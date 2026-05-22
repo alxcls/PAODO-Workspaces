@@ -1,0 +1,45 @@
+{
+  "name": "workspace-agent",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "tsx server.ts",
+    "start": "NODE_ENV=production tsx server.ts",
+    "build": "next build",
+    "lint": "next lint",
+    "build-graph": "tsx dev_tools/viz/generate-graph.ts",
+    "graph": "tsx dev_tools/viz/generate-graph.ts && open dev_tools/viz/graph.html",
+    "query-graph": "tsx dev_tools/query/query-graph.ts"
+  },
+  "dependencies": {
+    "@langchain/core": "^1.1.45",
+    "@langchain/openai": "^1.4.5",
+    "@xyflow/react": "^12.10.2",
+    "chokidar": "^5.0.0",
+    "dompurify": "^3.4.2",
+    "dotenv": "^17.4.2",
+    "file-type": "^22.0.1",
+    "highlight.js": "^11.11.1",
+    "jszip": "^3.10.1",
+    "marked": "^18.0.4",
+    "next": "16.2.6",
+    "react": "19.2.4",
+    "react-dom": "19.2.4",
+    "ws": "^8.20.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4",
+    "@types/dompurify": "^3.0.5",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "@types/ws": "^8.18.1",
+    "eslint": "^9",
+    "eslint-config-next": "16.2.6",
+    "tailwindcss": "^4",
+    "ts-morph": "^25.0.1",
+    "tsx": "^4.21.0",
+    "typescript": "^5"
+  }
+}

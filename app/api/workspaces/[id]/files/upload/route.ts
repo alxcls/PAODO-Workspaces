@@ -8,6 +8,7 @@ import { getWorkspace } from "@/lib/infra/workspaceStore";
 import { checkRateLimit } from "@/lib/infra/rateLimit";
 import fs from "fs/promises";
 import path from "path";
+import { createLogger } from "@/lib/infra/logger";
 
 const MAX_BYTES = 100 * 1024 * 1024; // 100 MB
 
@@ -18,6 +19,8 @@ export async function POST(
   const ip = req.headers.get("x-forwarded-for")?.split(",")[0].trim() ?? "unknown";
   const rl = checkRateLimit(ip);
   if (!rl.ok) {
+    const { id } = await params;
+    createLogger("api").warn({ workspaceId: id, ip }, "rate limit exceeded");
     return new Response("Too Many Requests", {
       status: 429,
       headers: { "Retry-After": String(rl.retryAfter) },
@@ -56,8 +59,13 @@ export async function POST(
     return NextResponse.json({ error: "File too large (max 100 MB)" }, { status: 413 });
   }
 
-  await fs.mkdir(path.dirname(resolved), { recursive: true });
-  await fs.writeFile(resolved, buf);
+  try {
+    await fs.mkdir(path.dirname(resolved), { recursive: true });
+    await fs.writeFile(resolved, buf);
+  } catch (err) {
+    createLogger("api").error({ err, workspaceId: id, filePath }, "failed to write uploaded file");
+    return NextResponse.json({ error: "failed to write file" }, { status: 500 });
+  }
 
   return NextResponse.json({ ok: true });
 }

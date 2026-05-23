@@ -1,5 +1,8 @@
 // Simple in-memory rate limiter keyed by IP address.
 // Allows up to 20 requests per 60-second window and returns a retryAfter value when the limit is exceeded.
+import { createLogger } from "./logger";
+
+const log = createLogger("rateLimit");
 const store = new Map<string, { count: number; resetAt: number }>();
 const WINDOW_MS = 60_000;
 const MAX = 20;
@@ -12,6 +15,7 @@ export function checkRateLimit(ip: string): { ok: boolean; retryAfter: number } 
     return { ok: true, retryAfter: 0 };
   }
   if (entry.count >= MAX) {
+    log.warn({ ip, retryAfter: Math.ceil((entry.resetAt - now) / 1000) }, "rate limit exceeded");
     return { ok: false, retryAfter: Math.ceil((entry.resetAt - now) / 1000) };
   }
   entry.count++;

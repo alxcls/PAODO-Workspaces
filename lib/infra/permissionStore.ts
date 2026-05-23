@@ -1,5 +1,8 @@
 import fs from "fs/promises";
 import path from "path";
+import { createLogger } from "./logger";
+
+const log = createLogger("permissions");
 
 const WORKSPACES_ROOT = path.resolve(process.cwd(), "./data");
 const STORE_FILE = ".agent-permissions.json";
@@ -24,6 +27,7 @@ async function readStore(workspaceId: string, workspaceDir: string): Promise<Per
     const raw = await fs.readFile(storePath, "utf8");
     return JSON.parse(raw) as PermStore;
   } catch {
+    log.debug({ workspaceId }, "permission store not found — trying legacy path");
     const legacyPath = getLegacyStorePath(workspaceDir);
     try {
       const raw = await fs.readFile(legacyPath, "utf8");
@@ -32,6 +36,7 @@ async function readStore(workspaceId: string, workspaceDir: string): Promise<Per
       await fs.rm(legacyPath).catch(() => {});
       return parsed;
     } catch {
+      log.debug({ workspaceId }, "no legacy store found — migrating from filesystem");
       return migrateFromFilesystem(workspaceId, workspaceDir);
     }
   }
@@ -49,7 +54,6 @@ async function migrateFromFilesystem(workspaceId: string, workspaceDir: string):
     }
     for (const e of entries) {
       if (e.name === STORE_FILE) continue;
-      if (e.name === "AGENTS.md") continue;
       const full = path.join(dir, e.name);
       const stat = await fs.stat(full).catch(() => null);
       if (!stat) continue;
@@ -70,14 +74,17 @@ async function migrateFromFilesystem(workspaceId: string, workspaceDir: string):
 
 async function writeStore(workspaceId: string, store: PermStore): Promise<void> {
   const storePath = getStorePath(workspaceId);
-  await fs.mkdir(path.dirname(storePath), { recursive: true });
-  await fs.writeFile(storePath, JSON.stringify(store, null, 2), "utf8");
+  try {
+    await fs.mkdir(path.dirname(storePath), { recursive: true });
+    await fs.writeFile(storePath, JSON.stringify(store, null, 2), "utf8");
+  } catch (err) {
+    log.error({ err, workspaceId }, "failed to write permission store");
+    throw err;
+  }
 }
 
 export async function isAgentLocked(workspaceId: string, workspaceDir: string, absPath: string): Promise<boolean> {
   const rel = path.relative(workspaceDir, absPath);
-  if (rel === "AGENTS.md") return true;
-
   const store = await readStore(workspaceId, workspaceDir);
   if (store.globalLock) return true;
 
@@ -116,4 +123,9 @@ export async function setGlobalPermission(
   store.globalLock = perm === "R";
   store.locked = [];
   await writeStore(workspaceId, store);
+}
+
+export async function getGlobalLock(workspaceId: string, workspaceDir: string): Promise<boolean> {
+  const store = await readStore(workspaceId, workspaceDir);
+  return store.globalLock;
 }

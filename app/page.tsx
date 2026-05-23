@@ -2,6 +2,7 @@
 // Also renders the description editor and API access panel for workspace-level configuration.
 "use client";
 
+import Image from "next/image";
 import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import DescriptionBlock, { loadDesc } from "@/components/home/DescriptionBlock";
@@ -131,8 +132,10 @@ export default function HomePage() {
       <TopBar
         left={
           <div className="brand">
-            <div className="brand-mark" />
-            <span className="brand-name">Workspace Agent</span>
+            <div className="brand-mark">
+              <Image src="/paodo-logo.svg" alt="Paodo logo" width={34} height={34} className="brand-logo" />
+            </div>
+            <span className="brand-name">PAODO WS agents</span>
           </div>
         }
         right={
@@ -283,7 +286,7 @@ export default function HomePage() {
               value={description}
               onChange={setDescription}
             />
-            <ApiAccessBlock wsId={selected.id} />
+            <ApiAccessBlock key={selected.id} wsId={selected.id} />
           </div>
         ) : (
           <div className="empty-state">

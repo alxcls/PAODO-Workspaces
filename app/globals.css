@@ -139,16 +139,31 @@ button { font: inherit; color: inherit; }
 
 .brand {
   display: flex; align-items: center; gap: 8px;
-  padding: 4px 4px 8px;
+  padding: 0;
 }
 .brand-mark {
-  width: 22px; height: 22px;
-  border-radius: 6px;
-  background: linear-gradient(135deg, var(--primary) 0%, var(--primary-2) 100%);
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  overflow: hidden;
   flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, var(--primary) 0%, var(--primary-2) 100%);
+}
+.brand-logo {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 .brand-name {
   font-weight: 600; letter-spacing: -.01em;
+  font-size: 18px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
 }
 
 .create-form {
@@ -879,15 +894,20 @@ button { font: inherit; color: inherit; }
   color: var(--text-2);
 }
 
-/* Preview/Edit toggle — overlaid top-right of the editor area, .md files only */
-.md-toggle-btn {
-  position: absolute;
-  top: 8px;
-  right: 10px;
-  z-index: 10;
-  opacity: 0.75;
+
+.html-preview {
+  flex: 1;
+  border: none;
+  width: 100%;
+  background: #fff;
 }
-.md-toggle-btn:hover { opacity: 1; }
+
+.json-preview {
+  flex: 1;
+  width: 100%;
+  height: 100%;
+  min-height: 400px;
+}
 
 .tool-inline {
   font: 12.5px/1.4 var(--font-mono);
@@ -896,6 +916,60 @@ button { font: inherit; color: inherit; }
 }
 .tool-inline b { font-weight: 600; color: var(--primary); }
 .tool-args { color: var(--text-3); }
+.tool-running { opacity: 1; }
+.tool-done    { opacity: 0.45; }
+.tool-check   { color: var(--primary-2); margin-right: 2px; }
+.tool-spin {
+  display: inline-block;
+  width: 8px; height: 8px;
+  border: 1.5px solid var(--primary-2);
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: tool-spin 0.7s linear infinite;
+  vertical-align: middle;
+  margin-right: 3px;
+}
+@keyframes tool-spin { to { transform: rotate(360deg); } }
+
+.tool-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+.tool-result {
+  padding: 10px 12px;
+  background: var(--bg);
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  font: 13px/1.6 var(--font-sans);
+  color: var(--text-2);
+  white-space: pre-wrap;
+}
+.tool-result h1,
+.tool-result h2,
+.tool-result h3,
+.tool-result h4,
+.tool-result h5 {
+  margin: 0 0 4px;
+  color: var(--text);
+  font-weight: 600;
+}
+.tool-result p {
+  margin: 0;
+}
+.tool-result ul {
+  margin: 4px 0 0 18px;
+}
+.tool-result li {
+  margin-bottom: 2px;
+}
+.tool-result code {
+  font-family: var(--font-mono);
+  background: rgba(0, 0, 0, 0.05);
+  padding: 2px 4px;
+  border-radius: 4px;
+}
 
 .typing { padding: 10px 14px; display: inline-flex; gap: 4px; }
 .typing span {

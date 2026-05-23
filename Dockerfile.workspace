@@ -12,21 +12,32 @@ RUN apt-get update && apt-get install -y \
     rm -rf /var/lib/apt/lists/* && \
     ln -sf /usr/bin/python3 /usr/bin/python
 
-# nvm + Node LTS
-# Symlink into /usr/local/bin so node/npm/npx work in non-login shells.
-ENV NVM_DIR=/root/.nvm
-RUN curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash && \
-    . "$NVM_DIR/nvm.sh" && \
-    nvm install --lts && \
-    nvm alias default node && \
-    ln -sf "$(which node)" /usr/local/bin/node && \
-    ln -sf "$(which npm)"  /usr/local/bin/npm  && \
-    ln -sf "$(which npx)"  /usr/local/bin/npx
+# Two execution identities:
+#   developer (UID 1000) — owns nvm/pyenv install dirs; root can also write (bypasses permissions).
+#   agent     (UID 999)  — restricted; can read/execute but not write; used when workspace is globally locked.
+RUN groupadd -g 999 agentgroup && \
+    useradd -r -u 999 -g agentgroup -M -s /bin/bash agent && \
+    useradd -u 1001 -m -s /bin/bash developer
 
-# pyenv — lets the agent switch Python versions at runtime (pyenv install 3.11 && pyenv local 3.11)
-ENV PYENV_ROOT=/root/.pyenv
+# nvm + Node LTS — installed as developer so only developer (and root) can write to the install dirs.
+# chmod -R 755 makes nvm dirs world-readable/executable so the agent user can execute node/npm.
+# Symlinking real binaries (not the nvm script wrapper) into /usr/local/bin so they work in any shell
+# without sourcing nvm.sh, and so the agent user can follow the symlink without needing /root access.
+ENV NVM_DIR=/home/developer/.nvm
+RUN su - developer -c "curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash" && \
+    su - developer -c ". $NVM_DIR/nvm.sh && nvm install --lts && nvm alias default node" && \
+    chmod -R 755 /home/developer/.nvm && \
+    NVM_BIN=$(su - developer -c ". $NVM_DIR/nvm.sh && dirname \$(which node)") && \
+    ln -sf "$NVM_BIN/node" /usr/local/bin/node && \
+    ln -sf "$NVM_BIN/npm"  /usr/local/bin/npm  && \
+    ln -sf "$NVM_BIN/npx"  /usr/local/bin/npx
+
+# pyenv — same ownership pattern: developer owns, chmod 755 lets agent read/execute but not write.
+ENV PYENV_ROOT=/home/developer/.pyenv
 ENV PATH=$PYENV_ROOT/shims:$PYENV_ROOT/bin:$PATH
 RUN git clone --depth=1 https://github.com/pyenv/pyenv.git $PYENV_ROOT && \
-    cd $PYENV_ROOT && src/configure && make -C src
+    cd $PYENV_ROOT && src/configure && make -C src && \
+    chown -R developer:developer $PYENV_ROOT && \
+    chmod -R 755 $PYENV_ROOT
 
 WORKDIR /workspace

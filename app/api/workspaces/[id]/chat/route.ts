@@ -1,19 +1,27 @@
 // Internal chat endpoint used by the browser UI.
 // Runs the agent loop and streams events (tokens, tool calls, errors) back as Server-Sent Events.
 import { getWorkspace } from "@/lib/infra/workspaceStore";
+import { getGlobalLock } from "@/lib/infra/permissionStore";
 import { runAgent, type AgentEvent } from "@/lib/agent/runner";
+import { buildSystemPrompt } from "@/lib/agent/systemPrompt";
+import { createLogger } from "@/lib/infra/logger";
 
 export async function POST(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
+  const log = createLogger("api").child({ workspaceId: id, route: "chat" });
   const ws = getWorkspace(id);
   if (!ws) return new Response("Workspace not found", { status: 404 });
 
   const body = await req.json() as { message?: string };
   if (!body.message?.trim()) return new Response("message is required", { status: 400 });
 
+  // Refresh the system prompt on every request so AGENTS.md changes are always picked up.
+  ws.messages[0] = buildSystemPrompt(ws.dir, await getGlobalLock(ws.id, ws.dir));
+
+  log.info("chat stream started");
   const encoder = new TextEncoder();
 
   const stream = new ReadableStream({
@@ -23,14 +31,16 @@ export async function POST(
       };
 
       try {
-        for await (const event of runAgent(ws.messages, body.message!.trim(), ws.dir, ws.id)) {
+        for await (const event of runAgent(ws.messages, body.message!.trim(), ws.dir, ws.id, req.signal)) {
           send(event);
           if (event.type === "done") break;
         }
       } catch (err) {
+        log.error({ err }, "chat stream error");
         send({ type: "error", message: String(err) });
         send({ type: "done" });
       } finally {
+        log.info("chat stream ended");
         controller.close();
       }
     },

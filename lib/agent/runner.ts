@@ -1,20 +1,24 @@
-// Drives the agent's agentic loop: sends messages to the model, dispatches tool calls in parallel,
-// feeds results back, and streams token-by-token output for the final response.
-// Handles both native tool_calls and inline JSON tool calls emitted by some model versions.
+// Drives the agent's agentic loop: streams every model turn, collecting text tokens
+// and tool-call chunks simultaneously, then dispatches tools and loops until a turn
+// arrives with neither native nor inline tool calls.
 // Set DEBUG=1 in the environment to enable verbose tool call logging.
 import { HumanMessage, ToolMessage, AIMessage } from "@langchain/core/messages";
-import type { BaseMessage } from "@langchain/core/messages";
+import type { AIMessageChunk, BaseMessage } from "@langchain/core/messages";
 import { buildTools } from "./tools";
 import { getWsForWorkspace } from "../infra/wsHub";
+import { createLogger } from "../infra/logger";
+
+const log = createLogger("agent");
 
 export type AgentEvent =
   | { type: "token"; content: string }
-  | { type: "tool_start"; name: string }
+  | { type: "tool_start"; name: string; args: Record<string, unknown> }
   | { type: "tool_result"; name: string; result: string }
   | { type: "error"; message: string }
   | { type: "done" };
 
 type AnyTool = { invoke: (args: Record<string, unknown>) => Promise<unknown> };
+type ResolvedToolCall = { id: string; name: string; args: Record<string, unknown> };
 
 // Newer models return content as an array of typed blocks instead of a plain string.
 function contentToText(content: unknown): string {
@@ -44,8 +48,6 @@ function extractInlineToolCall(raw: string): { name: string; parameters: Record<
 }
 
 const MAX_RESULT_CHARS = 10_000;
-const DEBUG = process.env.DEBUG === "1";
-const log = DEBUG ? console.log : () => {};
 
 async function invokeTool(tool: AnyTool, args: Record<string, unknown>): Promise<string> {
   const result = await tool.invoke(args);
@@ -62,115 +64,119 @@ export async function* runAgent(
   workspaceId: string,
   signal?: AbortSignal,
 ): AsyncGenerator<AgentEvent> {
+  const wlog = log.child({ workspaceId });
   const { modelWithTools, toolMap } = buildTools(workspaceId, workspaceDir);
   const typedToolMap = toolMap as Record<string, AnyTool>;
+  const socket = getWsForWorkspace(workspaceId);
 
   messages.push(new HumanMessage(userInput));
+  wlog.info("agent run started");
 
   try {
-    let response = await modelWithTools.invoke(messages, { signal });
-
     while (true) {
-      messages.push(response);
+      // Stream one model turn. Tool-call chunks are accumulated by their index field
+      // and reconstructed into complete calls after the stream ends.
+      // Tokens are buffered and only emitted after the stream ends, when we know there
+      // are no tool calls (i.e. the text is the final response, not an intermediate turn).
+      type PartialTC = { id: string; name: string; args: string };
+      const partials: PartialTC[] = [];
+      let fullText = "";
 
-      if (!response.tool_calls?.length) {
-        const inlineCall = extractInlineToolCall(contentToText(response.content));
+      const stream = await modelWithTools.stream(messages, { signal });
+      for await (const chunk of stream as AsyncIterable<AIMessageChunk>) {
+        const text = contentToText(chunk.content);
+        if (text) {
+          fullText += text;
+        }
+        for (const tcc of chunk.tool_call_chunks ?? []) {
+          const idx = tcc.index ?? 0;
+          if (!partials[idx]) partials[idx] = { id: "", name: "", args: "" };
+          if (tcc.id)   partials[idx].id    = tcc.id;
+          if (tcc.name) partials[idx].name += tcc.name;
+          if (tcc.args) partials[idx].args += tcc.args;
+        }
+      }
 
-        if (inlineCall) {
-          const tool = typedToolMap[inlineCall.name];
+      const toolCalls: ResolvedToolCall[] = partials
+        .filter((p) => p.name)
+        .map((p, i) => {
+          let args: Record<string, unknown> = {};
+          try { args = JSON.parse(p.args || "{}"); } catch { /* leave empty */ }
+          return { id: p.id || `tc_${i}_${Date.now()}`, name: p.name, args };
+        });
+
+      if (!toolCalls.length) {
+        // No native tool calls — check for legacy inline JSON tool call in the text.
+        const inline = extractInlineToolCall(fullText);
+        if (inline) {
+          const tool = typedToolMap[inline.name];
           if (tool) {
-            yield { type: "tool_start", name: inlineCall.name };
-            const socket = getWsForWorkspace(workspaceId);
-            socket?.send(JSON.stringify({ type: "tool_call", name: inlineCall.name, args: inlineCall.parameters }));
-            log(`[tool] ${inlineCall.name}`, inlineCall.parameters);
-            const resultStr = await invokeTool(tool, inlineCall.parameters);
-            yield { type: "tool_result", name: inlineCall.name, result: resultStr };
-            if (inlineCall.name !== "execute_command") {
-              socket?.send(JSON.stringify({ type: "tool_result_log", name: inlineCall.name, result: resultStr }));
+            yield { type: "tool_start", name: inline.name, args: inline.parameters };
+            socket?.send(JSON.stringify({ type: "tool_call", name: inline.name, args: inline.parameters }));
+            wlog.debug({ name: inline.name, args: inline.parameters }, "tool call");
+            const resultStr = await invokeTool(tool, inline.parameters);
+            yield { type: "tool_result", name: inline.name, result: resultStr };
+            if (inline.name !== "execute_command") {
+              socket?.send(JSON.stringify({ type: "tool_result_log", name: inline.name, result: resultStr }));
             }
-            log(`[result] ${inlineCall.name}:`, resultStr.slice(0, 200));
-            messages.push(
-              new ToolMessage({ tool_call_id: `inline_${Date.now()}`, content: resultStr })
-            );
-            response = await modelWithTools.invoke(messages, { signal });
+            wlog.debug({ name: inline.name, result: resultStr.slice(0, 200) }, "tool result");
+            messages.push(new AIMessage({ content: fullText }));
+            messages.push(new ToolMessage({ tool_call_id: `inline_${Date.now()}`, content: resultStr }));
             continue;
           }
         }
 
-        // Final response — re-invoke in streaming mode so the UI receives tokens as they arrive.
-        // We already pushed `response` onto `messages` at the top of the loop (line 71), but the
-        // streaming call needs to produce that final turn itself, so we pop it off first and let
-        // modelWithTools.stream() regenerate it with token-by-token delivery.
-        messages.pop();
-
-        let fullContent = "";
-        const stream = await modelWithTools.stream(messages, { signal });
-        for await (const chunk of stream) {
-          const text = contentToText(chunk.content);
-          if (text) {
-            fullContent += text;
-            yield { type: "token", content: text };
-          }
-        }
-
-        messages.push(new AIMessage(fullContent));
+        // Final text response — emit the buffered text now that we know no tool calls follow.
+        if (fullText) yield { type: "token", content: fullText };
+        messages.push(new AIMessage(fullText));
+        wlog.info("agent run done");
         yield { type: "done" };
         break;
       }
 
-      // Native tool calls — emit all starts, run all in parallel, then emit results
-      const socket = getWsForWorkspace(workspaceId);
-      // Deduplicate: if multiple calls to the same tool carry identical args, keep only the last.
-      // Prevents redundant back-to-back todo_write (or similar) calls with the same payload.
+      // Deduplicate: keep only the last of any calls with identical name+args.
+      // Done before pushing the AIMessage so every tool_call_id gets a ToolMessage.
       const seen = new Map<string, number>();
-      response.tool_calls.forEach((tc, i) => {
-        if (tc) seen.set(`${tc.name}:${JSON.stringify(tc.args)}`, i);
-      });
-      const activeCalls = response.tool_calls.filter(
-        (tc, i) => tc && seen.get(`${tc.name}:${JSON.stringify(tc.args)}`) === i
-      );
+      toolCalls.forEach((tc, i) => seen.set(`${tc.name}:${JSON.stringify(tc.args)}`, i));
+      const activeCalls = toolCalls.filter((tc, i) => seen.get(`${tc.name}:${JSON.stringify(tc.args)}`) === i);
 
-      for (const toolCall of activeCalls) {
-        yield { type: "tool_start", name: toolCall.name };
-        socket?.send(JSON.stringify({ type: "tool_call", name: toolCall.name, args: toolCall.args }));
-        log(`[tool] ${toolCall.name}`, toolCall.args);
+      messages.push(new AIMessage({
+        content: fullText,
+        tool_calls: activeCalls.map((tc) => ({ id: tc.id, name: tc.name, args: tc.args })),
+      }));
+
+      // Emit all starts, run all in parallel, then emit results.
+      for (const tc of activeCalls) {
+        yield { type: "tool_start", name: tc.name, args: tc.args };
+        socket?.send(JSON.stringify({ type: "tool_call", name: tc.name, args: tc.args }));
+        wlog.debug({ name: tc.name, args: tc.args }, "tool call");
       }
 
       const settled = await Promise.all(
-        activeCalls.map(async (toolCall) => {
-          const tool = typedToolMap[toolCall.name];
-          let resultStr: string;
-          if (!tool) {
-            resultStr = `Error: unknown tool "${toolCall.name}"`;
-          } else {
-            try {
-              resultStr = await invokeTool(tool, toolCall.args as Record<string, unknown>);
-            } catch (err) {
-              resultStr = `Error: ${String(err)}`;
-            }
-          }
-          return { toolCall, resultStr };
+        activeCalls.map(async (tc) => {
+          const tool = typedToolMap[tc.name];
+          const resultStr = tool
+            ? await invokeTool(tool, tc.args).catch((err) => `Error: ${String(err)}`)
+            : `Error: unknown tool "${tc.name}"`;
+          return { tc, resultStr };
         })
       );
 
-      for (const { toolCall, resultStr } of settled) {
-        yield { type: "tool_result", name: toolCall.name, result: resultStr };
-        if (toolCall.name !== "execute_command") {
-          socket?.send(JSON.stringify({ type: "tool_result_log", name: toolCall.name, result: resultStr }));
+      for (const { tc, resultStr } of settled) {
+        yield { type: "tool_result", name: tc.name, result: resultStr };
+        if (tc.name !== "execute_command") {
+          socket?.send(JSON.stringify({ type: "tool_result_log", name: tc.name, result: resultStr }));
         }
-        log(`[result] ${toolCall.name}:`, resultStr.slice(0, 200));
-        messages.push(new ToolMessage({ tool_call_id: toolCall.id!, content: resultStr }));
+        wlog.debug({ name: tc.name, result: resultStr.slice(0, 200) }, "tool result");
+        messages.push(new ToolMessage({ tool_call_id: tc.id, content: resultStr }));
       }
-
-      response = await modelWithTools.invoke(messages, { signal });
     }
   } catch (err) {
-    // Remove any dangling assistant message with unanswered tool_calls so future
+    // Remove any dangling assistant turn with unanswered tool_calls so future
     // requests don't fail with the "tool_call_id must be followed by tool messages" error.
     const last = messages[messages.length - 1];
-    if (last instanceof AIMessage && last.tool_calls?.length) {
-      messages.pop();
-    }
+    if (last instanceof AIMessage && last.tool_calls?.length) messages.pop();
+    wlog.error({ err }, "agent run failed");
     yield { type: "error", message: String(err) };
     yield { type: "done" };
   }

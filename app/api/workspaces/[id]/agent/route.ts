@@ -9,6 +9,7 @@ import { runAgent, type AgentEvent } from "@/lib/agent/runner";
 import { buildSystemPrompt } from "@/lib/agent/systemPrompt";
 import { validateKey } from "@/lib/infra/apiKeyStore";
 import { checkRateLimit } from "@/lib/infra/rateLimit";
+import { createLogger } from "@/lib/infra/logger";
 
 
 export async function POST(
@@ -18,6 +19,8 @@ export async function POST(
   const ip = req.headers.get("x-forwarded-for")?.split(",")[0].trim() ?? "unknown";
   const rl = checkRateLimit(ip);
   if (!rl.ok) {
+    const { id } = await params;
+    createLogger("api").warn({ workspaceId: id, ip }, "rate limit exceeded");
     return new Response("Too Many Requests", {
       status: 429,
       headers: { "Retry-After": String(rl.retryAfter) },
@@ -26,8 +29,10 @@ export async function POST(
 
   const plain = req.headers.get("authorization")?.replace(/^Bearer /, "") ?? "";
   const { id } = await params;
+  const log = createLogger("api").child({ workspaceId: id, route: "agent" });
 
   if (!plain || !validateKey(id, plain)) {
+    log.warn({ ip }, "unauthorized request");
     return new Response("Unauthorized", { status: 401 });
   }
 
@@ -59,6 +64,7 @@ export async function POST(
           }
         }
       } catch (err) {
+        log.error({ err }, "agent stream error");
         send({ type: "error", message: String(err) });
         send({ type: "done" });
       } finally {

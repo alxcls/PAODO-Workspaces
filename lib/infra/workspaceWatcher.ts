@@ -4,6 +4,9 @@
 import chokidar, { type FSWatcher } from "chokidar";
 import fs from "fs";
 import { broadcastToWorkspace } from "./wsHub";
+import { createLogger } from "./logger";
+
+const log = createLogger("watcher");
 
 const WATCHERS_DISABLED = process.env.DISABLE_WS_FILE_WATCH === "1";
 
@@ -79,7 +82,7 @@ export function ensureWatcher(workspaceId: string, dir: string): void {
   });
 
   watcher.on("error", (err: unknown) => {
-    console.error(`[workspaceWatcher] error for ${workspaceId}`, err);
+    log.error({ workspaceId, err }, "watcher error");
   });
 
   entry.watcher = watcher;

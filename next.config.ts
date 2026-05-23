@@ -4,6 +4,16 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   devIndicators: false,
+  transpilePackages: ["jsoncrack-react"],
+  serverExternalPackages: ["pino", "pino-pretty"],
+  logging: {
+    incomingRequests: false,
+  },
+  webpack: (config) => {
+    // jsoncrack-react ships ESM-only ("import" condition); webpack defaults don't include it
+    config.resolve.conditionNames = ["import", ...(config.resolve.conditionNames ?? [])];
+    return config;
+  },
 };
 
 export default nextConfig;

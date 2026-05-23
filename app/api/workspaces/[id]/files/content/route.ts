@@ -5,8 +5,10 @@ export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
 import { getWorkspace } from "@/lib/infra/workspaceStore";
+import { isAgentLocked } from "@/lib/infra/permissionStore";
 import fs from "fs/promises";
 import path from "path";
+import { createLogger } from "@/lib/infra/logger";
 
 // Resolves symlinks before checking the boundary so a symlink inside the workspace
 // cannot silently point to a path outside it.
@@ -66,6 +68,7 @@ export async function GET(
   const filePath = searchParams.get("path");
   if (!filePath) return NextResponse.json({ error: "path required" }, { status: 400 });
 
+  const log = createLogger("api").child({ workspaceId: id, route: "files/content" });
   try {
     const resolved = await assertInsideWorkspace(ws.dir, filePath);
     const buf = await fs.readFile(resolved);
@@ -87,6 +90,7 @@ export async function GET(
     if (classified.type === "image") return NextResponse.json({ type: "image" });
     return NextResponse.json({ type: "binary" });
   } catch (err) {
+    log.warn({ err, filePath }, "GET file failed");
     const msg = err instanceof Error ? err.message : "Unknown error";
     return NextResponse.json({ error: msg }, { status: 400 });
   }
@@ -105,9 +109,13 @@ export async function PUT(
     return NextResponse.json({ error: "path and content required" }, { status: 400 });
   }
 
+  const log = createLogger("api").child({ workspaceId: id, route: "files/content" });
   try {
     const filePath = path.isAbsolute(body.path) ? body.path : path.join(ws.dir, body.path);
     const resolved = await assertInsideWorkspace(ws.dir, filePath);
+    if (await isAgentLocked(ws.id, ws.dir, resolved)) {
+      return NextResponse.json({ error: "File is read-only" }, { status: 403 });
+    }
     const exists = await fs.access(resolved).then(() => true).catch(() => false);
     if (exists) {
       await fs.access(resolved, fs.constants.W_OK).catch(() => {
@@ -122,6 +130,7 @@ export async function PUT(
     await fs.writeFile(resolved, body.content, "utf-8");
     return NextResponse.json({ ok: true });
   } catch (err) {
+    log.warn({ err, path: body.path }, "PUT file failed");
     const msg = err instanceof Error ? err.message : "Unknown error";
     return NextResponse.json({ error: msg }, { status: 400 });
   }
@@ -139,14 +148,24 @@ export async function DELETE(
   const filePath = searchParams.get("path");
   if (!filePath) return NextResponse.json({ error: "path required" }, { status: 400 });
 
+  const log = createLogger("api").child({ workspaceId: id, route: "files/content" });
   try {
     const resolved = await assertInsideWorkspace(ws.dir, filePath);
+    if (await isAgentLocked(ws.id, ws.dir, resolved)) {
+      return NextResponse.json({ error: "File is read-only" }, { status: 403 });
+    }
     await fs.access(path.dirname(resolved), fs.constants.W_OK).catch(() => {
       throw new Error("Directory is locked");
     });
-    await fs.unlink(resolved);
+    const stat = await fs.stat(resolved);
+    if (stat.isDirectory()) {
+      await fs.rm(resolved, { recursive: true });
+    } else {
+      await fs.unlink(resolved);
+    }
     return NextResponse.json({ ok: true });
   } catch (err) {
+    log.warn({ err, filePath }, "DELETE file failed");
     const msg = err instanceof Error ? err.message : "Unknown error";
     return NextResponse.json({ error: msg }, { status: 400 });
   }

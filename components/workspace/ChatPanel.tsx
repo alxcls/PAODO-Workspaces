@@ -2,7 +2,9 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { marked } from "marked";
+import * as markedModule from "marked";
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const marked = (markedModule as any).marked as (src: string) => string;
 import DOMPurify from "dompurify";
 import type { AgentEvent } from "@/lib/agent/runner";
 
@@ -16,8 +18,11 @@ const SendIcon = () => (
 
 interface Message {
   role: "user" | "assistant" | "tool_start" | "error";
-  content: string;
+  content?: string;
   toolName?: string;
+  toolSummary?: string;
+  toolDone?: boolean;
+  toolResult?: string;
 }
 
 const TOOL_LABELS: Record<string, string> = {
@@ -35,12 +40,29 @@ function toolLabel(name: string): string {
   return TOOL_LABELS[name] ?? name.replace(/_/g, " ");
 }
 
+function toolArgSummary(name: string, args: Record<string, unknown>): string {
+  const s = (k: string) => String(args[k] ?? "");
+  switch (name) {
+    case "execute_command": return s("command");
+    case "file_read":       return s("file_path");
+    case "file_write":
+    case "file_edit":       return s("file_path");
+    case "glob":            return s("pattern");
+    case "list_directory":  return s("dir_path") || ".";
+    case "web_fetch":       return s("url");
+    case "call_agent":      return `→ ${s("workspace")}`;
+    default:                return "";
+  }
+}
+
 export default function ChatPanel({ workspaceId, onAgentTurnComplete }: { workspaceId: string; onAgentTurnComplete?: () => void }) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [draft, setDraft] = useState("");
   const [streaming, setStreaming] = useState(false);
+  const [pendingTools, setPendingTools] = useState(0);
   const bottomRef = useRef<HTMLDivElement>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
+  const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -50,6 +72,15 @@ export default function ChatPanel({ workspaceId, onAgentTurnComplete }: { worksp
     setMessages([]);
     setDraft("");
   }, [workspaceId]);
+
+  useEffect(() => {
+    if (!streaming) return;
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") abortRef.current?.abort();
+    }
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [streaming]);
 
   async function sendMessage(userMessage: string) {
     setDraft("");
@@ -61,10 +92,12 @@ export default function ChatPanel({ workspaceId, onAgentTurnComplete }: { worksp
     let assistantStarted = false;
 
     try {
+      abortRef.current = new AbortController();
       const res = await fetch(`/api/workspaces/${workspaceId}/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ message: userMessage }),
+        signal: abortRef.current.signal,
       });
 
       if (!res.ok || !res.body) {
@@ -91,32 +124,55 @@ export default function ChatPanel({ workspaceId, onAgentTurnComplete }: { worksp
 
             if (event.type === "token") {
               assistantContent += event.content;
+              const content = assistantContent;
               if (!assistantStarted) {
-                setMessages((prev) => [...prev, { role: "assistant", content: assistantContent }]);
+                setMessages((prev) => [...prev, { role: "assistant", content }]);
                 assistantStarted = true;
               } else {
                 setMessages((prev) => {
                   const next = [...prev];
-                  next[next.length - 1] = { role: "assistant", content: assistantContent };
+                  next[next.length - 1] = { role: "assistant", content };
                   return next;
                 });
               }
             } else if (event.type === "tool_start") {
+              setPendingTools((n) => n + 1);
               setMessages((prev) => [
                 ...prev,
-                { role: "tool_start", content: `Running ${event.name}…`, toolName: event.name },
+                { role: "tool_start", toolName: event.name, toolSummary: toolArgSummary(event.name, event.args), toolDone: false },
               ]);
+            } else if (event.type === "tool_result") {
+              setPendingTools((n) => Math.max(0, n - 1));
+              const resultText = event.name === "call_agent" ? event.result : undefined;
+              setMessages((prev) => {
+                const next = [...prev];
+                for (let j = next.length - 1; j >= 0; j--) {
+                  if (next[j].role === "tool_start" && next[j].toolName === event.name && !next[j].toolDone) {
+                    next[j] = {
+                      ...next[j],
+                      toolDone: true,
+                      ...(resultText ? { toolResult: resultText } : {}),
+                    };
+                    break;
+                  }
+                }
+                return next;
+              });
             } else if (event.type === "error") {
               setMessages((prev) => [...prev, { role: "error", content: event.message }]);
             }
           } catch { /* skip malformed lines */ }
         }
       }
+    } catch (err) {
+      if (!(err instanceof DOMException && err.name === "AbortError")) {
+        setMessages((prev) => [...prev, { role: "error", content: "Failed to reach server." }]);
+      }
     } finally {
+      abortRef.current = null;
       setStreaming(false);
+      setPendingTools(0);
       onAgentTurnComplete?.();
-      assistantContent = "";
-      assistantStarted = false;
     }
   }
 
@@ -142,9 +198,19 @@ export default function ChatPanel({ workspaceId, onAgentTurnComplete }: { worksp
 
         {messages.map((m, i) => {
           if (m.role === "tool_start") {
+            const resultHtml = m.toolResult ? DOMPurify.sanitize(marked(m.toolResult)) : "";
             return (
-              <div key={i} className="tool-inline">
-                ▶ <b>{toolLabel(m.toolName ?? "")}</b>
+              <div key={i} className="tool-row">
+                <div className={`tool-inline${m.toolDone ? " tool-done" : " tool-running"}`}>
+                  {m.toolDone
+                    ? <span className="tool-check">✓</span>
+                    : <span className="tool-spin" />}{" "}
+                  <b>{toolLabel(m.toolName ?? "")}</b>
+                  {m.toolSummary && <span className="tool-args"> {m.toolSummary}</span>}
+                </div>
+                {resultHtml && (
+                  <div className="tool-result" dangerouslySetInnerHTML={{ __html: resultHtml }} />
+                )}
               </div>
             );
           }
@@ -166,18 +232,25 @@ export default function ChatPanel({ workspaceId, onAgentTurnComplete }: { worksp
               </div>
             );
           }
-          return (
-            <div key={i} className={"msg msg-" + (m.role === "user" ? "user" : "agent")}>
-              <div className={"bubble bubble-" + (m.role === "user" ? "user" : "agent")}>
-                {m.role === "user"
-                  ? m.content
-                  : <span dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(marked.parse(m.content)) }} />}
+          if (m.role === "assistant") {
+            const html = DOMPurify.sanitize(marked(m.content ?? ""));
+            if (!html.trim()) return null;
+            return (
+              <div key={i} className="msg msg-agent">
+                <div className="bubble bubble-agent">
+                  <span dangerouslySetInnerHTML={{ __html: html }} />
+                </div>
               </div>
+            );
+          }
+          return (
+            <div key={i} className="msg msg-user">
+              <div className="bubble bubble-user">{m.content}</div>
             </div>
           );
         })}
 
-        {streaming && (
+        {streaming && pendingTools === 0 && (
           <div className="msg msg-agent">
             <div className="bubble bubble-agent typing">
               <span /><span /><span />

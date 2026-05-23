@@ -8,6 +8,7 @@ import { SystemMessage } from "@langchain/core/messages";
 import { canCall } from "../../infra/workspaceGraph";
 import { getWorkspaceByName, getWorkspace } from "../../infra/workspaceStore";
 import { buildSystemPrompt } from "../systemPrompt";
+import { createLogger } from "../../infra/logger";
 // runner is imported dynamically inside the function to avoid the circular:
 // agentCall → runner → buildTools → agentCall
 
@@ -17,12 +18,17 @@ const MAX_RESPONSE_CHARS = 8_000;
 const TIMEOUT_MS = 120_000;
 
 export function buildAgentCallTool(callerWorkspaceId: string) {
+  const log = createLogger("agentCall");
   return tool(
     async ({ workspace, message }) => {
       const callee = getWorkspaceByName(workspace);
-      if (!callee) return `Error: workspace "${workspace}" not found.`;
+      if (!callee) {
+        log.warn({ callerWorkspaceId, callee: workspace }, "call_agent target not found");
+        return `Error: workspace "${workspace}" not found.`;
+      }
 
       if (!canCall(callerWorkspaceId, callee.id)) {
+        log.warn({ callerWorkspaceId, callee: workspace }, "call_agent permission denied — no edge in graph");
         return (
           `Permission denied: this workspace is not connected to "${workspace}" in the Agent Network. ` +
           `Add an edge in the /graph page first.`
@@ -33,6 +39,8 @@ export function buildAgentCallTool(callerWorkspaceId: string) {
       const caller = getWorkspace(callerWorkspaceId);
       const taggedMessage = caller ? `[From: ${caller.name}] ${message}` : message;
 
+      log.debug({ callerWorkspaceId, callee: workspace }, "call_agent start");
+
       try {
         const { runAgent } = await import("../runner");
         const signal = AbortSignal.timeout(TIMEOUT_MS);
@@ -40,9 +48,13 @@ export function buildAgentCallTool(callerWorkspaceId: string) {
 
         for await (const event of runAgent(freshMessages, taggedMessage, callee.dir, callee.id, signal)) {
           if (event.type === "token") response += event.content;
-          if (event.type === "error") return `Error from "${workspace}": ${event.message}`;
+          if (event.type === "error") {
+            log.error({ callerWorkspaceId, callee: workspace, agentError: event.message }, "call_agent remote error");
+            return `Error from "${workspace}": ${event.message}`;
+          }
         }
 
+        log.debug({ callerWorkspaceId, callee: workspace, responseChars: response.length }, "call_agent done");
         if (!response) return `(${workspace} produced no response)`;
         return response.length > MAX_RESPONSE_CHARS
           ? response.slice(0, MAX_RESPONSE_CHARS) +
@@ -50,8 +62,10 @@ export function buildAgentCallTool(callerWorkspaceId: string) {
           : response;
       } catch (err) {
         if (err instanceof Error && err.name === "AbortError") {
+          log.warn({ callerWorkspaceId, callee: workspace, timeoutMs: TIMEOUT_MS }, "call_agent timed out");
           return `Error: call to "${workspace}" timed out after ${TIMEOUT_MS / 1000}s — the target agent is too slow or stuck.`;
         }
+        log.error({ err, callerWorkspaceId, callee: workspace }, "call_agent failed");
         return `Error: ${err instanceof Error ? err.message : String(err)}`;
       }
     },
@@ -59,6 +73,7 @@ export function buildAgentCallTool(callerWorkspaceId: string) {
       name: "call_agent",
       description: `Contact a connected workspace to delegate a task, place an order, or request information.
 ALWAYS use this when the user asks you to contact, call, notify, or order from another workspace.
+If you don't know which workspaces are available, call list_agents first.
 The target agent runs in a fresh isolated context — it has no memory of your conversation.
 If the workspace is not connected you will receive a permission error, but always attempt the call rather than refusing.`,
       schema: z.object({

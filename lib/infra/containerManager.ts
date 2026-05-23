@@ -3,9 +3,13 @@
 // CONTAINER_IDLE_MS of inactivity, re-started automatically on next command.
 //
 // Container naming: ws_<workspaceId>
+// Network naming:   wsnet_<workspaceId>  (isolated per-workspace bridge — no inter-container traffic)
 // Bind mount:       <workspaceDir> → /workspace  (host files, shared with file tools)
 // Resource limits:  CONTAINER_MEMORY / CONTAINER_CPUS env vars (defaults: 1g / 1.0)
 import { spawn } from "child_process";
+import { createLogger } from "./logger";
+
+const log = createLogger("container");
 
 const CONTAINER_IMAGE = process.env.CONTAINER_IMAGE ?? "paodo-workspace";
 const CONTAINER_MEMORY = process.env.CONTAINER_MEMORY ?? "1g";
@@ -18,6 +22,18 @@ const startLocks = new Map<string, Promise<void>>();
 
 function containerName(workspaceId: string): string {
   return `ws_${workspaceId}`;
+}
+
+function networkName(workspaceId: string): string {
+  return `wsnet_${workspaceId}`;
+}
+
+async function ensureNetwork(workspaceId: string): Promise<void> {
+  const name = networkName(workspaceId);
+  const inspect = await dockerCmd("network", "inspect", name);
+  if (inspect.code === 0) return;
+  const r = await dockerCmd("network", "create", "--driver", "bridge", name);
+  if (r.code !== 0) throw new Error(`docker network create failed: ${r.stderr}`);
 }
 
 type DockerResult = { stdout: string; stderr: string; code: number };
@@ -53,14 +69,21 @@ async function _ensureContainer(workspaceId: string, workspaceDir: string): Prom
   const status = await getContainerStatus(workspaceId);
   if (status === "running") return;
   if (status === "stopped") {
+    log.debug({ workspaceId }, "starting stopped container");
+    await ensureNetwork(workspaceId);
+    const connect = await dockerCmd("network", "connect", networkName(workspaceId), containerName(workspaceId));
+    if (connect.code !== 0) throw new Error(`docker network connect failed: ${connect.stderr}`);
     const r = await dockerCmd("start", containerName(workspaceId));
     if (r.code !== 0) throw new Error(`docker start failed: ${r.stderr}`);
     return;
   }
   // missing — create and start
+  log.debug({ workspaceId }, "creating container");
+  await ensureNetwork(workspaceId);
   const r = await dockerCmd(
     "run", "-d",
     "--name", containerName(workspaceId),
+    "--network", networkName(workspaceId),
     `--memory=${CONTAINER_MEMORY}`,
     `--cpus=${CONTAINER_CPUS}`,
     "-v", `${workspaceDir}:/workspace`,
@@ -86,23 +109,51 @@ export function ensureContainer(workspaceId: string, workspaceDir: string): Prom
 export async function stopContainer(workspaceId: string): Promise<void> {
   const t = idleTimers.get(workspaceId);
   if (t) { clearTimeout(t); idleTimers.delete(workspaceId); }
-  await dockerCmd("stop", containerName(workspaceId));
+  const r = await dockerCmd("stop", containerName(workspaceId));
+  if (r.code !== 0) log.warn({ workspaceId, stderr: r.stderr }, "docker stop failed");
+  await dockerCmd("network", "disconnect", networkName(workspaceId), containerName(workspaceId));
+  const net = await dockerCmd("network", "rm", networkName(workspaceId));
+  if (net.code !== 0) log.debug({ workspaceId, stderr: net.stderr }, "network rm on stop (may not exist)");
 }
 
 export async function removeContainer(workspaceId: string): Promise<void> {
   const t = idleTimers.get(workspaceId);
   if (t) { clearTimeout(t); idleTimers.delete(workspaceId); }
   startLocks.delete(workspaceId);
-  // Ignore errors — container may never have been created.
-  await dockerCmd("stop", containerName(workspaceId));
-  await dockerCmd("rm",   containerName(workspaceId));
+  // Non-zero exit codes are expected if the container/network was never created.
+  const stop = await dockerCmd("stop", containerName(workspaceId));
+  if (stop.code !== 0) log.debug({ workspaceId, stderr: stop.stderr }, "docker stop on remove (may not exist)");
+  const rm = await dockerCmd("rm", containerName(workspaceId));
+  if (rm.code !== 0) log.debug({ workspaceId, stderr: rm.stderr }, "docker rm on remove (may not exist)");
+  const net = await dockerCmd("network", "rm", networkName(workspaceId));
+  if (net.code !== 0) log.debug({ workspaceId, stderr: net.stderr }, "docker network rm on remove (may not exist)");
 }
 
 export async function assertDockerAvailable(): Promise<void> {
   const r = await dockerCmd("info");
   if (r.code !== 0) {
-    console.error("Docker is not available. Make sure Docker is running before starting the server.");
-    console.error(r.stderr);
+    log.error({ stderr: r.stderr }, "Docker is not available. Make sure Docker is running before starting the server.");
     process.exit(1);
   }
+  await ensureWorkspaceImage();
+}
+
+async function ensureWorkspaceImage(): Promise<void> {
+  const check = await dockerCmd("image", "inspect", CONTAINER_IMAGE);
+  if (check.code === 0) return;
+
+  log.info({ image: CONTAINER_IMAGE }, "workspace image not found — building it now (this runs once)...");
+
+  await new Promise<void>((resolve, reject) => {
+    const proc = spawn("docker", ["build", "-f", "Dockerfile.workspace", "-t", CONTAINER_IMAGE, "."], {
+      stdio: ["ignore", "inherit", "inherit"],
+    });
+    proc.on("close", (code: number | null) => {
+      if (code === 0) resolve();
+      else reject(new Error(`docker build exited with code ${code}`));
+    });
+    proc.on("error", reject);
+  });
+
+  log.info({ image: CONTAINER_IMAGE }, "workspace image ready");
 }

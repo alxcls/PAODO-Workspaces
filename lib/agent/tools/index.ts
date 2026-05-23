@@ -10,6 +10,7 @@ import { buildWebFetchTool } from "./webFetch";
 import { buildGlobTool } from "./glob";
 import { buildListDirectoryTool } from "./listDirectory";
 import { buildAgentCallTool } from "./agentCall";
+import { buildListAgentsTool } from "./listAgents";
 
 export function buildTools(workspaceId: string, workspaceDir: string) {
   const model = new ChatOpenAI({
@@ -27,6 +28,7 @@ export function buildTools(workspaceId: string, workspaceDir: string) {
     buildGlobTool(workspaceId, workspaceDir),
     buildListDirectoryTool(workspaceId, workspaceDir),
     buildAgentCallTool(workspaceId),
+    buildListAgentsTool(workspaceId),
   ];
 
   const toolMap: Record<string, (typeof tools)[number]> = Object.fromEntries(

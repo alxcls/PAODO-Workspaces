@@ -11,6 +11,10 @@ export async function PUT(req: Request) {
     edges: GraphEdge[];
     positions: Record<string, { x: number; y: number }>;
   };
-  saveGraph(body.edges ?? [], body.positions ?? {});
+  try {
+    saveGraph(body.edges ?? [], body.positions ?? {});
+  } catch (e) {
+    return NextResponse.json({ error: (e as Error).message }, { status: 400 });
+  }
   return NextResponse.json({ ok: true });
 }

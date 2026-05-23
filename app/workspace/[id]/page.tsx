@@ -13,6 +13,7 @@ export default function WorkspacePage({ params }: { params: Promise<{ id: string
   const [workspaceName, setWorkspaceName] = useState<string>("");
   const [workspaceDir, setWorkspaceDir] = useState<string>("");
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
+  const [selectedPermission, setSelectedPermission] = useState<"R" | "RW">("RW");
   const [viewerOpen, setViewerOpen] = useState(false);
 
   // Column widths (px)
@@ -22,6 +23,8 @@ export default function WorkspacePage({ params }: { params: Promise<{ id: string
 
   // Chat/console vertical split
   const [chatRatio, setChatRatio] = useState(0.62);
+
+  const [isDragging, setIsDragging] = useState(false);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const rightRef = useRef<HTMLDivElement>(null);
@@ -53,6 +56,7 @@ export default function WorkspacePage({ params }: { params: Promise<{ id: string
     const onUp = () => {
       if (!colDragging.current) return;
       colDragging.current = null;
+      setIsDragging(false);
       document.body.style.cursor = "";
       document.body.style.userSelect = "";
     };
@@ -74,6 +78,7 @@ export default function WorkspacePage({ params }: { params: Promise<{ id: string
     const onUp = () => {
       if (!rowDragging.current) return;
       rowDragging.current = false;
+      setIsDragging(false);
       document.body.style.cursor = "";
       document.body.style.userSelect = "";
     };
@@ -87,25 +92,29 @@ export default function WorkspacePage({ params }: { params: Promise<{ id: string
 
   const startColDrag = useCallback((side: "left" | "right") => {
     colDragging.current = side;
+    setIsDragging(true);
     document.body.style.cursor = "col-resize";
     document.body.style.userSelect = "none";
   }, []);
 
   const startRowDrag = useCallback(() => {
     rowDragging.current = true;
+    setIsDragging(true);
     document.body.style.cursor = "row-resize";
     document.body.style.userSelect = "none";
   }, []);
 
   return (
     <div className="workspace" ref={containerRef}>
+      {isDragging && <div style={{ position: "fixed", inset: 0, zIndex: 9999 }} />}
       {/* LEFT — file tree */}
       <FileTreePanel
         workspaceId={id}
         workspaceName={workspaceName}
         wsDir={workspaceDir}
         selectedPath={selectedFile}
-        onFileSelect={(path) => { setSelectedFile(path); setViewerOpen(true); }}
+        onFileSelect={(path, permission) => { setSelectedFile(path); setSelectedPermission(permission); setViewerOpen(true); }}
+        onPermissionChange={(path, perm) => { if (path === null || path === selectedFile) setSelectedPermission(perm); }}
         onDeletedPaths={(paths) => {
           if (selectedFile && paths.includes(selectedFile)) {
             setSelectedFile(null);
@@ -124,6 +133,7 @@ export default function WorkspacePage({ params }: { params: Promise<{ id: string
             <FileViewer
               workspaceId={id}
               filePath={selectedFile}
+              permission={selectedPermission}
               onClose={() => setViewerOpen(false)}
               onDeleted={() => { setViewerOpen(false); setTreeRefreshKey((k) => k + 1); }}
             />

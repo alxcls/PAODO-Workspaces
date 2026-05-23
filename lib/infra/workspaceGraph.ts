@@ -4,6 +4,9 @@
 import path from "path";
 import fs from "fs";
 import { WORKSPACES_ROOT } from "./workspaceStore";
+import { createLogger } from "./logger";
+
+const log = createLogger("workspaceGraph");
 
 export interface GraphEdge {
   id: string;
@@ -34,10 +37,33 @@ export function getGraph(): GraphFile {
   return cache;
 }
 
+function hasCycle(edges: GraphEdge[]): boolean {
+  const adj = new Map<string, string[]>();
+  for (const e of edges) {
+    adj.set(e.source, [...(adj.get(e.source) ?? []), e.target]);
+  }
+  const visited = new Set<string>();
+  const stack = new Set<string>();
+  function dfs(n: string): boolean {
+    visited.add(n); stack.add(n);
+    for (const m of adj.get(n) ?? []) {
+      if (stack.has(m) || (!visited.has(m) && dfs(m))) return true;
+    }
+    stack.delete(n);
+    return false;
+  }
+  for (const n of adj.keys()) if (!visited.has(n) && dfs(n)) return true;
+  return false;
+}
+
 export function saveGraph(
   edges: GraphEdge[],
   positions: Record<string, { x: number; y: number }>
 ): void {
+  if (hasCycle(edges)) {
+    log.warn({ edgeCount: edges.length }, "saveGraph rejected — cycle detected");
+    throw new Error("Graph contains a cycle — only DAGs are allowed.");
+  }
   cache = { edges, positions };
   fs.mkdirSync(WORKSPACES_ROOT, { recursive: true });
   fs.writeFileSync(GRAPH_FILE, JSON.stringify(cache, null, 2));

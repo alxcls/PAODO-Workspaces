@@ -1,0 +1,18 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "${PORT:-3000}:3000"
+    env_file:
+      - .env
+    volumes:
+      # Gives the app access to the host Docker daemon to spawn workspace containers
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Workspace files are stored on the host so they persist across restarts
+      - workspaces:/workspaces
+    restart: unless-stopped
+
+volumes:
+  workspaces:

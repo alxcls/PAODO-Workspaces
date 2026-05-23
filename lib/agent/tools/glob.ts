@@ -8,6 +8,7 @@ import path from "path";
 import { isAgentLocked } from "@/lib/infra/permissionStore";
 
 async function globMatch(pattern: string, workspaceDir: string): Promise<string[]> {
+  if (pattern.startsWith("/")) throw new Error("absolute paths are not allowed; use paths relative to the workspace root");
   const parts = pattern.split("/");
   const results: string[] = [];
 
@@ -60,11 +61,7 @@ async function globMatch(pattern: string, workspaceDir: string): Promise<string[
     }
   }
 
-  const isAbsolute = parts[0] === "";
-  const startDir = isAbsolute ? "/" : workspaceDir;
-  const effectiveParts = isAbsolute ? parts.slice(1) : parts;
-
-  await walk(startDir, effectiveParts);
+  await walk(workspaceDir, parts);
   return results
     .map((p) => path.relative(workspaceDir, p))
     .filter((p) => !p.startsWith(".."))

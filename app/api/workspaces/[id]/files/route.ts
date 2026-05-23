@@ -5,6 +5,7 @@ import { getWorkspace } from "@/lib/infra/workspaceStore";
 import { isAgentLocked } from "@/lib/infra/permissionStore";
 import fs from "fs/promises";
 import path from "path";
+import { createLogger } from "@/lib/infra/logger";
 
 export interface TreeNode {
   name: string;
@@ -14,7 +15,7 @@ export interface TreeNode {
   children?: TreeNode[];
 }
 
-const IGNORED = [".git"];
+const IGNORED = [".git", "__pycache__", ".mypy_cache", ".pytest_cache", ".ruff_cache"];
 
 async function buildTree(
   dirPath: string,
@@ -26,13 +27,14 @@ async function buildTree(
   let entries;
   try {
     entries = await fs.readdir(dirPath, { withFileTypes: true });
-  } catch {
+  } catch (err) {
+    createLogger("api").warn({ err, dirPath, workspaceId }, "failed to read directory in file tree");
     return [];
   }
 
   const nodes = await Promise.all(
     entries
-      .filter((e) => !IGNORED.includes(e.name))
+      .filter((e) => !IGNORED.includes(e.name) && !/\.(pyc|pyo)$/.test(e.name))
       .map(async (e): Promise<TreeNode> => {
         const fullPath = path.join(dirPath, e.name);
         const locked = await isAgentLocked(workspaceId, workspaceDir, fullPath);

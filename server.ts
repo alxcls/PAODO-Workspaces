@@ -5,11 +5,15 @@
 
 import "dotenv/config";
 import { createServer } from "http";
+import { createLogger } from "./lib/infra/logger";
+
+const log = createLogger("server");
 
 import next from "next";
 import { assertDockerAvailable, ensureContainer } from "./lib/infra/containerManager";
 import { WebSocketServer } from "ws";
 import { getWorkspace, resetWorkspaceMessages } from "./lib/infra/workspaceStore";
+import { setTodos } from "./lib/infra/todoStore";
 import {
   addConnection,
   removeConnection,
@@ -39,12 +43,29 @@ const app = next({ dev, httpServer, port, webpack: true } as any);
 const handle = app.getRequestHandler();
 
 httpServer.on("request", (req, res) => {
-  const isApi = req.url?.startsWith("/api/");
-  if (!isApi && !isAuthorized(req)) {
+  const method = req.method ?? "GET";
+  const url = req.url ?? "/";
+  const start = process.hrtime.bigint();
+  let logged = false;
+  const logRequest = () => {
+    if (logged) return;
+    logged = true;
+    const durationNs = process.hrtime.bigint() - start;
+    const durationMs = Number(durationNs) / 1_000_000;
+    const meta = { method, url, status: res.statusCode, durationMs, context: "http" };
+    if (res.statusCode >= 500) log.error(meta, "http request");
+    else if (res.statusCode >= 400) log.warn(meta, "http request");
+    else log.info(meta, "http request");
+  };
+  res.once("finish", logRequest);
+  res.once("close", logRequest);
+
+  if (!isAuthorized(req)) {
     res.writeHead(401, { "WWW-Authenticate": 'Basic realm="App"' });
     res.end("Unauthorized");
     return;
   }
+
   handle(req, res);
 });
 
@@ -73,11 +94,18 @@ wss.on("connection", (ws, req) => {
     return;
   }
 
+  const wasEmpty = getConnectionCount(workspaceId) === 0;
   addConnection(workspaceId, ws);
-  if (getConnectionCount(workspaceId) === 1) {
+  if (wasEmpty) {
+    // First connection — treat as a new session: clear conversation history and todos
+    // so prior agent state (including todo_write calls) never bleeds into the new session.
+    resetWorkspaceMessages(workspaceId).catch((err) =>
+      log.error({ workspaceId, err }, "failed to reset messages")
+    );
+    setTodos(workspaceId, []);
     ensureWatcher(workspaceId, workspace.dir);
     ensureContainer(workspaceId, workspace.dir).catch((err) =>
-      console.error(`[container] failed to start for ${workspaceId}:`, err.message)
+      log.error({ workspaceId, err }, "failed to start container")
     );
   }
 
@@ -86,7 +114,6 @@ wss.on("connection", (ws, req) => {
     setTimeout(() => {
       if (getConnectionCount(workspaceId) === 0) {
         stopWatcher(workspaceId);
-        resetWorkspaceMessages(workspaceId);
       }
     }, 5000);
   };
@@ -111,7 +138,7 @@ wss.on("connection", (ws, req) => {
 
 assertDockerAvailable().then(() => app.prepare()).then(() => {
   httpServer.listen(port, () => {
-    console.log(`> Ready on http://localhost:${port}`);
+    log.info(`Ready on http://localhost:${port}`);
   });
 });
 

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getWorkspace } from "@/lib/infra/workspaceStore";
 import { setPermission, setGlobalPermission } from "@/lib/infra/permissionStore";
 import path from "path";
+import { createLogger } from "@/lib/infra/logger";
 
 export async function PATCH(
   req: NextRequest,
@@ -23,7 +24,12 @@ export async function PATCH(
     return NextResponse.json({ error: "Path outside workspace" }, { status: 403 });
   }
 
-  await setPermission(ws.id, ws.dir, relPath, permission);
+  try {
+    await setPermission(ws.id, ws.dir, relPath, permission);
+  } catch (err) {
+    createLogger("api").error({ err, workspaceId: id, path: relPath }, "failed to set permission");
+    return NextResponse.json({ error: "failed to set permission" }, { status: 500 });
+  }
   return NextResponse.json({ path: relPath, permission });
 }
 
@@ -40,6 +46,11 @@ export async function PUT(
     return NextResponse.json({ error: "Invalid permission" }, { status: 400 });
   }
 
-  await setGlobalPermission(ws.id, ws.dir, permission);
+  try {
+    await setGlobalPermission(ws.id, ws.dir, permission);
+  } catch (err) {
+    createLogger("api").error({ err, workspaceId: id }, "failed to set global permission");
+    return NextResponse.json({ error: "failed to set global permission" }, { status: 500 });
+  }
   return NextResponse.json({ permission });
 }

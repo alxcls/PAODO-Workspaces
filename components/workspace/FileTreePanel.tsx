@@ -86,11 +86,13 @@ const PermBadge = ({
   workspaceId,
   wsDir,
   onRefresh,
+  onPermissionChange,
 }: {
   node: TreeNode;
   workspaceId: string;
   wsDir: string;
   onRefresh: () => void;
+  onPermissionChange: (path: string, perm: "R" | "RW") => void;
 }) => {
   const [busy, setBusy] = useState(false);
   const perm = node.permission ?? "RW";
@@ -108,6 +110,7 @@ const PermBadge = ({
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ path: relPath, permission: next }),
     });
+    onPermissionChange(node.path, next);
     onRefresh();
     setBusy(false);
   };
@@ -139,10 +142,12 @@ const MasterLockButton = ({
   workspaceId,
   tree,
   onRefresh,
+  onGlobalPermissionChange,
 }: {
   workspaceId: string;
   tree: TreeNode[];
   onRefresh: () => void;
+  onGlobalPermissionChange: (perm: "R" | "RW") => void;
 }) => {
   const [busy, setBusy] = useState(false);
   const allNodes = getAllNodes(tree).filter((n) => n.permission !== undefined);
@@ -158,6 +163,7 @@ const MasterLockButton = ({
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ permission: next }),
     });
+    onGlobalPermissionChange(next);
     onRefresh();
     setBusy(false);
   };
@@ -193,10 +199,11 @@ interface TreeListProps {
   activePath: string | null;
   selected: Set<string>;
   onSelect: (paths: string[], on: boolean) => void;
-  onPick: (path: string) => void;
+  onPick: (path: string, permission: "R" | "RW") => void;
   workspaceId: string;
   wsDir: string;
   onRefresh: () => void;
+  onPermissionChange: (path: string, perm: "R" | "RW") => void;
 }
 
 const TreeNodeList = ({
@@ -211,6 +218,7 @@ const TreeNodeList = ({
   workspaceId,
   wsDir,
   onRefresh,
+  onPermissionChange,
 }: TreeListProps) => {
   const sorted = [...nodes].sort((a, b) => {
     if (a.type !== b.type) return a.type === "directory" ? -1 : 1;
@@ -223,11 +231,13 @@ const TreeNodeList = ({
         if (node.type === "directory") {
           const isOpen = expanded[node.path] ?? false;
           const childPaths = getAllFilePaths(node);
-          const selectedCount = childPaths.filter((p) => selected.has(p)).length;
+          // Empty folders have no file descendants — fall back to the folder path itself
+          const effectivePaths = childPaths.length > 0 ? childPaths : [node.path];
+          const selectedCount = effectivePaths.filter((p) => selected.has(p)).length;
           const state: CheckState =
             selectedCount === 0
               ? "none"
-              : selectedCount === childPaths.length
+              : selectedCount === effectivePaths.length
               ? "all"
               : "some";
 
@@ -242,7 +252,7 @@ const TreeNodeList = ({
                   state={state}
                   onClick={(e) => {
                     e.stopPropagation();
-                    onSelect(childPaths, state !== "all");
+                    onSelect(effectivePaths, state !== "all");
                   }}
                 />
                 <span className={"chev" + (isOpen ? " is-open" : "")}>
@@ -252,7 +262,7 @@ const TreeNodeList = ({
                   <FolderIcon />
                 </span>
                 <span className="tree-name">{node.name}</span>
-                <PermBadge node={node} workspaceId={workspaceId} wsDir={wsDir} onRefresh={onRefresh} />
+                <PermBadge node={node} workspaceId={workspaceId} wsDir={wsDir} onRefresh={onRefresh} onPermissionChange={onPermissionChange} />
               </button>
               {isOpen && node.children && (
                 <TreeNodeList
@@ -267,6 +277,7 @@ const TreeNodeList = ({
                   workspaceId={workspaceId}
                   wsDir={wsDir}
                   onRefresh={onRefresh}
+                  onPermissionChange={onPermissionChange}
                 />
               )}
             </div>
@@ -284,7 +295,7 @@ const TreeNodeList = ({
               (isSel ? " is-selected" : "")
             }
             style={{ paddingLeft: 8 + depth * 14 + 14 }}
-            onClick={() => onPick(node.path)}
+            onClick={() => onPick(node.path, node.permission ?? "RW")}
           >
             <Checkbox
               state={isSel ? "all" : "none"}
@@ -297,7 +308,7 @@ const TreeNodeList = ({
               <FileIcon />
             </span>
             <span className="tree-name">{node.name}</span>
-            <PermBadge node={node} workspaceId={workspaceId} wsDir={wsDir} onRefresh={onRefresh} />
+            <PermBadge node={node} workspaceId={workspaceId} wsDir={wsDir} onRefresh={onRefresh} onPermissionChange={onPermissionChange} />
           </button>
         );
       })}
@@ -382,7 +393,8 @@ interface Props {
   workspaceName: string;
   wsDir: string;
   selectedPath: string | null;
-  onFileSelect: (path: string) => void;
+  onFileSelect: (path: string, permission: "R" | "RW") => void;
+  onPermissionChange?: (path: string | null, perm: "R" | "RW") => void;
   onDeletedPaths?: (paths: string[]) => void;
   style?: React.CSSProperties;
   refreshKey?: number;
@@ -394,6 +406,7 @@ export default function FileTreePanel({
   wsDir,
   selectedPath,
   onFileSelect,
+  onPermissionChange,
   onDeletedPaths,
   style,
   refreshKey,
@@ -440,7 +453,7 @@ export default function FileTreePanel({
         <span className="ws-name" title={workspaceName}>
           {workspaceName}
         </span>
-        <MasterLockButton workspaceId={workspaceId} tree={tree} onRefresh={fetchTree} />
+        <MasterLockButton workspaceId={workspaceId} tree={tree} onRefresh={fetchTree} onGlobalPermissionChange={(perm) => onPermissionChange?.(null, perm)} />
       </div>
 
       <div className="ws-upload-row">
@@ -460,6 +473,7 @@ export default function FileTreePanel({
           workspaceId={workspaceId}
           wsDir={wsDir}
           onRefresh={fetchTree}
+          onPermissionChange={(path, perm) => onPermissionChange?.(path, perm)}
         />
       </div>
 

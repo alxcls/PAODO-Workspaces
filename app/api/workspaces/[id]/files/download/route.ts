@@ -5,6 +5,7 @@ import { getWorkspace } from "@/lib/infra/workspaceStore";
 import fs from "fs/promises";
 import path from "path";
 import JSZip from "jszip";
+import { createLogger } from "@/lib/infra/logger";
 
 export async function POST(
   req: Request,
@@ -27,11 +28,15 @@ export async function POST(
       const resolved = path.resolve(filePath);
       if (!resolved.startsWith(wsDir + path.sep)) return;
       try {
-        const content = await fs.readFile(resolved);
+        const stat = await fs.stat(resolved);
         const relative = path.relative(wsDir, resolved);
-        zip.file(relative, content);
-      } catch {
-        // skip unreadable files
+        if (stat.isDirectory()) {
+          zip.folder(relative);
+        } else {
+          zip.file(relative, await fs.readFile(resolved));
+        }
+      } catch (err) {
+        createLogger("api").warn({ workspaceId: id, filePath, err }, "skipping unreadable path in download");
       }
     })
   );

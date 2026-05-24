@@ -1,4 +1,4 @@
-// Persists the directed workspace connection graph to data/workspace-graph.json.
+// Persists the directed workspace connection graph to data/.workspace-graph.json.
 // Edges flow from caller (source) → callee (target), enforcing a DAG where only
 // connected workspaces can invoke each other via the call_agent tool.
 import path from "path";
@@ -19,7 +19,7 @@ interface GraphFile {
   positions: Record<string, { x: number; y: number }>;
 }
 
-const GRAPH_FILE = path.join(WORKSPACES_ROOT, "workspace-graph.json");
+const GRAPH_FILE = path.join(WORKSPACES_ROOT, ".workspace-graph.json");
 
 let cache: GraphFile = { edges: [], positions: {} };
 

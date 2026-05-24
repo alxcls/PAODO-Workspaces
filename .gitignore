@@ -40,7 +40,8 @@ yarn-error.log*
 next-env.d.ts
 
 # runtime data
-/data/
+/data/*
+!/data/.gitkeep
 
 # generated codebase graph
 graph.html

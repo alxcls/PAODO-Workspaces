@@ -28,7 +28,7 @@ export interface Workspace {
 interface WorkspaceRecord {
   id: string;
   name: string;
-  dir: string;
+  dir?: string;
   createdAt: string;
 }
 
@@ -48,11 +48,12 @@ function loadRegistry(): void {
   try {
     const records: WorkspaceRecord[] = JSON.parse(fs.readFileSync(REGISTRY_FILE, "utf-8"));
     for (const r of records) {
+      const dir = path.join(WORKSPACES_ROOT, r.name);
       workspaces.set(r.id, {
         id: r.id,
         name: r.name,
-        dir: r.dir,
-        messages: [buildSystemPrompt(r.dir)],
+        dir,
+        messages: [buildSystemPrompt(dir)],
         createdAt: new Date(r.createdAt),
       });
     }
@@ -70,7 +71,6 @@ function saveRegistry(): void {
   const records: WorkspaceRecord[] = Array.from(workspaces.values()).map((w) => ({
     id: w.id,
     name: w.name,
-    dir: w.dir,
     createdAt: w.createdAt.toISOString(),
   }));
   fs.writeFileSync(REGISTRY_FILE, JSON.stringify(records, null, 2));

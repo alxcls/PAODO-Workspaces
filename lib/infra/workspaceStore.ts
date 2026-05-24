@@ -62,10 +62,6 @@ function loadRegistry(): void {
   }
 }
 
-// NOTE — no file locking. Concurrent write operations (e.g. two simultaneous createWorkspace
-// calls) perform a read-modify-write without coordination and can silently clobber each other.
-// This is acceptable for single-user / single-instance deployments. If you need multi-instance
-// support, replace the JSON file with a database and serialise writes through a transaction.
 function saveRegistry(): void {
   fs.mkdirSync(WORKSPACES_ROOT, { recursive: true });
   const records: WorkspaceRecord[] = Array.from(workspaces.values()).map((w) => ({
@@ -73,7 +69,9 @@ function saveRegistry(): void {
     name: w.name,
     createdAt: w.createdAt.toISOString(),
   }));
-  fs.writeFileSync(REGISTRY_FILE, JSON.stringify(records, null, 2));
+  const tmp = REGISTRY_FILE + ".tmp";
+  fs.writeFileSync(tmp, JSON.stringify(records, null, 2));
+  fs.renameSync(tmp, REGISTRY_FILE);
 }
 
 if (freshMap) loadRegistry();

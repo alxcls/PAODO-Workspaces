@@ -66,7 +66,9 @@ export function saveGraph(
   }
   cache = { edges, positions };
   fs.mkdirSync(WORKSPACES_ROOT, { recursive: true });
-  fs.writeFileSync(GRAPH_FILE, JSON.stringify(cache, null, 2));
+  const tmp = GRAPH_FILE + ".tmp";
+  fs.writeFileSync(tmp, JSON.stringify(cache, null, 2));
+  fs.renameSync(tmp, GRAPH_FILE);
 }
 
 export function canCall(fromId: string, toId: string): boolean {

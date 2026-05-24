@@ -66,7 +66,7 @@ Agent runner (lib/agent/runner.ts)
 
 **Sandboxing** — `execute_command` runs inside a per-workspace Docker container (`ws_<id>`) with the workspace directory bind-mounted to `/workspace`. Containers are created lazily, restarted automatically, and stopped after idle timeout. A global lock switches execution to a restricted user (`agent`, UID 999) that can read and run but not write — useful for safe demos or shared workspaces.
 
-**Persistence** is intentionally lightweight: workspace metadata and the agent network graph live in JSON files under `data/`; conversation history is in-memory only and resets on restart or tab close.
+**Persistence** is intentionally lightweight: workspace metadata and the agent network graph live in JSON files under `data/` (written atomically — crash-safe); conversation history is in-memory only and resets on restart or tab close.
 
 ## Workspaces
 

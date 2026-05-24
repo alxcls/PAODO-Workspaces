@@ -93,7 +93,7 @@ export function buildExecCommandTool(workspaceId: string, workspaceDir: string) 
       description: `Execute a bash shell command in the workspace directory.
 
 Covers all shell operations including:
-- File search:        find . -name "*.ts" (or fd, ls)
+- File search:        find . -name "*.ts" (or fd)
 - Content search:     grep -rn "pattern" --include="*.ts" (exclude node_modules/.git/.next automatically)
 - File deletion:      rm filename
 - Git operations:     git status, git log --oneline, git diff

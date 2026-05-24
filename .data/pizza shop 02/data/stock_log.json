@@ -1,0 +1,11 @@
+{
+  "deliveries": [
+    {
+      "timestamp": "2026-05-23T18:53:42",
+      "ingredient": "mozzarella",
+      "quantity": 200.0,
+      "unit": "grams",
+      "supplier": "supplier 01"
+    }
+  ]
+}

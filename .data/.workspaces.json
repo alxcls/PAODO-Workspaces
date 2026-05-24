@@ -3,5 +3,55 @@
     "id": "d6e0a989-9273-44f3-ba83-842418674e3e",
     "name": "pizza shop 01",
     "createdAt": "2026-05-22T11:34:17.740Z"
-  }
+  },
+  {
+    "id": "4755ebc5-16ec-4332-8ce7-5cddab0518ab",
+    "name": "pizza shop 02",
+    "createdAt": "2026-05-22T11:34:24.740Z"
+  },
+  {
+    "id": "230bfca4-5fa4-4ef6-96bf-a4190baefa35",
+    "name": "supplier 01",
+    "createdAt": "2026-05-22T11:34:28.740Z"
+  },
+  {
+    "id": "3bb99473-6b04-4bdd-8551-aa4525fb7f73",
+    "name": "supplier 02",
+    "createdAt": "2026-05-23T08:24:04.740Z"
+  },
+  {
+    "id": "3ebda301-747f-49bc-85c0-cc1bc6a1e641",
+    "name": "Artisan Bakery Co",
+    "createdAt": "2026-05-23T10:28:23.740Z"
+  },
+  {
+    "id": "4b5bee7f-1056-49cc-85de-3e08bd635b2a",
+    "name": "Classic Tomato Foods",
+    "createdAt": "2026-05-23T10:28:42.740Z"
+  },
+  {
+    "id": "4a5b1dd7-3eb8-4e29-ae63-d49b752cf846",
+    "name": "Fresh Dairy Supply",
+    "createdAt": "2026-05-23T10:28:51.740Z"
+  },
+  {
+    "id": "8e885378-686a-4986-b3a9-690a1def1fba",
+    "name": "Italian Charcuterie Co",
+    "createdAt": "2026-05-23T10:28:59.740Z"
+  },
+  {
+    "id": "60fd0aa9-eba8-4e33-aab5-ed7f8f2fdc04",
+    "name": "Woodland Produce Farm",
+    "createdAt": "2026-05-23T10:29:07.740Z"
+  },
+  {
+    "id": "a1049278-95ec-4d8e-85a3-be19fe94e3e9",
+    "name": "Sunfield Vegetables",
+    "createdAt": "2026-05-23T10:29:18.740Z"
+  },
+  {
+    "id": "4bfe3378-e2a0-4692-83cc-96283fe8fc29",
+    "name": "Med Olive imports",
+    "createdAt": "2026-05-23T10:29:36.740Z"
+  },
 ]

@@ -1,0 +1,8 @@
+{
+  "catalog": {
+    "dough": { "unit": "balls", "price_per_unit": 0.35 },
+    "pepperoni": { "unit": "slices", "price_per_unit": 0.12 },
+    "tomato_sauce": { "unit": "cups", "price_per_unit": 0.6 },
+    "mozzarella": { "unit": "grams", "price_per_unit": 0.01 }
+  }
+}

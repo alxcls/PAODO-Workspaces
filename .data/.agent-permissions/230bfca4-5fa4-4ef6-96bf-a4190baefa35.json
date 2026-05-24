@@ -1,0 +1,11 @@
+{
+  "globalLock": false,
+  "locked": [
+    "data/inventory.json",
+    "data/orders_log.json",
+    "scripts/check_catalog.py",
+    "scripts/receive_stock.py",
+    "scripts/sell_stock.py",
+    "scripts"
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "catalog": {
+    "tomato_sauce": { "unit": "cups", "price_per_unit": 0.8 },
+    "mozzarella": { "unit": "grams", "price_per_unit": 0.012 },
+    "mushrooms": { "unit": "grams", "price_per_unit": 0.008 },
+    "bell_pepper": { "unit": "grams", "price_per_unit": 0.006 },
+    "olives": { "unit": "grams", "price_per_unit": 0.01 },
+    "basil": { "unit": "leaves", "price_per_unit": 0.05 },
+    "olive_oil": { "unit": "ml", "price_per_unit": 0.003 }
+  }
+}

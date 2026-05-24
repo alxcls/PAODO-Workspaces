@@ -1,0 +1,33 @@
+{
+  "inventory": {
+    "tomato_sauce": {
+      "unit": "cups",
+      "quantity": 0
+    },
+    "mozzarella": {
+      "unit": "grams",
+      "quantity": 0.0
+    },
+    "mushrooms": {
+      "unit": "grams",
+      "quantity": 400.0
+    },
+    "bell_pepper": {
+      "unit": "grams",
+      "quantity": 0
+    },
+    "olives": {
+      "unit": "grams",
+      "quantity": 0
+    },
+    "basil": {
+      "unit": "leaves",
+      "quantity": 0
+    },
+    "olive_oil": {
+      "unit": "ml",
+      "quantity": 0
+    }
+  },
+  "last_updated": "2026-05-23T21:49:33"
+}

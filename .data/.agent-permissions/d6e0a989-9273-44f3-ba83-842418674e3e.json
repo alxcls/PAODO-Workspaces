@@ -1,0 +1,11 @@
+{
+  "globalLock": false,
+  "locked": [
+    "scripts/check_stock.py",
+    "data/ingredients.json",
+    "data/pizza_log.json",
+    "scripts/make_pizza.py",
+    "scripts/receive_stock.py",
+    "scripts"
+  ]
+}

@@ -44,10 +44,11 @@ export function buildWebFetchTool() {
       }
     },
     {
-      name: "web_fetch",
-      description: `Fetch content from a URL and return it as plain text.
+      name: "http_get",
+      description: `Make an HTTP GET request to any public URL and return the response body as plain text.
+This is a server-side request executed by the platform — always call this tool when the user provides a URL or asks for web content.
 HTTP URLs are automatically upgraded to HTTPS.
-Use the prompt field to describe what you want to extract — the main model will process the content.
+Use the prompt field to describe what to extract from the response.
 For GitHub repos/PRs/issues, prefer gh CLI via execute_command instead.`,
       schema: z.object({
         url: z.string().describe("Fully-formed URL to fetch"),

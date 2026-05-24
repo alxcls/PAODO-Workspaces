@@ -30,7 +30,7 @@ const TOOL_LABELS: Record<string, string> = {
   file_write:      "Writing file",
   file_edit:       "Editing file",
   execute_command: "Running command",
-  web_fetch:       "Fetching page",
+  http_get:        "Fetching page",
   todo_write:      "Updating tasks",
   glob:            "Searching files",
   list_directory:  "Listing directory",
@@ -49,7 +49,7 @@ function toolArgSummary(name: string, args: Record<string, unknown>): string {
     case "file_edit":       return s("file_path");
     case "glob":            return s("pattern");
     case "list_directory":  return s("dir_path") || ".";
-    case "web_fetch":       return s("url");
+    case "http_get":        return s("url");
     case "call_agent":      return `→ ${s("workspace")}`;
     default:                return "";
   }

@@ -4,7 +4,7 @@ A self-hosted platform for running small, grounded AI-managed services. Each **w
 
 ## What it does
 
-- **Workspaces** — isolated Docker containers with a bind-mounted directory, each with its own agent and `AGENTS.md` `state.md` instruction file
+- **Workspaces** — isolated Docker containers with a bind-mounted directory, each with its own agent and `AGENTS.md` instruction file
 - **ReAct agent loop** — streams tool calls and responses in real time over SSE; final tokens stream word by word
 - **Full tool set** — file read/edit/write, shell execution, glob search, directory listing, web fetch, todo list
 - **File locks** — per-file and per-directory R/RW toggle protects workspace files from accidental agent edits without blocking scripts
@@ -70,10 +70,9 @@ Agent runner (lib/agent/runner.ts)
 
 ## Workspaces
 
-Each workspace is a directory under `./data/`. Two files are created automatically:
+Each workspace is a directory under `./data/`. One file is created automatically:
 
 - **`AGENTS.md`** — injected as the system prompt for every request. Edit it to give the agent custom instructions, domain knowledge, or persona.
-- **`state.md`** — intended as a running log. Scripts in the workspace can append to it; the agent reads it for context.
 
 ## File locks
 
@@ -173,7 +172,7 @@ dev_tools/                        Codebase graph builder and query tool
 
 - **Single instance only** — the rate limiter, WebSocket registry, and workspace registry use in-memory state. Running multiple server processes without a shared store will cause inconsistent behavior.
 
-- **Conversation history not persisted** — resets on server restart. The workspace files and `state.md` are the intended long-term memory.
+- **Conversation history not persisted** — resets on server restart. Workspace files (scripts, data, `AGENTS.md`) are the intended long-term memory.
 
 - **Concurrent agent sessions work** — multiple agents can target the same workspace simultaneously with isolated memory and a shared console stream; however there is no file locking or queue, so simultaneous writes to the same file are unprotected and could silently overwrite each other under high load.
 

@@ -4,8 +4,8 @@
 //
 // NOTE — conversation history is intentionally not persisted to disk. The `messages` array on
 // each Workspace lives only in the in-memory Map and resets on server restart or when the user
-// disconnects (server.ts calls resetWorkspaceMessages when the last WebSocket closes). The
-// workspace files and state.md are the intended long-term memory layer for agents.
+// disconnects (server.ts calls resetWorkspaceMessages when the last WebSocket closes).
+// Workspace files (AGENTS.md, scripts, data) are the intended long-term memory layer for agents.
 import path from "path";
 import fs from "fs";
 import fsAsync from "fs/promises";
@@ -84,33 +84,16 @@ export async function createWorkspace(name: string): Promise<Workspace> {
   const dir = path.join(WORKSPACES_ROOT, name);
   await fsAsync.mkdir(dir, { recursive: true });
 
-  const now = new Date().toISOString().slice(0, 19);
-
-  await Promise.all([
-    fsAsync.writeFile(
-      path.join(dir, "AGENTS.md"),
-      `# Workspace Instructions
+  await fsAsync.writeFile(
+    path.join(dir, "AGENTS.md"),
+    `# Workspace Instructions
 
 This is the master instructions file for the workspace agent.
 Add your project-specific rules, conventions, and context here.
 The agent will follow these instructions on every request.
 `,
-      "utf8"
-    ),
-    fsAsync.writeFile(
-      path.join(dir, "state.md"),
-      `# State Log
-
-This file is meant for logging actions that happen in this workspace.
-We advise creating scripts that append to it whenever something meaningful occurs — the agent reads it as context at the start of each session.
-
----
-
-${now}  workspace initialized
-`,
-      "utf8"
-    ),
-  ]);
+    "utf8"
+  );
 
   const workspace: Workspace = {
     id,
@@ -152,6 +135,8 @@ export async function renameWorkspace(id: string, name: string): Promise<boolean
       await fsAsync.rename(ws.dir, newDir);
       ws.dir = newDir;
       ws.messages = [buildSystemPrompt(newDir)];
+      // Container bind mount is baked in at creation time — must recreate it with the new path.
+      await removeContainer(id);
     }
     ws.name = trimmed;
     saveRegistry();

@@ -13,8 +13,11 @@ import { buildAgentCallTool } from "./agentCall";
 import { buildListAgentsTool } from "./listAgents";
 
 export function buildTools(workspaceId: string, workspaceDir: string) {
+  const modelName = process.env.OPENAI_MODEL;
+  if (!modelName) throw new Error("OPENAI_MODEL is not set in .env");
+
   const model = new ChatOpenAI({
-    modelName: process.env.OPENAI_MODEL ?? "gpt-5.1-codex-mini",
+    modelName,
     openAIApiKey: process.env.OPENAI_API_KEY,
   });
 

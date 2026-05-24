@@ -1,6 +1,6 @@
 # PAODO — Self-Hosted AI Workspace Agents
 
-A self-hosted platform for running small, grounded AI-managed services. Each **workspace** is an isolated Docker container with its own agent: write a service, drop in instructions, let the agent operate it. Agents can read and write files, run shell commands, fetch URLs, manage task lists, and call each other over a configurable agent network — all from a browser UI or HTTP API.
+A self-hosted platform for running small, grounded AI-managed services. Each **workspace** is an isolated Docker container with its own agent: write a service, drop in instructions, let the agent operate it. Agents can read and write files, run shell commands, fetch URLs, manage task lists, and call each other over a configurable agent network.
 
 ## What it does
 

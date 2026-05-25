@@ -6,10 +6,8 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import dynamic from "next/dynamic";
 import hljs from "@/lib/highlighter";
-import * as markedModule from "marked";
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const marked = (markedModule as any).marked as (src: string) => string;
-import DOMPurify from "dompurify";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import "jsoncrack-react/style.css";
 
 const JSONCrack = dynamic(() => import("jsoncrack-react").then(m => m.JSONCrack), { ssr: false });
@@ -17,7 +15,6 @@ const JSONCrack = dynamic(() => import("jsoncrack-react").then(m => m.JSONCrack)
 function detectLang(filePath: string): string {
   const ext = filePath.split(".").pop()?.toLowerCase() ?? "";
   const map: Record<string, string> = {
-    // extension differs from hljs language id — auto-detect can't infer these
     ts: "typescript", tsx: "typescript",
     js: "javascript", jsx: "javascript",
     py: "python", rb: "ruby", rs: "rust",
@@ -26,9 +23,7 @@ function detectLang(filePath: string): string {
     html: "xml", htm: "xml", svg: "xml",
     yml: "yaml", tf: "hcl", toml: "ini",
     gql: "graphql", proto: "protobuf", ps1: "powershell",
-    md: "markdown",
-    json: "json",
-    txt: "txt",
+    md: "markdown", json: "json", txt: "txt",
   };
   return map[ext] ?? "";
 }
@@ -40,11 +35,8 @@ const CloseIcon = () => (
 );
 
 interface Props {
-  workspaceId: string;
-  filePath: string | null;
-  permission?: "R" | "RW";
-  onClose: () => void;
-  onDeleted?: () => void;
+  workspaceId: string; filePath: string | null; permission?: "R" | "RW";
+  onClose: () => void; onDeleted?: () => void;
 }
 
 export default function FileViewer({ workspaceId, filePath, permission = "RW", onClose, onDeleted }: Props) {
@@ -71,33 +63,23 @@ export default function FileViewer({ workspaceId, filePath, permission = "RW", o
   const lang = filePath ? detectLang(filePath) : "txt";
   const isHtml = /\.(html?|htm)$/i.test(filePath ?? "");
 
-  const fetchContent = useCallback(
-    async (path: string, silent = false) => {
-      if (!silent) {
-        setLoading(true);
-        setFileType(null);
-        setContent(null);
-        setDraft("");
-      }
-      setError(null);
-      try {
-        const res = await fetch(
-          `/api/workspaces/${workspaceId}/files/content?path=${encodeURIComponent(path)}`
-        );
-        if (res.status === 404) { onCloseRef.current(); return; }
-        if (!res.ok) { if (!silent) setError("Cannot load file"); return; }
-        const data = (await res.json()) as { type: "text" | "image" | "binary"; content?: string };
-        setFileType(data.type);
-        setContent(data.content ?? null);
-        setDraft(data.content ?? "");
-      } catch {
-        if (!silent) setError("Failed to fetch file");
-      } finally {
-        if (!silent) setLoading(false);
-      }
-    },
-    [workspaceId]
-  );
+  const fetchContent = useCallback(async (path: string, silent = false) => {
+    if (!silent) { setLoading(true); setFileType(null); setContent(null); setDraft(""); }
+    setError(null);
+    try {
+      const res = await fetch(`/api/workspaces/${workspaceId}/files/content?path=${encodeURIComponent(path)}`);
+      if (res.status === 404) { onCloseRef.current(); return; }
+      if (!res.ok) { if (!silent) setError("Cannot load file"); return; }
+      const data = (await res.json()) as { type: "text" | "image" | "binary"; content?: string };
+      setFileType(data.type);
+      setContent(data.content ?? null);
+      setDraft(data.content ?? "");
+    } catch {
+      if (!silent) setError("Failed to fetch file");
+    } finally {
+      if (!silent) setLoading(false);
+    }
+  }, [workspaceId]);
 
   useEffect(() => {
     if (filePath) fetchContent(filePath);
@@ -148,19 +130,14 @@ export default function FileViewer({ workspaceId, filePath, permission = "RW", o
     setDeleting(true);
     try {
       await fetch(`/api/workspaces/${workspaceId}/files/content?path=${encodeURIComponent(filePath)}`, { method: "DELETE" });
-      onClose();
-      onDeleted?.();
-    } catch {
-      setError("Delete failed");
-    } finally {
-      setDeleting(false);
-    }
+      onClose(); onDeleted?.();
+    } catch { setError("Delete failed"); }
+    finally { setDeleting(false); }
   }
 
   async function handleSave() {
     if (!filePath) return;
-    setSaving(true);
-    setError(null);
+    setSaving(true); setError(null);
     try {
       const res = await fetch(`/api/workspaces/${workspaceId}/files/content`, {
         method: "PUT",
@@ -172,21 +149,11 @@ export default function FileViewer({ workspaceId, filePath, permission = "RW", o
       if (wsRef.current?.readyState === 1) {
         wsRef.current.send(JSON.stringify({ type: "self_write", path: filePath }));
       }
-    } catch {
-      setError("Save failed");
-    } finally {
-      setSaving(false);
-    }
+    } catch { setError("Save failed"); }
+    finally { setSaving(false); }
   }
 
-  const renderedContent = useMemo(() => {
-    if (!showPreview || !draft) return "";
-    if (lang === "markdown") return DOMPurify.sanitize(marked(draft));
-    return "";
-  }, [draft, lang, showPreview]);
 
-  // Inject a <base> tag so relative URLs (../banner.png etc.) resolve through
-  // the path-based serve route instead of the parent page's origin.
   const htmlForPreview = useMemo(() => {
     if (!isHtml || !draft || !filePath) return draft;
     const dirSegments = filePath.split("/").slice(0, -1);
@@ -196,16 +163,12 @@ export default function FileViewer({ workspaceId, filePath, permission = "RW", o
     const html = /<head(\s[^>]*)?>/.test(draft)
       ? draft.replace(/<head(\s[^>]*)?>/, `$&${baseTag}`)
       : baseTag + draft;
-    // Embed previewKey so srcDoc changes on every sibling-triggered reload,
-    // guaranteeing the browser re-parses the document and re-fetches data deps.
     return `<!--v:${previewKey}-->${html}`;
   }, [draft, filePath, isHtml, workspaceId, previewKey]);
 
   const highlightedHtml = useMemo(() => {
     if (!draft || fileType !== "text") return draft ?? "";
-    if (lang === "txt") {
-      return draft.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-    }
+    if (lang === "txt") return draft.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
     try {
       return (lang ? hljs.highlight(draft, { language: lang }) : hljs.highlightAuto(draft)).value;
     } catch {
@@ -225,35 +188,36 @@ export default function FileViewer({ workspaceId, filePath, permission = "RW", o
     : "";
 
   const closeBtn = (
-    <button className="iconbtn viewer-close" onClick={onClose} title="Close viewer" aria-label="Close viewer">
+    <button className="iconbtn" onClick={onClose} title="Close viewer" aria-label="Close viewer">
       <CloseIcon />
     </button>
   );
 
   if (!filePath) {
     return (
-      <div className="viewer">
-        <div className="viewer-head">
-          <span className="viewer-path" style={{ color: "var(--text-3)" }}>No file open</span>
+      <div className="flex flex-col min-h-0 flex-1">
+        <div className="flex items-center gap-2.5 px-4 min-h-[44px] border-b border-border bg-bg flex-shrink-0">
+          <span className="font-mono text-[13px] text-text-3 flex-1 min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">No file open</span>
           {closeBtn}
         </div>
-        <div className="viewer-empty">Select a file from the tree to view its contents</div>
+        <div className="flex-1 grid place-items-center text-text-3 text-sm bg-bg-tint p-6 text-center">
+          Select a file from the tree to view its contents
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="viewer">
-      <div className="viewer-head">
-        <span className="viewer-path">{displayPath}</span>
+    <div className="flex flex-col min-h-0 flex-1">
+      <div className="flex items-center gap-2.5 px-4 min-h-[44px] border-b border-border bg-bg flex-shrink-0">
+        <span className="font-mono text-[13px] text-text-2 flex-1 min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">
+          {displayPath}
+        </span>
         {!loading && !error && fileType !== null && (
           <>
             {fileType === "text" && (lang === "markdown" || isHtml || lang === "json") && (
-              <button
-                className="btn btn-sm"
-                onClick={() => setShowPreview(v => !v)}
-                title={showPreview ? "Switch to editor" : "Switch to preview"}
-              >
+              <button className="btn btn-sm" onClick={() => setShowPreview(v => !v)}
+                title={showPreview ? "Switch to editor" : "Switch to preview"}>
                 {showPreview ? "Code" : "Preview"}
               </button>
             )}
@@ -268,11 +232,10 @@ export default function FileViewer({ workspaceId, filePath, permission = "RW", o
               </button>
             )}
             <button
-              className="btn btn-sm"
+              className="btn btn-sm text-danger"
               onClick={handleDelete}
               disabled={deleting || isLocked}
               title={isLocked ? "Unlock file in the tree to delete" : undefined}
-              style={{ color: "var(--danger)" }}
             >
               {deleting ? "Deleting…" : "Delete"}
             </button>
@@ -281,46 +244,35 @@ export default function FileViewer({ workspaceId, filePath, permission = "RW", o
         {closeBtn}
       </div>
 
-      {loading && <div className="viewer-empty">Loading…</div>}
-      {error && <div className="viewer-empty" style={{ color: "var(--danger)" }}>{error}</div>}
+      {loading && <div className="flex-1 grid place-items-center text-text-3 text-sm bg-bg-tint p-6 text-center">Loading…</div>}
+      {error && <div className="flex-1 grid place-items-center text-sm bg-bg-tint p-6 text-center text-danger">{error}</div>}
 
-      {/* Image preview */}
       {!loading && !error && fileType === "image" && (
-        <div className="viewer-empty" style={{ overflow: "auto", padding: 16, alignItems: "flex-start" }}>
-          <img
-            src={rawUrl}
-            alt={filePath.split("/").pop()}
-            style={{ maxWidth: "100%", objectFit: "contain", borderRadius: 4 }}
-          />
+        <div className="flex-1 grid place-items-center bg-bg-tint overflow-auto p-4">
+          <img src={rawUrl} alt={filePath.split("/").pop()} className="max-w-full object-contain rounded" />
         </div>
       )}
 
-      {/* Binary */}
       {!loading && !error && fileType === "binary" && (
-        <div className="viewer-empty">Binary file — cannot be previewed</div>
+        <div className="flex-1 grid place-items-center text-text-3 text-sm bg-bg-tint p-6 text-center">
+          Binary file — cannot be previewed
+        </div>
       )}
 
-      {/* Text editor */}
       {!loading && !error && fileType === "text" && content !== null && (
         <div className="code-editor-wrap">
           {showPreview ? (
             lang === "json" ? (
               jsonParsed !== null
                 ? <JSONCrack key={previewKey} json={jsonParsed} theme="light" showGrid={false} className="json-preview" />
-                : <div className="viewer-empty" style={{ color: "var(--text-2)" }}>File too big for preview</div>
+                : <div className="flex-1 grid place-items-center text-text-2 text-sm bg-bg-tint p-6 text-center">File too big for preview</div>
             ) : isHtml ? (
-              <iframe
-                key={previewKey}
-                className="html-preview"
-                srcDoc={htmlForPreview}
-                sandbox="allow-scripts allow-forms allow-same-origin"
-                title="HTML preview"
-              />
+              <iframe key={previewKey} className="html-preview" srcDoc={htmlForPreview}
+                sandbox="allow-scripts allow-forms allow-same-origin" title="HTML preview" />
             ) : (
-              <div
-                className="md-preview"
-                dangerouslySetInnerHTML={{ __html: renderedContent }}
-              />
+              <div className="md-preview md-prose">
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>{draft ?? ""}</ReactMarkdown>
+              </div>
             )
           ) : (
             <>
@@ -330,22 +282,11 @@ export default function FileViewer({ workspaceId, filePath, permission = "RW", o
                 ))}
               </div>
               <div className="code-editor-body">
-                <pre
-                  className="code-editor-hl"
-                  ref={preRef}
-                  aria-hidden="true"
-                  dangerouslySetInnerHTML={{ __html: highlightedHtml + "\n" }}
-                />
-                <textarea
-                  ref={taRef}
-                  className="code-editor-input"
-                  value={draft}
-                  onChange={e => setDraft(e.target.value)}
-                  onScroll={syncScroll}
-                  spellCheck={false}
-                  wrap="off"
-                  readOnly={isLocked}
-                />
+                <pre className="code-editor-hl" ref={preRef} aria-hidden="true"
+                  dangerouslySetInnerHTML={{ __html: highlightedHtml + "\n" }} />
+                <textarea ref={taRef} className="code-editor-input" value={draft}
+                  onChange={e => setDraft(e.target.value)} onScroll={syncScroll}
+                  spellCheck={false} wrap="off" readOnly={isLocked} />
               </div>
             </>
           )}

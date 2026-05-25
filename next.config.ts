@@ -4,7 +4,7 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   devIndicators: false,
-  transpilePackages: ["jsoncrack-react"],
+  transpilePackages: ["jsoncrack-react", "reaflow", "reablocks", "reakeys"],
   serverExternalPackages: ["pino", "pino-pretty"],
   logging: {
     incomingRequests: false,

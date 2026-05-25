@@ -16,14 +16,10 @@ export default function WorkspacePage({ params }: { params: Promise<{ id: string
   const [selectedPermission, setSelectedPermission] = useState<"R" | "RW">("RW");
   const [viewerOpen, setViewerOpen] = useState(false);
 
-  // Column widths (px)
   const [leftWidth, setLeftWidth] = useState(220);
   const [rightWidth, setRightWidth] = useState(400);
   const [treeRefreshKey, setTreeRefreshKey] = useState(0);
-
-  // Chat/console vertical split
   const [chatRatio, setChatRatio] = useState(0.62);
-
   const [isDragging, setIsDragging] = useState(false);
 
   const containerRef = useRef<HTMLDivElement>(null);
@@ -42,7 +38,6 @@ export default function WorkspacePage({ params }: { params: Promise<{ id: string
       .catch(() => {});
   }, [id]);
 
-  // Column resize
   useEffect(() => {
     const onMove = (e: MouseEvent) => {
       if (!colDragging.current || !containerRef.current) return;
@@ -55,20 +50,14 @@ export default function WorkspacePage({ params }: { params: Promise<{ id: string
     };
     const onUp = () => {
       if (!colDragging.current) return;
-      colDragging.current = null;
-      setIsDragging(false);
-      document.body.style.cursor = "";
-      document.body.style.userSelect = "";
+      colDragging.current = null; setIsDragging(false);
+      document.body.style.cursor = ""; document.body.style.userSelect = "";
     };
     window.addEventListener("mousemove", onMove);
     window.addEventListener("mouseup", onUp);
-    return () => {
-      window.removeEventListener("mousemove", onMove);
-      window.removeEventListener("mouseup", onUp);
-    };
+    return () => { window.removeEventListener("mousemove", onMove); window.removeEventListener("mouseup", onUp); };
   }, []);
 
-  // Chat/console vertical resize
   useEffect(() => {
     const onMove = (e: MouseEvent) => {
       if (!rowDragging.current || !rightRef.current) return;
@@ -77,63 +66,46 @@ export default function WorkspacePage({ params }: { params: Promise<{ id: string
     };
     const onUp = () => {
       if (!rowDragging.current) return;
-      rowDragging.current = false;
-      setIsDragging(false);
-      document.body.style.cursor = "";
-      document.body.style.userSelect = "";
+      rowDragging.current = false; setIsDragging(false);
+      document.body.style.cursor = ""; document.body.style.userSelect = "";
     };
     window.addEventListener("mousemove", onMove);
     window.addEventListener("mouseup", onUp);
-    return () => {
-      window.removeEventListener("mousemove", onMove);
-      window.removeEventListener("mouseup", onUp);
-    };
+    return () => { window.removeEventListener("mousemove", onMove); window.removeEventListener("mouseup", onUp); };
   }, []);
 
   const startColDrag = useCallback((side: "left" | "right") => {
-    colDragging.current = side;
-    setIsDragging(true);
-    document.body.style.cursor = "col-resize";
-    document.body.style.userSelect = "none";
+    colDragging.current = side; setIsDragging(true);
+    document.body.style.cursor = "col-resize"; document.body.style.userSelect = "none";
   }, []);
 
   const startRowDrag = useCallback(() => {
-    rowDragging.current = true;
-    setIsDragging(true);
-    document.body.style.cursor = "row-resize";
-    document.body.style.userSelect = "none";
+    rowDragging.current = true; setIsDragging(true);
+    document.body.style.cursor = "row-resize"; document.body.style.userSelect = "none";
   }, []);
 
   return (
-    <div className="workspace" ref={containerRef}>
+    <div className="flex h-screen bg-bg overflow-hidden" ref={containerRef}>
       {isDragging && <div style={{ position: "fixed", inset: 0, zIndex: 9999 }} />}
-      {/* LEFT — file tree */}
+
       <FileTreePanel
-        workspaceId={id}
-        workspaceName={workspaceName}
-        wsDir={workspaceDir}
+        workspaceId={id} workspaceName={workspaceName} wsDir={workspaceDir}
         selectedPath={selectedFile}
         onFileSelect={(path, permission) => { setSelectedFile(path); setSelectedPermission(permission); setViewerOpen(true); }}
         onPermissionChange={(path, perm) => { if (path === null || path === selectedFile) setSelectedPermission(perm); }}
         onDeletedPaths={(paths) => {
-          if (selectedFile && paths.includes(selectedFile)) {
-            setSelectedFile(null);
-            setViewerOpen(false);
-          }
+          if (selectedFile && paths.includes(selectedFile)) { setSelectedFile(null); setViewerOpen(false); }
         }}
         style={{ width: leftWidth, minWidth: 150, flex: "none" }}
         refreshKey={treeRefreshKey}
       />
 
-      {/* CENTER — file viewer (closable) */}
       {viewerOpen && (
         <>
           <div className="ws-divider" onMouseDown={() => startColDrag("left")} />
-          <section className="ws-center">
+          <section className="flex-1 flex flex-col min-w-0 min-h-0 bg-bg">
             <FileViewer
-              workspaceId={id}
-              filePath={selectedFile}
-              permission={selectedPermission}
+              workspaceId={id} filePath={selectedFile} permission={selectedPermission}
               onClose={() => setViewerOpen(false)}
               onDeleted={() => { setViewerOpen(false); setTreeRefreshKey((k) => k + 1); }}
             />
@@ -143,23 +115,19 @@ export default function WorkspacePage({ params }: { params: Promise<{ id: string
 
       <div className="ws-divider" onMouseDown={() => startColDrag(viewerOpen ? "right" : "left")} />
 
-      {/* RIGHT — chat + console */}
       <aside
         ref={rightRef}
-        className="ws-right"
+        className="flex flex-col bg-bg overflow-hidden relative"
         style={viewerOpen
           ? { width: rightWidth, minWidth: 300, flex: "none" }
           : { flex: 1, width: "auto", minWidth: 0 }
         }
       >
-        <div className="ws-right-top" style={{ flex: chatRatio }}>
-          <ChatPanel
-            workspaceId={id}
-            onAgentTurnComplete={() => setTreeRefreshKey((k) => k + 1)}
-          />
+        <div className="flex flex-col min-h-0 overflow-hidden" style={{ flex: chatRatio }}>
+          <ChatPanel workspaceId={id} onAgentTurnComplete={() => setTreeRefreshKey((k) => k + 1)} />
         </div>
         <div className="ws-right-handle" onMouseDown={startRowDrag} />
-        <div className="ws-right-bottom" style={{ flex: 1 - chatRatio }}>
+        <div className="flex flex-col min-h-0 overflow-hidden" style={{ flex: 1 - chatRatio }}>
           <ConsolePanel workspaceId={id} />
         </div>
       </aside>

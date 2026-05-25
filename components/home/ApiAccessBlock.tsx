@@ -14,10 +14,7 @@ export default function ApiAccessBlock({ wsId }: { wsId: string }) {
   useEffect(() => {
     fetch(`/api/workspaces/${wsId}/api-key`)
       .then((r) => r.json())
-      .then((d: { enabled: boolean; hasKey: boolean }) => {
-        setEnabled(d.enabled);
-        setHasKey(d.hasKey);
-      })
+      .then((d: { enabled: boolean; hasKey: boolean }) => { setEnabled(d.enabled); setHasKey(d.hasKey); })
       .catch(() => {});
   }, [wsId]);
 
@@ -36,18 +33,13 @@ export default function ApiAccessBlock({ wsId }: { wsId: string }) {
     try {
       const res = await fetch(`/api/workspaces/${wsId}/api-key`, { method: "POST" });
       const { plain } = (await res.json()) as { plain: string };
-      setNewKey(plain);
-      setHasKey(true);
-      setEnabled(true);
-    } finally {
-      setLoading(false);
-    }
+      setNewKey(plain); setHasKey(true); setEnabled(true);
+    } finally { setLoading(false); }
   };
 
   const revoke = async () => {
     await fetch(`/api/workspaces/${wsId}/api-key`, { method: "DELETE" });
-    setHasKey(false);
-    setNewKey(null);
+    setHasKey(false); setNewKey(null);
   };
 
   const copy = () => {
@@ -58,18 +50,20 @@ export default function ApiAccessBlock({ wsId }: { wsId: string }) {
   };
 
   return (
-    <div className="api-access-block">
-      <div className="api-access-row">
+    <div className="flex flex-col gap-3 mt-4 border border-border rounded-[--radius-card] p-[14px_16px] bg-bg-tint">
+      <div className="flex items-center justify-between">
         <div>
-          <span className="api-access-label">API Access</span>
-          <span className="api-access-status">{enabled ? "Enabled" : "Disabled"}</span>
+          <span className="text-[13px] font-semibold text-text">API Access</span>
+          <span className="text-xs text-text-3 ml-2">{enabled ? "Enabled" : "Disabled"}</span>
         </div>
         <button
-          className={"api-toggle" + (enabled ? " is-on" : "")}
+          className={`relative w-9 h-5 rounded-[10px] border-0 cursor-pointer transition-colors duration-200 p-0 flex-shrink-0 ${enabled ? "bg-primary" : "bg-border"}`}
           onClick={toggle}
           aria-label={enabled ? "Disable API access" : "Enable API access"}
         >
-          <span className="api-toggle-knob" />
+          <span
+            className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform duration-200 block ${enabled ? "translate-x-4" : ""}`}
+          />
         </button>
       </div>
 
@@ -80,22 +74,20 @@ export default function ApiAccessBlock({ wsId }: { wsId: string }) {
       )}
 
       {enabled && hasKey && !newKey && (
-        <div className="api-key-row">
-          <span className="api-key-status">Key active</span>
-          <button className="linkbtn" style={{ color: "var(--danger)" }} onClick={revoke}>
-            Revoke
-          </button>
+        <div className="flex items-center gap-2.5">
+          <span className="text-[13px] font-medium text-select">Key active</span>
+          <button className="linkbtn text-danger" onClick={revoke}>Revoke</button>
         </div>
       )}
 
       {newKey && (
-        <div className="api-key-reveal">
-          <p className="api-key-warning">Save this key — it won&apos;t be shown again.</p>
-          <div className="api-key-display">
-            <code className="api-key-value">{newKey}</code>
-            <button className="btn btn-sm" onClick={copy}>
-              {copied ? "Copied!" : "Copy"}
-            </button>
+        <div className="bg-white border border-border rounded-[--radius-ctrl] p-[12px_14px] flex flex-col gap-2">
+          <p className="m-0 text-xs text-danger font-medium">Save this key — it won&apos;t be shown again.</p>
+          <div className="flex items-center gap-2">
+            <code className="font-mono text-[12px] leading-[1.4] text-text bg-bg-tint px-2 py-1 rounded border border-border flex-1 min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">
+              {newKey}
+            </code>
+            <button className="btn btn-sm" onClick={copy}>{copied ? "Copied!" : "Copy"}</button>
           </div>
           <button className="linkbtn" onClick={() => setNewKey(null)}>Dismiss</button>
         </div>

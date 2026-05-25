@@ -2,10 +2,14 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import * as markedModule from "marked";
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const marked = (markedModule as any).marked as (src: string) => string;
-import DOMPurify from "dompurify";
+import ReactMarkdown, { type Components } from "react-markdown";
+import remarkGfm from "remark-gfm";
+
+const mdComponents: Components = {
+  table: ({ node: _n, ...props }) => (
+    <div className="table-wrap"><table {...props} /></div>
+  ),
+};
 import type { AgentEvent } from "@/lib/agent/runner";
 
 const SendIcon = () => (
@@ -14,7 +18,6 @@ const SendIcon = () => (
     <polyline points="5 12 12 5 19 12" />
   </svg>
 );
-
 
 interface Message {
   role: "user" | "assistant" | "tool_start" | "error";
@@ -113,7 +116,6 @@ export default function ChatPanel({ workspaceId, onAgentTurnComplete }: { worksp
         const { done, value } = await reader.read();
         if (done) break;
         buffer += decoder.decode(value, { stream: true });
-
         const lines = buffer.split("\n");
         buffer = lines.pop() ?? "";
 
@@ -148,11 +150,7 @@ export default function ChatPanel({ workspaceId, onAgentTurnComplete }: { worksp
                 const next = [...prev];
                 for (let j = next.length - 1; j >= 0; j--) {
                   if (next[j].role === "tool_start" && next[j].toolName === event.name && !next[j].toolDone) {
-                    next[j] = {
-                      ...next[j],
-                      toolDone: true,
-                      ...(resultText ? { toolResult: resultText } : {}),
-                    };
+                    next[j] = { ...next[j], toolDone: true, ...(resultText ? { toolResult: resultText } : {}) };
                     break;
                   }
                 }
@@ -182,77 +180,72 @@ export default function ChatPanel({ workspaceId, onAgentTurnComplete }: { worksp
   }
 
   return (
-    <div className="chat">
-      <div className="chat-head">
-        <span className="chat-title">Agent</span>
+    <div className="flex flex-col h-full">
+      <div className="flex items-center gap-2 px-4 min-h-[44px] border-b border-border flex-shrink-0">
+        <span className="font-semibold text-sm">Agent</span>
         <span className={"status-dot" + (streaming ? " is-running" : "")} />
-        <span className="chat-status">{streaming ? "Running" : "Idle"}</span>
+        <span className="text-text-2 text-xs -ml-0.5">{streaming ? "Running" : "Idle"}</span>
       </div>
 
-      <div className="chat-body">
+      <div className="flex-1 overflow-auto p-[14px_16px] flex flex-col gap-2">
         {messages.length === 0 && !streaming && (
-          <div style={{ color: "var(--text-3)", fontSize: 13, textAlign: "center", marginTop: 24 }}>
+          <div className="text-text-3 text-[13px] text-center mt-6">
             Ask the agent anything about this workspace.
           </div>
         )}
 
         {messages.map((m, i) => {
           if (m.role === "tool_start") {
-            const resultHtml = m.toolResult ? DOMPurify.sanitize(marked(m.toolResult)) : "";
             return (
-              <div key={i} className="tool-row">
-                <div className={`tool-inline${m.toolDone ? " tool-done" : " tool-running"}`}>
+              <div key={i} className="flex flex-col gap-1.5 mb-1.5">
+                <div className={`font-mono text-[12.5px] leading-[1.4] text-primary-2 px-0.5${m.toolDone ? " opacity-45" : ""}`}>
                   {m.toolDone
-                    ? <span className="tool-check">✓</span>
-                    : <span className="tool-spin" />}{" "}
+                    ? <span className="text-primary-2 mr-0.5">✓</span>
+                    : <span className="inline-block w-2 h-2 border-[1.5px] border-primary-2 border-t-transparent rounded-full animate-[tool-spin_0.7s_linear_infinite] align-middle mr-0.5" />
+                  }{" "}
                   <b>{toolLabel(m.toolName ?? "")}</b>
-                  {m.toolSummary && <span className="tool-args"> {m.toolSummary}</span>}
+                  {m.toolSummary && <span className="text-text-3"> {m.toolSummary}</span>}
                 </div>
-                {resultHtml && (
-                  <div className="tool-result" dangerouslySetInnerHTML={{ __html: resultHtml }} />
+                {m.toolResult && (
+                  <div className="tool-result">
+                    <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>{m.toolResult}</ReactMarkdown>
+                  </div>
                 )}
               </div>
             );
           }
           if (m.role === "error") {
             return (
-              <div key={i} style={{ display: "flex", justifyContent: "center" }}>
-                <div
-                  className="bubble"
-                  style={{
-                    background: "var(--danger-soft)",
-                    color: "var(--danger)",
-                    border: "1px solid var(--danger)",
-                    borderRadius: 8,
-                    fontSize: 13,
-                  }}
-                >
+              <div key={i} className="flex justify-center">
+                <div className="max-w-[84%] px-3 py-2 text-[13px] rounded-lg bg-danger-soft text-danger border border-danger">
                   ✗ {m.content}
                 </div>
               </div>
             );
           }
           if (m.role === "assistant") {
-            const html = DOMPurify.sanitize(marked(m.content ?? ""));
-            if (!html.trim()) return null;
+            const content = m.content ?? "";
+            if (!content.trim()) return null;
             return (
-              <div key={i} className="msg msg-agent">
-                <div className="bubble bubble-agent">
-                  <span dangerouslySetInnerHTML={{ __html: html }} />
+              <div key={i} className="flex justify-start">
+                <div className="bubble-agent md-prose">
+                  <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>{content}</ReactMarkdown>
                 </div>
               </div>
             );
           }
           return (
-            <div key={i} className="msg msg-user">
-              <div className="bubble bubble-user">{m.content}</div>
+            <div key={i} className="flex justify-end">
+              <div className="max-w-[84%] px-3 py-2 rounded-xl rounded-br-sm text-sm leading-[1.45] break-words bg-primary text-white whitespace-pre-wrap">
+                {m.content}
+              </div>
             </div>
           );
         })}
 
         {streaming && pendingTools === 0 && (
-          <div className="msg msg-agent">
-            <div className="bubble bubble-agent typing">
+          <div className="flex justify-start">
+            <div className="bubble-agent md-prose typing">
               <span /><span /><span />
             </div>
           </div>
@@ -261,35 +254,35 @@ export default function ChatPanel({ workspaceId, onAgentTurnComplete }: { worksp
         <div ref={bottomRef} />
       </div>
 
-      <div className="chat-input">
-          <textarea
-            ref={taRef}
-            className="textarea chat-textarea"
-            rows={1}
-            value={draft}
-            placeholder={streaming ? "Agent is running…" : "Ask the agent…"}
-            disabled={streaming}
-            onInput={(e) => {
-              const t = e.target as HTMLTextAreaElement;
-              t.style.height = "auto";
-              t.style.height = Math.min(t.scrollHeight, 120) + "px";
-            }}
-            onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                handleSubmit();
-              }
-            }}
-          />
-          <button
-            className="send-btn"
-            disabled={!draft.trim() || streaming}
-            onClick={handleSubmit}
-            title="Send (Enter)"
-          >
-            {streaming ? <span className="spinner" /> : <SendIcon />}
-          </button>
+      <div className="flex items-end gap-2 px-3.5 pb-4 pt-3 border-t border-border bg-bg flex-shrink-0">
+        <textarea
+          ref={taRef}
+          className="textarea min-h-[38px] max-h-[120px] overflow-auto"
+          rows={1}
+          value={draft}
+          placeholder={streaming ? "Agent is running…" : "Ask the agent…"}
+          disabled={streaming}
+          onInput={(e) => {
+            const t = e.target as HTMLTextAreaElement;
+            t.style.height = "auto";
+            t.style.height = Math.min(t.scrollHeight, 120) + "px";
+          }}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSubmit(); }
+          }}
+        />
+        <button
+          className="w-9 h-9 rounded-lg border-0 bg-primary text-white inline-flex items-center justify-center cursor-pointer transition-[background,opacity] duration-[140ms] flex-none hover:bg-primary-2 disabled:opacity-45 disabled:cursor-not-allowed"
+          disabled={!draft.trim() || streaming}
+          onClick={handleSubmit}
+          title="Send (Enter)"
+        >
+          {streaming
+            ? <span className="w-3.5 h-3.5 border-2 border-white/40 border-t-white rounded-full animate-[spin_.8s_linear_infinite]" />
+            : <SendIcon />
+          }
+        </button>
       </div>
     </div>
   );

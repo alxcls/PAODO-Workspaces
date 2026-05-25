@@ -10,10 +10,10 @@ export default function TopBar({
   error?: string | null;
 }) {
   return (
-    <div className="topbar">
-      <div className="topbar-left">{left}</div>
-      {error && <span className="topbar-error">{error}</span>}
-      <div className="topbar-right">{right}</div>
+    <div className="flex items-center gap-2.5 px-4 h-12 flex-shrink-0 bg-bg border-b border-border">
+      <div className="flex items-center gap-2 flex-1 min-w-0">{left}</div>
+      {error && <span className="text-xs text-danger font-medium mr-1">{error}</span>}
+      <div className="flex items-center gap-2 ml-auto flex-shrink-0">{right}</div>
     </div>
   );
 }

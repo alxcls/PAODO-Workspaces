@@ -54,15 +54,10 @@ function getAllNodes(nodes: TreeNode[]): TreeNode[] {
 }
 
 // ---- Checkbox ----
-const Checkbox = ({
-  state,
-  onClick,
-}: {
-  state: CheckState;
-  onClick: (e: React.MouseEvent) => void;
-}) => (
+const Checkbox = ({ state, onClick }: { state: CheckState; onClick: (e: React.MouseEvent) => void }) => (
   <span
-    className={"tree-check" + (state !== "none" ? " tree-check-" + state : "")}
+    className={`w-[14px] h-[14px] rounded-[3px] inline-flex items-center justify-center flex-shrink-0 transition-[border-color,background] duration-[120ms] border-[1.4px] cursor-pointer
+      ${state !== "none" ? "bg-select border-select text-white" : "bg-white border-border hover:border-select"}`}
     onClick={onClick}
     role="checkbox"
     aria-checked={state === "all" ? "true" : state === "some" ? "mixed" : "false"}
@@ -82,17 +77,10 @@ const Checkbox = ({
 
 // ---- Permission badge ----
 const PermBadge = ({
-  node,
-  workspaceId,
-  wsDir,
-  onRefresh,
-  onPermissionChange,
+  node, workspaceId, wsDir, onRefresh, onPermissionChange,
 }: {
-  node: TreeNode;
-  workspaceId: string;
-  wsDir: string;
-  onRefresh: () => void;
-  onPermissionChange: (path: string, perm: "R" | "RW") => void;
+  node: TreeNode; workspaceId: string; wsDir: string;
+  onRefresh: () => void; onPermissionChange: (path: string, perm: "R" | "RW") => void;
 }) => {
   const [busy, setBusy] = useState(false);
   const perm = node.permission ?? "RW";
@@ -117,7 +105,7 @@ const PermBadge = ({
 
   return (
     <span
-      className="perm-badge"
+      className="flex-shrink-0 inline-flex items-center justify-center w-[18px] h-[18px] rounded-[3px] cursor-pointer select-none ml-1 text-text-2 hover:text-text hover:bg-black/[.12] transition-colors"
       onClick={toggle}
       title={perm === "R" ? "Read-only — click to unlock" : "Read-write — click to lock"}
       style={{ opacity: busy ? 0.4 : 1 }}
@@ -139,15 +127,10 @@ const PermBadge = ({
 
 // ---- Master lock button ----
 const MasterLockButton = ({
-  workspaceId,
-  tree,
-  onRefresh,
-  onGlobalPermissionChange,
+  workspaceId, tree, onRefresh, onGlobalPermissionChange,
 }: {
-  workspaceId: string;
-  tree: TreeNode[];
-  onRefresh: () => void;
-  onGlobalPermissionChange: (perm: "R" | "RW") => void;
+  workspaceId: string; tree: TreeNode[];
+  onRefresh: () => void; onGlobalPermissionChange: (perm: "R" | "RW") => void;
 }) => {
   const [busy, setBusy] = useState(false);
   const allNodes = getAllNodes(tree).filter((n) => n.permission !== undefined);
@@ -192,33 +175,17 @@ const MasterLockButton = ({
 
 // ---- Tree node list ----
 interface TreeListProps {
-  nodes: TreeNode[];
-  depth: number;
-  expanded: Record<string, boolean>;
-  onToggle: (path: string) => void;
-  activePath: string | null;
-  selected: Set<string>;
-  onSelect: (paths: string[], on: boolean) => void;
+  nodes: TreeNode[]; depth: number; expanded: Record<string, boolean>;
+  onToggle: (path: string) => void; activePath: string | null;
+  selected: Set<string>; onSelect: (paths: string[], on: boolean) => void;
   onPick: (path: string, permission: "R" | "RW") => void;
-  workspaceId: string;
-  wsDir: string;
-  onRefresh: () => void;
+  workspaceId: string; wsDir: string; onRefresh: () => void;
   onPermissionChange: (path: string, perm: "R" | "RW") => void;
 }
 
 const TreeNodeList = ({
-  nodes,
-  depth,
-  expanded,
-  onToggle,
-  activePath,
-  selected,
-  onSelect,
-  onPick,
-  workspaceId,
-  wsDir,
-  onRefresh,
-  onPermissionChange,
+  nodes, depth, expanded, onToggle, activePath, selected,
+  onSelect, onPick, workspaceId, wsDir, onRefresh, onPermissionChange,
 }: TreeListProps) => {
   const sorted = [...nodes].sort((a, b) => {
     if (a.type !== b.type) return a.type === "directory" ? -1 : 1;
@@ -231,52 +198,35 @@ const TreeNodeList = ({
         if (node.type === "directory") {
           const isOpen = expanded[node.path] ?? false;
           const childPaths = getAllFilePaths(node);
-          // Empty folders have no file descendants — fall back to the folder path itself
           const effectivePaths = childPaths.length > 0 ? childPaths : [node.path];
           const selectedCount = effectivePaths.filter((p) => selected.has(p)).length;
           const state: CheckState =
-            selectedCount === 0
-              ? "none"
-              : selectedCount === effectivePaths.length
-              ? "all"
-              : "some";
+            selectedCount === 0 ? "none"
+            : selectedCount === effectivePaths.length ? "all"
+            : "some";
 
           return (
             <div key={node.path}>
               <button
-                className={"tree-row tree-folder" + (state !== "none" ? " is-selected" : "")}
-                style={{ paddingLeft: 8 + depth * 14 }}
+                className={`flex items-center w-full border-0 border-l-[3px] border-l-transparent bg-transparent py-[5px] pl-2 pr-2 text-[13.5px] text-text cursor-pointer text-left transition-[background,border-color,color] duration-[120ms] hover:bg-black/[.04] ${state !== "none" ? "bg-select-tint" : ""}`}
                 onClick={() => onToggle(node.path)}
               >
-                <Checkbox
-                  state={state}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onSelect(effectivePaths, state !== "all");
-                  }}
-                />
-                <span className={"chev" + (isOpen ? " is-open" : "")}>
-                  <ChevIcon />
-                </span>
-                <span className="tree-icon">
-                  <FolderIcon />
-                </span>
-                <span className="tree-name">{node.name}</span>
-                <PermBadge node={node} workspaceId={workspaceId} wsDir={wsDir} onRefresh={onRefresh} onPermissionChange={onPermissionChange} />
+                <Checkbox state={state} onClick={(e) => { e.stopPropagation(); onSelect(effectivePaths, state !== "all"); }} />
+                <div className="flex items-center gap-1.5 flex-1 min-w-0 overflow-hidden" style={{ marginLeft: 6 + depth * 14 }}>
+                  <span className={`inline-flex items-center justify-center w-3 h-3 flex-shrink-0 transition-transform duration-[150ms] text-text-3 ${isOpen ? "rotate-90" : ""}`}>
+                    <ChevIcon />
+                  </span>
+                  <span className="text-text-2 inline-flex flex-shrink-0"><FolderIcon /></span>
+                  <span className="flex-1 whitespace-nowrap overflow-hidden text-ellipsis">{node.name}</span>
+                  <PermBadge node={node} workspaceId={workspaceId} wsDir={wsDir} onRefresh={onRefresh} onPermissionChange={onPermissionChange} />
+                </div>
               </button>
               {isOpen && node.children && (
                 <TreeNodeList
-                  nodes={node.children}
-                  depth={depth + 1}
-                  expanded={expanded}
-                  onToggle={onToggle}
-                  activePath={activePath}
-                  selected={selected}
-                  onSelect={onSelect}
-                  onPick={onPick}
-                  workspaceId={workspaceId}
-                  wsDir={wsDir}
-                  onRefresh={onRefresh}
+                  nodes={node.children} depth={depth + 1} expanded={expanded}
+                  onToggle={onToggle} activePath={activePath} selected={selected}
+                  onSelect={onSelect} onPick={onPick}
+                  workspaceId={workspaceId} wsDir={wsDir} onRefresh={onRefresh}
                   onPermissionChange={onPermissionChange}
                 />
               )}
@@ -289,26 +239,22 @@ const TreeNodeList = ({
         return (
           <button
             key={node.path}
-            className={
-              "tree-row tree-file" +
-              (isActive ? " is-active" : "") +
-              (isSel ? " is-selected" : "")
-            }
-            style={{ paddingLeft: 8 + depth * 14 + 14 }}
+            className={`flex items-center w-full border-0 border-l-[3px] bg-transparent py-[5px] pl-2 pr-2 text-[13.5px] cursor-pointer text-left transition-[background,border-color,color] duration-[120ms]
+              ${isActive
+                ? "bg-primary-tint border-l-primary text-primary"
+                : `border-l-transparent text-text hover:bg-black/[.04] ${isSel ? "bg-select-tint" : ""}`
+              }`}
             onClick={() => onPick(node.path, node.permission ?? "RW")}
           >
             <Checkbox
               state={isSel ? "all" : "none"}
-              onClick={(e) => {
-                e.stopPropagation();
-                onSelect([node.path], !isSel);
-              }}
+              onClick={(e) => { e.stopPropagation(); onSelect([node.path], !isSel); }}
             />
-            <span className="tree-icon">
-              <FileIcon />
-            </span>
-            <span className="tree-name">{node.name}</span>
-            <PermBadge node={node} workspaceId={workspaceId} wsDir={wsDir} onRefresh={onRefresh} onPermissionChange={onPermissionChange} />
+            <div className="flex items-center gap-1.5 flex-1 min-w-0 overflow-hidden" style={{ marginLeft: 6 + depth * 14 + 14 }}>
+              <span className={`inline-flex flex-shrink-0 ${isActive ? "text-primary" : "text-text-2"}`}><FileIcon /></span>
+              <span className="flex-1 whitespace-nowrap overflow-hidden text-ellipsis">{node.name}</span>
+              <PermBadge node={node} workspaceId={workspaceId} wsDir={wsDir} onRefresh={onRefresh} onPermissionChange={onPermissionChange} />
+            </div>
           </button>
         );
       })}
@@ -317,13 +263,7 @@ const TreeNodeList = ({
 };
 
 // ---- Upload button ----
-const UploadMenu = ({
-  workspaceId,
-  onUploaded,
-}: {
-  workspaceId: string;
-  onUploaded: () => void;
-}) => {
+const UploadMenu = ({ workspaceId, onUploaded }: { workspaceId: string; onUploaded: () => void }) => {
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -331,12 +271,9 @@ const UploadMenu = ({
     if (files.length === 0) return;
     setError(null);
     setUploading(true);
-
     try {
       await Promise.all(files.map(async (file) => {
-        const filePath = useRelativePath && file.webkitRelativePath
-          ? file.webkitRelativePath
-          : file.name;
+        const filePath = useRelativePath && file.webkitRelativePath ? file.webkitRelativePath : file.name;
         const res = await fetch(
           `/api/workspaces/${workspaceId}/files/upload?path=${encodeURIComponent(filePath)}`,
           { method: "POST", body: file }
@@ -358,13 +295,13 @@ const UploadMenu = ({
   };
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-      <div style={{ display: "flex", gap: 4 }}>
-        <label className="btn btn-ghost btn-sm" style={{ cursor: "pointer", flex: 1, justifyContent: "center", pointerEvents: uploading ? "none" : "auto", opacity: uploading ? 0.5 : 1 }}>
+    <div className="flex flex-col gap-1">
+      <div className="flex gap-1">
+        <label className={`btn btn-ghost btn-sm flex-1 justify-center cursor-pointer ${uploading ? "pointer-events-none opacity-50" : ""}`}>
           <UploadIcon /><span>Files</span>
           <input type="file" multiple hidden onChange={(e) => handleFiles(e, false)} />
         </label>
-        <label className="btn btn-ghost btn-sm" style={{ cursor: "pointer", flex: 1, justifyContent: "center", pointerEvents: uploading ? "none" : "auto", opacity: uploading ? 0.5 : 1 }}>
+        <label className={`btn btn-ghost btn-sm flex-1 justify-center cursor-pointer ${uploading ? "pointer-events-none opacity-50" : ""}`}>
           <UploadIcon /><span>Folder</span>
           <input type="file" multiple hidden
             // @ts-expect-error — webkitdirectory is not in React's HTMLInputElement types
@@ -373,43 +310,25 @@ const UploadMenu = ({
           />
         </label>
       </div>
-      {uploading && (
-        <div style={{ fontSize: 11, color: "var(--color-text-muted, #888)", padding: "2px 4px" }}>
-          Uploading…
-        </div>
-      )}
-      {error && (
-        <div style={{ fontSize: 11, color: "var(--color-error, #e55)", padding: "2px 4px" }}>
-          {error}
-        </div>
-      )}
+      {uploading && <div className="text-[11px] text-text-3 px-1">Uploading…</div>}
+      {error && <div className="text-[11px] text-danger px-1">{error}</div>}
     </div>
   );
 };
 
 // ---- Main component ----
 interface Props {
-  workspaceId: string;
-  workspaceName: string;
-  wsDir: string;
+  workspaceId: string; workspaceName: string; wsDir: string;
   selectedPath: string | null;
   onFileSelect: (path: string, permission: "R" | "RW") => void;
   onPermissionChange?: (path: string | null, perm: "R" | "RW") => void;
   onDeletedPaths?: (paths: string[]) => void;
-  style?: React.CSSProperties;
-  refreshKey?: number;
+  style?: React.CSSProperties; refreshKey?: number;
 }
 
 export default function FileTreePanel({
-  workspaceId,
-  workspaceName,
-  wsDir,
-  selectedPath,
-  onFileSelect,
-  onPermissionChange,
-  onDeletedPaths,
-  style,
-  refreshKey,
+  workspaceId, workspaceName, wsDir, selectedPath,
+  onFileSelect, onPermissionChange, onDeletedPaths, style, refreshKey,
 }: Props) {
   const router = useRouter();
   const [tree, setTree] = useState<TreeNode[]>([]);
@@ -422,19 +341,13 @@ export default function FileTreePanel({
       if (!res.ok) return;
       const data = (await res.json()) as TreeNode[];
       setTree(data);
-      setExpanded((prev) => {
-        if (Object.keys(prev).length > 0) return prev;
-        return {};
-      });
+      setExpanded((prev) => Object.keys(prev).length > 0 ? prev : {});
     } catch { /* silent */ }
   }, [workspaceId]);
 
-  useEffect(() => {
-    fetchTree();
-  }, [fetchTree, refreshKey]);
+  useEffect(() => { fetchTree(); }, [fetchTree, refreshKey]);
 
-  const toggleExpanded = (path: string) =>
-    setExpanded((e) => ({ ...e, [path]: !e[path] }));
+  const toggleExpanded = (path: string) => setExpanded((e) => ({ ...e, [path]: !e[path] }));
 
   const handleSelect = (paths: string[], on: boolean) => {
     setSelected((prev) => {
@@ -445,44 +358,39 @@ export default function FileTreePanel({
   };
 
   return (
-    <aside className="ws-left" style={style}>
-      <div className="ws-left-head">
+    <aside className="flex flex-col bg-bg-tint overflow-hidden" style={style}>
+      <div className="flex items-center gap-2 p-[14px_14px_8px]">
         <button className="iconbtn" onClick={() => router.push("/")} title="Back to workspaces">
           <BackIcon />
         </button>
-        <span className="ws-name" title={workspaceName}>
+        <span className="font-semibold text-[15px] tracking-[-0.01em] whitespace-nowrap overflow-hidden text-ellipsis flex-1" title={workspaceName}>
           {workspaceName}
         </span>
-        <MasterLockButton workspaceId={workspaceId} tree={tree} onRefresh={fetchTree} onGlobalPermissionChange={(perm) => onPermissionChange?.(null, perm)} />
+        <MasterLockButton
+          workspaceId={workspaceId} tree={tree} onRefresh={fetchTree}
+          onGlobalPermissionChange={(perm) => onPermissionChange?.(null, perm)}
+        />
       </div>
 
-      <div className="ws-upload-row">
+      <div className="flex gap-1.5 px-3 pb-2.5 border-b border-border">
         <UploadMenu workspaceId={workspaceId} onUploaded={fetchTree} />
       </div>
 
-      <div className="tree">
+      <div className="flex-1 overflow-auto py-2">
         <TreeNodeList
-          nodes={tree}
-          depth={0}
-          expanded={expanded}
-          onToggle={toggleExpanded}
-          activePath={selectedPath}
-          selected={selected}
-          onSelect={handleSelect}
-          onPick={onFileSelect}
-          workspaceId={workspaceId}
-          wsDir={wsDir}
+          nodes={tree} depth={0} expanded={expanded} onToggle={toggleExpanded}
+          activePath={selectedPath} selected={selected} onSelect={handleSelect}
+          onPick={onFileSelect} workspaceId={workspaceId} wsDir={wsDir}
           onRefresh={fetchTree}
           onPermissionChange={(path, perm) => onPermissionChange?.(path, perm)}
         />
       </div>
 
       {selected.size > 0 && (
-        <div className="tree-selectbar">
-          <div style={{ display: "flex", gap: 4 }}>
+        <div className="border-t border-border p-[10px_12px] bg-bg">
+          <div className="flex gap-1">
             <button
-              className="btn btn-ghost btn-sm"
-              style={{ flex: 1, justifyContent: "center" }}
+              className="btn btn-ghost btn-sm flex-1 justify-center"
               onClick={async () => {
                 const res = await fetch(`/api/workspaces/${workspaceId}/files/download`, {
                   method: "POST",
@@ -493,17 +401,14 @@ export default function FileTreePanel({
                 const blob = await res.blob();
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement("a");
-                a.href = url;
-                a.download = `${workspaceName}.zip`;
-                a.click();
+                a.href = url; a.download = `${workspaceName}.zip`; a.click();
                 URL.revokeObjectURL(url);
               }}
             >
               Download .zip
             </button>
             <button
-              className="btn btn-ghost btn-sm"
-              style={{ flex: 1, justifyContent: "center", color: "var(--danger)" }}
+              className="btn btn-ghost btn-sm flex-1 justify-center text-danger"
               onClick={async () => {
                 const paths = Array.from(selected);
                 await Promise.all(

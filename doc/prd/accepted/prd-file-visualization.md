@@ -1,6 +1,6 @@
 # PRD — File Visualization
 
-**Status:** implemented  
+**Status:** Accepted  
 **Author:** @alxcls  
 **Related:** [VISION.md](../VISION.md)
 
@@ -56,7 +56,7 @@ As a developer reviewing what the agent wrote, I can switch any previewed file b
 ### Nice to have
 
 - **Remember per-type preference**: Store the user's last-chosen mode (preview vs. code) per file type in `localStorage` so repeat opens respect their preference.
-- **Toggle label flip**: Relabel the toggle button "Source" when in preview mode and "Preview" when in code mode, making the action clearer.
+- **Toggle label flip**: Relabel the toggle button "Source" when in preview mode and "Preview" when code mode, making the action clearer.
 - **Markdown styles**: A lightweight stylesheet scoped to `.md-preview` that renders headings, tables, and code blocks with visual hierarchy (font sizes, spacing, borders) rather than bare browser defaults.
 
 ---
@@ -66,4 +66,3 @@ As a developer reviewing what the agent wrote, I can switch any previewed file b
 | Question | Owner | Status |
 |----------|-------|--------|
 | Did we enforce a tight enough security around the html visualizer ? | alxcls | Open |
-

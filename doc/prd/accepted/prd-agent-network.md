@@ -1,6 +1,6 @@
 # PRD — Agent Network
 
-**Status:** Implemented  
+**Status:** Accepted  
 **Author:** @alxcls  
 **Related:** [VISION.md](../VISION.md)
 

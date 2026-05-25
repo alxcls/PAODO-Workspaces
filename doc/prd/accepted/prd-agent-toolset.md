@@ -1,6 +1,6 @@
 # PRD — Agent Capabilities
 
-**Status:** Implemented  
+**Status:** Accepted  
 **Author:** @alxcls  
 **Related:** [VISION.md](../VISION.md), [prd-lock-mechanism.md](prd-lock-mechanism.md), [prd-agent-network.md](prd-agent-network.md)
 

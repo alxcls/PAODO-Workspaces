@@ -19,11 +19,26 @@ function htmlToText(html: string): string {
     .trim();
 }
 
+const BLOCKED_HOST = /^(localhost|.*\.local)(:\d+)?$|^(127\.|10\.|169\.254\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/;
+
+function assertPublicUrl(rawUrl: string): string {
+  const finalUrl = rawUrl.startsWith("http://") ? rawUrl.replace("http://", "https://") : rawUrl;
+  let parsed: URL;
+  try {
+    parsed = new URL(finalUrl);
+  } catch {
+    throw new Error("Invalid URL");
+  }
+  if (parsed.protocol !== "https:") throw new Error("Only HTTPS URLs are allowed");
+  if (BLOCKED_HOST.test(parsed.hostname)) throw new Error("Blocked internal address");
+  return finalUrl;
+}
+
 export function buildWebFetchTool() {
   return tool(
     async ({ url, prompt }) => {
       try {
-        const finalUrl = url.startsWith("http://") ? url.replace("http://", "https://") : url;
+        const finalUrl = assertPublicUrl(url);
         const res = await fetch(finalUrl, {
           headers: { "User-Agent": "Mozilla/5.0 (compatible; ShellCopilot/1.0)" },
           signal: AbortSignal.timeout(15_000),

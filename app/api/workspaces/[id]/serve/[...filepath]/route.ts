@@ -63,12 +63,10 @@ export async function GET(
     const resolved = await assertInsideWorkspace(ws.dir, absPath);
     const buf = await fs.readFile(resolved);
     const mime = await getMime(resolved, buf);
-    const corsOrigin = process.env.APP_URL ?? "";
     return new Response(buf, {
       headers: {
         "Content-Type": mime,
         "Cache-Control": "no-cache",
-        ...(corsOrigin ? { "Access-Control-Allow-Origin": corsOrigin } : {}),
       },
     });
   } catch (err) {

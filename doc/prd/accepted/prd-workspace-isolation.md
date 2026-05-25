@@ -1,6 +1,6 @@
 # PRD — Workspace Isolation
 
-**Status:** Implemented (runtime selection: in progress)
+**Status:** Accepted (runtime selection: in progress)
 **Author:** @alxcls
 **Related:** [VISION.md](../VISION.md), [prd-agent-network.md](prd-agent-network.md), [prd-lock-mechanism.md](prd-lock-mechanism.md)
 

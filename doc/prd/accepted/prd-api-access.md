@@ -1,6 +1,6 @@
 # PRD — External API Access
 
-**Status:** Implemented  
+**Status:** Accepted  
 **Author:** @alxcls  
 **Related:** [VISION.md](../VISION.md)
 

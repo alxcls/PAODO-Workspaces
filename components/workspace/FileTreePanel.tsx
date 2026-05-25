@@ -3,7 +3,8 @@
 // Re-fetches the tree whenever the refreshKey prop changes (triggered by agent file mutations).
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
+import JSZip from "jszip";
 import { useRouter } from "next/navigation";
 
 interface TreeNode {
@@ -44,13 +45,15 @@ const ChevIcon = () => (
 );
 
 // ---- Helpers ----
-function getAllFilePaths(node: TreeNode): string[] {
-  if (node.type === "file") return [node.path];
-  return (node.children ?? []).flatMap(getAllFilePaths);
-}
-
 function getAllNodes(nodes: TreeNode[]): TreeNode[] {
   return nodes.flatMap((n) => [n, ...getAllNodes(n.children ?? [])]);
+}
+
+function getNodeCheckState(node: TreeNode, selected: Set<string>): CheckState {
+  if (selected.has(node.path)) return "all";
+  if (node.type === "file") return "none";
+  const anyDescendant = getAllNodes(node.children ?? []).some(n => selected.has(n.path));
+  return anyDescendant ? "some" : "none";
 }
 
 // ---- Checkbox ----
@@ -197,13 +200,7 @@ const TreeNodeList = ({
       {sorted.map((node) => {
         if (node.type === "directory") {
           const isOpen = expanded[node.path] ?? false;
-          const childPaths = getAllFilePaths(node);
-          const effectivePaths = childPaths.length > 0 ? childPaths : [node.path];
-          const selectedCount = effectivePaths.filter((p) => selected.has(p)).length;
-          const state: CheckState =
-            selectedCount === 0 ? "none"
-            : selectedCount === effectivePaths.length ? "all"
-            : "some";
+          const state = getNodeCheckState(node, selected);
 
           return (
             <div key={node.path}>
@@ -211,7 +208,15 @@ const TreeNodeList = ({
                 className={`flex items-center w-full border-0 border-l-[3px] border-l-transparent bg-transparent py-[5px] pl-2 pr-2 text-[13.5px] text-text cursor-pointer text-left transition-[background,border-color,color] duration-[120ms] hover:bg-black/[.04] ${state !== "none" ? "bg-select-tint" : ""}`}
                 onClick={() => onToggle(node.path)}
               >
-                <Checkbox state={state} onClick={(e) => { e.stopPropagation(); onSelect(effectivePaths, state !== "all"); }} />
+                <Checkbox state={state} onClick={(e) => {
+                  e.stopPropagation();
+                  if (state !== "none") {
+                    const descendants = getAllNodes(node.children ?? []).map(n => n.path);
+                    onSelect([node.path, ...descendants], false);
+                  } else {
+                    onSelect([node.path], true);
+                  }
+                }} />
                 <div className="flex items-center gap-1.5 flex-1 min-w-0 overflow-hidden" style={{ marginLeft: 6 + depth * 14 }}>
                   <span className={`inline-flex items-center justify-center w-3 h-3 flex-shrink-0 transition-transform duration-[150ms] text-text-3 ${isOpen ? "rotate-90" : ""}`}>
                     <ChevIcon />
@@ -264,53 +269,118 @@ const TreeNodeList = ({
 
 // ---- Upload button ----
 const UploadMenu = ({ workspaceId, onUploaded }: { workspaceId: string; onUploaded: () => void }) => {
-  const [uploading, setUploading] = useState(false);
+  const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const upload = async (files: File[], useRelativePath: boolean) => {
+  // Single files: send individually (small count, no need to archive)
+  const uploadFiles = async (files: File[]) => {
     if (files.length === 0) return;
     setError(null);
-    setUploading(true);
+    setStatus("Uploading…");
     try {
-      await Promise.all(files.map(async (file) => {
-        const filePath = useRelativePath && file.webkitRelativePath ? file.webkitRelativePath : file.name;
-        const res = await fetch(
-          `/api/workspaces/${workspaceId}/files/upload?path=${encodeURIComponent(filePath)}`,
-          { method: "POST", body: file }
-        );
-        if (!res.ok) throw new Error(`Failed to upload ${file.name}`);
-      }));
+      const CONCURRENCY = 5;
+      const queue = [...files];
+      const worker = async () => {
+        while (queue.length > 0) {
+          const file = queue.shift()!;
+          const res = await fetch(
+            `/api/workspaces/${workspaceId}/files/upload?path=${encodeURIComponent(file.name)}`,
+            { method: "POST", body: file }
+          );
+          if (!res.ok) throw new Error(`Failed to upload ${file.name}`);
+        }
+      };
+      await Promise.all(Array.from({ length: Math.min(CONCURRENCY, files.length) }, worker));
       onUploaded();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Upload failed");
     } finally {
-      setUploading(false);
+      setStatus(null);
     }
   };
 
-  const handleFiles = (e: React.ChangeEvent<HTMLInputElement>, useRelativePath: boolean) => {
-    const files = Array.from(e.target.files ?? []);
-    e.target.value = "";
-    upload(files, useRelativePath);
+  // Folder: pack everything into a single ZIP then POST once — avoids per-file request
+  // storms that exhaust the rate limit and file-descriptor pool for 10k+ file trees.
+  const uploadFolder = async (files: File[]) => {
+    if (files.length === 0) return;
+    setError(null);
+    try {
+      const zip = new JSZip();
+      for (const file of files) {
+        const entryPath = file.webkitRelativePath || file.name;
+        zip.file(entryPath, file);
+      }
+
+      setStatus("Compressing 0%");
+      const blob = await zip.generateAsync(
+        { type: "blob", compression: "DEFLATE", compressionOptions: { level: 1 } },
+        (meta) => setStatus(`Compressing ${Math.round(meta.percent)}%`)
+      );
+
+      setStatus("Uploading archive…");
+      const res = await fetch(`/api/workspaces/${workspaceId}/files/upload`, {
+        method: "POST",
+        headers: { "Content-Type": "application/zip" },
+        body: blob,
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error((body as { error?: string }).error ?? `Upload failed (${res.status})`);
+      }
+      onUploaded();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Upload failed");
+    } finally {
+      setStatus(null);
+    }
   };
 
+  const handleFiles = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files ?? []);
+    e.target.value = "";
+    uploadFiles(files);
+  };
+
+  const handleFolder = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files ?? []);
+    e.target.value = "";
+    uploadFolder(files);
+  };
+
+  const busy = status !== null;
+
   return (
-    <div className="flex flex-col gap-1">
+    <div className="flex flex-col gap-1 flex-1">
       <div className="flex gap-1">
-        <label className={`btn btn-ghost btn-sm flex-1 justify-center cursor-pointer ${uploading ? "pointer-events-none opacity-50" : ""}`}>
+        <button
+          type="button"
+          className={`btn btn-ghost btn-sm flex-1 justify-center relative ${busy ? "pointer-events-none opacity-50" : ""}`}
+        >
           <UploadIcon /><span>Files</span>
-          <input type="file" multiple hidden onChange={(e) => handleFiles(e, false)} />
-        </label>
-        <label className={`btn btn-ghost btn-sm flex-1 justify-center cursor-pointer ${uploading ? "pointer-events-none opacity-50" : ""}`}>
+          <input
+            type="file"
+            multiple
+            className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+            onChange={handleFiles}
+          />
+        </button>
+
+        <button
+          type="button"
+          className={`btn btn-ghost btn-sm flex-1 justify-center relative ${busy ? "pointer-events-none opacity-50" : ""}`}
+        >
           <UploadIcon /><span>Folder</span>
-          <input type="file" multiple hidden
+          <input
+            type="file"
+            multiple
             // @ts-expect-error — webkitdirectory is not in React's HTMLInputElement types
             webkitdirectory=""
-            onChange={(e) => handleFiles(e, true)}
+            className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+            onChange={handleFolder}
           />
-        </label>
+        </button>
       </div>
-      {uploading && <div className="text-[11px] text-text-3 px-1">Uploading…</div>}
+      {status && <div className="text-[11px] text-text-3 px-1">{status}</div>}
       {error && <div className="text-[11px] text-danger px-1">{error}</div>}
     </div>
   );
@@ -334,6 +404,28 @@ export default function FileTreePanel({
   const [tree, setTree] = useState<TreeNode[]>([]);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const deleteTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (!deleteError) return;
+    // clear any existing timer
+    if (deleteTimerRef.current) {
+      clearTimeout(deleteTimerRef.current);
+      deleteTimerRef.current = null;
+    }
+    // hide the error after 2 seconds
+    deleteTimerRef.current = window.setTimeout(() => {
+      setDeleteError(null);
+      deleteTimerRef.current = null;
+    }, 2000);
+    return () => {
+      if (deleteTimerRef.current) {
+        clearTimeout(deleteTimerRef.current);
+        deleteTimerRef.current = null;
+      }
+    };
+  }, [deleteError]);
 
   const fetchTree = useCallback(async () => {
     try {
@@ -386,7 +478,7 @@ export default function FileTreePanel({
         />
       </div>
 
-      {selected.size > 0 && (
+      {(selected.size > 0 || deleteError) && (
         <div className="border-t border-border p-[10px_12px] bg-bg">
           <div className="flex gap-1">
             <button
@@ -409,21 +501,56 @@ export default function FileTreePanel({
             </button>
             <button
               className="btn btn-ghost btn-sm flex-1 justify-center text-danger"
-              onClick={async () => {
-                const paths = Array.from(selected);
-                await Promise.all(
-                  paths.map((p) =>
-                    fetch(`/api/workspaces/${workspaceId}/files/content?path=${encodeURIComponent(p)}`, { method: "DELETE" })
-                  )
-                );
-                setSelected(new Set());
+                onClick={async () => {
+                  const paths = Array.from(selected);
+                  const roots = paths.filter(
+                    p => !paths.some(other => other !== p && p.startsWith(other + "/"))
+                  );
+                setDeleteError(null);
+                let failures: string[] = [];
+                try {
+                  const resArr = await Promise.all(
+                    roots.map((p) =>
+                      fetch(`/api/workspaces/${workspaceId}/files/content?path=${encodeURIComponent(p)}`, { method: "DELETE" })
+                    )
+                  );
+
+                  for (let i = 0; i < resArr.length; i++) {
+                    const r = resArr[i];
+                    if (!r.ok) {
+                      const body = await r.json().catch(() => ({} as any));
+                      const msg = (body && (body.error || body.message)) || `${r.status} ${r.statusText}`;
+                      // Do not include the path in the UI message — only show the reason
+                      failures.push(msg);
+                    }
+                  }
+
+                  if (failures.length > 0) {
+                    const uniq = Array.from(new Set(failures));
+                    // Single-line if one reason, otherwise join by "; "
+                    const message = uniq.length === 1 ? `Failed to delete: ${uniq[0]}` : `Failed to delete: ${uniq.join('; ')}`;
+                    setDeleteError(message);
+                  } else {
+                    setDeleteError(null);
+                  }
+                } catch (err) {
+                  setDeleteError(err instanceof Error ? err.message : String(err));
+                }
+
+                if (failures.length === 0) {
+                  setSelected(new Set());
+                  onDeletedPaths?.(paths);
+                }
+                // Always refresh the tree so the UI reflects successful deletions
                 fetchTree();
-                onDeletedPaths?.(paths);
               }}
-            >
-              Delete selected
+              >
+                Delete
             </button>
           </div>
+          {deleteError && (
+            <div className="text-[12px] text-danger whitespace-pre-wrap mt-2 px-1">{deleteError}</div>
+          )}
         </div>
       )}
     </aside>

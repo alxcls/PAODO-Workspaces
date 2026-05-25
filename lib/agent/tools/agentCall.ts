@@ -45,21 +45,27 @@ export function buildAgentCallTool(callerWorkspaceId: string) {
         const { runAgent } = await import("../runner");
         const signal = AbortSignal.timeout(TIMEOUT_MS);
         let response = "";
+        let limitReached = false;
 
-        for await (const event of runAgent(freshMessages, taggedMessage, callee.dir, callee.id, signal)) {
+        for await (const event of runAgent(freshMessages, taggedMessage, callee.dir, callee.id, { signal, maxIterations: callee.maxIterations })) {
           if (event.type === "token") response += event.content;
+          if (event.type === "limit_reached") limitReached = true;
           if (event.type === "error") {
             log.error({ callerWorkspaceId, callee: workspace, agentError: event.message }, "call_agent remote error");
             return `Error from "${workspace}": ${event.message}`;
           }
         }
 
-        log.debug({ callerWorkspaceId, callee: workspace, responseChars: response.length }, "call_agent done");
+        log.debug({ callerWorkspaceId, callee: workspace, responseChars: response.length, limitReached }, "call_agent done");
         if (!response) return `(${workspace} produced no response)`;
-        return response.length > MAX_RESPONSE_CHARS
-          ? response.slice(0, MAX_RESPONSE_CHARS) +
-              `\n\n[response truncated — ${response.length} chars total, showing first ${MAX_RESPONSE_CHARS}]`
-          : response;
+        const note = limitReached
+          ? `\n\n[Note: "${workspace}" reached its iteration limit — the above is a partial result.]`
+          : "";
+        const full = response + note;
+        return full.length > MAX_RESPONSE_CHARS
+          ? full.slice(0, MAX_RESPONSE_CHARS) +
+              `\n\n[response truncated — ${full.length} chars total, showing first ${MAX_RESPONSE_CHARS}]`
+          : full;
       } catch (err) {
         if (err instanceof Error && err.name === "AbortError") {
           log.warn({ callerWorkspaceId, callee: workspace, timeoutMs: TIMEOUT_MS }, "call_agent timed out");

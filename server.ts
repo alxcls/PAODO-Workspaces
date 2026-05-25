@@ -55,7 +55,7 @@ httpServer.on("request", (req, res) => {
     const meta = { method, url, status: res.statusCode, durationMs, context: "http" };
     if (res.statusCode >= 500) log.error(meta, "http request");
     else if (res.statusCode >= 400) log.warn(meta, "http request");
-    else log.info(meta, "http request");
+    else if (!url.startsWith("/_next/") && !url.includes("/files/upload")) log.info(meta, "http request");
   };
   res.once("finish", logRequest);
   res.once("close", logRequest);
@@ -74,6 +74,11 @@ const wss = new WebSocketServer({ noServer: true });
 httpServer.on("upgrade", (req, socket, head) => {
   const { pathname } = new URL(req.url ?? "", "http://localhost");
   if (pathname === "/ws") {
+    if (!isAuthorized(req)) {
+      socket.write("HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: Basic realm=\"App\"\r\n\r\n");
+      socket.destroy();
+      return;
+    }
     wss.handleUpgrade(req, socket, head, (ws) => {
       wss.emit("connection", ws, req);
     });
@@ -104,9 +109,6 @@ wss.on("connection", (ws, req) => {
     );
     setTodos(workspaceId, []);
     ensureWatcher(workspaceId, workspace.dir);
-    ensureContainer(workspaceId, workspace.dir).catch((err) =>
-      log.error({ workspaceId, err }, "failed to start container")
-    );
   }
 
   const cleanup = () => {
@@ -135,6 +137,11 @@ wss.on("connection", (ws, req) => {
     }
   });
 });
+
+if ((!UI_USER || !UI_PASS) && !dev) {
+  log.error("USERNAME and PASSWORD must be set in production — refusing to start.");
+  process.exit(1);
+}
 
 assertDockerAvailable().then(() => app.prepare()).then(() => {
   httpServer.listen(port, () => {

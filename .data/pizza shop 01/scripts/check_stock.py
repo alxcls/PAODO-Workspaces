@@ -1,7 +1,6 @@
 """
 check_stock.py — Read-only inventory check. No file writes.
 
-This script is safe to run concurrently — it never touches the edit queue.
 Usage:
     python check_stock.py
     python check_stock.py <ingredient>
@@ -22,24 +21,45 @@ def load_inventory():
         return json.load(f)
 
 
+def load_recipes():
+    with open(RECIPES_FILE) as f:
+        return json.load(f)
+
+
+def fmt_qty(qty):
+    return int(qty) if qty == int(qty) else qty
+
+
 def print_inventory(data):
-    print(f"\n=== Inventory (last updated: {data['last_updated']}) ===")
-    for name, info in data["inventory"].items():
-        bar = "#" * int(info["quantity"] // 10)
-        print(f"  {name:<15} {info['quantity']:>5} {info['unit']:<8}  {bar}")
+    recipes = load_recipes()
+    inventory = data["inventory"]
+
+    print(f"\nInventory — {data['last_updated']}\n")
+    print(f"  {'ingredient':<16} {'qty':>6}  unit")
+    print(f"  {'─' * 16} {'─' * 6}  {'─' * 8}")
+
+    for name, info in inventory.items():
+        qty = info["quantity"]
+        unit = info["unit"]
+        pizzas = 0
+        for recipe in recipes.values():
+            if name in recipe:
+                pizzas = max(pizzas, int(qty // recipe[name]))
+        suffix = f"  → {pizzas} pizzas" if pizzas else ""
+        print(f"  {name:<16} {fmt_qty(qty):>6}  {unit:<8}{suffix}")
 
 
 def print_feasibility(inventory):
-    with open(RECIPES_FILE) as f:
-        recipes = json.load(f)
-    print("\n=== Pizzas we can make ===")
+    recipes = load_recipes()
+    print("\nPizzas we can make\n")
+
     for pizza, recipe in recipes.items():
         can_make = min(
             int(inventory[ing]["quantity"] // amt)
             for ing, amt in recipe.items()
             if ing in inventory
         )
-        print(f"  {pizza:<15} up to {can_make} pizzas")
+        print(f"  {pizza:<16} {can_make} pizzas")
 
 
 if __name__ == "__main__":
@@ -49,7 +69,7 @@ if __name__ == "__main__":
         ingredient = sys.argv[1]
         if ingredient in data["inventory"]:
             info = data["inventory"][ingredient]
-            print(f"{ingredient}: {info['quantity']} {info['unit']}")
+            print(f"{ingredient}: {fmt_qty(info['quantity'])} {info['unit']}")
         else:
             print(f"Unknown ingredient: {ingredient}")
         sys.exit(0)

@@ -53,7 +53,9 @@
 
 @layer components {
   .btn {
-    @apply inline-flex items-center justify-center gap-1.5 h-8 px-[14px] border bg-white font-medium text-sm cursor-pointer whitespace-nowrap;
+    /* use flex (not inline-flex) and allow shrinking/expansion inside flex containers */
+    @apply flex items-center justify-center gap-1.5 h-8 px-[14px] border bg-white font-medium text-sm cursor-pointer;
+    min-width: 0;
     border-radius: var(--radius-ctrl);
     border-color: var(--color-border);
     color: var(--color-text);
@@ -101,6 +103,7 @@
     &:focus { border-color: var(--color-primary-2); box-shadow: 0 0 0 3px var(--color-primary-soft); }
   }
   .textarea { @apply resize-none leading-[1.45]; }
+  .input-sm  { height: 32px; padding-top: 0; padding-bottom: 0; font-size: 14px; }
 
   .iconbtn {
     @apply inline-flex items-center justify-center w-7 h-7 border-0 bg-transparent cursor-pointer;

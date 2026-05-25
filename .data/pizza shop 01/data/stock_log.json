@@ -6,6 +6,13 @@
       "quantity": 400.0,
       "unit": "grams",
       "supplier": "supplier 02"
+    },
+    {
+      "timestamp": "2026-05-25T05:42:07",
+      "ingredient": "mushrooms",
+      "quantity": 400.0,
+      "unit": "grams",
+      "supplier": "supplier 01"
     }
   ]
 }

@@ -1,3 +1,5 @@
+// Tool that lists the agents reachable from this workspace via call_agent.
+// Reads the workspace graph to find callee IDs, then resolves their display names.
 import { tool } from "@langchain/core/tools";
 import { z } from "zod";
 import { getCallees } from "../../infra/workspaceGraph";

@@ -19,7 +19,7 @@ export async function POST(
   if (!body.message?.trim()) return new Response("message is required", { status: 400 });
 
   // Refresh the system prompt on every request so AGENTS.md changes are always picked up.
-  ws.messages[0] = buildSystemPrompt(ws.dir, await getGlobalLock(ws.id, ws.dir));
+  ws.messages[0] = buildSystemPrompt(ws.dir, await getGlobalLock(ws.id));
 
   log.info("chat stream started");
   const encoder = new TextEncoder();
@@ -31,7 +31,7 @@ export async function POST(
       };
 
       try {
-        for await (const event of runAgent(ws.messages, body.message!.trim(), ws.dir, ws.id, req.signal)) {
+        for await (const event of runAgent(ws.messages, body.message!.trim(), ws.dir, ws.id, { signal: req.signal, maxIterations: ws.maxIterations })) {
           send(event);
           if (event.type === "done") break;
         }

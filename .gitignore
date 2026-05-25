@@ -42,6 +42,7 @@ next-env.d.ts
 # runtime data
 /data/*
 !/data/.gitkeep
+/.data-backup
 
 # generated codebase graph
 graph.html

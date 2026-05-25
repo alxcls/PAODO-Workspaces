@@ -20,7 +20,7 @@ const SendIcon = () => (
 );
 
 interface Message {
-  role: "user" | "assistant" | "tool_start" | "error";
+  role: "user" | "assistant" | "tool_start" | "error" | "limit_notice";
   content?: string;
   toolName?: string;
   toolSummary?: string;
@@ -93,6 +93,8 @@ export default function ChatPanel({ workspaceId, onAgentTurnComplete }: { worksp
 
     let assistantContent = "";
     let assistantStarted = false;
+    let hadToolCalls = false;
+    let wasAborted = false;
 
     try {
       abortRef.current = new AbortController();
@@ -139,6 +141,7 @@ export default function ChatPanel({ workspaceId, onAgentTurnComplete }: { worksp
               }
             } else if (event.type === "tool_start") {
               setPendingTools((n) => n + 1);
+              hadToolCalls = true;
               setMessages((prev) => [
                 ...prev,
                 { role: "tool_start", toolName: event.name, toolSummary: toolArgSummary(event.name, event.args), toolDone: false },
@@ -156,6 +159,8 @@ export default function ChatPanel({ workspaceId, onAgentTurnComplete }: { worksp
                 }
                 return next;
               });
+            } else if (event.type === "limit_reached") {
+              setMessages((prev) => [...prev, { role: "limit_notice" }]);
             } else if (event.type === "error") {
               setMessages((prev) => [...prev, { role: "error", content: event.message }]);
             }
@@ -163,13 +168,18 @@ export default function ChatPanel({ workspaceId, onAgentTurnComplete }: { worksp
         }
       }
     } catch (err) {
-      if (!(err instanceof DOMException && err.name === "AbortError")) {
+      if (err instanceof DOMException && err.name === "AbortError") {
+        wasAborted = true;
+      } else {
         setMessages((prev) => [...prev, { role: "error", content: "Failed to reach server." }]);
       }
     } finally {
       abortRef.current = null;
       setStreaming(false);
       setPendingTools(0);
+      if (!wasAborted && !assistantStarted && hadToolCalls) {
+        setMessages((prev) => [...prev, { role: "error", content: "Agent stopped without generating a response." }]);
+      }
       onAgentTurnComplete?.();
     }
   }
@@ -214,12 +224,17 @@ export default function ChatPanel({ workspaceId, onAgentTurnComplete }: { worksp
               </div>
             );
           }
+          if (m.role === "limit_notice") {
+            return (
+              <div key={i} className="font-mono text-[12.5px] leading-[1.4] text-text-3 px-0.5 py-1">
+                ⚠ Iteration limit reached — response may be incomplete.
+              </div>
+            );
+          }
           if (m.role === "error") {
             return (
-              <div key={i} className="flex justify-center">
-                <div className="max-w-[84%] px-3 py-2 text-[13px] rounded-lg bg-danger-soft text-danger border border-danger">
-                  ✗ {m.content}
-                </div>
+              <div key={i} className="px-0.5 py-1 text-[12.5px] text-danger">
+                ✗ {m.content}
               </div>
             );
           }

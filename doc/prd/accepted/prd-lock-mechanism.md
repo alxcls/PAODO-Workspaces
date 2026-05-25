@@ -1,6 +1,6 @@
 # PRD — Lock Mechanism
 
-**Status:** Implemented  
+**Status:** Accepted  
 **Author:** @alxcls  
 **Related:** [VISION.md](../VISION.md), [prd-api-access.md](prd-api-access.md)
 

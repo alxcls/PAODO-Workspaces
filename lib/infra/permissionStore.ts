@@ -1,3 +1,6 @@
+// Per-workspace file permission store, persisted to `.agent-permissions/<workspaceId>.json`.
+// Tracks a global read-only lock and a list of individually locked paths (files or directories).
+// The agent checks these before writing; the UI exposes controls to set or lift locks.
 import fs from "fs/promises";
 import path from "path";
 import { createLogger } from "./logger";
@@ -5,15 +8,10 @@ import { createLogger } from "./logger";
 const log = createLogger("permissions");
 
 const WORKSPACES_ROOT = path.resolve(process.cwd(), "./data");
-const STORE_FILE = ".agent-permissions.json";
 const PERMISSIONS_DIR = path.join(WORKSPACES_ROOT, ".agent-permissions");
 
 function getStorePath(workspaceId: string): string {
   return path.join(PERMISSIONS_DIR, `${workspaceId}.json`);
-}
-
-function getLegacyStorePath(workspaceDir: string): string {
-  return path.join(workspaceDir, STORE_FILE);
 }
 
 interface PermStore {
@@ -21,55 +19,13 @@ interface PermStore {
   locked: string[]; // relative paths (files or directories)
 }
 
-async function readStore(workspaceId: string, workspaceDir: string): Promise<PermStore> {
-  const storePath = getStorePath(workspaceId);
+async function readStore(workspaceId: string): Promise<PermStore> {
   try {
-    const raw = await fs.readFile(storePath, "utf8");
+    const raw = await fs.readFile(getStorePath(workspaceId), "utf8");
     return JSON.parse(raw) as PermStore;
   } catch {
-    log.debug({ workspaceId }, "permission store not found — trying legacy path");
-    const legacyPath = getLegacyStorePath(workspaceDir);
-    try {
-      const raw = await fs.readFile(legacyPath, "utf8");
-      const parsed = JSON.parse(raw) as PermStore;
-      await writeStore(workspaceId, parsed);
-      await fs.rm(legacyPath).catch(() => {});
-      return parsed;
-    } catch {
-      log.debug({ workspaceId }, "no legacy store found — migrating from filesystem");
-      return migrateFromFilesystem(workspaceId, workspaceDir);
-    }
+    return { globalLock: false, locked: [] };
   }
-}
-
-async function migrateFromFilesystem(workspaceId: string, workspaceDir: string): Promise<PermStore> {
-  const locked: string[] = [];
-
-  async function scan(dir: string): Promise<void> {
-    let entries;
-    try {
-      entries = await fs.readdir(dir, { withFileTypes: true });
-    } catch {
-      return;
-    }
-    for (const e of entries) {
-      if (e.name === STORE_FILE) continue;
-      const full = path.join(dir, e.name);
-      const stat = await fs.stat(full).catch(() => null);
-      if (!stat) continue;
-      if (!(stat.mode & 0o200)) {
-        locked.push(path.relative(workspaceDir, full));
-        await fs.chmod(full, e.isDirectory() ? 0o755 : 0o644).catch(() => {});
-      }
-      if (e.isDirectory()) await scan(full);
-    }
-  }
-
-  await scan(workspaceDir);
-  const store: PermStore = { globalLock: false, locked };
-  await writeStore(workspaceId, store);
-  await fs.rm(getLegacyStorePath(workspaceDir)).catch(() => {});
-  return store;
 }
 
 async function writeStore(workspaceId: string, store: PermStore): Promise<void> {
@@ -85,10 +41,9 @@ async function writeStore(workspaceId: string, store: PermStore): Promise<void> 
 
 export async function isAgentLocked(workspaceId: string, workspaceDir: string, absPath: string): Promise<boolean> {
   const rel = path.relative(workspaceDir, absPath);
-  const store = await readStore(workspaceId, workspaceDir);
+  const store = await readStore(workspaceId);
   if (store.globalLock) return true;
 
-  // Check if path or any ancestor directory is in the locked list
   const parts = rel.split(path.sep);
   for (let i = 1; i <= parts.length; i++) {
     if (store.locked.includes(parts.slice(0, i).join(path.sep))) return true;
@@ -96,17 +51,20 @@ export async function isAgentLocked(workspaceId: string, workspaceDir: string, a
   return false;
 }
 
+// Read-only snapshot helper to avoid repeated disk reads during large tree walks.
+export async function readPermissionSnapshot(workspaceId: string): Promise<{ globalLock: boolean; locked: string[] }> {
+  return readStore(workspaceId);
+}
+
 export async function setPermission(
   workspaceId: string,
-  workspaceDir: string,
   relPath: string,
   perm: "R" | "RW"
 ): Promise<void> {
-  const store = await readStore(workspaceId, workspaceDir);
+  const store = await readStore(workspaceId);
   if (perm === "R") {
     if (!store.locked.includes(relPath)) store.locked.push(relPath);
   } else {
-    // Remove the path and any children that were individually locked under it
     store.locked = store.locked.filter(
       (p) => p !== relPath && !p.startsWith(relPath + path.sep)
     );
@@ -116,16 +74,15 @@ export async function setPermission(
 
 export async function setGlobalPermission(
   workspaceId: string,
-  workspaceDir: string,
   perm: "R" | "RW"
 ): Promise<void> {
-  const store = await readStore(workspaceId, workspaceDir);
+  const store = await readStore(workspaceId);
   store.globalLock = perm === "R";
   store.locked = [];
   await writeStore(workspaceId, store);
 }
 
-export async function getGlobalLock(workspaceId: string, workspaceDir: string): Promise<boolean> {
-  const store = await readStore(workspaceId, workspaceDir);
+export async function getGlobalLock(workspaceId: string): Promise<boolean> {
+  const store = await readStore(workspaceId);
   return store.globalLock;
 }

@@ -129,8 +129,14 @@ export default function FileViewer({ workspaceId, filePath, permission = "RW", o
     if (!filePath || !confirm(`Delete ${filePath.split("/").pop()}?`)) return;
     setDeleting(true);
     try {
-      await fetch(`/api/workspaces/${workspaceId}/files/content?path=${encodeURIComponent(filePath)}`, { method: "DELETE" });
-      onClose(); onDeleted?.();
+      const res = await fetch(`/api/workspaces/${workspaceId}/files/content?path=${encodeURIComponent(filePath)}`, { method: "DELETE" });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({} as any));
+        const msg = (body && (body.error || body.message)) || `${res.status} ${res.statusText}`;
+        setError(`Delete failed: ${msg}`);
+      } else {
+        onClose(); onDeleted?.();
+      }
     } catch { setError("Delete failed"); }
     finally { setDeleting(false); }
   }

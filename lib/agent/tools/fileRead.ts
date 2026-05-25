@@ -1,3 +1,5 @@
+// Tool that reads a workspace file and returns its content with line numbers (cat -n format).
+// Enforces workspace sandboxing via realpath checks and prefixes each result with the file's permission status.
 import { tool } from "@langchain/core/tools";
 import { z } from "zod";
 import { promises as fs } from "fs";

@@ -15,7 +15,7 @@ const log = createLogger("store");
 import type { BaseMessage } from "@langchain/core/messages";
 import { buildSystemPrompt } from "../agent/systemPrompt";
 import { removeContainer } from "./containerManager";
-import { getGlobalLock } from "./permissionStore";
+import { getGlobalLock, setPermission } from "./permissionStore";
 
 export interface Workspace {
   id: string;
@@ -23,6 +23,7 @@ export interface Workspace {
   dir: string;
   messages: BaseMessage[];
   createdAt: Date;
+  maxIterations: number;
 }
 
 interface WorkspaceRecord {
@@ -30,6 +31,7 @@ interface WorkspaceRecord {
   name: string;
   dir?: string;
   createdAt: string;
+  maxIterations?: number;
 }
 
 export const WORKSPACES_ROOT = path.resolve(process.cwd(), "./data");
@@ -44,10 +46,23 @@ const freshMap = !g._workspaces;
 if (!g._workspaces) g._workspaces = new Map();
 const workspaces = g._workspaces;
 
+function assertSafeWorkspaceName(name: string): void {
+  const dir = path.join(WORKSPACES_ROOT, name);
+  if (!dir.startsWith(WORKSPACES_ROOT + path.sep)) {
+    throw new Error(`Invalid workspace name: "${name}"`);
+  }
+}
+
 function loadRegistry(): void {
   try {
     const records: WorkspaceRecord[] = JSON.parse(fs.readFileSync(REGISTRY_FILE, "utf-8"));
     for (const r of records) {
+      try {
+        assertSafeWorkspaceName(r.name);
+      } catch {
+        log.warn({ name: r.name, id: r.id }, "skipping poisoned registry entry");
+        continue;
+      }
       const dir = path.join(WORKSPACES_ROOT, r.name);
       workspaces.set(r.id, {
         id: r.id,
@@ -55,6 +70,7 @@ function loadRegistry(): void {
         dir,
         messages: [buildSystemPrompt(dir)],
         createdAt: new Date(r.createdAt),
+        maxIterations: r.maxIterations ?? 30,
       });
     }
   } catch {
@@ -68,6 +84,7 @@ function saveRegistry(): void {
     id: w.id,
     name: w.name,
     createdAt: w.createdAt.toISOString(),
+    maxIterations: w.maxIterations,
   }));
   const tmp = REGISTRY_FILE + ".tmp";
   fs.writeFileSync(tmp, JSON.stringify(records, null, 2));
@@ -77,6 +94,7 @@ function saveRegistry(): void {
 if (freshMap) loadRegistry();
 
 export async function createWorkspace(name: string): Promise<Workspace> {
+  assertSafeWorkspaceName(name);
   const id = crypto.randomUUID();
   log.info({ name }, "creating workspace");
   const dir = path.join(WORKSPACES_ROOT, name);
@@ -92,6 +110,7 @@ The agent will follow these instructions on every request.
 `,
     "utf8"
   );
+  await setPermission(id, "AGENTS.md", "R");
 
   const workspace: Workspace = {
     id,
@@ -99,6 +118,7 @@ The agent will follow these instructions on every request.
     dir,
     messages: [buildSystemPrompt(dir)],
     createdAt: new Date(),
+    maxIterations: 30,
   };
 
   workspaces.set(id, workspace);
@@ -127,6 +147,7 @@ export async function renameWorkspace(id: string, name: string): Promise<boolean
   const ws = workspaces.get(id);
   if (!ws) return false;
   const trimmed = name.trim();
+  assertSafeWorkspaceName(trimmed);
   const newDir = path.join(WORKSPACES_ROOT, trimmed);
   try {
     if (ws.dir !== newDir) {
@@ -167,9 +188,17 @@ export async function deleteWorkspace(id: string): Promise<boolean> {
   return true;
 }
 
+export function setWorkspaceMaxIterations(id: string, n: number): boolean {
+  const ws = workspaces.get(id);
+  if (!ws) return false;
+  ws.maxIterations = n;
+  saveRegistry();
+  return true;
+}
+
 export async function resetWorkspaceMessages(id: string): Promise<void> {
   const ws = workspaces.get(id);
   if (!ws) return;
-  const isLocked = await getGlobalLock(id, ws.dir);
+  const isLocked = await getGlobalLock(id);
   ws.messages = [buildSystemPrompt(ws.dir, isLocked)];
 }

@@ -15,6 +15,7 @@ export type AgentEvent =
   | { type: "tool_start"; name: string; args: Record<string, unknown> }
   | { type: "tool_result"; name: string; result: string }
   | { type: "error"; message: string }
+  | { type: "limit_reached" }
   | { type: "done" };
 
 type AnyTool = { invoke: (args: Record<string, unknown>) => Promise<unknown> };
@@ -35,18 +36,6 @@ function contentToText(content: unknown): string {
   return "";
 }
 
-function extractInlineToolCall(raw: string): { name: string; parameters: Record<string, unknown> } | null {
-  const text = raw.trim();
-  if (!text.startsWith("{") || !text.endsWith("}")) return null;
-  try {
-    const parsed = JSON.parse(text) as { name?: string; parameters?: Record<string, unknown> };
-    if (!parsed.name || !parsed.parameters) return null;
-    return { name: parsed.name, parameters: parsed.parameters };
-  } catch {
-    return null;
-  }
-}
-
 const MAX_RESULT_CHARS = 10_000;
 
 async function invokeTool(tool: AnyTool, args: Record<string, unknown>): Promise<string> {
@@ -62,18 +51,48 @@ export async function* runAgent(
   userInput: string,
   workspaceDir: string,
   workspaceId: string,
-  signal?: AbortSignal,
+  { signal, maxIterations = 30 }: { signal?: AbortSignal; maxIterations?: number } = {},
 ): AsyncGenerator<AgentEvent> {
   const wlog = log.child({ workspaceId });
-  const { modelWithTools, toolMap } = buildTools(workspaceId, workspaceDir);
+  const { modelWithTools, model, toolMap } = buildTools(workspaceId, workspaceDir);
   const typedToolMap = toolMap as Record<string, AnyTool>;
   const socket = getWsForWorkspace(workspaceId);
 
   messages.push(new HumanMessage(userInput));
-  wlog.info("agent run started");
+  wlog.info({ maxIterations }, "agent run started");
 
+  let iterations = 0;
   try {
     while (true) {
+      if (iterations >= maxIterations) {
+        wlog.warn({ iterations }, "agent loop limit reached");
+        yield { type: "limit_reached" };
+        wlog.info("limit synthesis started");
+        try {
+          const synthMessages = [
+            ...messages,
+            new HumanMessage(
+              "You have reached the maximum number of steps. Briefly summarize what you accomplished and what still needs to be done. Do not attempt any tool calls."
+            ),
+          ];
+          const synthStream = await model.stream(synthMessages, { signal });
+          let synthText = "";
+          for await (const chunk of synthStream as AsyncIterable<AIMessageChunk>) {
+            const text = contentToText(chunk.content);
+            if (text) {
+              synthText += text;
+              yield { type: "token", content: text };
+            }
+          }
+          if (synthText) messages.push(new AIMessage(synthText));
+          wlog.info({ chars: synthText.length }, "limit synthesis done");
+        } catch (err) {
+          wlog.error({ err }, "limit synthesis failed");
+        }
+        yield { type: "done" };
+        break;
+      }
+      iterations++;
       // Stream one model turn. Tool-call chunks are accumulated by their index field
       // and reconstructed into complete calls after the stream ends.
       // Tokens are buffered and only emitted after the stream ends, when we know there
@@ -82,8 +101,11 @@ export async function* runAgent(
       const partials: PartialTC[] = [];
       let fullText = "";
 
+      const t0 = Date.now();
       const stream = await modelWithTools.stream(messages, { signal });
+      let ttftMs: number | null = null;
       for await (const chunk of stream as AsyncIterable<AIMessageChunk>) {
+        if (ttftMs === null) ttftMs = Date.now() - t0;
         const text = contentToText(chunk.content);
         if (text) {
           fullText += text;
@@ -96,6 +118,8 @@ export async function* runAgent(
           if (tcc.args) partials[idx].args += tcc.args;
         }
       }
+      const streamMs = Date.now() - t0;
+      wlog.debug({ iteration: iterations, ttftMs, streamMs }, "model stream timing");
 
       const toolCalls: ResolvedToolCall[] = partials
         .filter((p) => p.name)
@@ -106,26 +130,6 @@ export async function* runAgent(
         });
 
       if (!toolCalls.length) {
-        // No native tool calls — check for legacy inline JSON tool call in the text.
-        const inline = extractInlineToolCall(fullText);
-        if (inline) {
-          const tool = typedToolMap[inline.name];
-          if (tool) {
-            yield { type: "tool_start", name: inline.name, args: inline.parameters };
-            socket?.send(JSON.stringify({ type: "tool_call", name: inline.name, args: inline.parameters }));
-            wlog.debug({ name: inline.name, args: inline.parameters }, "tool call");
-            const resultStr = await invokeTool(tool, inline.parameters);
-            yield { type: "tool_result", name: inline.name, result: resultStr };
-            if (inline.name !== "execute_command") {
-              socket?.send(JSON.stringify({ type: "tool_result_log", name: inline.name, result: resultStr }));
-            }
-            wlog.debug({ name: inline.name, result: resultStr.slice(0, 200) }, "tool result");
-            messages.push(new AIMessage({ content: fullText }));
-            messages.push(new ToolMessage({ tool_call_id: `inline_${Date.now()}`, content: resultStr }));
-            continue;
-          }
-        }
-
         // Final text response — emit the buffered text now that we know no tool calls follow.
         if (fullText) yield { type: "token", content: fullText };
         messages.push(new AIMessage(fullText));
@@ -155,9 +159,11 @@ export async function* runAgent(
       const settled = await Promise.all(
         activeCalls.map(async (tc) => {
           const tool = typedToolMap[tc.name];
+          const toolStart = Date.now();
           const resultStr = tool
             ? await invokeTool(tool, tc.args).catch((err) => `Error: ${String(err)}`)
             : `Error: unknown tool "${tc.name}"`;
+          wlog.debug({ name: tc.name, toolMs: Date.now() - toolStart }, "tool timing");
           return { tc, resultStr };
         })
       );

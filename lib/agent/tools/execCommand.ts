@@ -21,7 +21,7 @@ export function buildExecCommandTool(workspaceId: string, workspaceDir: string) 
       }
       const [, isLocked] = await Promise.all([
         ensureContainer(workspaceId, workspaceDir),
-        getGlobalLock(workspaceId, workspaceDir),
+        getGlobalLock(workspaceId),
       ]);
       const userArgs = isLocked ? ["-u", RESTRICTED_USER] : [];
       const TIMEOUT_MS = 120_000;
@@ -102,7 +102,8 @@ Covers all shell operations including:
 - JSON extraction:    jq '.key' file.json
 - Piping/chaining:    cmd1 | cmd2, cmd1 && cmd2
 
-Do NOT use for: reading files (use file_read), editing files (use file_edit), writing files (use file_write).
+Do NOT use for: reading file contents (use file_read), editing file contents (use file_edit), writing new file contents (use file_write).
+USE THIS for: renaming files (mv), moving files, deleting files (rm), creating symlinks, and any other shell file-system operation that doesn't involve reading or writing file content.
 Always use POSIX/bash syntax. Never use PowerShell syntax.
 When the workspace is globally locked [R], write operations (npm install, file writes, apt-get, nvm install) are blocked — only read-only commands work.`,
       schema: z.object({

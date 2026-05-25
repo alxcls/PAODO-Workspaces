@@ -16,7 +16,7 @@ export function buildSystemPrompt(workspaceDir: string, isLocked = false): Syste
     const agentsMd = fs.readFileSync(path.join(workspaceDir, "AGENTS.md"), "utf-8");
     agentsSection = agentsMd.trim();
   } catch (err) {
-    log.debug({ err, workspaceDir }, "AGENTS.md not found or unreadable — skipping");
+    log.debug(`AGENTS.md not found in ${workspaceDir} — skipping`);
   }
 
   const lockNotice = isLocked

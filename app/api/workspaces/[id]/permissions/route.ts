@@ -25,7 +25,7 @@ export async function PATCH(
   }
 
   try {
-    await setPermission(ws.id, ws.dir, relPath, permission);
+    await setPermission(ws.id, relPath, permission);
   } catch (err) {
     createLogger("api").error({ err, workspaceId: id, path: relPath }, "failed to set permission");
     return NextResponse.json({ error: "failed to set permission" }, { status: 500 });
@@ -47,7 +47,7 @@ export async function PUT(
   }
 
   try {
-    await setGlobalPermission(ws.id, ws.dir, permission);
+    await setGlobalPermission(ws.id, permission);
   } catch (err) {
     createLogger("api").error({ err, workspaceId: id }, "failed to set global permission");
     return NextResponse.json({ error: "failed to set global permission" }, { status: 500 });

@@ -7,7 +7,6 @@
 - File tools enforce path boundaries — agents can't read outside their workspace directory via file read/write/edit/list
 - Glob tool rejects absolute path patterns — prevents host filesystem traversal from inside the tool layer
 - Basic Auth covers all routes including `/api/*` — Docker containers cannot reach workspace file or management endpoints without credentials
-- Serve route CORS restricted to `APP_URL` — no wildcard cross-origin access to workspace files
 - Memory/CPU limits per container (`CONTAINER_MEMORY`, `CONTAINER_CPUS`)
 - Containers auto-stop after 10 min idle
 - Agent-to-agent calls require an explicit graph edge
@@ -21,14 +20,6 @@
 **1. No TLS**
 The app serves plain HTTP. Basic Auth credentials and API keys travel unencrypted over the wire.
 Fix: put nginx or Caddy in front as a reverse proxy with a TLS certificate (Let's Encrypt).
-
-**2. WebSocket upgrade bypasses Basic Auth**
-The WS upgrade handler in `server.ts` runs in the `httpServer.on("upgrade", ...)` path, which is separate from the `request` handler where `isAuthorized` lives. Anyone who can reach the server and knows a workspace UUID can connect and receive real-time file change events without credentials.
-Fix: call `isAuthorized` during the WS upgrade handshake before calling `wss.handleUpgrade`.
-
-**3. Auth silently disabled**
-If `USERNAME` and `PASSWORD` env vars are not set, `isAuthorized` returns `true` for everyone — including Docker containers — with no warning. This nullifies the agent isolation guarantee.
-Fix: log a loud warning at startup when both vars are empty and `NODE_ENV` is not `development`.
 
 ### Medium priority
 

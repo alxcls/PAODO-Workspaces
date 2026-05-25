@@ -2,15 +2,15 @@
   "inventory": {
     "dough": {
       "unit": "balls",
-      "quantity": 8
+      "quantity": 7
     },
     "tomato_sauce": {
       "unit": "cups",
-      "quantity": 8
+      "quantity": 7
     },
     "mozzarella": {
       "unit": "grams",
-      "quantity": 2200.0
+      "quantity": 2000.0
     },
     "pepperoni": {
       "unit": "slices",
@@ -18,15 +18,15 @@
     },
     "mushrooms": {
       "unit": "grams",
-      "quantity": 520.0
+      "quantity": 840.0
     },
     "bell_pepper": {
       "unit": "grams",
-      "quantity": 340
+      "quantity": 280
     },
     "olives": {
       "unit": "grams",
-      "quantity": 260
+      "quantity": 220
     },
     "basil": {
       "unit": "leaves",
@@ -34,8 +34,8 @@
     },
     "olive_oil": {
       "unit": "ml",
-      "quantity": 180
+      "quantity": 170
     }
   },
-  "last_updated": "2026-05-23T22:00:58"
+  "last_updated": "2026-05-25T05:42:07"
 }

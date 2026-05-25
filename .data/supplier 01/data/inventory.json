@@ -10,7 +10,7 @@
     },
     "mushrooms": {
       "unit": "grams",
-      "quantity": 400.0
+      "quantity": 0.0
     },
     "bell_pepper": {
       "unit": "grams",
@@ -29,5 +29,5 @@
       "quantity": 0
     }
   },
-  "last_updated": "2026-05-23T21:49:33"
+  "last_updated": "2026-05-25T05:42:02"
 }

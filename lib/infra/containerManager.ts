@@ -42,9 +42,19 @@ function dockerCmd(...args: string[]): Promise<DockerResult> {
   return new Promise((resolve) => {
     let stdout = "";
     let stderr = "";
-    const proc = spawn("docker", args);
-    proc.stdout.on("data", (d: Buffer) => (stdout += d.toString()));
-    proc.stderr.on("data", (d: Buffer) => (stderr += d.toString()));
+    let proc: ReturnType<typeof spawn>;
+    try {
+      proc = spawn("docker", args);
+    } catch (err) {
+      // spawn can throw synchronously (e.g. EBADF during Next.js compilation) before
+      // the child process is created, so proc.on("error") never fires in that case.
+      resolve({ stdout: "", stderr: (err as Error).message, code: 1 });
+      return;
+    }
+    proc.stdout!.on("data", (d: Buffer) => (stdout += d.toString()));
+    proc.stderr!.on("data", (d: Buffer) => (stderr += d.toString()));
+    proc.stdout!.on("error", () => {});
+    proc.stderr!.on("error", () => {});
     proc.on("close", (code) => resolve({ stdout: stdout.trim(), stderr: stderr.trim(), code: code ?? 1 }));
     proc.on("error", (err) => resolve({ stdout: "", stderr: err.message, code: 1 }));
   });

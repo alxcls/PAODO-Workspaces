@@ -40,5 +40,5 @@ export function buildTools(workspaceId: string, workspaceDir: string) {
 
   const modelWithTools = model.bindTools(tools);
 
-  return { modelWithTools, toolMap };
+  return { modelWithTools, model, toolMap };
 }

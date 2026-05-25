@@ -44,7 +44,7 @@ export function buildFileWriteTool(workspaceId: string, workspaceDir: string) {
       description: `Write full content to a file, creating or overwriting it.
 ALWAYS use this when the user asks you to "write", "create", or "save" a file — never output the content as a code block in text.
 Use for creating new files or complete rewrites. For targeted edits to existing files, prefer file_edit.
-If the file already exists, you MUST read it first with file_read.
+If the file already exists and you need to preserve or merge its content, read it first with file_read. If you are replacing it wholesale or creating a new file, skip the read.
 If file_read shows [R] for the file, or list_directory shows [R] for the target directory, DO NOT call this tool — tell the user the file or folder is locked instead.`,
       schema: z.object({
         file_path: z.string().describe("File path relative to workspace root"),

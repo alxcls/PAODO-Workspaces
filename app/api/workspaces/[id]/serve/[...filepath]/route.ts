@@ -8,6 +8,11 @@ import fs from "fs/promises";
 import path from "path";
 import { createLogger } from "@/lib/infra/logger";
 
+// Omitting allow-same-origin is intentional: it forces the page to a null origin so
+// fetch() calls to the app's own API routes are cross-origin and blocked by CORS.
+const SANDBOX_CSP =
+  "sandbox allow-scripts allow-forms allow-popups allow-modals allow-top-navigation-by-user-activation";
+
 const EXT_MIME: Record<string, string> = {
   html: "text/html; charset=utf-8",
   htm: "text/html; charset=utf-8",
@@ -63,10 +68,12 @@ export async function GET(
     const resolved = await assertInsideWorkspace(ws.dir, absPath);
     const buf = await fs.readFile(resolved);
     const mime = await getMime(resolved, buf);
+    const needsSandbox = mime.startsWith("text/html") || mime === "image/svg+xml";
     return new Response(buf, {
       headers: {
         "Content-Type": mime,
         "Cache-Control": "no-cache",
+        ...(needsSandbox && { "Content-Security-Policy": SANDBOX_CSP }),
       },
     });
   } catch (err) {

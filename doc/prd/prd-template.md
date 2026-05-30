@@ -19,8 +19,3 @@
 ### Must have
 
 ### Nice to have
-
-## Open questions
-
-| Question | Owner | Status |
-|----------|-------|--------|

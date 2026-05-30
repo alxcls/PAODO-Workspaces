@@ -60,9 +60,3 @@ As a developer reviewing what the agent wrote, I can switch any previewed file b
 - **Markdown styles**: A lightweight stylesheet scoped to `.md-preview` that renders headings, tables, and code blocks with visual hierarchy (font sizes, spacing, borders) rather than bare browser defaults.
 
 ---
-
-## Open questions
-
-| Question | Owner | Status |
-|----------|-------|--------|
-| Did we enforce a tight enough security around the html visualizer ? | alxcls | Open |

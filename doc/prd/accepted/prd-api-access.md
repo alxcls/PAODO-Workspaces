@@ -44,9 +44,3 @@ A workspace agent is useful beyond the browser UI — it should be triggerable f
 ### Nice to have
 
 - UI to manage the key state (generate, revoke, enable/disable) directly from the workspace settings
-
-## Open questions
-
-| Question | Owner | Status |
-|----------|-------|--------|
-| Should we enhance concurrency between agent call, citizen developer call, external API call ? | @alxcls | Open |

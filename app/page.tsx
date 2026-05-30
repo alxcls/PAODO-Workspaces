@@ -39,6 +39,7 @@ export default function HomePage() {
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [renaming, setRenaming] = useState(false);
   const [renameDraft, setRenameDraft] = useState("");
+  const [graphEnabled, setGraphEnabled] = useState(false);
 
   const fetchWorkspaces = useCallback(async () => {
     const res = await fetch("/api/workspaces");
@@ -46,6 +47,13 @@ export default function HomePage() {
   }, []);
 
   useEffect(() => { fetchWorkspaces(); }, [fetchWorkspaces]);
+
+  useEffect(() => {
+    fetch("/api/config")
+      .then((r) => r.json())
+      .then((cfg) => setGraphEnabled(cfg.graphEnabled ?? false))
+      .catch(() => {});
+  }, []);
 
   const selected = workspaces.find((w) => w.id === selectedId);
 
@@ -112,16 +120,18 @@ export default function HomePage() {
           </div>
         }
         right={
-          <button className="btn btn-ghost text-[13px] gap-1.5 text-text-2 hover:text-primary" onClick={() => router.push("/graph")} title="Agent Network">
-            <svg width="15" height="15" viewBox="0 0 15 15" fill="none">
-              <circle cx="2.5" cy="7.5" r="2" stroke="currentColor" strokeWidth="1.3" />
-              <circle cx="12.5" cy="3" r="2" stroke="currentColor" strokeWidth="1.3" />
-              <circle cx="12.5" cy="12" r="2" stroke="currentColor" strokeWidth="1.3" />
-              <line x1="4.4" y1="6.5" x2="10.6" y2="3.6" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
-              <line x1="4.4" y1="8.5" x2="10.6" y2="11.4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
-            </svg>
-            Network
-          </button>
+          graphEnabled ? (
+            <button className="btn btn-ghost text-[13px] gap-1.5 text-text-2 hover:text-primary" onClick={() => router.push("/graph")} title="Agent Network">
+              <svg width="15" height="15" viewBox="0 0 15 15" fill="none">
+                <circle cx="2.5" cy="7.5" r="2" stroke="currentColor" strokeWidth="1.3" />
+                <circle cx="12.5" cy="3" r="2" stroke="currentColor" strokeWidth="1.3" />
+                <circle cx="12.5" cy="12" r="2" stroke="currentColor" strokeWidth="1.3" />
+                <line x1="4.4" y1="6.5" x2="10.6" y2="3.6" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+                <line x1="4.4" y1="8.5" x2="10.6" y2="11.4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+              </svg>
+              Network
+            </button>
+          ) : null
         }
       />
 

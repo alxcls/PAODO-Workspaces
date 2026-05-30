@@ -1,7 +1,0 @@
-{
-  "inventory": {
-    "bell_pepper": { "unit": "grams", "quantity": 2000.0 },
-    "basil": { "unit": "leaves", "quantity": 500.0 }
-  },
-  "last_updated": "2026-05-23T13:01:17"
-}

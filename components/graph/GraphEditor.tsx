@@ -74,9 +74,10 @@ export default function GraphEditor() {
   useEffect(() => {
     Promise.all([
       fetch("/api/workspaces").then((r) => r.json()) as Promise<WorkspaceItem[]>,
-      fetch("/api/workspace-graph").then((r) => r.json()) as Promise<{
-        edges: Edge[]; positions: Record<string, { x: number; y: number }>;
-      }>,
+      fetch("/api/workspace-graph").then((r) => {
+        if (!r.ok) throw new Error("graph-disabled");
+        return r.json() as Promise<{ edges: Edge[]; positions: Record<string, { x: number; y: number }> }>;
+      }),
     ])
       .then(([wss, graph]) => {
         const positions = graph.positions ?? {};
@@ -88,8 +89,14 @@ export default function GraphEditor() {
         setEdges((graph.edges ?? []).map((e) => ({ ...e, ...EDGE_STYLE })));
         setReady(true);
       })
-      .catch(() => setReady(true));
-  }, [setNodes, setEdges]);
+      .catch((e: unknown) => {
+        if (e instanceof Error && e.message === "graph-disabled") {
+          router.replace("/");
+        } else {
+          setReady(true);
+        }
+      });
+  }, [setNodes, setEdges, router]);
 
   useEffect(() => {
     const handler = (e: BeforeUnloadEvent) => { if (!isDirty) return; e.preventDefault(); };
@@ -123,17 +130,25 @@ export default function GraphEditor() {
   const persist = useCallback(async () => {
     const positions: Record<string, { x: number; y: number }> = {};
     nodesRef.current.forEach((n) => { positions[n.id] = n.position; });
-    await fetch("/api/workspace-graph", {
+    const res = await fetch("/api/workspace-graph", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ edges: edgesRef.current, positions }),
     });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({})) as { error?: string };
+      throw new Error(body.error ?? `Save failed (${res.status})`);
+    }
   }, []);
 
   const handleSave = useCallback(async () => {
-    await persist(); setIsDirty(false); setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
-  }, [persist]);
+    try {
+      await persist(); setIsDirty(false); setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+    } catch (err) {
+      showError(err instanceof Error ? err.message : "Save failed");
+    }
+  }, [persist, showError]);
 
   const handleBack = useCallback(() => {
     if (isDirty) setShowUnsavedModal(true);
@@ -141,8 +156,12 @@ export default function GraphEditor() {
   }, [isDirty, router]);
 
   const handleSaveAndLeave = useCallback(async () => {
-    await persist(); router.push("/");
-  }, [persist, router]);
+    try {
+      await persist(); router.push("/");
+    } catch (err) {
+      showError(err instanceof Error ? err.message : "Save failed");
+    }
+  }, [persist, router, showError]);
 
   return (
     <div className="h-screen flex flex-col bg-bg-tint">

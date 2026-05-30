@@ -1,7 +1,0 @@
-{
-  "globalLock": false,
-  "locked": [
-    "data/values.json",
-    "randomize.js"
-  ]
-}

@@ -7,6 +7,7 @@ import { type NextRequest } from "next/server";
 import { getWorkspace } from "@/lib/infra/workspaceStore";
 import { validateKey } from "@/lib/infra/apiKeyStore";
 import { checkRateLimit } from "@/lib/infra/rateLimit";
+import { getClientIp } from "@/lib/infra/clientIp";
 import { createLogger } from "@/lib/infra/logger";
 import { makeAgentStream } from "@/lib/agent/agentStream";
 
@@ -14,7 +15,7 @@ export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const ip = req.headers.get("x-forwarded-for")?.split(",")[0].trim() ?? "unknown";
+  const ip = getClientIp(req);
   const rl = checkRateLimit(ip);
   if (!rl.ok) {
     const { id } = await params;

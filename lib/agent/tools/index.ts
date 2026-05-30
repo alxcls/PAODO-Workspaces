@@ -1,6 +1,8 @@
-// Assembles the full agent tool set and binds it to the OpenAI model.
+// Assembles the full agent tool set and binds it to the configured LLM.
+// Provider is selected via LLM_PROVIDER env var ("openai" default, "anthropic").
 // Each tool receives the workspace directory and/or workspace ID to scope operations to the correct workspace.
 import { ChatOpenAI } from "@langchain/openai";
+import { ChatAnthropic } from "@langchain/anthropic";
 import { buildExecCommandTool } from "./execCommand";
 import { buildFileReadTool } from "./fileRead";
 import { buildFileEditTool } from "./fileEdit";
@@ -13,13 +15,18 @@ import { buildAgentCallTool } from "./agentCall";
 import { buildListAgentsTool } from "./listAgents";
 
 export function buildTools(workspaceId: string, workspaceDir: string) {
-  const modelName = process.env.OPENAI_MODEL;
-  if (!modelName) throw new Error("OPENAI_MODEL is not set in .env");
+  const provider = process.env.LLM_PROVIDER ?? "openai";
 
-  const model = new ChatOpenAI({
-    modelName,
-    openAIApiKey: process.env.OPENAI_API_KEY,
-  });
+  let model: ChatOpenAI | ChatAnthropic;
+  if (provider === "anthropic") {
+    const modelName = process.env.ANTHROPIC_MODEL;
+    if (!modelName) throw new Error("ANTHROPIC_MODEL is not set in .env");
+    model = new ChatAnthropic({ model: modelName, apiKey: process.env.ANTHROPIC_API_KEY });
+  } else {
+    const modelName = process.env.OPENAI_MODEL;
+    if (!modelName) throw new Error("OPENAI_MODEL is not set in .env");
+    model = new ChatOpenAI({ modelName, openAIApiKey: process.env.OPENAI_API_KEY });
+  }
 
   const tools = [
     buildExecCommandTool(workspaceId, workspaceDir),
@@ -30,8 +37,9 @@ export function buildTools(workspaceId: string, workspaceDir: string) {
     buildWebFetchTool(),
     buildGlobTool(workspaceId, workspaceDir),
     buildListDirectoryTool(workspaceId, workspaceDir),
-    buildAgentCallTool(workspaceId),
-    buildListAgentsTool(workspaceId),
+    ...(process.env.GRAPH_ENABLED === "true"
+      ? [buildAgentCallTool(workspaceId), buildListAgentsTool(workspaceId)]
+      : []),
   ];
 
   const toolMap: Record<string, (typeof tools)[number]> = Object.fromEntries(

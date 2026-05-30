@@ -63,10 +63,3 @@ As a user with a file open in the viewer, if the agent deletes it, the viewer cl
 - WebSocket reconnect with backoff so the live feed survives server restarts.
 
 ---
-
-## Open questions
-
-| Question | Owner | Status |
-|----------|-------|--------|
-| Should the file tree refresh mid-turn, not only at end-of-turn? | alxcls | Open |
-| Should self-write suppression also apply to agent tool writes? | alxcls | Open |

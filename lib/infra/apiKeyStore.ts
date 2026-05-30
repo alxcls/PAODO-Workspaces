@@ -18,7 +18,6 @@ if (!g._apiKeys) {
   try {
     g._apiKeys = JSON.parse(readFileSync(FILE, "utf-8")) as Store;
   } catch {
-    log.debug("api key store not found — starting fresh");
     g._apiKeys = {};
   }
 }

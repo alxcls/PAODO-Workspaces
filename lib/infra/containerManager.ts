@@ -7,11 +7,14 @@
 // Bind mount:       <workspaceDir> → /workspace  (host files, shared with file tools)
 // Resource limits:  CONTAINER_MEMORY / CONTAINER_CPUS env vars (defaults: 1g / 1.0)
 import { spawn } from "child_process";
+import { createHash } from "crypto";
+import { readFile } from "fs/promises";
 import { createLogger } from "./logger";
 
 const log = createLogger("container");
 
 const CONTAINER_IMAGE = process.env.CONTAINER_IMAGE ?? "paodo-workspace";
+const HASH_LABEL = "paodo.workspace-hash";
 const CONTAINER_MEMORY = process.env.CONTAINER_MEMORY ?? "1g";
 const CONTAINER_CPUS = process.env.CONTAINER_CPUS ?? "1.0";
 const IDLE_TIMEOUT_MS = parseInt(process.env.CONTAINER_IDLE_MS ?? "", 10) || 10 * 60 * 1000;
@@ -97,6 +100,7 @@ async function _ensureContainer(workspaceId: string, workspaceDir: string): Prom
     `--memory=${CONTAINER_MEMORY}`,
     `--cpus=${CONTAINER_CPUS}`,
     "-v", `${workspaceDir}:/workspace`,
+    "--security-opt", "no-new-privileges:true",
     CONTAINER_IMAGE,
     "sleep", "infinity",
   );
@@ -148,16 +152,34 @@ export async function assertDockerAvailable(): Promise<void> {
   await ensureWorkspaceImage();
 }
 
-async function ensureWorkspaceImage(): Promise<void> {
-  const check = await dockerCmd("image", "inspect", CONTAINER_IMAGE);
-  if (check.code === 0) return;
+async function dockerfileHash(): Promise<string | null> {
+  try {
+    const content = await readFile("Dockerfile.workspace");
+    return createHash("sha256").update(content).digest("hex").slice(0, 16);
+  } catch {
+    return null;
+  }
+}
 
-  log.info({ image: CONTAINER_IMAGE }, "workspace image not found — building it now (this runs once)...");
+async function ensureWorkspaceImage(): Promise<void> {
+  const hash = await dockerfileHash();
+  const check = await dockerCmd("image", "inspect", CONTAINER_IMAGE);
+
+  if (check.code === 0) {
+    if (!hash) return; // can't read Dockerfile.workspace — assume image is current
+    const label = await dockerCmd("image", "inspect", "--format", `{{index .Config.Labels "${HASH_LABEL}"}}`, CONTAINER_IMAGE);
+    if (label.stdout === hash) return;
+    log.info({ image: CONTAINER_IMAGE }, "Dockerfile.workspace changed — rebuilding workspace image (takes a few minutes)...");
+  } else {
+    log.info({ image: CONTAINER_IMAGE }, "workspace image not found — building now (takes a few minutes)...");
+  }
+
+  const buildArgs = ["build", "-f", "Dockerfile.workspace", "-t", CONTAINER_IMAGE];
+  if (hash) buildArgs.push("--label", `${HASH_LABEL}=${hash}`);
+  buildArgs.push(".");
 
   await new Promise<void>((resolve, reject) => {
-    const proc = spawn("docker", ["build", "-f", "Dockerfile.workspace", "-t", CONTAINER_IMAGE, "."], {
-      stdio: ["ignore", "inherit", "inherit"],
-    });
+    const proc = spawn("docker", buildArgs, { stdio: ["ignore", "inherit", "inherit"] });
     proc.on("close", (code: number | null) => {
       if (code === 0) resolve();
       else reject(new Error(`docker build exited with code ${code}`));

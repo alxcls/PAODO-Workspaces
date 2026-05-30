@@ -50,11 +50,3 @@ The user cannot simply block all script execution, because some scripts are the 
 
 - Tooltip on the crown badge: "Trusted script — can write to locked files. Only you can grant this."
 - When the agent is blocked by a missing trust grant, it names the script it would have used and prompts the user to crown it if they agree
-
-## Open questions
-
-| Question | Owner | Status |
-|----------|-------|--------|
-| Should trusted status apply to the script file itself or to the (script, locked-file) pair — i.e. can a trusted script write to *any* locked file or only specific ones? | @alxcls | Open |
-| How is trust enforced at runtime — pre-execution check or post-write watcher revert? | @alxcls | Open |
-| Should the agent be able to see which scripts are trusted (to suggest running them) or should that be hidden to prevent planning a bypass? | @alxcls | Open |

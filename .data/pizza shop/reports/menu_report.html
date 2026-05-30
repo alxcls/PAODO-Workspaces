@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Pizza Shop — Menu</title>
+  <style>
+    :root {
+      --background-color: #ffffff;
+      --panel-color: rgba(255, 255, 255, 0.9);
+      --accent: #d6411c;
+    }
+    body {
+      font-family: 'Segoe UI', sans-serif;
+      background: var(--background-color);
+      color: #131313;
+      margin: 0;
+      padding: 2rem;
+    }
+    .banner-wrapper {
+      margin: -2rem -2rem 1.5rem -2rem;
+    }
+    .banner {
+      display: block;
+      width: 100%;
+      height: auto;
+    }
+    section {
+      background: var(--panel-color);
+      border-radius: 1rem;
+      padding: 1.75rem;
+      margin-bottom: 1.5rem;
+      box-shadow: 0 15px 30px rgba(0, 0, 0, 0.08);
+      border: 1px solid rgba(212, 65, 28, 0.2);
+      transition: transform 0.2s ease, box-shadow 0.2s ease;
+    }
+    section:hover {
+      transform: translateY(-3px);
+      box-shadow: 0 25px 35px rgba(0, 0, 0, 0.1);
+    }
+    h2 {
+      margin: 0 0 0.25rem 0;
+      font-size: 1.6rem;
+      letter-spacing: 0.01em;
+    }
+    .note {
+      font-size: 0.95rem;
+      color: #5d5d5d;
+      margin-top: 0.75rem;
+    }
+    .alert {
+      font-weight: 600;
+      color: var(--accent);
+    }
+    .menu-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 1rem;
+      margin-top: 1.25rem;
+    }
+    .menu-card {
+      background: rgba(255, 255, 255, 0.95);
+      border-radius: 0.75rem;
+      padding: 1.1rem 1.4rem 1.2rem;
+      border: 1px solid rgba(212, 65, 28, 0.12);
+      box-shadow: 0 8px 20px rgba(0, 0, 0, 0.06);
+    }
+    .menu-card h3 {
+      margin: 0 0 0.35rem 0;
+      font-size: 1.15rem;
+      color: var(--accent);
+      letter-spacing: 0.01em;
+    }
+    .menu-card-divider {
+      border: none;
+      border-top: 1px solid rgba(212, 65, 28, 0.2);
+      margin: 0 0 0.55rem 0;
+    }
+    .ingredients {
+      font-size: 0.9rem;
+      color: #5d5d5d;
+      font-style: italic;
+      margin: 0;
+      line-height: 1.5;
+    }
+    @media (max-width: 640px) {
+      body { padding: 1.25rem; }
+      .banner-wrapper { margin: -1.25rem -1.25rem 1.25rem -1.25rem; }
+      .menu-grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="banner-wrapper">
+    <img src="../img/banner.jpg" alt="Pizza Shop banner" class="banner" />
+  </div>
+  <section>
+    <h2>Menu</h2>
+    <p class="note">Currently available pizzas</p>
+    <div class="menu-grid" id="menu-grid">
+    </div>
+  </section>
+  <script>
+    const RECIPES_URL = new URL('../data/recipes.json', document.baseURI).href;
+    const grid = document.getElementById('menu-grid');
+
+    function capitalize(str) {
+      return str.replaceAll('_', ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+    }
+
+    function buildMenuCards(recipes) {
+      return Object.entries(recipes)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([pizza, ingredients]) => {
+          const ingredientList = Object.keys(ingredients).map(capitalize).join(', ');
+          return `<article class="menu-card">
+            <h3>${capitalize(pizza)}</h3>
+            <hr class="menu-card-divider" />
+            <p class="ingredients">${ingredientList}</p>
+          </article>`;
+        })
+        .join('');
+    }
+
+    async function refreshMenu() {
+      try {
+        const response = await fetch(`${RECIPES_URL}?t=${Date.now()}`);
+        if (!response.ok) {
+          throw new Error(`${response.status} ${response.statusText}`);
+        }
+        const recipes = await response.json();
+        grid.innerHTML = buildMenuCards(recipes);
+      } catch (error) {
+        grid.innerHTML = '<p>Unable to load menu.</p>';
+        console.error(error);
+      }
+    }
+
+    window.addEventListener('DOMContentLoaded', () => {
+      refreshMenu();
+      setInterval(refreshMenu, 180_000);
+    });
+  </script>
+</body>
+</html>

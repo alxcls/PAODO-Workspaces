@@ -15,10 +15,6 @@ export function buildExecCommandTool(workspaceId: string, workspaceDir: string) 
   const log = createLogger("execCommand");
   return tool(
     async ({ command }) => {
-      if (/\bchmod\b|\bchown\b|\bsudo\b|\bsu\b/.test(command)) {
-        log.warn({ workspaceId, command }, "blocked command");
-        return "Error: chmod, chown, sudo and su are not permitted. File permissions are managed by the user via the file tree UI.";
-      }
       const [, isLocked] = await Promise.all([
         ensureContainer(workspaceId, workspaceDir),
         getGlobalLock(workspaceId),

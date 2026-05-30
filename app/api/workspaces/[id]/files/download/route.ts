@@ -7,6 +7,21 @@ import path from "path";
 import JSZip from "jszip";
 import { createLogger } from "@/lib/infra/logger";
 
+async function addDirToZip(zip: JSZip, dirPath: string, zipPath: string) {
+  const entries = await fs.readdir(dirPath, { withFileTypes: true });
+  await Promise.all(
+    entries.map(async (entry) => {
+      const fullPath = path.join(dirPath, entry.name);
+      const entryZipPath = path.join(zipPath, entry.name);
+      if (entry.isDirectory()) {
+        await addDirToZip(zip, fullPath, entryZipPath);
+      } else {
+        zip.file(entryZipPath, await fs.readFile(fullPath));
+      }
+    })
+  );
+}
+
 export async function POST(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
@@ -31,7 +46,7 @@ export async function POST(
         const stat = await fs.stat(resolved);
         const relative = path.relative(wsDir, resolved);
         if (stat.isDirectory()) {
-          zip.folder(relative);
+          await addDirToZip(zip, resolved, relative);
         } else {
           zip.file(relative, await fs.readFile(resolved));
         }

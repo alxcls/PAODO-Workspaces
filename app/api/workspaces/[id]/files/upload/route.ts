@@ -7,6 +7,7 @@ export const maxDuration = 120;
 import { type NextRequest, NextResponse } from "next/server";
 import { getWorkspace } from "@/lib/infra/workspaceStore";
 import { checkRateLimit } from "@/lib/infra/rateLimit";
+import { getClientIp } from "@/lib/infra/clientIp";
 import fs from "fs/promises";
 import path from "path";
 import JSZip from "jszip";
@@ -19,7 +20,7 @@ export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const ip = req.headers.get("x-forwarded-for")?.split(",")[0].trim() ?? "unknown";
+  const ip = getClientIp(req);
   const rl = checkRateLimit(ip, { max: 200, bucket: "upload" });
   if (!rl.ok) {
     const { id } = await params;

@@ -1,9 +1,10 @@
 // Centre pane that loads and displays workspace files with syntax highlighting and inline editing.
-// Listens to WebSocket file-change events to auto-reload the open file when the agent modifies it,
-// but suppresses reload when the user has unsaved local edits.
+// File-change and file-delete notifications arrive via the imperative handle (notifyFilesChanged /
+// notifyFilesDeleted), called by the workspace page which owns the shared WebSocket connection.
+// Self-write suppression is signalled back to the page via the onSelfWrite prop after a save.
 "use client";
 
-import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo, forwardRef, useImperativeHandle } from "react";
 import dynamic from "next/dynamic";
 import hljs from "@/lib/highlighter";
 import ReactMarkdown from "react-markdown";
@@ -34,12 +35,20 @@ const CloseIcon = () => (
   </svg>
 );
 
-interface Props {
-  workspaceId: string; filePath: string | null; permission?: "R" | "RW";
-  onClose: () => void; onDeleted?: () => void;
+export interface FileViewerHandle {
+  notifyFilesChanged: (paths: string[]) => void;
+  notifyFilesDeleted: (paths: string[]) => void;
 }
 
-export default function FileViewer({ workspaceId, filePath, permission = "RW", onClose, onDeleted }: Props) {
+interface Props {
+  workspaceId: string; filePath: string | null; permission?: "R" | "RW";
+  onClose: () => void; onSelfWrite?: (path: string) => void;
+}
+
+const FileViewer = forwardRef<FileViewerHandle, Props>(function FileViewer(
+  { workspaceId, filePath, permission = "RW", onClose, onSelfWrite },
+  ref
+) {
   const [fileType, setFileType] = useState<"text" | "image" | "binary" | null>(null);
   const [content, setContent] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
@@ -52,13 +61,14 @@ export default function FileViewer({ workspaceId, filePath, permission = "RW", o
   const preRef = useRef<HTMLPreElement>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
   const gutterRef = useRef<HTMLDivElement>(null);
-  const wsRef = useRef<WebSocket | null>(null);
 
   const filePathRef = useRef<string | null>(filePath);
-  useEffect(() => { filePathRef.current = filePath; }, [filePath]);
   const isDirtyRef = useRef(false);
   const onCloseRef = useRef(onClose);
-  useEffect(() => { onCloseRef.current = onClose; }, [onClose]);
+
+  // Assign during render so the refs are always current before any effect or imperative call runs.
+  filePathRef.current = filePath;
+  onCloseRef.current = onClose;
 
   const lang = filePath ? detectLang(filePath) : "txt";
   const isHtml = /\.(html?|htm)$/i.test(filePath ?? "");
@@ -87,33 +97,24 @@ export default function FileViewer({ workspaceId, filePath, permission = "RW", o
     setShowPreview(lang === "markdown" || isHtml || lang === "json");
   }, [filePath, fetchContent, lang]);
 
-  useEffect(() => {
-    const ws = new WebSocket(`ws://${window.location.host}/ws?workspaceId=${workspaceId}`);
-    wsRef.current = ws;
-    ws.onmessage = (event) => {
-      try {
-        const msg = JSON.parse(event.data as string) as { type: string; paths?: string[] };
-        if (msg.type === "files_changed" && msg.paths && !isDirtyRef.current) {
-          const currentPath = filePathRef.current ?? "";
-          const directMatch = msg.paths.includes(currentPath);
-          const isHtmlFile = /\.(html?|htm)$/i.test(currentPath);
-          const siblingChanged = isHtmlFile && msg.paths.some(p => p !== currentPath);
-          if (directMatch) {
-            fetchContent(currentPath, true);
-            const isJsonFile = /\.json$/i.test(currentPath);
-            if (isHtmlFile || isJsonFile) setPreviewKey((k: number) => k + 1);
-          } else if (siblingChanged) {
-            setPreviewKey((k: number) => k + 1);
-          }
-        }
-        if (msg.type === "files_deleted" && msg.paths?.includes(filePathRef.current ?? "")) {
-          onCloseRef.current();
-        }
-      } catch { /* ignore */ }
-    };
-    ws.onclose = () => { if (wsRef.current === ws) wsRef.current = null; };
-    return () => { ws.close(); wsRef.current = null; };
-  }, [workspaceId, fetchContent]);
+  useImperativeHandle(ref, () => ({
+    notifyFilesChanged(paths: string[]) {
+      if (isDirtyRef.current) return;
+      const currentPath = filePathRef.current ?? "";
+      const directMatch = paths.includes(currentPath);
+      const isHtmlFile = /\.(html?|htm)$/i.test(currentPath);
+      const siblingChanged = isHtmlFile && paths.some(p => p !== currentPath);
+      if (directMatch) {
+        fetchContent(currentPath, true);
+        if (isHtmlFile || /\.json$/i.test(currentPath)) setPreviewKey(k => k + 1);
+      } else if (siblingChanged) {
+        setPreviewKey(k => k + 1);
+      }
+    },
+    notifyFilesDeleted(paths: string[]) {
+      if (paths.includes(filePathRef.current ?? "")) onCloseRef.current();
+    },
+  }), [fetchContent]);
 
   function syncScroll() {
     if (preRef.current && taRef.current) {
@@ -135,7 +136,7 @@ export default function FileViewer({ workspaceId, filePath, permission = "RW", o
         const msg = (body && (body.error || body.message)) || `${res.status} ${res.statusText}`;
         setError(`Delete failed: ${msg}`);
       } else {
-        onClose(); onDeleted?.();
+        onClose();
       }
     } catch { setError("Delete failed"); }
     finally { setDeleting(false); }
@@ -152,13 +153,10 @@ export default function FileViewer({ workspaceId, filePath, permission = "RW", o
       });
       if (!res.ok) { setError("Save failed"); return; }
       setContent(draft);
-      if (wsRef.current?.readyState === 1) {
-        wsRef.current.send(JSON.stringify({ type: "self_write", path: filePath }));
-      }
+      onSelfWrite?.(filePath);
     } catch { setError("Save failed"); }
     finally { setSaving(false); }
   }
-
 
   const htmlForPreview = useMemo(() => {
     if (!isHtml || !draft || !filePath) return draft;
@@ -182,8 +180,10 @@ export default function FileViewer({ workspaceId, filePath, permission = "RW", o
     }
   }, [draft, lang, fileType]);
 
-  let jsonParsed: object | null = null;
-  if (lang === "json" && draft) { try { jsonParsed = JSON.parse(draft); } catch { /* leave null */ } }
+  const jsonParsed = useMemo<object | null>(() => {
+    if (lang !== "json" || !draft) return null;
+    try { return JSON.parse(draft) as object; } catch { return null; }
+  }, [draft, lang]);
 
   const isLocked = permission === "R";
   const isDirty = fileType === "text" && draft !== content;
@@ -300,4 +300,6 @@ export default function FileViewer({ workspaceId, filePath, permission = "RW", o
       )}
     </div>
   );
-}
+});
+
+export default FileViewer;

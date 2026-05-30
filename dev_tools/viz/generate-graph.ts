@@ -122,6 +122,7 @@ function generateHTML(nodes: GraphNode[], edges: GraphEdge[]): string {
 <header>
   <h1>PAODO_WS &mdash; Codebase Graph</h1>
   <button class="icon-btn" id="resetBtn">Reset view</button>
+  <button class="icon-btn" id="resetLayoutBtn">Reset layout</button>
   <span class="stats" id="stats"></span>
 </header>
 
@@ -166,6 +167,41 @@ for (var j = 0; j < GRAPH_DATA.edges.length; j++) {
     }
   });
 }
+
+var POSITIONS_KEY = "PAODO_WS:graph:positions";
+
+var FCOSE_LAYOUT = {
+  name: "fcose",
+  quality: "default",
+  randomize: false,
+  animate: false,
+  nodeDimensionsIncludeLabels: true,
+  packComponents: true,
+  nodeRepulsion: 6000,
+  idealEdgeLength: 100,
+  edgeElasticity: 0.4,
+  gravity: 0.2,
+  numIter: 2500,
+  tile: true,
+  tilingPaddingVertical: 20,
+  tilingPaddingHorizontal: 20
+};
+
+function savePositions() {
+  var pos = {};
+  cy.nodes().forEach(function(n) { pos[n.id()] = n.position(); });
+  try { localStorage.setItem(POSITIONS_KEY, JSON.stringify(pos)); } catch(e) {}
+}
+
+function loadPositions() {
+  try { return JSON.parse(localStorage.getItem(POSITIONS_KEY) || "null"); } catch(e) { return null; }
+}
+
+var savedPositions = loadPositions();
+var allCovered = savedPositions && GRAPH_DATA.nodes.every(function(n) { return savedPositions[n.id]; });
+var initialLayout = allCovered
+  ? { name: "preset", positions: function(n) { return savedPositions[n.id()]; }, fit: true, padding: 40 }
+  : FCOSE_LAYOUT;
 
 var cy = cytoscape({
   container: document.getElementById("cy"),
@@ -233,33 +269,28 @@ var cy = cytoscape({
       style: { "opacity": 0.03 }
     }
   ],
-  layout: {
-    name: "fcose",
-    quality: "default",
-    randomize: false,
-    animate: false,
-    nodeDimensionsIncludeLabels: true,
-    packComponents: true,
-    nodeRepulsion: 6000,
-    idealEdgeLength: 100,
-    edgeElasticity: 0.4,
-    gravity: 0.2,
-    numIter: 2500,
-    tile: true,
-    tilingPaddingVertical: 20,
-    tilingPaddingHorizontal: 20
-  }
+  layout: initialLayout
 });
+
+savePositions();
+cy.on("dragfree", "node", savePositions);
 
 document.getElementById("stats").textContent =
   GRAPH_DATA.nodes.length + " files  ·  " + GRAPH_DATA.edges.length + " imports";
 
-// --- Reset ---
+// --- Reset view ---
 document.getElementById("resetBtn").addEventListener("click", function() {
   cy.nodes().removeClass("highlighted dimmed").style("opacity", 1);
   cy.edges().removeClass("highlighted dimmed").style("opacity", 0.75);
   cy.fit(undefined, 40);
   showEmpty();
+});
+
+// --- Reset layout ---
+document.getElementById("resetLayoutBtn").addEventListener("click", function() {
+  try { localStorage.removeItem(POSITIONS_KEY); } catch(e) {}
+  cy.layout(FCOSE_LAYOUT).run();
+  savePositions();
 });
 
 // --- Node click ---

@@ -3,6 +3,7 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { getWorkspace, deleteWorkspace, renameWorkspace, setWorkspaceMaxIterations } from "@/lib/infra/workspaceStore";
 import { checkRateLimit } from "@/lib/infra/rateLimit";
+import { getClientIp } from "@/lib/infra/clientIp";
 import { createLogger } from "@/lib/infra/logger";
 
 export async function GET(
@@ -19,7 +20,7 @@ export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const ip = req.headers.get("x-forwarded-for")?.split(",")[0].trim() ?? "unknown";
+  const ip = getClientIp(req);
   const rl = checkRateLimit(ip);
   if (!rl.ok) {
     const { id } = await params;
@@ -48,7 +49,7 @@ export async function DELETE(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const ip = req.headers.get("x-forwarded-for")?.split(",")[0].trim() ?? "unknown";
+  const ip = getClientIp(req);
   const rl = checkRateLimit(ip);
   if (!rl.ok) {
     const { id } = await params;

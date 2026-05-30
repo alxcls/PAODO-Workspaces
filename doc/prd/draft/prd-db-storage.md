@@ -42,10 +42,3 @@ Platform metadata — workspace registry, API keys, and the agent network graph 
 
 - Automatic migration from existing JSON files so no data is lost on upgrade
 - Storage layer abstracted behind an interface to allow swapping backends without touching business logic
-
-## Open questions
-
-| Question | Owner | Status |
-|----------|-------|--------|
-| Should permission state (`.agent-permissions/`) also move into the store? | @alxcls | Open |
-| Should graph node positions (display state) be stored alongside domain data or in a separate sidecar? | @alxcls | Open |

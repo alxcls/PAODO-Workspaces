@@ -38,8 +38,3 @@ Give citizen developer a simple, per-workspace control over how much work an age
 - When the iteration limit is reached, the agent produces a final text response before stopping, summarizing what it accomplished. This response is delivered through all interaction paths: chat UI, external API, and agent-to-agent calls.
 - The final response is accompanied by a clear note that the iteration limit was reached, so the caller knows the response may be incomplete.
 - The cap is enforced by the server regardless of what the agent decides to do — it cannot be bypassed by instructions in the workspace.
-
-## Open questions
-
-| Question | Owner | Status |
-|----------|-------|--------|

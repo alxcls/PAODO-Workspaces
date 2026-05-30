@@ -15,7 +15,7 @@ import { createLogger } from "../../infra/logger";
 // Shorter than the general tool result cap — agent responses are prose, not raw output,
 // so 8k is enough and keeps nested agent-call chains from ballooning the context.
 const MAX_RESPONSE_CHARS = 8_000;
-const TIMEOUT_MS = 120_000;
+const TIMEOUT_MS = 300_000;
 
 export function buildAgentCallTool(callerWorkspaceId: string) {
   const log = createLogger("agentCall");

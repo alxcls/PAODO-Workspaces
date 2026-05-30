@@ -1,12 +1,15 @@
 // Workspace page — the main three-column layout combining the file tree, file viewer, chat panel, and console.
 // Manages column/row resize state and coordinates file selection, viewer visibility, and tree refreshes across panels.
+// A single shared WebSocket (useWorkspaceSocket) routes files_changed / files_deleted events to both the
+// file tree (via treeRefreshKey) and the file viewer (via the imperative FileViewerHandle ref).
 "use client";
 
 import { use, useState, useEffect, useRef, useCallback } from "react";
 import FileTreePanel from "@/components/workspace/FileTreePanel";
-import FileViewer from "@/components/workspace/FileViewer";
+import FileViewer, { type FileViewerHandle } from "@/components/workspace/FileViewer";
 import ChatPanel from "@/components/workspace/ChatPanel";
 import ConsolePanel from "@/components/workspace/ConsolePanel";
+import { useWorkspaceSocket } from "@/lib/hooks/useWorkspaceSocket";
 
 export default function WorkspacePage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -26,6 +29,7 @@ export default function WorkspacePage({ params }: { params: Promise<{ id: string
   const rightRef = useRef<HTMLDivElement>(null);
   const colDragging = useRef<"left" | "right" | null>(null);
   const rowDragging = useRef(false);
+  const viewerRef = useRef<FileViewerHandle>(null);
 
   useEffect(() => {
     fetch(`/api/workspaces/${id}`)
@@ -37,6 +41,17 @@ export default function WorkspacePage({ params }: { params: Promise<{ id: string
       })
       .catch(() => {});
   }, [id]);
+
+  const { sendMessage } = useWorkspaceSocket(id, {
+    onFilesChanged: (paths) => {
+      setTreeRefreshKey((k) => k + 1);
+      viewerRef.current?.notifyFilesChanged(paths);
+    },
+    onFilesDeleted: (paths) => {
+      setTreeRefreshKey((k) => k + 1);
+      viewerRef.current?.notifyFilesDeleted(paths);
+    },
+  });
 
   useEffect(() => {
     const onMove = (e: MouseEvent) => {
@@ -105,9 +120,10 @@ export default function WorkspacePage({ params }: { params: Promise<{ id: string
           <div className="ws-divider" onMouseDown={() => startColDrag("left")} />
           <section className="flex-1 flex flex-col min-w-0 min-h-0 bg-bg">
             <FileViewer
+              ref={viewerRef}
               workspaceId={id} filePath={selectedFile} permission={selectedPermission}
               onClose={() => setViewerOpen(false)}
-              onDeleted={() => { setViewerOpen(false); setTreeRefreshKey((k) => k + 1); }}
+              onSelfWrite={(path) => sendMessage({ type: "self_write", path })}
             />
           </section>
         </>

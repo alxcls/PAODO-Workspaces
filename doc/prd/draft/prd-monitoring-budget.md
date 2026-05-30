@@ -37,11 +37,3 @@ A runaway agent or a misconfigured workspace can silently consume a large number
 
 - A warning notification when usage reaches a configurable percentage of the budget (e.g. 80%)
 - Budget resets on a schedule (daily, weekly, monthly)
-
-## Open questions
-
-| Question | Owner | Status |
-|----------|-------|--------|
-| Should the budget count input tokens, output tokens, or total? | @alxcls | Open |
-| Should hitting the budget lock the workspace or just stop the current run? | @alxcls | Open |
-| Should budget status be visible in the monitoring dashboard? | @alxcls | Open |

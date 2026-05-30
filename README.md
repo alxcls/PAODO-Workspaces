@@ -1,8 +1,8 @@
 # PAODO Workspace - Self-Hosted AI Workspace Agents
 
-A self-hosted platform for running small, grounded AI-managed services. Each **workspace** is an isolated Docker container with its own agent: write a service, drop in instructions, let the agent operate it. Agents can read and write files, run shell commands, fetch URLs, manage task lists, and call each other over a configurable agent network.
+A self-hosted platform for running small, grounded AI-managed services. Each **workspace** is an isolated Docker container with its own agent: write a service, drop in instructions, let the agent operate it. Agents can read and write files, run shell commands, fetch URLs, manage task lists. think VS Code and Claude Code in an isolated workspace as a service.
 
-![Workspace overview](doc/images/WORKSPACE.png)
+![Workspace overview](doc/images/DEMO_OVERVIEW.png)
 
 ## What it does
 
@@ -10,10 +10,11 @@ A self-hosted platform for running small, grounded AI-managed services. Each **w
 - **ReAct agent loop**: streams tool calls and responses in real time over SSE; final tokens stream word by word
 - **Full tool set**: file read/edit/write, shell execution, glob search, directory listing, web fetch, todo list
 - **Lock mechanism**: per-file and per-directory R/RW toggle protects workspace files from accidental agent edits without blocking scripts
-- **Agent-to-agent calls**: connect workspaces in a directed graph; agents delegate tasks to each other
 - **File browser**: view, edit, upload, and download files from the UI with syntax highlighting
 - **API access**: every workspace exposes an HTTP endpoint with an optional per-workspace API key
 - **Live console**: shell output and file-change notifications stream over WebSocket in real time
+- **Agent-to-agent calls** (Opt-in optional functionality): connect workspaces in a directed graph; agents delegate tasks to each other
+
 
 ## Quick start
 
@@ -25,7 +26,8 @@ npm install
 
 # 2. Configure
 cp .env.example .env
-# Set OPENAI_API_KEY in .env
+# Set OPENAI_API_KEY or ANTHROPIC_API_KEY in .env
+
 
 # 3. Start
 npm run dev
@@ -72,7 +74,7 @@ Browser / API client
               (bind-mounted dir)
 ```
 
-**Agent loop**: each turn the model receives a system prompt (built from the workspace's `AGENTS.md`), the conversation history, and tool results, then emits either a tool call or a final answer. Tool calls are executed, their output appended to history, and the loop continues until the model stops calling tools. Events (`tool_start`, `tool_result`, `token`, `done`) are streamed over SSE so the UI updates word by word.
+**Agent loop**: each turn the model receives a system prompt (built from the standard system prompt and workspace's `AGENTS.md`), the conversation history, and tool results, then emits either a tool call or a final answer. Tool calls are executed, their output appended to history, and the loop continues until the model stops calling tools. Events (`tool_start`, `tool_result`, `token`, `done`) are streamed over SSE so the UI updates word by word.
 
 **Sandboxing**: `execute_command` runs inside a per-workspace Docker container (`ws_<id>`) with the workspace directory bind-mounted to `/workspace`. Containers are created lazily, restarted automatically, and stopped after idle timeout. A global lock switches execution to a restricted user (`agent`, UID 999) that can read and run but not write.
 
@@ -96,9 +98,11 @@ Locked scripts can still be executed, locked files can still be updated by scrip
 
 ![Lock Mechanism](doc/images/LOCK_MECHANISM.png)
 
-## Agent network
+## Agent network *(experimental, opt-in)*
 
 The network page lets you draw directed edges between workspaces. An edge from workspace A to workspace B means A's agent can call B's agent using the `call_agent` tool. Calls are isolated: the callee runs with a fresh conversation history. Cycles are prevented in the UI.
+
+> **Note:** This feature is experimental and disabled by default. Agent-to-agent coordination adds complexity and may not suit every deployment. Enable it by setting `GRAPH_ENABLED=true` in your `.env`.
 
 ![Agent Network](doc/images/NETWORK_EXAMPLE.png)
 

@@ -4,6 +4,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { listWorkspaces, createWorkspace } from "@/lib/infra/workspaceStore";
 import { createLogger } from "@/lib/infra/logger";
 import { checkRateLimit } from "@/lib/infra/rateLimit";
+import { getClientIp } from "@/lib/infra/clientIp";
 
 export async function GET() {
   const list = listWorkspaces().map(({ id, name, createdAt }) => ({ id, name, createdAt }));
@@ -12,7 +13,7 @@ export async function GET() {
 
 export async function POST(req: NextRequest) {
   const log = createLogger("api").child({ route: "workspaces" });
-  const ip = req.headers.get("x-forwarded-for")?.split(",")[0].trim() ?? "unknown";
+  const ip = getClientIp(req);
   const rl = checkRateLimit(ip);
   if (!rl.ok) {
     log.warn({ ip }, "rate limit exceeded");

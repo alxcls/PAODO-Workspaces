@@ -1,6 +1,0 @@
-{
-  "catalog": {
-    "olives": { "unit": "grams", "price_per_unit": 0.007 },
-    "olive_oil": { "unit": "ml", "price_per_unit": 0.002 }
-  }
-}

@@ -1,0 +1,70 @@
+{
+  "pizzas_made": [
+    {
+      "timestamp": "2026-05-26T21:19:28",
+      "pizza": "veggie",
+      "ingredients_used": {
+        "dough": 1,
+        "tomato_sauce": 1,
+        "mozzarella": 200,
+        "mushrooms": 80,
+        "bell_pepper": 60,
+        "olives": 40,
+        "olive_oil": 10
+      }
+    },
+    {
+      "timestamp": "2026-05-26T21:19:29",
+      "pizza": "veggie",
+      "ingredients_used": {
+        "dough": 1,
+        "tomato_sauce": 1,
+        "mozzarella": 200,
+        "mushrooms": 80,
+        "bell_pepper": 60,
+        "olives": 40,
+        "olive_oil": 10
+      }
+    },
+    {
+      "timestamp": "2026-05-26T21:19:30",
+      "pizza": "veggie",
+      "ingredients_used": {
+        "dough": 1,
+        "tomato_sauce": 1,
+        "mozzarella": 200,
+        "mushrooms": 80,
+        "bell_pepper": 60,
+        "olives": 40,
+        "olive_oil": 10
+      }
+    },
+    {
+      "timestamp": "2026-05-26T21:19:31",
+      "pizza": "veggie",
+      "ingredients_used": {
+        "dough": 1,
+        "tomato_sauce": 1,
+        "mozzarella": 200,
+        "mushrooms": 80,
+        "bell_pepper": 60,
+        "olives": 40,
+        "olive_oil": 10
+      }
+    },
+    {
+      "timestamp": "2026-05-26T21:19:32",
+      "pizza": "veggie",
+      "ingredients_used": {
+        "dough": 1,
+        "tomato_sauce": 1,
+        "mozzarella": 200,
+        "mushrooms": 80,
+        "bell_pepper": 60,
+        "olives": 40,
+        "olive_oil": 10
+      }
+    }
+  ],
+  "last_updated": "2026-05-26T21:00:00"
+}

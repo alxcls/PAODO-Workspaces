@@ -48,9 +48,3 @@ The agent has unrestricted write access to every file in a workspace by default 
 
 - Lock state visible in the file tree as a persistent badge (not just on hover)
 - Bulk lock toggle at the workspace level (master lock button)
-
-## Open questions
-
-| Question | Owner | Status |
-|----------|-------|--------|
-| Right now in a unlocked workspace, if we lock the edit of a data.json folder the agent technically can create a new python script to edit data.json indirectly, we adress it through system prompt but we didn't find a way to harness it deterministically. | @alxcls | Addressed in [prd-trusted-scripts.md](prd-trusted-scripts.md), bypass documented in [agent-lock-bypass.md](../agent-lock-bypass.md) |

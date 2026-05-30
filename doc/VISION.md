@@ -34,7 +34,7 @@ Benefit : Agent has every tool required to manipulate data inside it's isolated 
 
 Benefit : protect critical data and configuration from accidental changes so you can let the agent work autonomously with confidence
 
-- **Agent network** — connect workspaces in a directed graph so agents can delegate tasks to each other
+- **Agent network** (optional and experimental) — connect workspaces in a directed graph so agents can delegate tasks to each other
 
 Benefit : build complex workflows by wiring together workspaces, each with a single responsibility, while staying in control of which agent can talk to which
 

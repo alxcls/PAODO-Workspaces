@@ -46,11 +46,6 @@ A citizen developer building a complex service needs to coordinate multiple spec
 
 - Visual graph editor where the user can see and edit connections between workspaces
 
-## Open questions
+## Note
 
-| Question | Owner | Status |
-|----------|-------|--------|
-| Should we add a color palette for each node in the workflow for clarity ? | @alxcls | Open |
-| Should we add history of conversation between agents ? | @alxcls | Open |
-| Should we add live execution visualization of agent call in the graph ? | @alxcls | Open |
-| relative to agent toolbox, should the caller agent be able to call multiple callees in parallel ? | @alxcls | Open |
+This feature is gated behind `GRAPH_ENABLED=true` and kept optional, as agent-to-agent coordination is inherently messy and may not align with the core product vision. It is experimental and should be evaluated before being promoted to a default-on capability.

@@ -37,10 +37,3 @@ While the agent is running, users have no indication of how many tokens are bein
 
 - Per-turn token count shown inline in the chat (e.g. a small annotation under each assistant response showing tokens used for that specific turn)
 - Visual highlight or warning when the session total exceeds a configurable threshold
-
-## Open questions
-
-| Question | Owner | Status |
-|----------|-------|--------|
-| Where exactly in the workspace UI should the counter appear? | @alxcls | Open |
-| Should the counter also show per-turn stats or a running total only? | @alxcls | Open |

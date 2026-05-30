@@ -1,6 +1,0 @@
-{
-  "catalog": {
-    "bell_pepper": { "unit": "grams", "price_per_unit": 0.004 },
-    "basil": { "unit": "leaves", "price_per_unit": 0.03 }
-  }
-}

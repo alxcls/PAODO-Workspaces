@@ -1,6 +1,6 @@
 # PRD — Workspace Isolation
 
-**Status:** Accepted (runtime selection: in progress)
+**Status:** Accepted
 **Author:** @alxcls
 **Related:** [VISION.md](../VISION.md), [prd-agent-network.md](prd-agent-network.md), [prd-lock-mechanism.md](prd-lock-mechanism.md)
 
@@ -14,15 +14,12 @@ Each workspace is meant to be an independent service with its own goal, its own 
 
 **Environment pollution between workspaces.** When a workspace installs a package (`npm install`, `pip install`, etc.), those packages must not end up visible to other workspaces. If they do, workspaces start depending on each other's side-effects — workspace B works because workspace A happened to install `pandas` first. That's invisible coupling that breaks without warning the moment workspace A is deleted or rebuilt.
 
-A third, related problem is runtime mismatch: a workspace building a Python 3.10 service should not be forced to use Python 3.12 just because that's what another workspace needed.
-
 ---
 
 ## Goals
 
 - An agent can only ever read or write files that belong to its own workspace
 - Packages installed in one workspace are completely invisible to every other workspace
-- Each workspace can declare which language runtime it needs (Python version, Node.js version, etc.) independently of every other workspace
 - Isolation is enforced at the infrastructure level — it does not depend on the agent following instructions
 
 ---
@@ -38,8 +35,6 @@ A third, related problem is runtime mismatch: a workspace building a Python 3.10
 ## User stories
 
 > As a citizen developer, I want to know that my "invoice-parser" workspace cannot accidentally read or overwrite files from my "customer-data" workspace, even if the agent makes a mistake.
-
-> As a citizen developer, I want to build one workspace in Python 3.10 and another in Node.js 20 — they should never interfere with each other's environments.
 
 > As a citizen developer, I want the agent to install any library it needs without worrying that it will break something in my other workspaces.
 
@@ -78,24 +73,9 @@ Each container is placed on its own private network. Containers cannot reach eac
 - Containers cannot communicate with each other at the network level. Cross-workspace interactions are only possible through the agent network tool.
 - The workspace's runtime environment (language versions, installed runtimes) is set at the workspace level and does not depend on what other workspaces have installed.
 
-### Must have (in progress — runtime selection)
-
-- When creating a workspace, the user can specify which primary language runtime it needs (e.g. Python 3.10, Node.js 18, Node.js 22).
-- The workspace container is built or configured with that runtime version. It does not share a runtime installation with any other workspace.
-- If no runtime is specified, the workspace gets sensible defaults (latest stable Python and Node.js).
-
 ### Nice to have
 
 - The user can declare a list of dependencies to pre-install when the workspace is first created (e.g. a `requirements.txt` or a `package.json`), so the agent does not need to waste time installing them on its first run.
 - The workspace settings panel shows the currently active runtime versions so the user can verify the environment without asking the agent.
 
 ---
-
-## Open questions
-
-| Question | Owner | Status |
-|----------|-------|--------|
-| How do we handle runtime selection UI — a dropdown at workspace creation, or a config file the user edits? | @alxcls | Open |
-| Should runtime version changes after workspace creation be allowed? Rebuilding the container would reset any manually installed packages. | @alxcls | Open |
-| The agent can write a script that references an absolute path outside the workspace and run it as a shell command — should we add a tighter sandbox (e.g. read-only root filesystem outside `/workspace`) to close this? | @alxcls | Open — see also [agent-lock-bypass.md](../agent-lock-bypass.md) |
-| Should we support workspaces that need more than one language (e.g. a Python backend + a Node.js build tool)? | @alxcls | Open |

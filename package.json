@@ -14,7 +14,7 @@
   "dependencies": {
     "@langchain/anthropic": "^1.4.0",
     "@langchain/core": "^1.1.45",
-    "@langchain/openai": "^1.4.5",
+    "@langchain/openai": "^1.4.7",
     "@xyflow/react": "^12.10.2",
     "chokidar": "3.5.3",
     "dotenv": "^17.4.2",

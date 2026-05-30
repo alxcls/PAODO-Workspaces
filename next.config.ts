@@ -10,6 +10,10 @@ const nextConfig: NextConfig = {
   logging: {
     incomingRequests: false,
   },
+  // Turbopack is the default build engine in Next.js 16. Empty config tells Next.js
+  // the webpack callback below is intentional and not a mistake. Turbopack handles
+  // ESM natively so no conditionNames equivalent is needed.
+  turbopack: {},
   webpack: (config, { webpack }) => {
     // jsoncrack-react ships ESM-only ("import" condition); webpack defaults don't include it
     config.resolve.conditionNames = ["import", ...(config.resolve.conditionNames ?? [])];

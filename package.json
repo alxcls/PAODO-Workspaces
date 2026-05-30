@@ -16,7 +16,7 @@
     "@langchain/core": "^1.1.45",
     "@langchain/openai": "^1.4.5",
     "@xyflow/react": "^12.10.2",
-    "chokidar": "3.5.3",
+    "chokidar": "5.0.0",
     "dotenv": "^17.4.2",
     "file-type": "^22.0.1",
     "highlight.js": "^11.11.1",

@@ -177,6 +177,11 @@ doc/                         Architecture docs, PRDs, ADRs
 - Token count monitoring
 - Scheduled agent triggers
 - Trusted scripts vs untrusted scripts
+- Workspace secrets
+- Workspace git versioning
+- Streaming reasoning display
+- Database storage
+- Agent database tools
 
 ## ADRs & PRDs
 

@@ -165,8 +165,6 @@ doc/                         Architecture docs, PRDs, ADRs
 
 - **Single instance only**: the rate limiter, WebSocket registry, and workspace registry use in-memory state. Running multiple server processes without a shared store will cause inconsistent behavior.
 
-- **Single LLM provider**: only OpenAI is supported; there is no way to switch to another provider such as Anthropic or Mistral.
-
 - **Single model for all agents**: the model is set globally via the `OPENAI_model` env var; individual workspaces cannot use a different model.
 
 ## Roadmap

@@ -7,7 +7,7 @@ A self-hosted platform for running small, grounded AI-managed services. Each **w
 ## What it does
 
 - **Workspaces**: isolated Docker containers, each with its own agent and `AGENTS.md` instruction file, all files and shell operations run inside the container
-- **ReAct agent loop**: streams tool calls and responses in real time over SSE; final tokens stream word by word
+- **ReAct agent loop**: streams tool calls in real time over SSE; final response delivered as a single event once the loop completes
 - **Full tool set**: file read/edit/write, shell execution, glob search, directory listing, web fetch, todo list
 - **Lock mechanism**: per-file and per-directory R/RW toggle protects workspace files from accidental agent edits without blocking script execution
 - **File browser**: view, edit, upload, and download files from the UI with syntax highlighting and preview for .html, .md and .json
@@ -116,18 +116,16 @@ Each workspace can be called over HTTP. Enable API access from the workspace pan
 ```bash
 curl -X POST http://localhost:<port>/api/workspaces/<id>/agent \
   -H "Authorization: Bearer <api-key>" \
-  -H "Content-Type: application/json" \
   -d '{"message": "list all files and summarize what this workspace does"}'
 ```
 
-The response is a single JSON array of `AgentEvent` objects returned once the agent finishes:
-```json
-[
-  {"type":"tool_start","name":"list_directory"},
-  {"type":"tool_result","name":"list_directory","result":"..."},
-  {"type":"token","content":"This workspace contains..."},
-  {"type":"done"}
-]
+The response is a Server-Sent Events stream:
+```
+data: {"type":"tool_start","name":"list_directory"}
+
+data: {"type":"response","content":"This workspace contains...","iterationLimitReached":false}
+
+data: {"type":"done"}
 ```
 
 ## Project structure

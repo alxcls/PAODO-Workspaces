@@ -13,6 +13,7 @@ const log = createLogger("agent");
 
 export type AgentEvent =
   | { type: "token"; content: string }
+  | { type: "reasoning"; content: string }
   | { type: "tool_start"; name: string; args: Record<string, unknown> }
   | { type: "tool_result"; name: string; result: string }
   | { type: "error"; message: string }
@@ -104,15 +105,36 @@ export async function* runAgent(
       type PartialTC = { id: string; name: string; args: string };
       const partials: PartialTC[] = [];
       let fullText = "";
+      // Accumulate the full message so thinking blocks (Anthropic) and reasoning items
+      // (OpenAI) are preserved verbatim for history — Anthropic requires thinking blocks
+      // echoed back in subsequent messages when extended thinking + tool use are combined.
+      let accumulatedChunk: AIMessageChunk | null = null;
 
       const t0 = Date.now();
       const stream = await modelWithTools.stream(messages, { signal });
       let ttftMs: number | null = null;
       for await (const chunk of stream as AsyncIterable<AIMessageChunk>) {
         if (ttftMs === null) ttftMs = Date.now() - t0;
-        const text = contentToText(chunk.content);
-        if (text) {
-          fullText += text;
+        accumulatedChunk = accumulatedChunk ? accumulatedChunk.concat(chunk) : chunk;
+        // Process content blocks — text blocks become tokens, reasoning blocks
+        // become reasoning events (OpenAI Responses API reasoning summaries).
+        const rawContent = chunk.content;
+        if (typeof rawContent === "string") {
+          if (rawContent) { fullText += rawContent; yield { type: "token", content: rawContent }; }
+        } else if (Array.isArray(rawContent)) {
+          for (const block of rawContent) {
+            if (typeof block === "string") {
+              if (block) { fullText += block; yield { type: "token", content: block }; }
+            } else if (block.type === "text" && (block as { text?: string }).text) {
+              const t = (block as { text: string }).text;
+              fullText += t;
+              yield { type: "token", content: t };
+            } else if (block.type === "reasoning" && (block as unknown as { reasoning?: string }).reasoning) {
+              yield { type: "reasoning", content: (block as unknown as { reasoning: string }).reasoning };
+            } else if (block.type === "thinking" && (block as unknown as { thinking?: string }).thinking) {
+              yield { type: "reasoning", content: (block as unknown as { thinking: string }).thinking };
+            }
+          }
         }
         for (const tcc of chunk.tool_call_chunks ?? []) {
           const idx = tcc.index ?? 0;
@@ -134,8 +156,7 @@ export async function* runAgent(
         });
 
       if (!toolCalls.length) {
-        // Final text response — emit the buffered text now that we know no tool calls follow.
-        if (fullText) yield { type: "token", content: fullText };
+        // Final text response — tokens already streamed as they arrived; just persist and exit.
         messages.push(new AIMessage(fullText));
         wlog.info("agent run done");
         yield { type: "done" };
@@ -149,7 +170,7 @@ export async function* runAgent(
       const activeCalls = toolCalls.filter((tc, i) => seen.get(`${tc.name}:${JSON.stringify(tc.args)}`) === i);
 
       messages.push(new AIMessage({
-        content: fullText,
+        content: accumulatedChunk?.content ?? fullText,
         tool_calls: activeCalls.map((tc) => ({ id: tc.id, name: tc.name, args: tc.args })),
       }));
 

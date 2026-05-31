@@ -14,18 +14,41 @@ import { buildListDirectoryTool } from "./listDirectory";
 import { buildAgentCallTool } from "./agentCall";
 import { buildListAgentsTool } from "./listAgents";
 
+type ReasoningEffort = "low" | "medium" | "high";
+const ANTHROPIC_THINKING_BUDGET: Record<ReasoningEffort, number> = {
+  low: 4_000,
+  medium: 10_000,
+  high: 20_000,
+};
+
 export function buildTools(workspaceId: string, workspaceDir: string) {
   const provider = process.env.LLM_PROVIDER ?? "openai";
+  const effort = (process.env.REASONING_EFFORT ?? "low") as ReasoningEffort;
 
   let model: ChatOpenAI | ChatAnthropic;
   if (provider === "anthropic") {
     const modelName = process.env.ANTHROPIC_MODEL;
     if (!modelName) throw new Error("ANTHROPIC_MODEL is not set in .env");
-    model = new ChatAnthropic({ model: modelName, apiKey: process.env.ANTHROPIC_API_KEY });
+    const use1hTTL = process.env.ANTHROPIC_CACHE_TTL_1H === "true";
+    model = new ChatAnthropic({
+      model: modelName,
+      apiKey: process.env.ANTHROPIC_API_KEY,
+      thinking: { type: "enabled", budget_tokens: ANTHROPIC_THINKING_BUDGET[effort] },
+      ...(use1hTTL && {
+        clientOptions: {
+          defaultHeaders: { "anthropic-beta": "prompt-caching-scope-2026-01-05" },
+        },
+      }),
+    });
   } else {
     const modelName = process.env.OPENAI_MODEL;
     if (!modelName) throw new Error("OPENAI_MODEL is not set in .env");
-    model = new ChatOpenAI({ modelName, openAIApiKey: process.env.OPENAI_API_KEY });
+    model = new ChatOpenAI({
+      model: modelName,
+      openAIApiKey: process.env.OPENAI_API_KEY,
+      useResponsesApi: true,
+      reasoning: { effort, summary: "auto" },
+    });
   }
 
   const tools = [

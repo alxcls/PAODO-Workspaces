@@ -1,6 +1,3 @@
-// Builds the system prompt injected at the start of every agent conversation.
-// Describes the agent's persona, tool usage rules, and response formatting guidelines,
-// and is recreated on each workspace load so the workspace directory and date are always current.
 import { SystemMessage } from "@langchain/core/messages";
 import fs from "fs";
 import path from "path";
@@ -8,32 +5,9 @@ import { createLogger } from "../infra/logger";
 
 const log = createLogger("systemPrompt");
 
-export function buildSystemPrompt(workspaceDir: string, isLocked = false): SystemMessage {
-  const date = new Date().toDateString();
-
-  let agentsSection = "";
-  try {
-    const agentsMd = fs.readFileSync(path.join(workspaceDir, "AGENTS.md"), "utf-8");
-    agentsSection = agentsMd.trim();
-  } catch (err) {
-    log.debug(`AGENTS.md not found in ${workspaceDir} — skipping`);
-  }
-
-  const lockNotice = isLocked
-    ? `⚠ This workspace is globally locked [R]. You are running as a restricted user.
-execute_command cannot write files, install packages, or change language versions.
-Read-only commands (node script.js, grep, git status, python script.py) still work.
-
-`
-    : "";
-
-  return new SystemMessage(`${lockNotice}${agentsSection}
-
-# Environment
+const STATIC_INSTRUCTIONS = `# Environment
 - Operating System: Linux (Ubuntu, inside an isolated Docker container)
 - Shell: /bin/bash
-- Workspace Directory: ${workspaceDir} (mapped to /workspace inside the container)
-- Today's date: ${date}
 - Runtime: you run as root inside a dedicated Docker container — freely install packages, change language versions, and modify system config. Changes only affect this workspace's container.
 - Available runtimes include **Python 3** (\`python3\`, \`pip3\`) and **Node.js** (\`node\`, \`npm\`), among others.
 - Internet access: the \`http_get\` tool performs a real server-side HTTP request to any public URL.
@@ -81,5 +55,50 @@ const response = await fetch(\`\${url}?t=\${Date.now()}\`);
 \`\`\`
 
 The viewer injects a \`<base href="...">\` tag pointing to the workspace serve route, so \`document.baseURI\` always resolves correctly relative to the HTML file's location.
-`);
+`;
+
+export function buildSystemPrompt(workspaceDir: string, isLocked = false): SystemMessage {
+  const date = new Date().toDateString();
+
+  let agentsSection = "";
+  try {
+    const agentsMd = fs.readFileSync(path.join(workspaceDir, "AGENTS.md"), "utf-8");
+    agentsSection = agentsMd.trim();
+  } catch (err) {
+    log.debug(`AGENTS.md not found in ${workspaceDir} — skipping`);
+  }
+
+  const lockNotice = isLocked
+    ? `⚠ This workspace is globally locked [R]. You are running as a restricted user.
+execute_command cannot write files, install packages, or change language versions.
+Read-only commands (node script.js, grep, git status, python script.py) still work.
+
+`
+    : "";
+
+  const dynamicContext = `${lockNotice}${agentsSection ? agentsSection + "\n\n" : ""}Workspace Directory: ${workspaceDir} (mapped to /workspace inside the container)
+Today's date: ${date}`;
+
+  return new SystemMessage({
+    content: [
+      {
+        type: "text",
+        text: STATIC_INSTRUCTIONS,
+        // Only Anthropic accepts cache_control on content blocks; OpenAI rejects it.
+        // ANTHROPIC_CACHE_TTL_1H=true extends the TTL to 1h (requires prompt-caching-scope-2026-01-05 beta).
+        ...(process.env.LLM_PROVIDER === "anthropic"
+          ? {
+              cache_control: {
+                type: "ephemeral",
+                ...(process.env.ANTHROPIC_CACHE_TTL_1H === "true" ? { ttl: "1h" } : {}),
+              },
+            }
+          : {}),
+      },
+      {
+        type: "text",
+        text: dynamicContext,
+      },
+    ],
+  });
 }

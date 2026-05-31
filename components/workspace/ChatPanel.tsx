@@ -20,12 +20,14 @@ const SendIcon = () => (
 );
 
 interface Message {
-  role: "user" | "assistant" | "tool_start" | "error" | "limit_notice";
+  role: "user" | "assistant" | "tool_start" | "error" | "limit_notice" | "reasoning";
   content?: string;
   toolName?: string;
   toolSummary?: string;
   toolDone?: boolean;
   toolResult?: string;
+  id?: string;
+  thinking?: boolean;
 }
 
 const TOOL_LABELS: Record<string, string> = {
@@ -92,7 +94,7 @@ export default function ChatPanel({ workspaceId, onAgentTurnComplete }: { worksp
     setStreaming(true);
 
     let assistantContent = "";
-    let assistantStarted = false;
+    let reasoningContent = "";
     let hadToolCalls = false;
     let wasAborted = false;
 
@@ -129,23 +131,48 @@ export default function ChatPanel({ workspaceId, onAgentTurnComplete }: { worksp
             if (event.type === "token") {
               assistantContent += event.content;
               const content = assistantContent;
-              if (!assistantStarted) {
-                setMessages((prev) => [...prev, { role: "assistant", content }]);
-                assistantStarted = true;
-              } else {
-                setMessages((prev) => {
+              setMessages((prev) => {
+                const last = prev[prev.length - 1];
+                // Extend the in-progress assistant message if the last entry is ours.
+                if (last?.role === "assistant" && !last.thinking) {
                   const next = [...prev];
-                  next[next.length - 1] = { role: "assistant", content };
+                  next[next.length - 1] = { ...last, content };
                   return next;
-                });
-              }
+                }
+                return [...prev, { role: "assistant", content }];
+              });
+            } else if (event.type === "reasoning") {
+              reasoningContent += event.content;
+              const content = reasoningContent;
+              setMessages((prev) => {
+                const last = prev[prev.length - 1];
+                if (last?.role === "reasoning") {
+                  const next = [...prev];
+                  next[next.length - 1] = { ...last, content };
+                  return next;
+                }
+                return [...prev, { role: "reasoning", content }];
+              });
             } else if (event.type === "tool_start") {
-              setPendingTools((n) => n + 1);
+              // Demote any in-progress assistant text to "thinking" and append the
+              // tool indicator in one atomic state update so nothing gets lost.
+              assistantContent = "";
+              reasoningContent = "";
               hadToolCalls = true;
-              setMessages((prev) => [
-                ...prev,
-                { role: "tool_start", toolName: event.name, toolSummary: toolArgSummary(event.name, event.args), toolDone: false },
-              ]);
+              setPendingTools((n) => n + 1);
+              setMessages((prev) => {
+                const last = prev[prev.length - 1];
+                const toolMsg: Message = {
+                  role: "tool_start",
+                  toolName: event.name,
+                  toolSummary: toolArgSummary(event.name, event.args),
+                  toolDone: false,
+                };
+                if (last?.role === "assistant" && !last.thinking) {
+                  return [...prev.slice(0, -1), { ...last, thinking: true }, toolMsg];
+                }
+                return [...prev, toolMsg];
+              });
             } else if (event.type === "tool_result") {
               setPendingTools((n) => Math.max(0, n - 1));
               const resultText = event.name === "call_agent" ? event.result : undefined;
@@ -177,7 +204,7 @@ export default function ChatPanel({ workspaceId, onAgentTurnComplete }: { worksp
       abortRef.current = null;
       setStreaming(false);
       setPendingTools(0);
-      if (!wasAborted && !assistantStarted && hadToolCalls) {
+      if (!wasAborted && hadToolCalls && !assistantContent) {
         setMessages((prev) => [...prev, { role: "error", content: "Agent stopped without generating a response." }]);
       }
       onAgentTurnComplete?.();
@@ -205,6 +232,24 @@ export default function ChatPanel({ workspaceId, onAgentTurnComplete }: { worksp
         )}
 
         {messages.map((m, i) => {
+          if (m.role === "reasoning") {
+            const content = m.content?.trim();
+            if (!content) return null;
+            return (
+              <div key={i} className="text-[11.5px] text-text-3 italic px-0.5 py-0.5 leading-[1.5] [&_strong]:font-semibold [&_strong]:not-italic">
+                <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>{content}</ReactMarkdown>
+              </div>
+            );
+          }
+          if (m.role === "assistant" && m.thinking) {
+            const content = m.content?.trim();
+            if (!content) return null;
+            return (
+              <div key={i} className="text-[11.5px] text-text-3 italic px-0.5 py-0.5 leading-[1.5] [&_strong]:font-semibold [&_strong]:not-italic">
+                <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>{content}</ReactMarkdown>
+              </div>
+            );
+          }
           if (m.role === "tool_start") {
             return (
               <div key={i} className="flex flex-col gap-1.5 mb-1.5">

@@ -1,0 +1,22 @@
+name: Dependency Audit
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      # Audit level set to "high" because the only known moderate (postcss bundled
+      # inside next) has no viable fix until Next.js ships an upstream update.
+      # High/critical vulnerabilities still block merges.
+      - run: npm audit --audit-level=high

@@ -1,6 +1,12 @@
 // Agent tool that spawns a bash command in the workspace directory.
 // Streams stdout and stderr live to connected WebSocket clients so they appear in the console panel,
 // and returns the combined output to the agent as the tool result.
+//
+// When the command references a crowned script, the tool silently re-routes: it runs that script
+// as root with workspace secrets injected — same result as the old run_crowned_script tool, but
+// transparent to the agent. Only the fixed interpreter + script path are used; any extra flags or
+// chained commands in the original command string are discarded so the agent cannot inject arbitrary
+// root commands by composing them alongside a crowned script reference.
 import { tool } from "@langchain/core/tools";
 import { z } from "zod";
 import { spawn } from "child_process";
@@ -9,44 +15,98 @@ import { broadcastToWorkspace } from "../../infra/wsHub";
 import { ensureContainer } from "../../infra/containerManager";
 import { getGlobalLock } from "../../infra/permissionStore";
 import { listCrowned } from "../../infra/crownedScriptStore";
+import { getSecretEnvArgs } from "../../infra/secretStore";
 import { createLogger } from "../../infra/logger";
 
 const RESTRICTED_USER = "agent";
-// Kill if no output for this long (catches hung processes without interrupting active ones).
 const SILENCE_TIMEOUT_MS = parseInt(process.env.EXEC_SILENCE_TIMEOUT_MS ?? "", 10) || 60_000;
-// Absolute ceiling regardless of output activity.
 const MAX_TIMEOUT_MS = parseInt(process.env.EXEC_MAX_TIMEOUT_MS ?? "", 10) || 30 * 60_000;
+
+function interpreterFor(relPath: string): string[] {
+  const ext = path.extname(relPath).toLowerCase();
+  if (ext === ".py") return ["python3"];
+  if (ext === ".js" || ext === ".mjs") return ["node"];
+  return ["bash"];
+}
 
 export function buildExecCommandTool(workspaceId: string, workspaceDir: string) {
   const log = createLogger("execCommand");
   return tool(
     async ({ command }) => {
-      // If the command tries to run a crowned script, route the agent to run_crowned_script.
-      // execute_command runs as the non-root `developer`, so running a crowned script here would
-      // silently produce no secrets. This nudge doesn't leak the secret or weaken the OS lock —
-      // it just points the agent at the only tool that injects secrets (server-run, as root).
       const crownedRef = listCrowned(workspaceId).find(
         (p) => command.includes(p) || command.includes(path.posix.basename(p)),
       );
+
       if (crownedRef) {
-        return `"${crownedRef}" is a crowned script. Run it with the run_crowned_script tool (script_path: "${crownedRef}") so its workspace secrets are injected. execute_command runs as a non-root user without access to secrets, so running it here produces no secret values.`;
+        // Crowned script: run as root with secrets. Only the fixed interpreter + path are used —
+        // any extra flags or chained commands in `command` are intentionally dropped.
+        await ensureContainer(workspaceId, workspaceDir);
+        const secretArgs = getSecretEnvArgs(workspaceId);
+        const interp = interpreterFor(crownedRef);
+        log.info({ workspaceId, script: crownedRef }, "auto-routing crowned script");
+
+        return new Promise<string>((resolve) => {
+          const proc = spawn("docker", [
+            "exec", "-i", "-u", "root", ...secretArgs,
+            "-w", "/workspace", `ws_${workspaceId}`,
+            ...interp, `/workspace/${crownedRef}`,
+          ]);
+          proc.stdin.end();
+
+          let stdout = "";
+          let stderr = "";
+          const startedAt = Date.now();
+          let lastOutputAt = Date.now();
+          let killed = false;
+
+          const killWith = (reason: string) => {
+            if (killed) return;
+            killed = true;
+            proc.kill("SIGTERM");
+            broadcastToWorkspace(workspaceId, JSON.stringify({ type: "stdout", workspaceId, data: `\n[timeout] ${reason}\n` }));
+          };
+
+          const heartbeat = setInterval(() => {
+            const now = Date.now();
+            const silentMs = now - lastOutputAt;
+            const elapsedMs = now - startedAt;
+            const elapsed = Math.round(elapsedMs / 1000);
+            if (elapsedMs >= MAX_TIMEOUT_MS) { killWith(`Script killed after ${elapsed}s (max runtime exceeded).`); return; }
+            if (silentMs >= SILENCE_TIMEOUT_MS) { killWith(`Script killed after ${Math.round(silentMs / 1000)}s with no output.`); return; }
+            if (silentMs >= 5_000) broadcastToWorkspace(workspaceId, JSON.stringify({ type: "stdout", workspaceId, data: `⏳ still running... (${elapsed}s elapsed)\n` }));
+          }, 5_000);
+
+          proc.stdout.on("data", (chunk: Buffer) => {
+            lastOutputAt = Date.now();
+            const text = chunk.toString();
+            stdout += text;
+            broadcastToWorkspace(workspaceId, JSON.stringify({ type: "stdout", workspaceId, data: text }));
+          });
+          proc.stderr.on("data", (chunk: Buffer) => {
+            lastOutputAt = Date.now();
+            const text = chunk.toString();
+            stderr += text;
+            broadcastToWorkspace(workspaceId, JSON.stringify({ type: "stderr", workspaceId, data: text }));
+          });
+          proc.on("close", (code) => {
+            clearInterval(heartbeat);
+            broadcastToWorkspace(workspaceId, JSON.stringify({ type: "exec_done", workspaceId, exitCode: code }));
+            const stderrOut = stderr.trim() ? `[stderr]: ${stderr.trim()}` : "";
+            const parts = [stdout.trim(), stderrOut].filter(Boolean);
+            resolve(parts.join("\n") || "Script executed successfully with no output.");
+          });
+          proc.on("error", (err) => { clearInterval(heartbeat); resolve(`Script execution failed:\n${err.message}`); });
+        });
       }
 
       const [, isLocked] = await Promise.all([
         ensureContainer(workspaceId, workspaceDir),
         getGlobalLock(workspaceId),
       ]);
-      // Unlocked: run as the unprivileged `developer` user (NOT root) so the agent's shell
-      // genuinely cannot read root-owned secrets, write root-owned (locked) files, or read
-      // opaque data. Privilege lives only in the server, which runs crowned scripts as root
-      // via a separate exec the agent cannot compose. See doc/adr/draft/agent-privilege-model.
       const userArgs = isLocked ? ["-u", RESTRICTED_USER] : ["-u", "developer"];
 
       return new Promise<string>((resolve) => {
         const proc = spawn("docker", ["exec", "-i", ...userArgs, "-w", "/workspace", `ws_${workspaceId}`, "/bin/bash", "-c", command]);
-
-        // Close stdin immediately so commands that read from stdin when no path
-        // is given (e.g. `rg pattern` without a path) don't hang waiting for input.
         proc.stdin.end();
 
         let stdout = "";
@@ -68,18 +128,9 @@ export function buildExecCommandTool(workspaceId: string, workspaceDir: string) 
           const silentMs = now - lastOutputAt;
           const elapsedMs = now - startedAt;
           const elapsed = Math.round(elapsedMs / 1000);
-
-          if (elapsedMs >= MAX_TIMEOUT_MS) {
-            killWith(`Command killed after ${elapsed}s (max runtime exceeded).`);
-            return;
-          }
-          if (silentMs >= SILENCE_TIMEOUT_MS) {
-            killWith(`Command killed after ${Math.round(silentMs / 1000)}s with no output.`);
-            return;
-          }
-          if (silentMs >= 5_000) {
-            broadcastToWorkspace(workspaceId, JSON.stringify({ type: "stdout", workspaceId, data: `⏳ still running... (${elapsed}s elapsed)\n` }));
-          }
+          if (elapsedMs >= MAX_TIMEOUT_MS) { killWith(`Command killed after ${elapsed}s (max runtime exceeded).`); return; }
+          if (silentMs >= SILENCE_TIMEOUT_MS) { killWith(`Command killed after ${Math.round(silentMs / 1000)}s with no output.`); return; }
+          if (silentMs >= 5_000) broadcastToWorkspace(workspaceId, JSON.stringify({ type: "stdout", workspaceId, data: `⏳ still running... (${elapsed}s elapsed)\n` }));
         }, 5_000);
 
         proc.stdout.on("data", (chunk: Buffer) => {
@@ -88,14 +139,12 @@ export function buildExecCommandTool(workspaceId: string, workspaceDir: string) 
           stdout += text;
           broadcastToWorkspace(workspaceId, JSON.stringify({ type: "stdout", workspaceId, data: text }));
         });
-
         proc.stderr.on("data", (chunk: Buffer) => {
           lastOutputAt = Date.now();
           const text = chunk.toString();
           stderr += text;
           broadcastToWorkspace(workspaceId, JSON.stringify({ type: "stderr", workspaceId, data: text }));
         });
-
         proc.on("close", (code) => {
           clearInterval(heartbeat);
           broadcastToWorkspace(workspaceId, JSON.stringify({ type: "exec_done", workspaceId, exitCode: code }));
@@ -110,11 +159,7 @@ export function buildExecCommandTool(workspaceId: string, workspaceDir: string) 
           const parts = [stdout.trim(), stderrOut].filter(Boolean);
           resolve(parts.join("\n") || "Command executed successfully with no output.");
         });
-
-        proc.on("error", (err) => {
-          clearInterval(heartbeat);
-          resolve(`Command execution failed:\n${err.message}`);
-        });
+        proc.on("error", (err) => { clearInterval(heartbeat); resolve(`Command execution failed:\n${err.message}`); });
       });
     },
     {

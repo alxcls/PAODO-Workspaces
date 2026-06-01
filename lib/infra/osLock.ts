@@ -8,11 +8,8 @@
 //                      cannot write them, even via a script it writes.
 //   - UNLOCKED paths → developer:developer, owner-writable (u+w) → files 0644, dirs 0755.
 //
-// Root ownership is the durable signal for "protected": both manually-locked paths AND the outputs
-// a crowned script creates (it runs as root) are root-owned, so `reconcileOsPermissions` normalizes
-// only NON-root files back to developer and never demotes a protected path. run_crowned_script
-// registers a crowned run's root-owned outputs as locked so they're protected at the registry layer
-// too (file_write/file_edit gate on the registry, not on disk ownership).
+// Root ownership is the durable signal for "protected": manually-locked paths are chowned to root
+// so `reconcileOsPermissions` never demotes them back to developer on restart.
 //
 // It deliberately does NOT import containerManager: `reconcileOsPermissions` is invoked from
 // inside `_ensureContainer`, so going through `dockerExec` (which calls `ensureContainer`) would
@@ -20,16 +17,16 @@
 // container creation (the permissions route) must `ensureContainer` themselves first.
 //
 // ENFORCEMENT MODEL — depends on the mount type:
-//   - Production (Docker named volume, e.g. on the Debian VPS): a real Linux filesystem. `chown`
-//     works, root overrides mode bits, so the full ownership model holds: developer-vs-root is a
-//     real boundary, and a crowned script (root) can rewrite a locked (0444) file.
-//   - Local macOS dev (Colima virtiofs bind mount): `chown` is a no-op (every file maps to the
-//     host user and shows as root:root) and mode bits are enforced even against container-root.
-//     So enforcement degrades to MODE BITS ONLY — a 0444 file still blocks the agent's writes
-//     (the lock works), but root cannot rewrite a 0444 file either, and the dev/root ownership
-//     split is cosmetic. Secret hiding is unaffected on both (it's process-env + UID separation,
-//     not a mount property). The chown calls below are kept because they are correct and load-
-//     bearing in production; they are simply inert on the macOS virtiofs mount.
+//   - Production (Linux host, bind mount or named volume): a real Linux filesystem. `chown` and
+//     `chmod` are fully enforced by the kernel — developer cannot write a root-owned 0444 file,
+//     even via a script that calls write_text() directly, bypassing the tool-layer lock check.
+//   - Local macOS dev (Docker Desktop bind mount via gRPC-FUSE): mode bits and ownership inside
+//     the container are NOT enforced for writes. The host macOS user owns every inode; writes from
+//     inside the container pass straight through regardless of chown/chmod. Locks are therefore
+//     advisory in dev — they block the tool-layer check (file_write/file_edit) but NOT direct
+//     filesystem writes from scripts. Secret hiding is unaffected (process-env + UID separation,
+//     not a mount property). The chown/chmod calls below are kept because they are correct and
+//     load-bearing in production; they are cosmetic on the Docker Desktop macOS mount.
 import { spawn } from "child_process";
 import { readPermissionSnapshot } from "./permissionStore";
 import { listCrowned } from "./crownedScriptStore";
@@ -97,20 +94,6 @@ export async function lockPathOnDisk(workspaceId: string, relPath: string): Prom
 
 export async function unlockPathOnDisk(workspaceId: string, relPath: string): Promise<void> {
   await unlockOnDisk(workspaceId, relPath);
-}
-
-// Lists every path under /workspace as workspace-relative paths. run_crowned_script snapshots this
-// before and after a run to find the script's OUTPUTS by diff (new paths) — robust on both a real
-// Linux fs and on macOS virtiofs (where ownership is meaningless because everything maps to one
-// uid, so an ownership-based heuristic would match the whole tree). Returns [] on error.
-export async function listWorkspacePaths(workspaceId: string): Promise<string[]> {
-  // %P prints the path relative to /workspace (the find root), i.e. the workspace-relative path.
-  const r = await runRoot(workspaceId, ["find", "/workspace", "-mindepth", "1", "-printf", "%P\\n"]);
-  if (r.code !== 0) {
-    log.warn({ workspaceId, stderr: r.stderr }, "listWorkspacePaths failed");
-    return [];
-  }
-  return r.stdout.split("\n").map((p) => p.trim()).filter(Boolean);
 }
 
 // Brings the whole workspace into the canonical on-disk state. Called at the end of

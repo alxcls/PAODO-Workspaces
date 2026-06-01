@@ -14,8 +14,6 @@ import { broadcastToWorkspace } from "../../infra/wsHub";
 import { ensureContainer } from "../../infra/containerManager";
 import { getSecretEnvArgs } from "../../infra/secretStore";
 import { isCrowned, listCrowned } from "../../infra/crownedScriptStore";
-import { listWorkspacePaths, lockPathOnDisk } from "../../infra/osLock";
-import { readPermissionSnapshot, setPermission } from "../../infra/permissionStore";
 import { createLogger } from "../../infra/logger";
 
 const SILENCE_TIMEOUT_MS = parseInt(process.env.EXEC_SILENCE_TIMEOUT_MS ?? "", 10) || 60_000;
@@ -25,40 +23,6 @@ function normalizeRelpath(filePath: string): string | null {
   const normalized = path.posix.normalize(filePath.replace(/\\/g, "/"));
   if (normalized.startsWith("..") || normalized.startsWith("/")) return null;
   return normalized;
-}
-
-// Files/folders a crowned (root) script CREATES are its protected outputs: we register them as
-// locked [R] so the agent can read/run but not overwrite them — at both the registry layer
-// (file_write/file_edit refuse [R]) and the OS layer (root:root 0444). Outputs are found by diffing
-// the workspace path set before vs. after the run (NOT by ownership — on macOS virtiofs every file
-// reports as root, which would match the whole tree). Files the script merely OVERWRITES already
-// existed, so they aren't auto-locked. Skips already-locked/crowned paths and children of a path
-// we're already registering (sorted ascending so a parent dir precedes its contents). Never throws.
-async function protectCrownedOutputs(
-  workspaceId: string,
-  before: Set<string>,
-  log: ReturnType<typeof createLogger>,
-): Promise<void> {
-  try {
-    const snap = await readPermissionSnapshot(workspaceId);
-    if (snap.globalLock) return; // globally locked → read-only mount, nothing to register
-    const isLockedRel = (rel: string) => snap.locked.some((p) => p === rel || rel.startsWith(p + "/"));
-
-    const candidates = (await listWorkspacePaths(workspaceId))
-      .filter((rel) => !before.has(rel) && !isLockedRel(rel) && !isCrowned(workspaceId, rel))
-      .sort();
-
-    const registered: string[] = [];
-    for (const rel of candidates) {
-      if (registered.some((p) => rel === p || rel.startsWith(p + "/"))) continue; // covered by an ancestor
-      registered.push(rel);
-      await setPermission(workspaceId, rel, "R");
-      await lockPathOnDisk(workspaceId, rel);
-    }
-    if (registered.length > 0) log.info({ workspaceId, count: registered.length }, "locked crowned-script outputs");
-  } catch (err) {
-    log.warn({ workspaceId, err }, "failed to protect crowned-script outputs");
-  }
 }
 
 // Maps an extension to the interpreter argv prefix. The interpreter + absolute path are fixed by
@@ -88,8 +52,6 @@ export function buildRunCrownedScriptTool(workspaceId: string, workspaceDir: str
       await ensureContainer(workspaceId, workspaceDir);
       const secretArgs = getSecretEnvArgs(workspaceId);
       const interp = interpreterFor(relPath);
-      // Snapshot paths before the run so we can lock only the outputs the script CREATES (diff).
-      const before = new Set(await listWorkspacePaths(workspaceId));
 
       return new Promise<string>((resolve) => {
         const proc = spawn("docker", [
@@ -146,10 +108,8 @@ export function buildRunCrownedScriptTool(workspaceId: string, workspaceDir: str
           broadcastToWorkspace(workspaceId, JSON.stringify({ type: "stderr", workspaceId, data: text }));
         });
 
-        proc.on("close", async (code) => {
+        proc.on("close", (code) => {
           clearInterval(heartbeat);
-          // Protect anything the (root) script created: register new paths as locked.
-          await protectCrownedOutputs(workspaceId, before, log);
           broadcastToWorkspace(workspaceId, JSON.stringify({ type: "exec_done", workspaceId, exitCode: code }));
           const stderrOut = stderr.trim() ? `[stderr]: ${stderr.trim()}` : "";
           const parts = [stdout.trim(), stderrOut].filter(Boolean);

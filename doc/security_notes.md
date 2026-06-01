@@ -34,6 +34,7 @@ This is a single-user, self-hosted app accessed exclusively over a private Tails
 **Filesystem**
 - File tools enforce path boundaries via `fs.realpath` + prefix checks — agents cannot escape their workspace directory
 - Glob tool rejects absolute path patterns
+- Per-file locks are a guardrail against accidental agent edits, not a security control — only the global lock (read-only mount) and the container boundary are real enforcement. See [agent-lock-bypass.md](agent-lock-bypass.md)
 
 **Agent**
 - SSRF protection in `webFetch`: DNS-resolved IP validation blocks all private, loopback, CGNAT, and IPv6 local ranges before any request is made

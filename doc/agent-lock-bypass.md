@@ -33,3 +33,5 @@ No lock check was triggered. The agent never called a file editing tool on `valu
 ## Why the lock could not stop this
 
 Direct edition of a lock file is deterministically enforced and enforced through system prompt but indirect modification of files through script creation in an unlock workspace will produce indirectly the same result.
+
+> **Takeaway:** per-file locks are a guardrail against accidental agent edits, not a security control. The only real enforcement boundaries are the global lock (mounts the workspace read-only inside the container) and the container itself.

@@ -97,7 +97,7 @@ Every file and directory in a workspace can be marked **read-only** or **read-wr
 
 Locked scripts can still be executed, locked files can still be updated by scripts.
 
-> **Caveat:** per-file locks only block the agent's file tools. A script the agent writes and runs via the shell can still overwrite a locked file. The master lock is the only fully airtight protection. See [doc/agent-lock-bypass.md](doc/agent-lock-bypass.md).
+> **Caveat:** per-file locks are a guardrail against accidental agent edits, not a security control. A script the agent writes and runs via the shell can still overwrite a locked file. Only the global lock and the container boundary are real enforcement. See [doc/agent-lock-bypass.md](doc/agent-lock-bypass.md).
 
 ![Lock Mechanism](doc/images/LOCK_MECHANISM.png)
 

@@ -4,9 +4,11 @@
 import { tool } from "@langchain/core/tools";
 import { z } from "zod";
 import { spawn } from "child_process";
+import path from "path";
 import { broadcastToWorkspace } from "../../infra/wsHub";
 import { ensureContainer } from "../../infra/containerManager";
 import { getGlobalLock } from "../../infra/permissionStore";
+import { listCrowned } from "../../infra/crownedScriptStore";
 import { createLogger } from "../../infra/logger";
 
 const RESTRICTED_USER = "agent";
@@ -19,11 +21,26 @@ export function buildExecCommandTool(workspaceId: string, workspaceDir: string) 
   const log = createLogger("execCommand");
   return tool(
     async ({ command }) => {
+      // If the command tries to run a crowned script, route the agent to run_crowned_script.
+      // execute_command runs as the non-root `developer`, so running a crowned script here would
+      // silently produce no secrets. This nudge doesn't leak the secret or weaken the OS lock —
+      // it just points the agent at the only tool that injects secrets (server-run, as root).
+      const crownedRef = listCrowned(workspaceId).find(
+        (p) => command.includes(p) || command.includes(path.posix.basename(p)),
+      );
+      if (crownedRef) {
+        return `"${crownedRef}" is a crowned script. Run it with the run_crowned_script tool (script_path: "${crownedRef}") so its workspace secrets are injected. execute_command runs as a non-root user without access to secrets, so running it here produces no secret values.`;
+      }
+
       const [, isLocked] = await Promise.all([
         ensureContainer(workspaceId, workspaceDir),
         getGlobalLock(workspaceId),
       ]);
-      const userArgs = isLocked ? ["-u", RESTRICTED_USER] : [];
+      // Unlocked: run as the unprivileged `developer` user (NOT root) so the agent's shell
+      // genuinely cannot read root-owned secrets, write root-owned (locked) files, or read
+      // opaque data. Privilege lives only in the server, which runs crowned scripts as root
+      // via a separate exec the agent cannot compose. See doc/adr/draft/agent-privilege-model.
+      const userArgs = isLocked ? ["-u", RESTRICTED_USER] : ["-u", "developer"];
 
       return new Promise<string>((resolve) => {
         const proc = spawn("docker", ["exec", "-i", ...userArgs, "-w", "/workspace", `ws_${workspaceId}`, "/bin/bash", "-c", command]);

@@ -12,6 +12,7 @@ interface TreeNode {
   type: "file" | "directory";
   path: string;
   permission?: "R" | "RW";
+  crowned?: boolean;
   children?: TreeNode[];
 }
 
@@ -128,6 +129,48 @@ const PermBadge = ({
   );
 };
 
+// ---- Crown badge ----
+// Crowning authorizes a script to run with workspace secrets (via run_crowned_script) and locks
+// it so the agent can't tamper with it. Server-side, toggling crown also flips the file's lock,
+// so onRefresh re-fetches the tree to update both this badge and the PermBadge.
+const CrownBadge = ({
+  node, workspaceId, wsDir, onRefresh,
+}: {
+  node: TreeNode; workspaceId: string; wsDir: string; onRefresh: () => void;
+}) => {
+  const [busy, setBusy] = useState(false);
+  const crowned = node.crowned ?? false;
+
+  const toggle = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (busy) return;
+    setBusy(true);
+    const relPath = node.path.startsWith(wsDir)
+      ? node.path.slice(wsDir.length).replace(/^\//, "")
+      : node.path;
+    await fetch(`/api/workspaces/${workspaceId}/crowned-scripts`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path: relPath, crowned: !crowned }),
+    });
+    onRefresh();
+    setBusy(false);
+  };
+
+  return (
+    <span
+      className="flex-shrink-0 inline-flex items-center justify-center w-[18px] h-[18px] rounded-[3px] cursor-pointer select-none ml-1 hover:bg-black/[.12] transition-colors"
+      onClick={toggle}
+      title={crowned ? "Crowned — runs with secrets injected. Click to remove." : "Crown — let this script run with secrets (locks it so it can't be tampered with)."}
+      style={{ opacity: busy ? 0.4 : 1, color: crowned ? "#d4a017" : "var(--color-text-3)" }}
+    >
+      <svg viewBox="0 0 24 24" width="12" height="12" fill={crowned ? "currentColor" : "none"} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M5 18 L3 8 L8.5 12 L12 5 L15.5 12 L21 8 L19 18 Z" />
+      </svg>
+    </span>
+  );
+};
+
 // ---- Master lock button ----
 const MasterLockButton = ({
   workspaceId, globalLock, onRefresh, onGlobalPermissionChange,
@@ -221,6 +264,7 @@ const TreeNodeList = ({
                   </span>
                   <span className="text-text-2 inline-flex flex-shrink-0"><FolderIcon /></span>
                   <span className="flex-1 whitespace-nowrap overflow-hidden text-ellipsis">{node.name}</span>
+                  <CrownBadge node={node} workspaceId={workspaceId} wsDir={wsDir} onRefresh={onRefresh} />
                   <PermBadge node={node} workspaceId={workspaceId} wsDir={wsDir} onRefresh={onRefresh} onPermissionChange={onPermissionChange} />
                 </div>
               </button>
@@ -256,6 +300,7 @@ const TreeNodeList = ({
             <div className="flex items-center gap-1.5 flex-1 min-w-0 overflow-hidden" style={{ marginLeft: 6 + depth * 14 + 14 }}>
               <span className={`inline-flex flex-shrink-0 ${isActive ? "text-primary" : "text-text-2"}`}><FileIcon /></span>
               <span className="flex-1 whitespace-nowrap overflow-hidden text-ellipsis">{node.name}</span>
+              <CrownBadge node={node} workspaceId={workspaceId} wsDir={wsDir} onRefresh={onRefresh} />
               <PermBadge node={node} workspaceId={workspaceId} wsDir={wsDir} onRefresh={onRefresh} onPermissionChange={onPermissionChange} />
             </div>
           </button>

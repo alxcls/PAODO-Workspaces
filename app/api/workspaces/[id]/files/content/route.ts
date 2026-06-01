@@ -127,7 +127,7 @@ export async function PUT(
         const relPath = path.relative(ws.dir, resolved);
         const r = await dockerExec(ws.id, ws.dir, ["tee", `/workspace/${relPath}`], { stdin: body.content });
         if (r.code !== 0) throw new Error(r.stderr || "docker write failed");
-        await dockerExec(ws.id, ws.dir, ["chown", "1000:1000", `/workspace/${relPath}`]);
+        await dockerExec(ws.id, ws.dir, ["chown", "developer:developer", `/workspace/${relPath}`]);
       } else {
         throw writeErr;
       }
@@ -158,14 +158,25 @@ export async function DELETE(
     if (await isAgentLocked(ws.id, ws.dir, resolved)) {
       return NextResponse.json({ error: "File is read-only" }, { status: 403 });
     }
-    await fs.access(path.dirname(resolved), fs.constants.W_OK).catch(() => {
-      throw new Error("Directory is locked");
-    });
     const stat = await fs.stat(resolved);
-    if (stat.isDirectory()) {
-      await fs.rm(resolved, { recursive: true });
-    } else {
-      await fs.unlink(resolved);
+    try {
+      if (stat.isDirectory()) {
+        await fs.rm(resolved, { recursive: true });
+      } else {
+        await fs.unlink(resolved);
+      }
+    } catch (delErr) {
+      const code = (delErr as NodeJS.ErrnoException).code;
+      if (code === "EACCES" || code === "EPERM") {
+        // Unlocked files/dirs are `developer`-owned (UID 1001); the host app (UID 1000) can't
+        // unlink them directly. Delete via the container as root. The path is already validated
+        // inside the workspace, and the isAgentLocked guard above blocks locked paths.
+        const relPath = path.relative(ws.dir, resolved);
+        const r = await dockerExec(ws.id, ws.dir, ["rm", "-rf", `/workspace/${relPath}`]);
+        if (r.code !== 0) throw new Error(r.stderr || "docker delete failed");
+      } else {
+        throw delErr;
+      }
     }
     return NextResponse.json({ ok: true });
   } catch (err) {

@@ -8,7 +8,7 @@ const log = createLogger("systemPrompt");
 const STATIC_INSTRUCTIONS = `# Environment
 - Operating System: Linux (Ubuntu, inside an isolated Docker container)
 - Shell: /bin/bash
-- Runtime: you run as root inside a dedicated Docker container — freely install packages, change language versions, and modify system config. Changes only affect this workspace's container.
+- Runtime: \`execute_command\` runs as the **non-root \`developer\` user** in a dedicated Docker container. You do NOT have root. \`apt-get\`/\`apt\` and other system-wide changes are unavailable. Install in userspace instead: \`pip install --user\`, local \`npm install\`, pre-installed \`nvm\`/\`pyenv\`, or \`asdf\` (e.g. \`asdf plugin add golang && asdf install golang latest\`). Common system libraries are pre-baked into the image.
 - Available runtimes include **Python 3** (\`python3\`, \`pip3\`) and **Node.js** (\`node\`, \`npm\`), among others.
 - Internet access: the \`http_get\` tool performs a real server-side HTTP request to any public URL.
 
@@ -36,7 +36,14 @@ Carefully consider the reversibility of actions:
 Every tool response marks files and directories as **[R]** (read-only) or **[RW]** (read-write).
 - **[R]** = forbidden from file_edit or file_write — tell the user the file is locked and ask them to click the lock icon in the file tree.
 - **[RW]** = you may edit or write it.
-- Per-path [R] locks apply to file_edit and file_write only. The global workspace lock [R] also restricts execute_command.
+- Locks are now **kernel-enforced**: a locked [R] file is owned by root, so your \`execute_command\` (running as \`developer\`) physically cannot write it — not directly, and not by writing and running your own script. Do not attempt to work around a lock; if you need to change a locked file, ask the user to unlock it (lock icon in the file tree) or to crown a script that updates it.
+
+# Crowned scripts & secrets
+- Workspace **secrets** (API keys, tokens) are stored server-side and are NOT in your environment. \`execute_command\` runs as \`developer\` and will never see them (\`printenv\` shows nothing); you cannot read their values.
+- A secret reaches a script only when you run a **crowned** script with \`run_crowned_script(script_path)\` — the server runs it with the secrets injected. Use that tool (not execute_command) whenever a task needs a secret.
+- Only the **user** can crown a script (the crown icon in the file tree). You cannot crown scripts yourself. Crowning also locks the script so it can't be tampered with. If a needed script isn't crowned, ask the user to crown it.
+- A crowned script is the **only** privileged actor: it runs with elevated rights and is the only way a locked \`[R]\` file/folder can be modified. So when a task legitimately requires changing a locked file, do NOT try to work around the lock — ask the user to either unlock it or crown a script that performs the change.
+- Files and folders a crowned script **creates** come back **locked \`[R]\`** (they are protected outputs). You can read and run them, but not overwrite them; if you need to edit such an output, ask the user to unlock it.
 
 Call independent tools IN PARALLEL. Call dependent tools sequentially.
 

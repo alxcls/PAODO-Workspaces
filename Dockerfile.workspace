@@ -14,9 +14,14 @@ RUN apt-get update && apt-get install -y \
     rm -rf /var/lib/apt/lists/* && \
     ln -sf /usr/bin/python3 /usr/bin/python
 
-# Two execution identities:
-#   developer (UID 1000) — owns nvm/pyenv install dirs; root can also write (bypasses permissions).
-#   agent     (UID 999)  — restricted; can read/execute but not write; used when workspace is globally locked.
+# Three execution identities (see doc/adr/draft/agent-privilege-model):
+#   developer (UID 1001) — the agent's normal, NON-ROOT identity. `execute_command` runs as this
+#                          user, so it physically cannot read root-owned secrets or write root-owned
+#                          (locked) files. Owns nvm/pyenv/asdf install dirs and all unlocked workspace files.
+#   agent     (UID 999)  — even more restricted; used when the workspace is globally locked.
+#   root                 — server-only privileged path: runs crowned scripts and applies locks via
+#                          `docker exec -u root`, which the agent can never compose.
+# NOTE: UID 1001 (not 1000) avoids colliding with the default `ubuntu` user ubuntu:24.04 ships at 1000.
 RUN groupadd -g 999 agentgroup && \
     useradd -r -u 999 -g agentgroup -M -s /bin/bash agent && \
     useradd -u 1001 -m -s /bin/bash developer
@@ -41,5 +46,19 @@ RUN git clone --depth=1 https://github.com/pyenv/pyenv.git $PYENV_ROOT && \
     cd $PYENV_ROOT && src/configure && make -C src && \
     chown -R developer:developer $PYENV_ROOT && \
     chmod -R 755 $PYENV_ROOT
+
+# asdf — userspace version manager so the non-root `developer` can install languages
+# (go, ruby, node, ...) without apt/root. Installed as developer; cloned to its home.
+ENV ASDF_DIR=/home/developer/.asdf
+RUN su - developer -c "git clone --depth=1 https://github.com/asdf-vm/asdf.git $ASDF_DIR --branch v0.14.1" && \
+    chmod -R 755 $ASDF_DIR
+
+# Make userspace tool dirs resolvable in every (login and non-login) shell for the developer user:
+#   ~/.local/bin  — pip install --user console scripts
+#   asdf shims    — asdf-managed language binaries
+RUN printf '%s\n' \
+    'export PATH=$HOME/.local/bin:$PATH' \
+    '. /home/developer/.asdf/asdf.sh 2>/dev/null || true' \
+    > /etc/profile.d/developer-userspace.sh && chmod 644 /etc/profile.d/developer-userspace.sh
 
 WORKDIR /workspace

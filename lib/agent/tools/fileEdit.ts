@@ -36,6 +36,9 @@ export function buildFileEditTool(workspaceId: string, workspaceDir: string) {
             "tee", `/workspace/${relpath}`,
           ], { stdin: new_string });
           if (writeR.code !== 0) return `Error: ${writeR.stderr || "write failed"}`;
+          // tee runs as root — hand the new file to `developer` (canonical unlocked ownership) so
+          // the agent's own shell can modify it later.
+          await dockerExec(workspaceId, workspaceDir, ["chown", "developer:developer", `/workspace/${relpath}`]);
           return `Created ${file_path}`;
         } catch (err: unknown) {
           return `Error: ${err instanceof Error ? err.message : String(err)}`;
@@ -68,6 +71,8 @@ export function buildFileEditTool(workspaceId: string, workspaceDir: string) {
           "tee", `/workspace/${relpath}`,
         ], { stdin: updated });
         if (writeR.code !== 0) return `Error: ${writeR.stderr || "write failed"}`;
+        // tee runs as root — keep the file `developer`-owned so it stays agent-writable.
+        await dockerExec(workspaceId, workspaceDir, ["chown", "developer:developer", `/workspace/${relpath}`]);
         return `Updated ${file_path}`;
       } catch (err: unknown) {
         return `Error: ${err instanceof Error ? err.message : String(err)}`;

@@ -50,8 +50,11 @@ export function buildFileWriteTool(workspaceId: string, workspaceDir: string) {
         ], { stdin: content });
         if (writeR.code !== 0) return `Error: ${writeR.stderr || "write failed"}`;
 
-        // Transfer ownership to the app server user so the UI can save the file later.
-        await dockerExec(workspaceId, workspaceDir, ["chown", "1000:1000", `/workspace/${relpath}`]);
+        // tee runs as root, so the new file is root-owned. Hand it to `developer` so the agent's
+        // own `execute_command` (which runs as developer) can later modify it, and so it matches
+        // the canonical unlocked-file ownership. The host app (UID 1000) reads it fine (world-read)
+        // and writes via its root docker-exec fallback.
+        await dockerExec(workspaceId, workspaceDir, ["chown", "developer:developer", `/workspace/${relpath}`]);
 
         return `Written ${file_path} (${content.length} chars)`;
       } catch (err: unknown) {

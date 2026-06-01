@@ -40,7 +40,7 @@ messages.push(HumanMessage)
 ## Key points
 
 - **`messages` is a shared mutable array.** Every turn appends to it (`HumanMessage` → `AIMessage` → `ToolMessage` → `AIMessage` → ...). This is the model's working memory for the whole interaction.
-- **The model decides when it's done.** It signals this by producing a response with no tool calls. There is no max-iteration limit.
+- **The model decides when it's done.** It signals this by producing a response with no tool calls. Each workspace has a configurable `maxIterations` cap (default 30); when hit, the agent emits a final summary response tagged `iterationLimitReached: true` rather than crashing.
 - **Tools run in parallel within a turn** (`Promise.all`). If the model calls `file_read` and `glob` at the same time, both execute concurrently and their results are pushed back together.
 - **`call_agent` is just another tool** from the loop's perspective. It internally runs a complete nested `runAgent` loop on another workspace before returning its result string. The outer loop does not know or care.
 - **The `signal` (HTTP request abort) threads through every `stream()` call**, so if the browser disconnects mid-loop the whole thing stops cleanly.

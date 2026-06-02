@@ -4,7 +4,10 @@ import { tool } from "@langchain/core/tools";
 import { z } from "zod";
 import path from "path";
 import { readPermissionSnapshot } from "@/lib/infra/permissionStore";
+import { listSecured } from "@/lib/infra/securedScriptStore";
+import { listHidden } from "@/lib/infra/hiddenStore";
 import { dockerExec } from "@/lib/infra/containerManager";
+import { permissionTags, isCovered } from "./tags";
 
 function normalizeRelpath(dirPath: string): string | null {
   if (!dirPath || dirPath === ".") return ".";
@@ -73,6 +76,8 @@ export function buildListDirectoryTool(workspaceId: string, workspaceDir: string
 
         // One disk read for all lock checks
         const snapshot = await readPermissionSnapshot(workspaceId);
+        const securedPaths = listSecured(workspaceId);
+        const hiddenPaths = listHidden(workspaceId);
 
         const lines = entries.map((entry) => {
           const isDir = entry.type === "d";
@@ -80,8 +85,12 @@ export function buildListDirectoryTool(workspaceId: string, workspaceDir: string
           const suffix = isDir ? "/" : "";
           const size = isDir ? "" : `  ${formatSize(entry.sizeBytes)}`;
           const entryRelPath = relDir === "." ? entry.name : `${relDir}/${entry.name}`;
-          const perm = isLockedFromSnapshot(snapshot, entryRelPath) ? " [R]" : " [RW]";
-          return `${typeChar}  ${entry.name}${suffix}${size}${perm}`;
+          const tags = permissionTags({
+            locked: isLockedFromSnapshot(snapshot, entryRelPath),
+            secured: isCovered(entryRelPath, securedPaths),
+            hidden: isCovered(entryRelPath, hiddenPaths),
+          });
+          return `${typeChar}  ${entry.name}${suffix}${size} ${tags}`;
         });
 
         return lines.join("\n");

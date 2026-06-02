@@ -2,7 +2,7 @@
 
 **Status:** Accepted
 **Author:** @alxcls
-**Related:** [VISION.md](../VISION.md), [prd-agent-network.md](prd-agent-network.md), [prd-lock-mechanism.md](prd-lock-mechanism.md)
+**Related:** [VISION.md](../VISION.md), [prd-agent-network.md](prd-agent-network.md), [prd-agent-privilege-model.md](prd-agent-privilege-model.md)
 
 ---
 

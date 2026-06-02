@@ -13,6 +13,7 @@ interface TreeNode {
   path: string;
   permission?: "R" | "RW";
   secured?: boolean;
+  hidden?: boolean;
   children?: TreeNode[];
 }
 
@@ -174,6 +175,59 @@ const KeyBadge = ({
   );
 };
 
+// ---- Eye badge ----
+// Hiding makes a file's CONTENT invisible to the agent (kernel-enforced root:app-group ownership)
+// while the user still sees it here and secured scripts can still use it. Hiding also locks the
+// path server-side, and hidden/secured are mutually exclusive, so onRefresh re-fetches the tree to
+// update every badge.
+const EyeBadge = ({
+  node, workspaceId, wsDir, onRefresh,
+}: {
+  node: TreeNode; workspaceId: string; wsDir: string; onRefresh: () => void;
+}) => {
+  const [busy, setBusy] = useState(false);
+  const hidden = node.hidden ?? false;
+
+  const toggle = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (busy) return;
+    setBusy(true);
+    const relPath = node.path.startsWith(wsDir)
+      ? node.path.slice(wsDir.length).replace(/^\//, "")
+      : node.path;
+    await fetch(`/api/workspaces/${workspaceId}/hidden`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path: relPath, hidden: !hidden }),
+    });
+    onRefresh();
+    setBusy(false);
+  };
+
+  return (
+    <span
+      className="flex-shrink-0 inline-flex items-center justify-center w-[18px] h-[18px] rounded-[3px] cursor-pointer select-none ml-1 hover:bg-black/[.12] transition-colors"
+      onClick={toggle}
+      title={hidden ? "Hidden — content invisible to the agent. Click to reveal." : "Visible — click to hide its content from the agent."}
+      style={{ opacity: busy ? 0.4 : 1, color: hidden ? "#7c3aed" : "var(--color-text-3)" }}
+    >
+      {hidden ? (
+        <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M9.88 9.88a3 3 0 0 0 4.24 4.24" />
+          <path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68" />
+          <path d="M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61" />
+          <line x1="2" y1="2" x2="22" y2="22" />
+        </svg>
+      ) : (
+        <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z" />
+          <circle cx="12" cy="12" r="3" />
+        </svg>
+      )}
+    </span>
+  );
+};
+
 // ---- Master lock button ----
 const MasterLockButton = ({
   workspaceId, globalLock, onRefresh, onGlobalPermissionChange,
@@ -267,8 +321,17 @@ const TreeNodeList = ({
                   </span>
                   <span className="text-text-2 inline-flex flex-shrink-0"><FolderIcon /></span>
                   <span className="flex-1 whitespace-nowrap overflow-hidden text-ellipsis">{node.name}</span>
-                  <KeyBadge node={node} workspaceId={workspaceId} wsDir={wsDir} onRefresh={onRefresh} />
-                  <PermBadge node={node} workspaceId={workspaceId} wsDir={wsDir} onRefresh={onRefresh} onPermissionChange={onPermissionChange} />
+                  {node.hidden ? (
+                    <EyeBadge node={node} workspaceId={workspaceId} wsDir={wsDir} onRefresh={onRefresh} />
+                  ) : node.secured ? (
+                    <KeyBadge node={node} workspaceId={workspaceId} wsDir={wsDir} onRefresh={onRefresh} />
+                  ) : (
+                    <>
+                      <EyeBadge node={node} workspaceId={workspaceId} wsDir={wsDir} onRefresh={onRefresh} />
+                      <KeyBadge node={node} workspaceId={workspaceId} wsDir={wsDir} onRefresh={onRefresh} />
+                      <PermBadge node={node} workspaceId={workspaceId} wsDir={wsDir} onRefresh={onRefresh} onPermissionChange={onPermissionChange} />
+                    </>
+                  )}
                 </div>
               </button>
               {isOpen && node.children && (
@@ -303,8 +366,17 @@ const TreeNodeList = ({
             <div className="flex items-center gap-1.5 flex-1 min-w-0 overflow-hidden" style={{ marginLeft: 6 + depth * 14 + 14 }}>
               <span className={`inline-flex flex-shrink-0 ${isActive ? "text-primary" : "text-text-2"}`}><FileIcon /></span>
               <span className="flex-1 whitespace-nowrap overflow-hidden text-ellipsis">{node.name}</span>
-              <KeyBadge node={node} workspaceId={workspaceId} wsDir={wsDir} onRefresh={onRefresh} />
-              <PermBadge node={node} workspaceId={workspaceId} wsDir={wsDir} onRefresh={onRefresh} onPermissionChange={onPermissionChange} />
+              {node.hidden ? (
+                <EyeBadge node={node} workspaceId={workspaceId} wsDir={wsDir} onRefresh={onRefresh} />
+              ) : node.secured ? (
+                <KeyBadge node={node} workspaceId={workspaceId} wsDir={wsDir} onRefresh={onRefresh} />
+              ) : (
+                <>
+                  <EyeBadge node={node} workspaceId={workspaceId} wsDir={wsDir} onRefresh={onRefresh} />
+                  <KeyBadge node={node} workspaceId={workspaceId} wsDir={wsDir} onRefresh={onRefresh} />
+                  <PermBadge node={node} workspaceId={workspaceId} wsDir={wsDir} onRefresh={onRefresh} onPermissionChange={onPermissionChange} />
+                </>
+              )}
             </div>
           </button>
         );

@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getWorkspace } from "@/lib/infra/workspaceStore";
 import { setPermission, setGlobalPermission, getGlobalLock } from "@/lib/infra/permissionStore";
+import { isSecured } from "@/lib/infra/securedScriptStore";
+import { isHidden } from "@/lib/infra/hiddenStore";
 import { ensureContainer } from "@/lib/infra/containerManager";
 import { lockPathOnDisk, unlockPathOnDisk } from "@/lib/infra/osLock";
 import path from "path";
@@ -24,6 +26,14 @@ export async function PATCH(
   const abs = path.resolve(ws.dir, relPath);
   if (!abs.startsWith(ws.dir + path.sep) && abs !== ws.dir) {
     return NextResponse.json({ error: "Path outside workspace" }, { status: 403 });
+  }
+
+  if (isSecured(ws.id, relPath)) {
+    return NextResponse.json({ error: "Cannot lock/unlock a secured script; unsecure it first" }, { status: 400 });
+  }
+
+  if (isHidden(ws.id, relPath)) {
+    return NextResponse.json({ error: "Cannot lock/unlock a hidden file; reveal it first" }, { status: 400 });
   }
 
   try {

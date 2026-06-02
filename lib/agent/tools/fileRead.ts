@@ -4,7 +4,10 @@ import { tool } from "@langchain/core/tools";
 import { z } from "zod";
 import path from "path";
 import { isAgentLocked } from "@/lib/infra/permissionStore";
+import { isSecured } from "@/lib/infra/securedScriptStore";
+import { isHidden } from "@/lib/infra/hiddenStore";
 import { dockerExec } from "@/lib/infra/containerManager";
+import { permissionTags } from "./tags";
 
 // Normalizes a caller-supplied relative path and guards against directory traversal.
 // Uses path.posix because container paths are always POSIX regardless of dev host OS.
@@ -20,9 +23,17 @@ export function buildFileReadTool(workspaceId: string, workspaceDir: string) {
       const relpath = normalizeRelpath(file_path);
       if (relpath === null) return "Error: path is outside the workspace";
       try {
-        const perm = (await isAgentLocked(workspaceId, workspaceDir, path.join(workspaceDir, relpath)))
-          ? "[R]" : "[RW]";
-        const header = `${perm} ${file_path}\n`;
+        const hidden = isHidden(workspaceId, relpath);
+        const tags = permissionTags({
+          locked: await isAgentLocked(workspaceId, workspaceDir, path.join(workspaceDir, relpath)),
+          secured: isSecured(workspaceId, relpath),
+          hidden,
+        });
+        const header = `${tags} ${file_path}\n`;
+
+        // Hidden files: the user has marked the content invisible to the agent. The OS already
+        // blocks the read, but return a clean message instead of letting cat fail with EACCES.
+        if (hidden) return header + "content hidden by the user";
 
         if (offset === undefined && limit === undefined) {
           const r = await dockerExec(workspaceId, workspaceDir, ["cat", `/workspace/${relpath}`]);

@@ -4,6 +4,7 @@ import { NextResponse } from "next/server";
 import { getWorkspace } from "@/lib/infra/workspaceStore";
 import { readPermissionSnapshot } from "@/lib/infra/permissionStore";
 import { listSecured } from "@/lib/infra/securedScriptStore";
+import { listHidden } from "@/lib/infra/hiddenStore";
 import fs from "fs/promises";
 import path from "path";
 import { createLogger } from "@/lib/infra/logger";
@@ -14,13 +15,14 @@ export interface TreeNode {
   path: string;
   permission?: "R" | "RW";
   secured?: boolean;
+  hidden?: boolean;
   children?: TreeNode[];
 }
 
-// A path is secured if it's directly secured or lives under a secured directory (prefix match),
-// mirroring securedScriptStore.isSecured so the tree badge matches what run_secured_script accepts.
-function isSecuredRel(rel: string, secured: string[]): boolean {
-  return secured.some((c) => c === rel || rel.startsWith(c + path.sep));
+// A path is covered if it's directly listed or lives under a listed directory (prefix match),
+// mirroring securedScriptStore.isSecured / hiddenStore.isHidden so tree badges match the agent tags.
+function isCoveredRel(rel: string, entries: string[]): boolean {
+  return entries.some((c) => c === rel || rel.startsWith(c + path.sep));
 }
 
 const IGNORED = [".git", "__pycache__", ".mypy_cache", ".pytest_cache", ".ruff_cache"];
@@ -30,6 +32,7 @@ async function buildTree(
   workspaceDir: string,
   permSnapshot: { globalLock: boolean; locked: string[] },
   secured: string[],
+  hidden: string[],
   depth = 0
 ): Promise<TreeNode[]> {
   if (depth >= 5) return [];
@@ -54,7 +57,8 @@ async function buildTree(
       }
     }
     const permission: "R" | "RW" = locked ? "R" : "RW";
-    const isSecuredNode = isSecuredRel(rel, secured);
+    const isSecuredNode = isCoveredRel(rel, secured);
+    const isHiddenNode = isCoveredRel(rel, hidden);
     if (e.isDirectory()) {
       nodes.push({
         name: e.name,
@@ -62,10 +66,11 @@ async function buildTree(
         path: fullPath,
         permission,
         secured: isSecuredNode,
-        children: await buildTree(fullPath, workspaceDir, permSnapshot, secured, depth + 1),
+        hidden: isHiddenNode,
+        children: await buildTree(fullPath, workspaceDir, permSnapshot, secured, hidden, depth + 1),
       });
     } else {
-      nodes.push({ name: e.name, type: "file", path: fullPath, permission, secured: isSecuredNode });
+      nodes.push({ name: e.name, type: "file", path: fullPath, permission, secured: isSecuredNode, hidden: isHiddenNode });
     }
   }
 
@@ -81,6 +86,7 @@ export async function GET(
   if (!ws) return NextResponse.json({ error: "not found" }, { status: 404 });
   const permSnapshot = await readPermissionSnapshot(ws.id);
   const secured = listSecured(ws.id);
-  const tree = await buildTree(ws.dir, ws.dir, permSnapshot, secured);
+  const hidden = listHidden(ws.id);
+  const tree = await buildTree(ws.dir, ws.dir, permSnapshot, secured, hidden);
   return NextResponse.json({ tree, globalLock: permSnapshot.globalLock });
 }

@@ -14,7 +14,7 @@ RUN apt-get update && apt-get install -y \
     rm -rf /var/lib/apt/lists/* && \
     ln -sf /usr/bin/python3 /usr/bin/python
 
-# Three execution identities (see doc/adr/draft/agent-privilege-model):
+# Three execution identities (see doc/adr/accepted/agent-privilege-model.md):
 #   developer (UID 1001) — the agent's normal, NON-ROOT identity. `execute_command` runs as this
 #                          user, so it physically cannot read root-owned secrets or write root-owned
 #                          (locked) files. Owns nvm/pyenv/asdf install dirs and all unlocked workspace files.

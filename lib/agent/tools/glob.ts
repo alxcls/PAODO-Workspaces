@@ -4,7 +4,10 @@
 import { tool } from "@langchain/core/tools";
 import { z } from "zod";
 import { readPermissionSnapshot } from "@/lib/infra/permissionStore";
+import { listSecured } from "@/lib/infra/securedScriptStore";
+import { listHidden } from "@/lib/infra/hiddenStore";
 import { dockerExec } from "@/lib/infra/containerManager";
+import { permissionTags, isCovered } from "./tags";
 
 // Convert a single glob segment (no path separators) to a regex.
 function segmentToRegex(segment: string): RegExp {
@@ -84,9 +87,18 @@ export function buildGlobTool(workspaceId: string, workspaceDir: string) {
 
         // One disk read for all lock checks
         const snapshot = await readPermissionSnapshot(workspaceId);
+        const securedPaths = listSecured(workspaceId);
+        const hiddenPaths = listHidden(workspaceId);
 
         return matched
-          .map((rel) => `${rel}${isLockedFromSnapshot(snapshot, rel) ? " [R]" : " [RW]"}`)
+          .map((rel) => {
+            const tags = permissionTags({
+              locked: isLockedFromSnapshot(snapshot, rel),
+              secured: isCovered(rel, securedPaths),
+              hidden: isCovered(rel, hiddenPaths),
+            });
+            return `${rel} ${tags}`;
+          })
           .join("\n");
       } catch (err: unknown) {
         return `Error: ${err instanceof Error ? err.message : String(err)}`;

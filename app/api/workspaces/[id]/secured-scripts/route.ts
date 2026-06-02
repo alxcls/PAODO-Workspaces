@@ -7,6 +7,7 @@ export const runtime = "nodejs";
 import { NextResponse } from "next/server";
 import { getWorkspace } from "@/lib/infra/workspaceStore";
 import { secureScript, unsecureScript, listSecured } from "@/lib/infra/securedScriptStore";
+import { isHidden } from "@/lib/infra/hiddenStore";
 import { setPermission, getGlobalLock } from "@/lib/infra/permissionStore";
 import { ensureContainer } from "@/lib/infra/containerManager";
 import { lockPathOnDisk, unlockPathOnDisk } from "@/lib/infra/osLock";
@@ -38,6 +39,11 @@ export async function PATCH(
   const abs = path.resolve(ws.dir, relPath);
   if (!abs.startsWith(ws.dir + path.sep) && abs !== ws.dir) {
     return NextResponse.json({ error: "Path outside workspace" }, { status: 403 });
+  }
+
+  // Hidden and secured are mutually exclusive — see the hidden route for the rationale.
+  if (secured && isHidden(ws.id, relPath)) {
+    return NextResponse.json({ error: "Cannot secure a hidden file; reveal it first" }, { status: 400 });
   }
 
   try {

@@ -30,11 +30,18 @@
 import { spawn } from "child_process";
 import { readPermissionSnapshot } from "./permissionStore";
 import { listSecured } from "./securedScriptStore";
+import { listHidden } from "./hiddenStore";
 import { createLogger } from "./logger";
 
 const log = createLogger("osLock");
 
 const DEVELOPER = "developer:developer";
+
+// GID the app server (the file-tree viewer, host-side) runs as. HIDDEN paths are chowned to
+// root:APP_GID 0640 so root (secured scripts) and the app (user viewing) can read, but `developer`
+// (the agent, UID 1001, NOT in this group) lands in "other" and cannot read. Default 1000 = the
+// `node` user/group in the app image and the base-image `ubuntu` group in the workspace container.
+const APP_GID = process.env.APP_GID ?? "1000";
 
 function containerName(workspaceId: string): string {
   return `ws_${workspaceId}`;
@@ -86,6 +93,20 @@ async function unlockOnDisk(workspaceId: string, relPath: string): Promise<void>
   }
 }
 
+// Makes a path root-owned and readable only by root + the app group (APP_GID) — never by
+// `developer`. Files → 0640, dirs → 0755 (so the agent can still list names but not read contents;
+// names visible, contents hidden). The app server (in APP_GID) reads via the group bit for the
+// user-facing viewer; root reads for secured scripts. Idempotent.
+async function hideOnDisk(workspaceId: string, relPath: string): Promise<void> {
+  const target = `/workspace/${relPath}`;
+  const r1 = await runRoot(workspaceId, ["chown", "-R", `root:${APP_GID}`, target]);
+  const r2 = await runRoot(workspaceId, ["find", target, "-type", "f", "-exec", "chmod", "0640", "{}", "+"]);
+  const r3 = await runRoot(workspaceId, ["find", target, "-type", "d", "-exec", "chmod", "0755", "{}", "+"]);
+  if (r1.code !== 0 || r2.code !== 0 || r3.code !== 0) {
+    log.warn({ workspaceId, relPath, chown: r1.stderr, chmodF: r2.stderr, chmodD: r3.stderr }, "hideOnDisk failed");
+  }
+}
+
 // Public: lock/unlock a single path. Callers (the permissions/secured-scripts routes) must have ensured the
 // container is running first. No-op-safe when globally locked is handled by the caller.
 export async function lockPathOnDisk(workspaceId: string, relPath: string): Promise<void> {
@@ -93,6 +114,16 @@ export async function lockPathOnDisk(workspaceId: string, relPath: string): Prom
 }
 
 export async function unlockPathOnDisk(workspaceId: string, relPath: string): Promise<void> {
+  await unlockOnDisk(workspaceId, relPath);
+}
+
+// Public: hide/unhide a single path. Hiding blocks the agent from reading content; unhiding returns
+// the path to normal developer ownership (same as unlock). Callers must ensure the container first.
+export async function hidePathOnDisk(workspaceId: string, relPath: string): Promise<void> {
+  await hideOnDisk(workspaceId, relPath);
+}
+
+export async function unhidePathOnDisk(workspaceId: string, relPath: string): Promise<void> {
   await unlockOnDisk(workspaceId, relPath);
 }
 
@@ -112,13 +143,24 @@ export async function reconcileOsPermissions(workspaceId: string): Promise<void>
   await runRoot(workspaceId, ["find", "/workspace", "-mindepth", "1", "!", "-uid", "0", "-exec", "chown", DEVELOPER, "{}", "+"]);
   await runRoot(workspaceId, ["chmod", "-R", "u+w", "/workspace"]);
 
+  // Hidden paths get root:APP_GID 0640 (content unreadable by the agent). Apply these FIRST and
+  // exclude them from the lock set below so the lock's 0444/a-w doesn't clobber the hide mode bits.
+  const hidden = listHidden(workspaceId);
+  for (const relPath of hidden) {
+    await hideOnDisk(workspaceId, relPath);
+  }
+
   // Then re-lock the protected set: registered per-path locks + secured scripts (which are locked
-  // so the agent can't edit them). Dedupe so a path that's both locked and secured is done once.
-  const protectedPaths = new Set<string>([...snap.locked, ...listSecured(workspaceId)]);
+  // so the agent can't edit them), minus anything already hidden. Dedupe so a path that's both
+  // locked and secured is done once.
+  const hiddenSet = new Set(hidden);
+  const protectedPaths = new Set<string>(
+    [...snap.locked, ...listSecured(workspaceId)].filter((p) => !hiddenSet.has(p))
+  );
   for (const relPath of protectedPaths) {
     await lockOnDisk(workspaceId, relPath);
   }
-  if (protectedPaths.size > 0) {
-    log.debug({ workspaceId, count: protectedPaths.size }, "reconciled OS permissions");
+  if (protectedPaths.size > 0 || hidden.length > 0) {
+    log.debug({ workspaceId, locked: protectedPaths.size, hidden: hidden.length }, "reconciled OS permissions");
   }
 }

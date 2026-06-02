@@ -4,6 +4,7 @@ import { tool } from "@langchain/core/tools";
 import { z } from "zod";
 import path from "path";
 import { isAgentLocked } from "@/lib/infra/permissionStore";
+import { isHidden } from "@/lib/infra/hiddenStore";
 import { dockerExec } from "@/lib/infra/containerManager";
 
 function normalizeRelpath(filePath: string): string | null {
@@ -17,6 +18,9 @@ export function buildFileWriteTool(workspaceId: string, workspaceDir: string) {
     async ({ file_path, content }) => {
       const relpath = normalizeRelpath(file_path);
       if (relpath === null) return "Error: path is outside the workspace";
+      if (isHidden(workspaceId, relpath)) {
+        return `Error: "${file_path}" is hidden [H] — its content is invisible to you and cannot be written. Ask the user to reveal it (eye icon in the file tree) if it needs changing.`;
+      }
       try {
         const absFile = path.join(workspaceDir, relpath);
         const absDir = path.dirname(absFile);

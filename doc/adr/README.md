@@ -8,7 +8,7 @@ Current ADRs:
 - conversation-storage-inmemory-with-compaction.md — Conversation storage (Draft)
 - context-compaction-via-llm-summarization.md — Context compaction (Draft)
 - per-workspace-api-key-http-endpoint.md — Per-workspace API key & HTTP endpoint (Accepted)
-- file-locks-and-trusted-scripts.md — File locks + trusted scripts (Accepted/Draft)
+- agent-privilege-model.md — Agent privilege model: locks, secured scripts, hidden files (Accepted)
 - agent-to-agent-server-mediated-calls.md — Agent-to-agent via server (Accepted)
 - metadata-storage-json-vs-db.md — Metadata storage: JSON vs DB (Accepted)
 - single-llm-provider-global-model.md — Single LLM provider & global model (Accepted)

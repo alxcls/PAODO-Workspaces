@@ -2,7 +2,7 @@
 
 **Status:** Accepted  
 **Author:** @alxcls  
-**Related:** [VISION.md](../VISION.md), [prd-lock-mechanism.md](prd-lock-mechanism.md), [prd-agent-network.md](prd-agent-network.md)
+**Related:** [VISION.md](../VISION.md), [prd-agent-privilege-model.md](prd-agent-privilege-model.md), [prd-agent-network.md](prd-agent-network.md)
 
 ---
 
@@ -24,7 +24,7 @@ Without these capabilities the agent either reasons from stale or incomplete inf
 ## Non-goals
 
 - Agent-to-agent communication — covered separately in [prd-agent-network.md](prd-agent-network.md)
-- File lock management — the lock mechanism and its UI is covered in [prd-lock-mechanism.md](prd-lock-mechanism.md)
+- File lock management — locks, secured scripts, and hidden files are covered in [prd-agent-privilege-model.md](prd-agent-privilege-model.md)
 - Web search (finding relevant URLs by querying a search engine) — the agent can only fetch a URL it already knows
 - Binary files — all file operations work on text only
 - Browser automation — the agent fetches raw page content, it does not drive a browser or interact with JavaScript-rendered pages

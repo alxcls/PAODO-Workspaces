@@ -26,6 +26,7 @@ COPY public/ ./public/
 COPY server.ts ./
 COPY next.config.ts ./
 COPY tsconfig.json ./
+COPY .dockerignore ./
 COPY Dockerfile.workspace ./
 COPY lib/ ./lib/
 COPY app/ ./app/

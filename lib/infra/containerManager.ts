@@ -288,8 +288,12 @@ async function ensureWorkspaceImage(): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     const proc = spawn("docker", buildArgs, { stdio: ["ignore", "inherit", "inherit"] });
     proc.on("close", (code: number | null) => {
-      if (code === 0) resolve();
-      else reject(new Error(`docker build exited with code ${code}`));
+      if (code === 0) {
+        resolve();
+      } else {
+        log.error({ image: CONTAINER_IMAGE, code }, "workspace image build failed");
+        reject(new Error(`docker build exited with code ${code}`));
+      }
     });
     proc.on("error", reject);
   });

@@ -90,9 +90,11 @@ const PermBadge = ({
   const [busy, setBusy] = useState(false);
   const perm = node.permission ?? "RW";
 
+  const owned = node.secured || node.hidden;
+
   const toggle = async (e: React.MouseEvent) => {
     e.stopPropagation();
-    if (busy) return;
+    if (busy || owned) return;
     setBusy(true);
     const next: "R" | "RW" = perm === "R" ? "RW" : "R";
     const relPath = node.path.startsWith(wsDir)
@@ -108,12 +110,16 @@ const PermBadge = ({
     setBusy(false);
   };
 
+  const title = owned
+    ? `Locked by ${node.secured ? "key" : "eye"} — remove that first to change write access`
+    : perm === "R" ? "Read-only — click to unlock" : "Read-write — click to lock";
+
   return (
     <span
-      className="flex-shrink-0 inline-flex items-center justify-center w-[18px] h-[18px] rounded-[3px] cursor-pointer select-none ml-1 text-text-2 hover:text-text hover:bg-black/[.12] transition-colors"
+      className={`flex-shrink-0 inline-flex items-center justify-center w-[18px] h-[18px] rounded-[3px] select-none ml-1 text-text-2 transition-colors ${owned ? "cursor-default opacity-40" : "cursor-pointer hover:text-text hover:bg-black/[.12]"}`}
       onClick={toggle}
-      title={perm === "R" ? "Read-only — click to unlock" : "Read-write — click to lock"}
-      style={{ opacity: busy ? 0.4 : 1 }}
+      title={title}
+      style={{ opacity: busy ? 0.4 : undefined }}
     >
       {perm === "R" ? (
         <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -321,17 +327,11 @@ const TreeNodeList = ({
                   </span>
                   <span className="text-text-2 inline-flex flex-shrink-0"><FolderIcon /></span>
                   <span className="flex-1 whitespace-nowrap overflow-hidden text-ellipsis">{node.name}</span>
-                  {node.hidden ? (
+                  <>
                     <EyeBadge node={node} workspaceId={workspaceId} wsDir={wsDir} onRefresh={onRefresh} />
-                  ) : node.secured ? (
                     <KeyBadge node={node} workspaceId={workspaceId} wsDir={wsDir} onRefresh={onRefresh} />
-                  ) : (
-                    <>
-                      <EyeBadge node={node} workspaceId={workspaceId} wsDir={wsDir} onRefresh={onRefresh} />
-                      <KeyBadge node={node} workspaceId={workspaceId} wsDir={wsDir} onRefresh={onRefresh} />
-                      <PermBadge node={node} workspaceId={workspaceId} wsDir={wsDir} onRefresh={onRefresh} onPermissionChange={onPermissionChange} />
-                    </>
-                  )}
+                    <PermBadge node={node} workspaceId={workspaceId} wsDir={wsDir} onRefresh={onRefresh} onPermissionChange={onPermissionChange} />
+                  </>
                 </div>
               </button>
               {isOpen && node.children && (
@@ -366,17 +366,11 @@ const TreeNodeList = ({
             <div className="flex items-center gap-1.5 flex-1 min-w-0 overflow-hidden" style={{ marginLeft: 6 + depth * 14 + 14 }}>
               <span className={`inline-flex flex-shrink-0 ${isActive ? "text-primary" : "text-text-2"}`}><FileIcon /></span>
               <span className="flex-1 whitespace-nowrap overflow-hidden text-ellipsis">{node.name}</span>
-              {node.hidden ? (
+              <>
                 <EyeBadge node={node} workspaceId={workspaceId} wsDir={wsDir} onRefresh={onRefresh} />
-              ) : node.secured ? (
                 <KeyBadge node={node} workspaceId={workspaceId} wsDir={wsDir} onRefresh={onRefresh} />
-              ) : (
-                <>
-                  <EyeBadge node={node} workspaceId={workspaceId} wsDir={wsDir} onRefresh={onRefresh} />
-                  <KeyBadge node={node} workspaceId={workspaceId} wsDir={wsDir} onRefresh={onRefresh} />
-                  <PermBadge node={node} workspaceId={workspaceId} wsDir={wsDir} onRefresh={onRefresh} onPermissionChange={onPermissionChange} />
-                </>
-              )}
+                <PermBadge node={node} workspaceId={workspaceId} wsDir={wsDir} onRefresh={onRefresh} onPermissionChange={onPermissionChange} />
+              </>
             </div>
           </button>
         );

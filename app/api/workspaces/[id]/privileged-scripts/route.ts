@@ -1,12 +1,12 @@
-// REST endpoint for a workspace's secured scripts — scripts the user authorizes to run with
-// secrets injected (via the run_secured_script tool). Only the user (UI) can secure; the agent has
-// no tool to secure. Securing a script also LOCKS it on disk (root-owned, 0444) so the agent cannot
-// edit it to leak the injected secret — secure and lock stay coupled.
+// REST endpoint for a workspace's privileged scripts — scripts the user authorizes to run with
+// elevated privilege (secrets injected via docker exec -u root). Only the user (UI) can grant
+// privilege; the agent has no tool to do so. Granting privilege also LOCKS the script on disk
+// (root-owned, 0444) so the agent cannot edit it to leak the injected secret.
 export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
 import { getWorkspace } from "@/lib/infra/workspaceStore";
-import { secureScript, unsecureScript, listSecured } from "@/lib/infra/securedScriptStore";
+import { grantPrivilege, revokePrivilege, listPrivileged } from "@/lib/infra/privilegeStore";
 import { isHidden } from "@/lib/infra/hiddenStore";
 import { setPermission, getGlobalLock } from "@/lib/infra/permissionStore";
 import { ensureContainer } from "@/lib/infra/containerManager";
@@ -20,7 +20,7 @@ export async function GET(
 ) {
   const { id } = await params;
   if (!getWorkspace(id)) return NextResponse.json({ error: "Workspace not found" }, { status: 404 });
-  return NextResponse.json({ secured: listSecured(id) });
+  return NextResponse.json({ privileged: listPrivileged(id) });
 }
 
 export async function PATCH(
@@ -31,9 +31,9 @@ export async function PATCH(
   const ws = getWorkspace(id);
   if (!ws) return NextResponse.json({ error: "Workspace not found" }, { status: 404 });
 
-  const { path: relPath, secured } = (await req.json()) as { path?: string; secured?: boolean };
-  if (!relPath || typeof secured !== "boolean") {
-    return NextResponse.json({ error: "path and secured (boolean) required" }, { status: 400 });
+  const { path: relPath, privileged } = (await req.json()) as { path?: string; privileged?: boolean };
+  if (!relPath || typeof privileged !== "boolean") {
+    return NextResponse.json({ error: "path and privileged (boolean) required" }, { status: 400 });
   }
 
   const abs = path.resolve(ws.dir, relPath);
@@ -41,22 +41,22 @@ export async function PATCH(
     return NextResponse.json({ error: "Path outside workspace" }, { status: 403 });
   }
 
-  // Hidden and secured are mutually exclusive — see the hidden route for the rationale.
-  if (secured && isHidden(ws.id, relPath)) {
-    return NextResponse.json({ error: "Cannot secure a hidden file; reveal it first" }, { status: 400 });
+  // Hidden and privileged are mutually exclusive — see the hidden route for the rationale.
+  if (privileged && isHidden(ws.id, relPath)) {
+    return NextResponse.json({ error: "Cannot grant privilege to a hidden file; reveal it first" }, { status: 400 });
   }
 
   try {
-    if (secured) {
-      // Secure = register + lock (registry R + OS root:root) so the agent can't edit the script.
-      secureScript(ws.id, relPath);
+    if (privileged) {
+      // Grant privilege = register + lock (registry R + OS root:root) so the agent can't edit the script.
+      grantPrivilege(ws.id, relPath);
       await setPermission(ws.id, relPath, "R");
       if (!(await getGlobalLock(ws.id))) {
         await ensureContainer(ws.id, ws.dir);
         await lockPathOnDisk(ws.id, relPath);
       }
     } else {
-      unsecureScript(ws.id, relPath);
+      revokePrivilege(ws.id, relPath);
       await setPermission(ws.id, relPath, "RW");
       if (!(await getGlobalLock(ws.id))) {
         await ensureContainer(ws.id, ws.dir);
@@ -64,8 +64,8 @@ export async function PATCH(
       }
     }
   } catch (err) {
-    createLogger("api").error({ err, workspaceId: id, path: relPath }, "failed to toggle secured");
-    return NextResponse.json({ error: "failed to toggle secured" }, { status: 500 });
+    createLogger("api").error({ err, workspaceId: id, path: relPath }, "failed to toggle privilege");
+    return NextResponse.json({ error: "failed to toggle privilege" }, { status: 500 });
   }
-  return NextResponse.json({ path: relPath, secured });
+  return NextResponse.json({ path: relPath, privileged });
 }

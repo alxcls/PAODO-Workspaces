@@ -4,7 +4,7 @@
 import { tool } from "@langchain/core/tools";
 import { z } from "zod";
 import { readPermissionSnapshot } from "@/lib/infra/permissionStore";
-import { listSecured } from "@/lib/infra/securedScriptStore";
+import { listPrivileged } from "@/lib/infra/privilegeStore";
 import { listHidden } from "@/lib/infra/hiddenStore";
 import { dockerExec } from "@/lib/infra/containerManager";
 import { permissionTags, isCovered } from "./tags";
@@ -87,14 +87,14 @@ export function buildGlobTool(workspaceId: string, workspaceDir: string) {
 
         // One disk read for all lock checks
         const snapshot = await readPermissionSnapshot(workspaceId);
-        const securedPaths = listSecured(workspaceId);
+        const privilegedPaths = listPrivileged(workspaceId);
         const hiddenPaths = listHidden(workspaceId);
 
         return matched
           .map((rel) => {
             const tags = permissionTags({
               locked: isLockedFromSnapshot(snapshot, rel),
-              secured: isCovered(rel, securedPaths),
+              privileged: isCovered(rel, privilegedPaths),
               hidden: isCovered(rel, hiddenPaths),
             });
             return `${rel} ${tags}`;

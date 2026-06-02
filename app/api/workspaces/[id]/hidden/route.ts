@@ -2,13 +2,13 @@
 // the agent while still present in the workspace. Only the user (UI eye icon) can hide; the agent
 // has no tool to hide. Hiding makes the path root-owned + group-readable only by the app server
 // (see osLock.hidePathOnDisk), so the agent (`developer`) can never read it. Hiding also LOCKS the
-// path (registry R), and hidden/secured are mutually exclusive.
+// path (registry R), and hidden/privileged are mutually exclusive.
 export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
 import { getWorkspace } from "@/lib/infra/workspaceStore";
 import { hideFile, unhideFile, listHidden } from "@/lib/infra/hiddenStore";
-import { isSecured } from "@/lib/infra/securedScriptStore";
+import { isPrivileged } from "@/lib/infra/privilegeStore";
 import { setPermission, getGlobalLock } from "@/lib/infra/permissionStore";
 import { ensureContainer } from "@/lib/infra/containerManager";
 import { hidePathOnDisk, unhidePathOnDisk } from "@/lib/infra/osLock";
@@ -42,10 +42,10 @@ export async function PATCH(
     return NextResponse.json({ error: "Path outside workspace" }, { status: 403 });
   }
 
-  // Hidden and secured are mutually exclusive — a secured script must stay readable so the agent
-  // can reason about what it runs; a hidden file must not be runnable-with-secrets.
-  if (hidden && isSecured(ws.id, relPath)) {
-    return NextResponse.json({ error: "Cannot hide a secured script; unsecure it first" }, { status: 400 });
+  // Hidden and privileged are mutually exclusive — a privileged script must stay readable so the
+  // agent can reason about what it runs; a hidden file must not be runnable-with-secrets.
+  if (hidden && isPrivileged(ws.id, relPath)) {
+    return NextResponse.json({ error: "Cannot hide a privileged script; revoke its privilege first" }, { status: 400 });
   }
 
   try {

@@ -19,7 +19,7 @@ RUN apt-get update && apt-get install -y \
 #                          user, so it physically cannot read root-owned secrets or write root-owned
 #                          (locked) files. Owns nvm/pyenv/asdf install dirs and all unlocked workspace files.
 #   agent     (UID 999)  — even more restricted; used when the workspace is globally locked.
-#   root                 — server-only privileged path: runs crowned scripts and applies locks via
+#   root                 — server-only privileged path: runs privileged scripts and applies locks via
 #                          `docker exec -u root`, which the agent can never compose.
 # NOTE: UID 1001 (not 1000) avoids colliding with the default `ubuntu` user ubuntu:24.04 ships at 1000.
 RUN groupadd -g 999 agentgroup && \

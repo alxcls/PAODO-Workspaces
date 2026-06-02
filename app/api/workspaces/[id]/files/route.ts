@@ -3,7 +3,7 @@
 import { NextResponse } from "next/server";
 import { getWorkspace } from "@/lib/infra/workspaceStore";
 import { readPermissionSnapshot } from "@/lib/infra/permissionStore";
-import { listSecured } from "@/lib/infra/securedScriptStore";
+import { listPrivileged } from "@/lib/infra/privilegeStore";
 import { listHidden } from "@/lib/infra/hiddenStore";
 import fs from "fs/promises";
 import path from "path";
@@ -14,13 +14,13 @@ export interface TreeNode {
   type: "file" | "directory";
   path: string;
   permission?: "R" | "RW";
-  secured?: boolean;
+  privileged?: boolean;
   hidden?: boolean;
   children?: TreeNode[];
 }
 
 // A path is covered if it's directly listed or lives under a listed directory (prefix match),
-// mirroring securedScriptStore.isSecured / hiddenStore.isHidden so tree badges match the agent tags.
+// mirroring privilegeStore.isPrivileged / hiddenStore.isHidden so tree badges match the agent tags.
 function isCoveredRel(rel: string, entries: string[]): boolean {
   return entries.some((c) => c === rel || rel.startsWith(c + path.sep));
 }
@@ -31,7 +31,7 @@ async function buildTree(
   dirPath: string,
   workspaceDir: string,
   permSnapshot: { globalLock: boolean; locked: string[] },
-  secured: string[],
+  privileged: string[],
   hidden: string[],
   depth = 0
 ): Promise<TreeNode[]> {
@@ -57,7 +57,7 @@ async function buildTree(
       }
     }
     const permission: "R" | "RW" = locked ? "R" : "RW";
-    const isSecuredNode = isCoveredRel(rel, secured);
+    const isPrivilegedNode = isCoveredRel(rel, privileged);
     const isHiddenNode = isCoveredRel(rel, hidden);
     if (e.isDirectory()) {
       nodes.push({
@@ -65,12 +65,12 @@ async function buildTree(
         type: "directory",
         path: fullPath,
         permission,
-        secured: isSecuredNode,
+        privileged: isPrivilegedNode,
         hidden: isHiddenNode,
-        children: await buildTree(fullPath, workspaceDir, permSnapshot, secured, hidden, depth + 1),
+        children: await buildTree(fullPath, workspaceDir, permSnapshot, privileged, hidden, depth + 1),
       });
     } else {
-      nodes.push({ name: e.name, type: "file", path: fullPath, permission, secured: isSecuredNode, hidden: isHiddenNode });
+      nodes.push({ name: e.name, type: "file", path: fullPath, permission, privileged: isPrivilegedNode, hidden: isHiddenNode });
     }
   }
 
@@ -85,8 +85,8 @@ export async function GET(
   const ws = getWorkspace(id);
   if (!ws) return NextResponse.json({ error: "not found" }, { status: 404 });
   const permSnapshot = await readPermissionSnapshot(ws.id);
-  const secured = listSecured(ws.id);
+  const privileged = listPrivileged(ws.id);
   const hidden = listHidden(ws.id);
-  const tree = await buildTree(ws.dir, ws.dir, permSnapshot, secured, hidden);
+  const tree = await buildTree(ws.dir, ws.dir, permSnapshot, privileged, hidden);
   return NextResponse.json({ tree, globalLock: permSnapshot.globalLock });
 }

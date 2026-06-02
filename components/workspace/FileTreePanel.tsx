@@ -12,7 +12,7 @@ interface TreeNode {
   type: "file" | "directory";
   path: string;
   permission?: "R" | "RW";
-  secured?: boolean;
+  privileged?: boolean;
   hidden?: boolean;
   children?: TreeNode[];
 }
@@ -90,7 +90,7 @@ const PermBadge = ({
   const [busy, setBusy] = useState(false);
   const perm = node.permission ?? "RW";
 
-  const owned = node.secured || node.hidden;
+  const owned = node.privileged || node.hidden;
 
   const toggle = async (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -111,15 +111,15 @@ const PermBadge = ({
   };
 
   const title = owned
-    ? `Locked by ${node.secured ? "key" : "eye"} — remove that first to change write access`
+    ? `Locked by ${node.privileged ? "key" : "eye"} — remove that first to change write access`
     : perm === "R" ? "Read-only — click to unlock" : "Read-write — click to lock";
 
   return (
     <span
-      className={`flex-shrink-0 inline-flex items-center justify-center w-[18px] h-[18px] rounded-[3px] select-none ml-1 text-text-2 transition-colors ${owned ? "cursor-default opacity-40" : "cursor-pointer hover:text-text hover:bg-black/[.12]"}`}
+      className={`flex-shrink-0 inline-flex items-center justify-center w-[18px] h-[18px] rounded-[3px] select-none ml-1 transition-colors ${owned ? "cursor-default opacity-40" : "cursor-pointer hover:bg-black/[.12]"}`}
       onClick={toggle}
       title={title}
-      style={{ opacity: busy ? 0.4 : undefined }}
+      style={{ opacity: busy ? 0.4 : undefined, color: perm === "R" ? "#7c3aed" : "var(--color-text-3)" }}
     >
       {perm === "R" ? (
         <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -137,16 +137,16 @@ const PermBadge = ({
 };
 
 // ---- Key badge ----
-// Securing authorizes a script to run with workspace secrets (via run_secured_script) and locks
-// it so the agent can't tamper with it. Server-side, toggling secured also flips the file's lock,
-// so onRefresh re-fetches the tree to update both this badge and the PermBadge.
+// Granting privilege authorizes a script to run with workspace secrets and locks it so the agent
+// can't tamper with it. Server-side, toggling privilege also flips the file's lock, so onRefresh
+// re-fetches the tree to update both this badge and the PermBadge.
 const KeyBadge = ({
   node, workspaceId, wsDir, onRefresh,
 }: {
   node: TreeNode; workspaceId: string; wsDir: string; onRefresh: () => void;
 }) => {
   const [busy, setBusy] = useState(false);
-  const secured = node.secured ?? false;
+  const privileged = node.privileged ?? false;
 
   const toggle = async (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -155,10 +155,10 @@ const KeyBadge = ({
     const relPath = node.path.startsWith(wsDir)
       ? node.path.slice(wsDir.length).replace(/^\//, "")
       : node.path;
-    await fetch(`/api/workspaces/${workspaceId}/secured-scripts`, {
+    await fetch(`/api/workspaces/${workspaceId}/privileged-scripts`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ path: relPath, secured: !secured }),
+      body: JSON.stringify({ path: relPath, privileged: !privileged }),
     });
     onRefresh();
     setBusy(false);
@@ -168,8 +168,8 @@ const KeyBadge = ({
     <span
       className="flex-shrink-0 inline-flex items-center justify-center w-[18px] h-[18px] rounded-[3px] cursor-pointer select-none ml-1 hover:bg-black/[.12] transition-colors"
       onClick={toggle}
-      title={secured ? "Secured — runs with secrets injected. Click to remove." : "Secure — let this script run with secrets (locks it so it can't be tampered with)."}
-      style={{ opacity: busy ? 0.4 : 1, color: secured ? "#d4a017" : "var(--color-text-3)" }}
+      title={privileged ? "Privileged — runs with secrets injected. Click to revoke." : "Grant privilege — let this script run with secrets (locks it so it can't be tampered with)."}
+      style={{ opacity: busy ? 0.4 : 1, color: privileged ? "#7c3aed" : "var(--color-text-3)" }}
     >
       <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
         <circle cx="7.5" cy="12" r="4.5" />
@@ -183,8 +183,8 @@ const KeyBadge = ({
 
 // ---- Eye badge ----
 // Hiding makes a file's CONTENT invisible to the agent (kernel-enforced root:app-group ownership)
-// while the user still sees it here and secured scripts can still use it. Hiding also locks the
-// path server-side, and hidden/secured are mutually exclusive, so onRefresh re-fetches the tree to
+// while the user still sees it here and privileged scripts can still use it. Hiding also locks the
+// path server-side, and hidden/privileged are mutually exclusive, so onRefresh re-fetches the tree to
 // update every badge.
 const EyeBadge = ({
   node, workspaceId, wsDir, onRefresh,

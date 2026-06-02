@@ -2,12 +2,12 @@
 // agent while still present in the workspace. The agent sees the name (tagged [H]) but can never
 // read the bytes: hidden paths are made root-owned and group-readable only by the app server (see
 // osLock.hideOnDisk), so `developer` (the agent's identity) is blocked at the kernel level — via
-// file_read, cat, grep, or any shell command. A secured (root) script can still consume them, and
+// file_read, cat, grep, or any shell command. A privileged (root) script can still consume them, and
 // the user still views them through the file-tree viewer.
 //
-// Hiding also LOCKS the path (it's root-owned), and hidden/secured are mutually exclusive. Stored
+// Hiding also LOCKS the path (it's root-owned), and hidden/privileged are mutually exclusive. Stored
 // as PLAINTEXT relative paths in a JSON file outside any workspace's bind mount. Same global-cached,
-// atomic-write pattern as securedScriptStore / permissionStore.
+// atomic-write pattern as privilegeStore / permissionStore.
 import { readFileSync, writeFileSync, mkdirSync, renameSync } from "fs";
 import path from "path";
 import { createLogger } from "./logger";
@@ -15,7 +15,7 @@ import { createLogger } from "./logger";
 const log = createLogger("hidden");
 
 // Derived independently to keep this leaf module free of the workspaceStore → containerManager
-// import chain. Same pattern as securedScriptStore.
+// import chain. Same pattern as privilegeStore.
 const WORKSPACES_ROOT = process.env.WORKSPACES_ROOT ?? path.resolve(process.cwd(), "data");
 const FILE = path.join(WORKSPACES_ROOT, ".hidden-files.json");
 

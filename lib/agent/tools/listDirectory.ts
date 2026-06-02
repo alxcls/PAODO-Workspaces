@@ -4,7 +4,7 @@ import { tool } from "@langchain/core/tools";
 import { z } from "zod";
 import path from "path";
 import { readPermissionSnapshot } from "@/lib/infra/permissionStore";
-import { listSecured } from "@/lib/infra/securedScriptStore";
+import { listPrivileged } from "@/lib/infra/privilegeStore";
 import { listHidden } from "@/lib/infra/hiddenStore";
 import { dockerExec } from "@/lib/infra/containerManager";
 import { permissionTags, isCovered } from "./tags";
@@ -76,7 +76,7 @@ export function buildListDirectoryTool(workspaceId: string, workspaceDir: string
 
         // One disk read for all lock checks
         const snapshot = await readPermissionSnapshot(workspaceId);
-        const securedPaths = listSecured(workspaceId);
+        const privilegedPaths = listPrivileged(workspaceId);
         const hiddenPaths = listHidden(workspaceId);
 
         const lines = entries.map((entry) => {
@@ -87,7 +87,7 @@ export function buildListDirectoryTool(workspaceId: string, workspaceDir: string
           const entryRelPath = relDir === "." ? entry.name : `${relDir}/${entry.name}`;
           const tags = permissionTags({
             locked: isLockedFromSnapshot(snapshot, entryRelPath),
-            secured: isCovered(entryRelPath, securedPaths),
+            privileged: isCovered(entryRelPath, privilegedPaths),
             hidden: isCovered(entryRelPath, hiddenPaths),
           });
           return `${typeChar}  ${entry.name}${suffix}${size} ${tags}`;

@@ -1,6 +1,6 @@
-// REST endpoint for a workspace's secrets (env vars injected into secured scripts only).
+// REST endpoint for a workspace's secrets (env vars injected into privileged scripts only).
 // GET lists key NAMES only — values are write-only and never returned to the frontend.
-// PUT sets/overwrites a secret; DELETE removes one. Secrets are injected at secured-script run
+// PUT sets/overwrites a secret; DELETE removes one. Secrets are injected at privileged-script run
 // time (docker exec -u root -e ...), never into the agent's own execute_command shell.
 export const runtime = "nodejs";
 

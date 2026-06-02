@@ -4,7 +4,7 @@ import { tool } from "@langchain/core/tools";
 import { z } from "zod";
 import path from "path";
 import { isAgentLocked } from "@/lib/infra/permissionStore";
-import { isSecured } from "@/lib/infra/securedScriptStore";
+import { isPrivileged } from "@/lib/infra/privilegeStore";
 import { isHidden } from "@/lib/infra/hiddenStore";
 import { dockerExec } from "@/lib/infra/containerManager";
 import { permissionTags } from "./tags";
@@ -26,7 +26,7 @@ export function buildFileReadTool(workspaceId: string, workspaceDir: string) {
         const hidden = isHidden(workspaceId, relpath);
         const tags = permissionTags({
           locked: await isAgentLocked(workspaceId, workspaceDir, path.join(workspaceDir, relpath)),
-          secured: isSecured(workspaceId, relpath),
+          privileged: isPrivileged(workspaceId, relpath),
           hidden,
         });
         const header = `${tags} ${file_path}\n`;

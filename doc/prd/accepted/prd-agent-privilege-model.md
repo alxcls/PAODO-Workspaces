@@ -25,20 +25,20 @@ By default the agent can read and write every file in a workspace. That is fine 
 
 ## The model
 
-Every file and folder has three independent states, each toggled by its own icon in the file tree and shown to the agent as a tag in the order `[write] [secure] [visibility]`:
+Every file and folder has three independent states, each toggled by its own icon in the file tree and shown to the agent as a tag in the order `[write] [privilege] [visibility]`:
 
 | Control | Icon | Agent sees | Meaning |
 |---------|------|------------|---------|
 | Write | lock | `[RW]` / `[R]` | `[R]` = read-only: the agent can read it but never change or delete it. |
-| Secure | key | `[US]` / `[S]` | `[S]` = secured script: a script the user trusts to run with elevated rights (and with workspace secrets). It is the only actor allowed to change protected files. |
+| Privilege | key | `[US]` / `[S]` | `[S]` = privileged script: a script the user trusts to run with elevated rights (and with workspace secrets). It is the only actor allowed to change protected files. |
 | Visibility | eye | `[V]` / `[H]` | `[H]` = hidden: the agent sees the file's name but can never read its content. |
 
 Rules of the model — all automatic and enforced:
 
-- Securing or hiding a file **automatically locks it** (`[R]`); unsecuring or revealing it **automatically returns it to writable** (`[RW]`). The user never has to set the lock separately.
-- While a file is secured or hidden, its lock **cannot be changed on its own** — the key/eye owns the write state, and a direct lock/unlock on it is refused.
-- A plain locked file (just `[R]`) carries no secured or hidden status; unlocking it simply makes it writable again.
-- Secured and hidden are mutually exclusive — a file is one or the other, never both.
+- Granting privilege or hiding a file **automatically locks it** (`[R]`); revoking privilege or revealing it **automatically returns it to writable** (`[RW]`). The user never has to set the lock separately.
+- While a file is privileged or hidden, its lock **cannot be changed on its own** — the key/eye owns the write state, and a direct lock/unlock on it is refused.
+- A plain locked file (just `[R]`) carries no privileged or hidden status; unlocking it simply makes it writable again.
+- Privileged and hidden are mutually exclusive — a file is one or the other, never both.
 - **Only the user** can set any of these states. The agent has no way to grant itself a privilege or lift a restriction.
 - A whole workspace can also be put into a single hardened read-only mode.
 
@@ -50,7 +50,7 @@ Rules of the model — all automatic and enforced:
 
 > As a consultant under NDA, I want to hide a folder of client data so the agent can run scripts that process it but can never read its contents.
 
-> As a citizen developer, I want the agent to tell me exactly what to unlock, secure, or reveal when it is blocked — instead of failing confusingly or inventing a workaround.
+> As a citizen developer, I want the agent to tell me exactly what to unlock, grant privilege to, or reveal when it is blocked — instead of failing confusingly or inventing a workaround.
 
 > As a service builder, I want to run the agent autonomously, confident that protected files will not drift and confidential data will never enter the model.
 
@@ -60,16 +60,16 @@ Rules of the model — all automatic and enforced:
 
 - Three independent toggles (lock / key / eye) on any file or folder in the tree; applying one to a folder covers everything inside it.
 - All three states are set **only** by the user in the UI — the agent has no tool or prompt path to change them.
-- The lock follows the key and eye automatically: securing/hiding locks the file, unsecuring/revealing unlocks it, and the lock cannot be toggled independently while a file is secured or hidden.
+- The lock follows the key and eye automatically: granting privilege/hiding locks the file, revoking privilege/revealing unlocks it, and the lock cannot be toggled independently while a file is privileged or hidden.
 - Protections cannot be bypassed by the agent writing and running its own scripts.
-- `[R]` blocks writes and deletes; `[H]` blocks all content reads (the file-read tool and shell commands such as `cat`/`grep` return nothing); `[S]` scripts are the only actor that may write protected paths and the only way secrets are used.
+- `[R]` blocks writes and deletes; `[H]` blocks all content reads (the file-read tool and shell commands such as `cat`/`grep` return nothing); `[S]` privileged scripts are the only actor that may write protected paths and the only way secrets are used.
 - The agent sees all three tags on every file and, when blocked, names the file and the icon the user should click.
 - All states survive server restarts.
 - A workspace-wide read-only mode that also stops the agent installing packages or running write commands.
-- The user can always view hidden content, and secured scripts can always use it.
+- The user can always view hidden content, and privileged scripts can always use it.
 
 ### Nice to have
 
 - Persistent badges in the file tree (not only on hover) with explanatory tooltips.
 - A notice in the agent chat when a read was blocked: _"Contents not seen by agent."_
-- When blocked, the agent names the script it would secure or the file it would unlock and asks the user to confirm.
+- When blocked, the agent names the script it would grant privilege to or the file it would unlock and asks the user to confirm.

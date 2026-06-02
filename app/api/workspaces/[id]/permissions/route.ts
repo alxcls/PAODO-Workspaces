@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getWorkspace } from "@/lib/infra/workspaceStore";
 import { setPermission, setGlobalPermission, getGlobalLock } from "@/lib/infra/permissionStore";
-import { isSecured } from "@/lib/infra/securedScriptStore";
+import { isPrivileged } from "@/lib/infra/privilegeStore";
 import { isHidden } from "@/lib/infra/hiddenStore";
 import { ensureContainer } from "@/lib/infra/containerManager";
 import { lockPathOnDisk, unlockPathOnDisk } from "@/lib/infra/osLock";
@@ -28,8 +28,8 @@ export async function PATCH(
     return NextResponse.json({ error: "Path outside workspace" }, { status: 403 });
   }
 
-  if (isSecured(ws.id, relPath)) {
-    return NextResponse.json({ error: "Cannot lock/unlock a secured script; unsecure it first" }, { status: 400 });
+  if (isPrivileged(ws.id, relPath)) {
+    return NextResponse.json({ error: "Cannot lock/unlock a privileged script; revoke its privilege first" }, { status: 400 });
   }
 
   if (isHidden(ws.id, relPath)) {

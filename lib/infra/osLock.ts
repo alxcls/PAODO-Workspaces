@@ -83,18 +83,19 @@ function runRoot(workspaceId: string, cmdArgs: string[]): Promise<{ stdout: stri
 // Idempotent.
 async function lockOnDisk(workspaceId: string, relPath: string): Promise<void> {
   const target = `/workspace/${relPath}`;
-  const r1 = await runRoot(workspaceId, ["chown", "-R", "root:root", target]);
-  const r2 = await runRoot(workspaceId, ["chmod", "-R", "a-w", target]);
+  const [r1, r2] = await Promise.all([
+    runRoot(workspaceId, ["chown", "-R", "root:root", target]),
+    runRoot(workspaceId, ["chmod", "-R", "a-w", target]),
+  ]);
   if (r1.code !== 0 || r2.code !== 0) {
     log.warn({ workspaceId, relPath, chown: r1.stderr, chmod: r2.stderr }, "lockOnDisk failed");
   }
-  // Ensure the parent directory has sticky bit + group-write so developer can write to it but
-  // cannot delete root-owned entries (sticky: can only unlink files you own or own the directory,
-  // and developer does not own this root-owned parent).
   const parentDir = path.posix.dirname(target);
   if (parentDir !== "/") {
-    await runRoot(workspaceId, ["chown", "root:developer", parentDir]);
-    await runRoot(workspaceId, ["chmod", "01775", parentDir]);
+    await Promise.all([
+      runRoot(workspaceId, ["chown", "root:developer", parentDir]),
+      runRoot(workspaceId, ["chmod", "01775", parentDir]),
+    ]);
   }
 }
 
@@ -103,13 +104,12 @@ async function lockOnDisk(workspaceId: string, relPath: string): Promise<void> {
 // file/directory treatment is consistent whether relPath is a leaf or a subtree root.
 async function unlockOnDisk(workspaceId: string, relPath: string): Promise<void> {
   const target = `/workspace/${relPath}`;
-  // Restore files (and symlinks) to developer ownership and writable.
-  const r1 = await runRoot(workspaceId, ["find", target, "(", "-type", "f", "-o", "-type", "l", ")", "-exec", "chown", DEVELOPER, "{}", "+"]);
-  const r2 = await runRoot(workspaceId, ["find", target, "(", "-type", "f", "-o", "-type", "l", ")", "-exec", "chmod", "u+w", "{}", "+"]);
-  // Restore directories to root:developer 01775 so developer can write (group bit) but the sticky
-  // bit prevents it from deleting root-owned entries added by future locks in the same subtree.
-  const r3 = await runRoot(workspaceId, ["find", target, "-type", "d", "-exec", "chown", "root:developer", "{}", "+"]);
-  const r4 = await runRoot(workspaceId, ["find", target, "-type", "d", "-exec", "chmod", "01775", "{}", "+"]);
+  const [r1, r2, r3, r4] = await Promise.all([
+    runRoot(workspaceId, ["find", target, "(", "-type", "f", "-o", "-type", "l", ")", "-exec", "chown", DEVELOPER, "{}", "+"]),
+    runRoot(workspaceId, ["find", target, "(", "-type", "f", "-o", "-type", "l", ")", "-exec", "chmod", "u+w", "{}", "+"]),
+    runRoot(workspaceId, ["find", target, "-type", "d", "-exec", "chown", "root:developer", "{}", "+"]),
+    runRoot(workspaceId, ["find", target, "-type", "d", "-exec", "chmod", "01775", "{}", "+"]),
+  ]);
   if (r1.code !== 0 || r2.code !== 0 || r3.code !== 0 || r4.code !== 0) {
     log.warn({ workspaceId, relPath, r1: r1.stderr, r2: r2.stderr, r3: r3.stderr, r4: r4.stderr }, "unlockOnDisk failed");
   }
@@ -122,16 +122,20 @@ async function unlockOnDisk(workspaceId: string, relPath: string): Promise<void>
 // (sticky) so developer cannot `rm` the hidden entry. Idempotent.
 async function hideOnDisk(workspaceId: string, relPath: string): Promise<void> {
   const target = `/workspace/${relPath}`;
-  const r1 = await runRoot(workspaceId, ["chown", "-R", `root:${APP_GID}`, target]);
-  const r2 = await runRoot(workspaceId, ["find", target, "-type", "f", "-exec", "chmod", "0640", "{}", "+"]);
-  const r3 = await runRoot(workspaceId, ["find", target, "-type", "d", "-exec", "chmod", "0755", "{}", "+"]);
+  const [r1, r2, r3] = await Promise.all([
+    runRoot(workspaceId, ["chown", "-R", `root:${APP_GID}`, target]),
+    runRoot(workspaceId, ["find", target, "-type", "f", "-exec", "chmod", "0640", "{}", "+"]),
+    runRoot(workspaceId, ["find", target, "-type", "d", "-exec", "chmod", "0755", "{}", "+"]),
+  ]);
   if (r1.code !== 0 || r2.code !== 0 || r3.code !== 0) {
     log.warn({ workspaceId, relPath, chown: r1.stderr, chmodF: r2.stderr, chmodD: r3.stderr }, "hideOnDisk failed");
   }
   const parentDir = path.posix.dirname(target);
   if (parentDir !== "/") {
-    await runRoot(workspaceId, ["chown", "root:developer", parentDir]);
-    await runRoot(workspaceId, ["chmod", "01775", parentDir]);
+    await Promise.all([
+      runRoot(workspaceId, ["chown", "root:developer", parentDir]),
+      runRoot(workspaceId, ["chmod", "01775", parentDir]),
+    ]);
   }
 }
 

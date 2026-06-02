@@ -29,6 +29,9 @@ const WORKSPACES_VOLUME_NAME = process.env.WORKSPACES_VOLUME_NAME ?? "";
 const idleTimers = new Map<string, ReturnType<typeof setTimeout>>();
 // Prevents concurrent docker run/start calls for the same workspace.
 const startLocks = new Map<string, Promise<void>>();
+// Tracks containers we know are running with a specific lock state so ensureContainer can skip
+// docker inspect on repeated calls. Cleared on stop/remove to force a re-check.
+const runningCache = new Map<string, { isLocked: boolean }>();
 
 function containerName(workspaceId: string): string {
   return `ws_${workspaceId}`;
@@ -112,15 +115,21 @@ async function getContainerLockLabel(workspaceId: string): Promise<boolean> {
 }
 
 async function _ensureContainer(workspaceId: string, workspaceDir: string): Promise<void> {
-  const [status, isLocked] = await Promise.all([
-    getContainerStatus(workspaceId),
-    getGlobalLock(workspaceId),
-  ]);
+  const isLocked = await getGlobalLock(workspaceId);
+
+  // Fast path: skip docker inspect if we already know the container is running with the right state.
+  const cached = runningCache.get(workspaceId);
+  if (cached && cached.isLocked === isLocked) return;
+
+  const status = await getContainerStatus(workspaceId);
 
   if (status === "running" || status === "stopped") {
     const containerLocked = await getContainerLockLabel(workspaceId);
     if (containerLocked === isLocked) {
-      if (status === "running") return;
+      if (status === "running") {
+        runningCache.set(workspaceId, { isLocked });
+        return;
+      }
       // stopped, same lock state — just restart it
       log.debug({ workspaceId }, "starting stopped container");
       await ensureNetwork(workspaceId);
@@ -130,6 +139,7 @@ async function _ensureContainer(workspaceId: string, workspaceDir: string): Prom
       if (r.code !== 0) throw new Error(`docker start failed: ${r.stderr}`);
       // Re-apply OS-level locks/privileged scripts after restart (state survives in the JSON registries).
       await reconcileOsPermissions(workspaceId);
+      runningCache.set(workspaceId, { isLocked });
       return;
     }
     // Lock state changed — remove so we recreate with the correct mount mode below.
@@ -157,6 +167,7 @@ async function _ensureContainer(workspaceId: string, workspaceDir: string): Prom
   // Safe to call here: the container is now running and we are NOT inside a dockerExec→ensureContainer
   // cycle (osLock spawns docker exec directly). No-op while globally locked (read-only mount).
   await reconcileOsPermissions(workspaceId);
+  runningCache.set(workspaceId, { isLocked });
 }
 
 export function ensureContainer(workspaceId: string, workspaceDir: string): Promise<void> {
@@ -213,6 +224,7 @@ export async function dockerExec(
 export async function stopContainer(workspaceId: string): Promise<void> {
   const t = idleTimers.get(workspaceId);
   if (t) { clearTimeout(t); idleTimers.delete(workspaceId); }
+  runningCache.delete(workspaceId);
   const r = await dockerCmd("stop", containerName(workspaceId));
   if (r.code !== 0) log.warn({ workspaceId, stderr: r.stderr }, "docker stop failed");
   await dockerCmd("network", "disconnect", networkName(workspaceId), containerName(workspaceId));
@@ -224,6 +236,7 @@ export async function removeContainer(workspaceId: string): Promise<void> {
   const t = idleTimers.get(workspaceId);
   if (t) { clearTimeout(t); idleTimers.delete(workspaceId); }
   startLocks.delete(workspaceId);
+  runningCache.delete(workspaceId);
   // Non-zero exit codes are expected if the container/network was never created.
   const stop = await dockerCmd("stop", containerName(workspaceId));
   if (stop.code !== 0) log.debug({ workspaceId, stderr: stop.stderr }, "docker stop on remove (may not exist)");

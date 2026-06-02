@@ -98,14 +98,18 @@ const PermBadge = ({
     const relPath = node.path.startsWith(wsDir)
       ? node.path.slice(wsDir.length).replace(/^\//, "")
       : node.path;
-    await fetch(`/api/workspaces/${workspaceId}/permissions`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ path: relPath, permission: next }),
-    });
-    onPermissionChange(node.path, next);
-    onRefresh();
-    setBusy(false);
+    try {
+      const res = await fetch(`/api/workspaces/${workspaceId}/permissions`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path: relPath, permission: next }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      onPermissionChange(node.path, next);
+      onRefresh();
+    } finally {
+      setBusy(false);
+    }
   };
 
   const title = perm === "R" ? "Read-only — click to unlock" : "Read-write — click to lock";
@@ -150,13 +154,17 @@ const KeyBadge = ({
     const relPath = node.path.startsWith(wsDir)
       ? node.path.slice(wsDir.length).replace(/^\//, "")
       : node.path;
-    await fetch(`/api/workspaces/${workspaceId}/privileged-scripts`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ path: relPath, privileged: !privileged }),
-    });
-    onRefresh();
-    setBusy(false);
+    try {
+      const res = await fetch(`/api/workspaces/${workspaceId}/privileged-scripts`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path: relPath, privileged: !privileged }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      onRefresh();
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (
@@ -194,13 +202,17 @@ const EyeBadge = ({
     const relPath = node.path.startsWith(wsDir)
       ? node.path.slice(wsDir.length).replace(/^\//, "")
       : node.path;
-    await fetch(`/api/workspaces/${workspaceId}/hidden`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ path: relPath, hidden: !hidden }),
-    });
-    onRefresh();
-    setBusy(false);
+    try {
+      const res = await fetch(`/api/workspaces/${workspaceId}/hidden`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path: relPath, hidden: !hidden }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      onRefresh();
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (

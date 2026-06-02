@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getWorkspace } from "@/lib/infra/workspaceStore";
 import { setPermission, setGlobalPermission, getGlobalLock } from "@/lib/infra/permissionStore";
-import { isPrivileged } from "@/lib/infra/privilegeStore";
+import { isPrivileged, revokePrivilege } from "@/lib/infra/privilegeStore";
 import { isHidden } from "@/lib/infra/hiddenStore";
 import { ensureContainer } from "@/lib/infra/containerManager";
 import { lockPathOnDisk, unlockPathOnDisk } from "@/lib/infra/osLock";
@@ -28,21 +28,19 @@ export async function PATCH(
     return NextResponse.json({ error: "Path outside workspace" }, { status: 403 });
   }
 
-  if (isPrivileged(ws.id, relPath)) {
-    return NextResponse.json({ error: "Cannot lock/unlock a privileged script; revoke its privilege first" }, { status: 400 });
-  }
-
-  if (isHidden(ws.id, relPath)) {
-    return NextResponse.json({ error: "Cannot lock/unlock a hidden file; reveal it first" }, { status: 400 });
-  }
-
   try {
+    // Unlocking a privileged path auto-revokes privilege (privilege implies lock; the only way to
+    // break that coupling is to unlock, which signals the user no longer needs secret injection).
+    if (permission === "RW" && isPrivileged(ws.id, relPath)) {
+      revokePrivilege(ws.id, relPath);
+    }
+
     await setPermission(ws.id, relPath, permission);
-    // Mirror the registry change into real OS permissions so the lock holds against
-    // execute_command (which runs as the non-root `developer`), not just the app-layer tools.
-    // Skipped while globally locked: the workspace mount is read-only, so chown/chmod can't run
-    // and the :ro mount already enforces everything.
-    if (!(await getGlobalLock(ws.id))) {
+
+    // Mirror the registry change into real OS permissions. Skipped while globally locked (:ro
+    // mount already enforces it) or while the file is hidden (hideOnDisk is already in place and
+    // is more restrictive than lockOnDisk — restore happens when the file is revealed).
+    if (!isHidden(ws.id, relPath) && !(await getGlobalLock(ws.id))) {
       await ensureContainer(ws.id, ws.dir);
       if (permission === "R") await lockPathOnDisk(ws.id, relPath);
       else await unlockPathOnDisk(ws.id, relPath);

@@ -29,17 +29,17 @@ Every file and folder has three independent states, each toggled by its own icon
 
 | Control | Icon | Agent sees | Meaning |
 |---------|------|------------|---------|
-| Write | lock | `[RW]` / `[R]` | `[R]` = read-only: the agent can read it but never change or delete it. |
-| Privilege | key | `[US]` / `[S]` | `[S]` = privileged script: a script the user trusts to run with elevated rights (and with workspace secrets). It is the only actor allowed to change protected files. |
+| Write | lock | `[RW]` / `[R]` | `[R]` = read-only: the agent can read and execute it but never change or delete it. |
+| Privilege | key | `[US]` / `[S]` | `[S]` = privileged script: a script the user trusts to run with elevated rights (secrets injected, runs as root). It is the only actor that can write `[R]` files or read `[H]` files. |
 | Visibility | eye | `[V]` / `[H]` | `[H]` = hidden: the agent sees the file's name but can never read its content. |
 
 Rules of the model — all automatic and enforced:
 
-- Granting privilege or hiding a file **automatically locks it** (`[R]`); revoking privilege or revealing it **automatically returns it to writable** (`[RW]`). The user never has to set the lock separately.
-- While a file is privileged or hidden, its lock **cannot be changed on its own** — the key/eye owns the write state, and a direct lock/unlock on it is refused.
-- A plain locked file (just `[R]`) carries no privileged or hidden status; unlocking it simply makes it writable again.
-- Privileged and hidden are mutually exclusive — a file is one or the other, never both.
-- **Only the user** can set any of these states. The agent has no way to grant itself a privilege or lift a restriction.
+- **Privilege → lock (one direction).** Granting privilege automatically locks the file (`[R]`). Revoking privilege is metadata-only — the lock stays in place; only an explicit unlock clears it.
+- **Unlock → revokes privilege.** Setting a privileged file to `[RW]` automatically revokes its privilege first. The two states cannot diverge: `[RW]` + `[S]` is not a valid combination.
+- **Visibility is fully independent.** Hiding or revealing a file does not touch the lock or privilege state. A file can be `[H]` + `[R]`, `[H]` + `[S]`, or any combination. When revealed, the on-disk state is restored from the current lock/privilege registry.
+- A plain locked file (`[R]`, no `[S]`) can still be executed by the agent; it just cannot be modified. Lock means write-protection, not execution prevention.
+- **Only the user** can set any of these states. The agent has no way to grant itself privilege or lift a restriction.
 - A whole workspace can also be put into a single hardened read-only mode.
 
 ## User stories
@@ -60,9 +60,9 @@ Rules of the model — all automatic and enforced:
 
 - Three independent toggles (lock / key / eye) on any file or folder in the tree; applying one to a folder covers everything inside it.
 - All three states are set **only** by the user in the UI — the agent has no tool or prompt path to change them.
-- The lock follows the key and eye automatically: granting privilege/hiding locks the file, revoking privilege/revealing unlocks it, and the lock cannot be toggled independently while a file is privileged or hidden.
+- Privilege implies lock: granting privilege auto-locks; unlocking a privileged file auto-revokes privilege. Visibility is orthogonal to both.
 - Protections cannot be bypassed by the agent writing and running its own scripts.
-- `[R]` blocks writes and deletes; `[H]` blocks all content reads (the file-read tool and shell commands such as `cat`/`grep` return nothing); `[S]` privileged scripts are the only actor that may write protected paths and the only way secrets are used.
+- `[R]` blocks writes and deletes (execute is permitted); `[H]` blocks all content reads (the file-read tool and shell commands such as `cat`/`grep` return nothing); `[S]` privileged scripts are the only actor that may write `[R]` paths or read `[H]` paths, and the only way secrets are used.
 - The agent sees all three tags on every file and, when blocked, names the file and the icon the user should click.
 - All states survive server restarts.
 - A workspace-wide read-only mode that also stops the agent installing packages or running write commands.

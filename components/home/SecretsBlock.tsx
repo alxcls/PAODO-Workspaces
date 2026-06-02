@@ -58,16 +58,28 @@ export default function SecretsBlock({ wsId }: { wsId: string }) {
     <div className="flex flex-col gap-3 mt-4 border border-border rounded-[--radius-card] p-[14px_16px] bg-bg-tint">
       <div>
         <span className="text-[13px] font-semibold text-text">Environment Variables</span>
-        <span className="text-xs text-text-3 ml-2">Injected into privileged scripts — hidden from the agent</span>
+        <span className="inline-flex items-center gap-1 text-xs text-text-3 ml-2">
+          <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ color: "#7c3aed" }}>
+            <circle cx="7.5" cy="12" r="4.5" />
+            <line x1="12" y1="12" x2="22" y2="12" />
+            <line x1="19" y1="12" x2="19" y2="15" />
+            <line x1="17" y1="12" x2="17" y2="14" />
+          </svg>
+          only privileged scripts can use, hidden from the agent
+        </span>
       </div>
 
       {names.length > 0 && (
         <div className="flex flex-col gap-1.5">
           {names.map((n) => (
-            <div key={n} className="flex items-center gap-2.5 bg-white border border-border rounded-[--radius-ctrl] px-2.5 py-1.5">
-              <code className="font-mono text-[12px] text-text flex-1 min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">{n}</code>
-              <span className="font-mono text-[12px] text-text-3 select-none">••••••</span>
-              <button className="linkbtn text-danger" onClick={() => remove(n)}>Delete</button>
+            <div key={n} className="flex items-center gap-2">
+              <div className="h-8 px-2.5 rounded-[--radius-ctrl] border border-border bg-bg-tint flex items-center w-[38%] min-w-0">
+                <code className="font-mono text-[12px] text-text-3 overflow-hidden text-ellipsis whitespace-nowrap">{n}</code>
+              </div>
+              <div className="h-8 px-2.5 rounded-[--radius-ctrl] border border-border bg-bg-tint flex items-center flex-1 min-w-0">
+                <span className="font-mono text-[12px] text-text-3 select-none tracking-widest">••••••</span>
+              </div>
+              <button className="btn btn-sm text-danger border-danger/30 hover:bg-danger/5" onClick={() => remove(n)}>Delete</button>
             </div>
           ))}
         </div>

@@ -90,11 +90,9 @@ const PermBadge = ({
   const [busy, setBusy] = useState(false);
   const perm = node.permission ?? "RW";
 
-  const owned = node.privileged || node.hidden;
-
   const toggle = async (e: React.MouseEvent) => {
     e.stopPropagation();
-    if (busy || owned) return;
+    if (busy) return;
     setBusy(true);
     const next: "R" | "RW" = perm === "R" ? "RW" : "R";
     const relPath = node.path.startsWith(wsDir)
@@ -110,13 +108,11 @@ const PermBadge = ({
     setBusy(false);
   };
 
-  const title = owned
-    ? `Locked by ${node.privileged ? "key" : "eye"} — remove that first to change write access`
-    : perm === "R" ? "Read-only — click to unlock" : "Read-write — click to lock";
+  const title = perm === "R" ? "Read-only — click to unlock" : "Read-write — click to lock";
 
   return (
     <span
-      className={`flex-shrink-0 inline-flex items-center justify-center w-[18px] h-[18px] rounded-[3px] select-none ml-1 transition-colors ${owned ? "cursor-default opacity-40" : "cursor-pointer hover:bg-black/[.12]"}`}
+      className="flex-shrink-0 inline-flex items-center justify-center w-[18px] h-[18px] rounded-[3px] cursor-pointer select-none ml-1 hover:bg-black/[.12] transition-colors"
       onClick={toggle}
       title={title}
       style={{ opacity: busy ? 0.4 : undefined, color: perm === "R" ? "#7c3aed" : "var(--color-text-3)" }}
@@ -137,9 +133,8 @@ const PermBadge = ({
 };
 
 // ---- Key badge ----
-// Granting privilege authorizes a script to run with workspace secrets and locks it so the agent
-// can't tamper with it. Server-side, toggling privilege also flips the file's lock, so onRefresh
-// re-fetches the tree to update both this badge and the PermBadge.
+// Granting privilege authorizes a script to run with workspace secrets and auto-locks it (server-side).
+// Revoking privilege is metadata-only — the lock stays. Unlocking a privileged file auto-revokes privilege.
 const KeyBadge = ({
   node, workspaceId, wsDir, onRefresh,
 }: {
@@ -183,9 +178,7 @@ const KeyBadge = ({
 
 // ---- Eye badge ----
 // Hiding makes a file's CONTENT invisible to the agent (kernel-enforced root:app-group ownership)
-// while the user still sees it here and privileged scripts can still use it. Hiding also locks the
-// path server-side, and hidden/privileged are mutually exclusive, so onRefresh re-fetches the tree to
-// update every badge.
+// while the user still sees it here. Visibility is independent of lock and privilege.
 const EyeBadge = ({
   node, workspaceId, wsDir, onRefresh,
 }: {

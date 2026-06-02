@@ -39,9 +39,26 @@ Unlocked files are `developer:developer 0644`. **Workspace directories** (includ
 - **Privileged scripts** are the sole elevated actor: `execCommand` transparently re-routes a command that references a privileged script to `docker exec -u root` with secrets injected. They are the only way an `[R]`/`[H]` path is legitimately changed, and the agent cannot self-grant the status.
 - **Hidden** uses a *three-way identity split*: `root` reads (privileged scripts), the app server's group `APP_GID` reads (the user's file-tree viewer, host-side), and `developer` falls to "other" with no read. Names stay visible (directories remain listable); only content is blocked.
 
-### Coupling and exclusivity (automatic, both directions)
+### Coupling: privilege ↔ lock (one direction only); hidden is fully independent
 
-Toggling privilege or hidden automatically drives the lock: granting privilege/hiding sets the path to `[R]` (registry entry + on-disk root ownership); revoking privilege/revealing returns it to `[RW]` (developer-owned, via `setPermission` + `unlock`/`unhidePathOnDisk`). The lock cannot be operated independently on a protected path — `permissions/route.ts` returns `400` for a lock/unlock when `isPrivileged` or `isHidden`, so the key/eye is the single owner of that path's write state. `[S]` and `[H]` therefore each imply `[R]`, and the two are mutually exclusive — enforced in the UI (badges hide each other) and server-side (the privileged/hidden routes reject the conflicting toggle). The agent always sees all three tags explicitly (`[write] [privilege] [visibility]`); only the user can change any of them.
+**Privilege and lock are coupled in one direction:** granting privilege automatically sets the path to `[R]` (registry + `lockOnDisk`) so the agent cannot tamper with a script it will later run with secrets. Revoking privilege is metadata-only — the lock remains; only an explicit unlock clears it. Unlocking a privileged path auto-revokes privilege first (the two cannot diverge: if the user sets `[RW]`, it can no longer be `[S]`). The agent always sees both tags independently.
+
+**Hidden is fully independent of lock and privilege.** Hiding does not auto-lock; a hidden file may be `[RW]`, `[R]`, `[S]`, or any combination. When a hidden file is revealed, the route checks the current lock and privilege state and restores the correct on-disk representation (`hideOnDisk` → `lockOnDisk` if locked or privileged, otherwise `unlockOnDisk`). `[S]` and `[H]` may coexist — a hidden+privileged file is invisible to the agent and, when invoked as a privileged script, runs as root with secrets injected.
+
+**Disk state priority when states combine:** `hideOnDisk` (`root:APP_GID 0640`) takes precedence over `lockOnDisk` (`root:root 0444`) — the agent cannot read OR write a hidden file regardless of the lock bit. Disk changes for lock/privilege are skipped while a file is hidden; they are applied when the file is revealed.
+
+**Agent access matrix:**
+
+| State | Can read | Can write | Can execute | Gets secrets |
+|-------|:--------:|:---------:|:-----------:|:------------:|
+| Unlocked `[RW]` | ✓ | ✓ | ✓ | ✗ |
+| Locked `[R]` | ✓ | ✗ | ✓ | ✗ |
+| Privileged `[S]` + locked | ✓ | ✗ | ✓ (as root) | ✓ |
+| Hidden `[H]` | name only | ✗ | ✗ | ✗ |
+
+Locked scripts retain the execute bit (`chmod a-w`, not `a-wx`). An unprivileged agent can execute a locked script but cannot modify it; it runs as `developer` with no secrets and cannot write other locked files. This is intentional: lock = write protection, not execution prevention.
+
+The agent always sees all three tags explicitly (`[write] [privilege] [visibility]`); only the user can change any of them.
 
 ## Consequences
 
@@ -59,7 +76,7 @@ Toggling privilege or hidden automatically drives the lock: granting privilege/h
 - **`chattr +i` (immutable flag) on locked files:** would block deletion even by root, but requires `CAP_LINUX_IMMUTABLE` which Docker drops under `--no-new-privileges`. Unavailable.
 - **Per-file ACLs:** `setfacl` allows fine-grained per-user deny entries without changing directory ownership. Rejected because `acl` is not guaranteed to be installed in the workspace image and adds a non-standard dependency.
 - **Hidden content stored out-of-mount (like secrets), injected only at script runtime:** more robust (no UID/GID pinning) but the file stops being a normal in-place workspace file the user edits/views. Rejected in favour of in-place GID-gated files; the deployment constraint is acceptable.
-- **Hidden + privileged combined ("blind execution" of a proprietary script):** rejected for simplicity — `[S]`/`[H]` are mutually exclusive.
+- **Hidden + privileged combined ("blind execution" of a proprietary script):** previously rejected for simplicity. Now accepted — `[S]` and `[H]` may coexist. The file is invisible to the agent yet runs with secrets when invoked as a privileged script; hiding prevents the agent from reading the script's logic or output file.
 - **One collapsed tag via precedence (`H > S > R > RW`):** rejected in favour of three explicit, independent tags so the agent never has to infer a state from the absence of another.
 
 ## Notes

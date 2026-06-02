@@ -4,10 +4,9 @@
 //   privilege → [US] normal      | [S] elevated (runs as root with secrets injected)
 //   visibility → [V]  visible    | [H] hidden (content unreadable by the agent)
 //
-// Coupling: a hidden or privileged path is always read-only, so the write tag is forced to [R]
-// when either is set. Hidden and privileged are mutually exclusive (enforced at the API/UI layer).
+// All three states are independent — the write tag reflects only the lock toggle, not hidden/privilege.
 export function permissionTags(state: { locked: boolean; privileged: boolean; hidden: boolean }): string {
-  const write = state.locked || state.privileged || state.hidden ? "[R]" : "[RW]";
+  const write = state.locked ? "[R]" : "[RW]";
   const privilege = state.privileged ? "[S]" : "[US]";
   const visibility = state.hidden ? "[H]" : "[V]";
   return `${write} ${privilege} ${visibility}`;

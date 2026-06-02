@@ -2,11 +2,11 @@
 // Streams stdout and stderr live to connected WebSocket clients so they appear in the console panel,
 // and returns the combined output to the agent as the tool result.
 //
-// When the command references a crowned script, the tool silently re-routes: it runs that script
-// as root with workspace secrets injected — same result as the old run_crowned_script tool, but
+// When the command references a secured script, the tool silently re-routes: it runs that script
+// as root with workspace secrets injected — same result as the old run_secured_script tool, but
 // transparent to the agent. Only the fixed interpreter + script path are used; any extra flags or
 // chained commands in the original command string are discarded so the agent cannot inject arbitrary
-// root commands by composing them alongside a crowned script reference.
+// root commands by composing them alongside a secured script reference.
 import { tool } from "@langchain/core/tools";
 import { z } from "zod";
 import { spawn } from "child_process";
@@ -14,7 +14,7 @@ import path from "path";
 import { broadcastToWorkspace } from "../../infra/wsHub";
 import { ensureContainer } from "../../infra/containerManager";
 import { getGlobalLock } from "../../infra/permissionStore";
-import { listCrowned } from "../../infra/crownedScriptStore";
+import { listSecured } from "../../infra/securedScriptStore";
 import { getSecretEnvArgs } from "../../infra/secretStore";
 import { createLogger } from "../../infra/logger";
 
@@ -33,23 +33,23 @@ export function buildExecCommandTool(workspaceId: string, workspaceDir: string) 
   const log = createLogger("execCommand");
   return tool(
     async ({ command }) => {
-      const crownedRef = listCrowned(workspaceId).find(
+      const securedRef = listSecured(workspaceId).find(
         (p) => command.includes(p) || command.includes(path.posix.basename(p)),
       );
 
-      if (crownedRef) {
-        // Crowned script: run as root with secrets. Only the fixed interpreter + path are used —
+      if (securedRef) {
+        // Secured script: run as root with secrets. Only the fixed interpreter + path are used —
         // any extra flags or chained commands in `command` are intentionally dropped.
         await ensureContainer(workspaceId, workspaceDir);
         const secretArgs = getSecretEnvArgs(workspaceId);
-        const interp = interpreterFor(crownedRef);
-        log.info({ workspaceId, script: crownedRef }, "auto-routing crowned script");
+        const interp = interpreterFor(securedRef);
+        log.info({ workspaceId, script: securedRef }, "auto-routing secured script");
 
         return new Promise<string>((resolve) => {
           const proc = spawn("docker", [
             "exec", "-i", "-u", "root", ...secretArgs,
             "-w", "/workspace", `ws_${workspaceId}`,
-            ...interp, `/workspace/${crownedRef}`,
+            ...interp, `/workspace/${securedRef}`,
           ]);
           proc.stdin.end();
 

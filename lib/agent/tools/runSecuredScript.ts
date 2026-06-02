@@ -1,11 +1,11 @@
-// Agent tool that runs a user-crowned script with workspace secrets injected.
+// Agent tool that runs a user-secured script with workspace secrets injected.
 //
 // This is the ONLY path by which a script gets workspace secrets. The agent supplies just a
 // script PATH — never a command string — and the server composes a FIXED `docker exec -u root`
 // command with the secrets injected via `-e`. Because the agent runs `execute_command` as the
 // non-root `developer` user (no secrets, cannot become root, cannot read the running script's
 // /proc environ), it cannot read the secret values nor turn this into an arbitrary root command.
-// Only the user can crown a script (file-tree crown icon); the agent has no tool to crown.
+// Only the user can secure a script (file-tree key icon); the agent has no tool to secure.
 import { tool } from "@langchain/core/tools";
 import { z } from "zod";
 import { spawn } from "child_process";
@@ -13,7 +13,7 @@ import path from "path";
 import { broadcastToWorkspace } from "../../infra/wsHub";
 import { ensureContainer } from "../../infra/containerManager";
 import { getSecretEnvArgs } from "../../infra/secretStore";
-import { isCrowned, listCrowned } from "../../infra/crownedScriptStore";
+import { isSecured, listSecured } from "../../infra/securedScriptStore";
 import { createLogger } from "../../infra/logger";
 
 const SILENCE_TIMEOUT_MS = parseInt(process.env.EXEC_SILENCE_TIMEOUT_MS ?? "", 10) || 60_000;
@@ -34,19 +34,19 @@ function interpreterFor(relPath: string): string[] {
   return ["bash"];
 }
 
-export function buildRunCrownedScriptTool(workspaceId: string, workspaceDir: string) {
-  const log = createLogger("runCrownedScript");
+export function buildRunSecuredScriptTool(workspaceId: string, workspaceDir: string) {
+  const log = createLogger("runSecuredScript");
   return tool(
     async ({ script_path }) => {
       const relPath = normalizeRelpath(script_path);
       if (relPath === null) return "Error: path is outside the workspace";
 
-      if (!isCrowned(workspaceId, relPath)) {
-        const crowned = listCrowned(workspaceId);
-        if (crowned.length === 0) {
-          return "No crowned scripts available. Only the user can crown a script (the crown icon next to a file in the file tree). The agent cannot crown scripts. Ask the user to crown the script before it can run with secrets injected.";
+      if (!isSecured(workspaceId, relPath)) {
+        const secured = listSecured(workspaceId);
+        if (secured.length === 0) {
+          return "No secured scripts available. Only the user can secure a script (the key icon next to a file in the file tree). The agent cannot secure scripts. Ask the user to secure the script before it can run with secrets injected.";
         }
-        return `"${script_path}" is not crowned. Only the user can crown a script via the file tree. Available crowned scripts:\n${crowned.map((p) => `  - ${p}`).join("\n")}`;
+        return `"${script_path}" is not secured. Only the user can secure a script via the file tree. Available secured scripts:\n${secured.map((p) => `  - ${p}`).join("\n")}`;
       }
 
       await ensureContainer(workspaceId, workspaceDir);
@@ -72,7 +72,7 @@ export function buildRunCrownedScriptTool(workspaceId: string, workspaceDir: str
           if (killed) return;
           killed = true;
           proc.kill("SIGTERM");
-          log.warn({ workspaceId, script_path, reason }, "crowned script killed");
+          log.warn({ workspaceId, script_path, reason }, "secured script killed");
           broadcastToWorkspace(workspaceId, JSON.stringify({ type: "stdout", workspaceId, data: `\n[timeout] ${reason}\n` }));
         };
 
@@ -123,15 +123,15 @@ export function buildRunCrownedScriptTool(workspaceId: string, workspaceDir: str
       });
     },
     {
-      name: "run_crowned_script",
-      description: `Run a user-crowned script with workspace secrets injected into its environment.
+      name: "run_secured_script",
+      description: `Run a user-secured script with workspace secrets injected into its environment.
 Use this INSTEAD of execute_command whenever a task needs access to a secret (API key, token, credential).
-Only scripts the user has explicitly crowned (the crown icon in the file tree) can be run this way — you
-cannot crown scripts yourself, and plain execute_command will NOT have the secrets in its environment.
+Only scripts the user has explicitly secured (the key icon in the file tree) can be run this way — you
+cannot secure scripts yourself, and plain execute_command will NOT have the secrets in its environment.
 You supply only the script path; you cannot read the secret values.
 Supported extensions: .py (python3), .js/.mjs (node), everything else (bash).`,
       schema: z.object({
-        script_path: z.string().describe("Relative path to the crowned script within the workspace"),
+        script_path: z.string().describe("Relative path to the secured script within the workspace"),
       }),
     }
   );

@@ -1,6 +1,6 @@
 // Home page block for managing a workspace's secrets (environment variables).
 // Secrets are write-only: only key NAMES are ever returned from the server. They are injected into
-// crowned scripts at run time (never into the agent's own shell), so the agent can't read them.
+// secured scripts at run time (never into the agent's own shell), so the agent can't read them.
 "use client";
 
 import { useState, useEffect } from "react";
@@ -58,7 +58,7 @@ export default function SecretsBlock({ wsId }: { wsId: string }) {
     <div className="flex flex-col gap-3 mt-4 border border-border rounded-[--radius-card] p-[14px_16px] bg-bg-tint">
       <div>
         <span className="text-[13px] font-semibold text-text">Environment Variables</span>
-        <span className="text-xs text-text-3 ml-2">Injected into crowned scripts — hidden from the agent</span>
+        <span className="text-xs text-text-3 ml-2">Injected into secured scripts — hidden from the agent</span>
       </div>
 
       {names.length > 0 && (

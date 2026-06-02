@@ -1,10 +1,10 @@
-// Per-workspace secrets (API keys, tokens, config values) injected into CROWNED scripts at run
+// Per-workspace secrets (API keys, tokens, config values) injected into SECURED scripts at run
 // time as environment variables — never into the agent's own `execute_command` shell.
 //
 // Security model (Phase 2 — OS-enforced): the agent runs `execute_command` as the non-root
 // `developer` user, so it never has these values in its environment and cannot read this file
 // (it lives outside any /workspace bind mount). Secrets reach a process ONLY when the server runs
-// a user-crowned script via `docker exec -u root -e NAME=value ...` — a command the agent cannot
+// a user-secured script via `docker exec -u root -e NAME=value ...` — a command the agent cannot
 // compose. Values are write-only from the UI: only key NAMES are ever returned to the frontend.
 import { readFileSync, writeFileSync, mkdirSync, renameSync } from "fs";
 import path from "path";
@@ -13,7 +13,7 @@ import { createLogger } from "./logger";
 const log = createLogger("secrets");
 
 // Derived independently (not imported from workspaceStore) to avoid the
-// workspaceStore → containerManager import chain. Same pattern as crownedScriptStore.
+// workspaceStore → containerManager import chain. Same pattern as securedScriptStore.
 const WORKSPACES_ROOT = process.env.WORKSPACES_ROOT ?? path.resolve(process.cwd(), "data");
 const FILE = path.join(WORKSPACES_ROOT, ".secrets.json");
 

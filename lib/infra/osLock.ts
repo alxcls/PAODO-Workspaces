@@ -1,4 +1,4 @@
-// OS-level enforcement of file locks and crowned-script protection inside a workspace container.
+// OS-level enforcement of file locks and secured-script protection inside a workspace container.
 //
 // The agent's `execute_command` runs as the non-root `developer` user, so the kernel — not the
 // system prompt — is what actually stops it from writing locked files or reading hidden secrets.
@@ -29,7 +29,7 @@
 //     load-bearing in production; they are cosmetic on the Docker Desktop macOS mount.
 import { spawn } from "child_process";
 import { readPermissionSnapshot } from "./permissionStore";
-import { listCrowned } from "./crownedScriptStore";
+import { listSecured } from "./securedScriptStore";
 import { createLogger } from "./logger";
 
 const log = createLogger("osLock");
@@ -86,7 +86,7 @@ async function unlockOnDisk(workspaceId: string, relPath: string): Promise<void>
   }
 }
 
-// Public: lock/unlock a single path. Callers (the permissions/crown routes) must have ensured the
+// Public: lock/unlock a single path. Callers (the permissions/secured-scripts routes) must have ensured the
 // container is running first. No-op-safe when globally locked is handled by the caller.
 export async function lockPathOnDisk(workspaceId: string, relPath: string): Promise<void> {
   await lockOnDisk(workspaceId, relPath);
@@ -97,7 +97,7 @@ export async function unlockPathOnDisk(workspaceId: string, relPath: string): Pr
 }
 
 // Brings the whole workspace into the canonical on-disk state. Called at the end of
-// `_ensureContainer` so locks + crowns survive container restart/recreate.
+// `_ensureContainer` so locks + secured scripts survive container restart/recreate.
 //
 // While the workspace is GLOBALLY locked the bind mount is read-only (`:ro`), which enforces
 // everything at the mount level and would make chown/chmod fail — so we skip the per-path work.
@@ -106,15 +106,15 @@ export async function reconcileOsPermissions(workspaceId: string): Promise<void>
   if (snap.globalLock) return; // read-only mount already enforces it
 
   // Normalize so the agent can do normal work. Only chown NON-root files to developer: root-owned
-  // paths are intentionally protected (locked files AND crowned-script outputs) and must survive
+  // paths are intentionally protected (locked files AND secured-script outputs) and must survive
   // restart, so leave their ownership alone. The chmod u+w is applied broadly (cheap, and the
   // re-lock loop below re-asserts a-w on the protected set) so unlocked files stay writable.
   await runRoot(workspaceId, ["find", "/workspace", "-mindepth", "1", "!", "-uid", "0", "-exec", "chown", DEVELOPER, "{}", "+"]);
   await runRoot(workspaceId, ["chmod", "-R", "u+w", "/workspace"]);
 
-  // Then re-lock the protected set: registered per-path locks + crowned scripts (which are locked
-  // so the agent can't edit them). Dedupe so a path that's both locked and crowned is done once.
-  const protectedPaths = new Set<string>([...snap.locked, ...listCrowned(workspaceId)]);
+  // Then re-lock the protected set: registered per-path locks + secured scripts (which are locked
+  // so the agent can't edit them). Dedupe so a path that's both locked and secured is done once.
+  const protectedPaths = new Set<string>([...snap.locked, ...listSecured(workspaceId)]);
   for (const relPath of protectedPaths) {
     await lockOnDisk(workspaceId, relPath);
   }

@@ -128,7 +128,7 @@ async function _ensureContainer(workspaceId: string, workspaceDir: string): Prom
       if (connect.code !== 0) throw new Error(`docker network connect failed: ${connect.stderr}`);
       const r = await dockerCmd("start", containerName(workspaceId));
       if (r.code !== 0) throw new Error(`docker start failed: ${r.stderr}`);
-      // Re-apply OS-level locks/crowns after restart (state survives in the JSON registries).
+      // Re-apply OS-level locks/secured scripts after restart (state survives in the JSON registries).
       await reconcileOsPermissions(workspaceId);
       return;
     }
@@ -153,7 +153,7 @@ async function _ensureContainer(workspaceId: string, workspaceDir: string): Prom
     "sleep", "infinity",
   );
   if (r.code !== 0) throw new Error(`docker run failed: ${r.stderr}`);
-  // Establish canonical ownership (workspace → developer) and re-apply any locked/crowned paths.
+  // Establish canonical ownership (workspace → developer) and re-apply any locked/secured paths.
   // Safe to call here: the container is now running and we are NOT inside a dockerExec→ensureContainer
   // cycle (osLock spawns docker exec directly). No-op while globally locked (read-only mount).
   await reconcileOsPermissions(workspaceId);

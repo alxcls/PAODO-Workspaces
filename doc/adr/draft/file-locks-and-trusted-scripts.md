@@ -18,7 +18,7 @@ Two lock granularities in `lib/infra/permissionStore.ts` (JSON under `/data/.age
 - File tools: `isAgentLocked()` returns true for any path.
 - Shell commands: Docker runs with `-u agent` (UID 999, no write perms to `/workspace`) — OS-level, not bypassable by a JS bug.
 
-**Trusted scripts (not yet implemented):** crown toggle in the UI to allow specific scripts to write locked files. Stored in `PermStore`, set exclusively via UI.
+**Trusted scripts (not yet implemented):** secure toggle in the UI to allow specific scripts to write locked files. Stored in `PermStore`, set exclusively via UI.
 
 ## Key trade-offs
 

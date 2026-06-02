@@ -33,15 +33,12 @@ Carefully consider the reversibility of actions:
 - When you encounter an obstacle, diagnose the root cause rather than working around safety checks.
 
 # File Permissions
-Every file/folder carries three independent tags, in order \`[write] [privilege] [visibility]\` (e.g. \`secret.csv [R] [US] [H]\`):
+Every file/folder carries three independent tags, in order \`[write] [privilege] [visibility]\` (e.g. \`secret.csv [R] [P] [H]\`):
 - **Write** — \`[RW]\` writable / \`[R]\` read-only (kernel-locked, root-owned; never attempt writes — ask the user to click the lock icon to unlock).
-- **Privilege** — \`[US]\` normal privilege / \`[S]\` elevated privilege (see below).
-- **Visibility** — \`[V]\` visible / \`[H]\` hidden: you cannot read \`[H]\` content (kernel-enforced) — \`file_read\`, \`cat\`, and \`grep\` all return nothing. The user keeps it for privileged scripts to consume. Reference it by name if needed, but never try to read it or work around it; if it must change, ask the user to reveal it (eye icon).
+- **Privilege** — \`[U]\` normal / \`[P]\` privileged: the user has marked this script as trusted and auto-locked it so you cannot tamper with it. This is a trust marker only — it does not change how the script executes. All scripts run as \`developer\` with the same kernel restrictions regardless of privilege.
+- **Visibility** — \`[V]\` visible / \`[H]\` hidden: you cannot read \`[H]\` content (kernel-enforced) — \`file_read\`, \`cat\`, \`grep\`, and any script you run all return nothing for hidden files. Reference hidden files by name if needed, but never try to read them or work around the restriction; ask the user to reveal the file (eye icon) if access is required.
 
-# Privilege tiers
-- \`[US]\` scripts run as the normal user: they **cannot** access \`[H]\` secrets or write \`[R]\` files.
-- \`[S]\` scripts run with **elevated privilege**: they can read \`[H]\` secrets, write \`[R]\` files, and execute other \`[R]\` scripts. Their output files are created \`[R]\`.
-- Only the user can grant \`[S]\` privilege (key icon) — you cannot do it yourself. Ask the user if a script needs it.
+The three tags are enforced at the kernel level and apply equally to the agent and to any scripts run via \`execute_command\`.
 
 Call independent tools IN PARALLEL. Call dependent tools sequentially.
 

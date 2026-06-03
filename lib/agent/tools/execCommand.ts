@@ -2,8 +2,13 @@
 // Streams stdout and stderr live to connected WebSocket clients so they appear in the console panel,
 // and returns the combined output to the agent as the tool result.
 //
-// When the command references a privileged script, the tool silently re-routes: it runs the full
-// original command as root with workspace secrets injected — transparent to the agent.
+// When the *program being executed* is a privileged script (the first token, or the script argument
+// of an interpreter like `bash`/`python`), the tool re-routes execution to root with workspace
+// secrets injected. Only that single program runs as root: the command is parsed with a quote-aware
+// lexer and executed as a direct argv (no `/bin/bash -c`), and any shell operators (; && | < > $() …)
+// are refused. This stops the agent from smuggling extra commands to root by naming a privileged path
+// as a decoy token or chaining onto a legitimate invocation. Non-privileged commands run as the
+// `developer` (or `agent`) user through a normal shell, unchanged.
 import { tool } from "@langchain/core/tools";
 import { z } from "zod";
 import { spawn } from "child_process";
@@ -18,18 +23,94 @@ const RESTRICTED_USER = "agent";
 const SILENCE_TIMEOUT_MS = parseInt(process.env.EXEC_SILENCE_TIMEOUT_MS ?? "", 10) || 60_000;
 const MAX_TIMEOUT_MS = parseInt(process.env.EXEC_MAX_TIMEOUT_MS ?? "", 10) || 30 * 60_000;
 
+// Programs that execute a script passed as an argument — for these the privileged target is the
+// first non-flag argument (e.g. `bash deploy.sh`, `python3 -u build.py`), not the interpreter itself.
+const INTERPRETERS = new Set(["bash", "sh", "dash", "zsh", "ksh", "python", "python3", "node", "ruby", "perl", "php"]);
+
+// Shell metacharacters that introduce additional commands, redirection, or substitution. A privileged
+// invocation must contain none of them (outside quotes): each would otherwise run as root too.
+const OPERATOR_CHARS = new Set([";", "&", "|", "<", ">", "$", "`", "(", ")", "\n"]);
+
+// Quote-aware tokenizer. Splits on unquoted whitespace, keeps quoted spans literal (no expansion),
+// and flags any unquoted shell operator. It does NOT interpret the shell — it only extracts the argv
+// well enough to (a) identify the program and (b) confirm the command is a single plain invocation.
+// Used solely to gate privileged routing; non-privileged commands bypass it and keep full shell power.
+function lexCommand(command: string): { tokens: string[]; hadOperator: boolean; error?: string } {
+  const tokens: string[] = [];
+  let cur = "";
+  let started = false;
+  let quote: '"' | "'" | null = null;
+  let hadOperator = false;
+  for (const c of command) {
+    if (quote) {
+      if (c === quote) quote = null;
+      else cur += c;
+      started = true;
+    } else if (c === '"' || c === "'") {
+      quote = c;
+      started = true;
+    } else if (c === " " || c === "\t") {
+      if (started) { tokens.push(cur); cur = ""; started = false; }
+    } else if (OPERATOR_CHARS.has(c)) {
+      hadOperator = true;
+      if (started) { tokens.push(cur); cur = ""; started = false; }
+    } else {
+      cur += c;
+      started = true;
+    }
+  }
+  if (quote) return { tokens, hadOperator, error: "unbalanced quote" };
+  if (started) tokens.push(cur);
+  return { tokens, hadOperator };
+}
+
+// Normalizes a token to a workspace-relative path for the privilege-registry lookup (mirrors the
+// path forms the agent may use: absolute /workspace/..., ./relative, or bare relative).
+function toWorkspaceRel(token: string): string {
+  if (token.startsWith("/workspace/")) return token.slice("/workspace/".length);
+  if (token.startsWith("./")) return token.slice(2);
+  return token;
+}
+
+// The program a command actually runs: the first token, unless it's a known interpreter, in which
+// case it's the interpreter's first non-flag argument (the script). Returns null if indeterminable.
+function resolveProgramRel(tokens: string[]): string | null {
+  if (tokens.length === 0) return null;
+  const first = toWorkspaceRel(tokens[0]);
+  const base = first.split("/").pop() ?? first;
+  if (INTERPRETERS.has(base)) {
+    const scriptArg = tokens.slice(1).find((t) => !t.startsWith("-"));
+    return scriptArg ? toWorkspaceRel(scriptArg) : null;
+  }
+  return first;
+}
+
 export function buildExecCommandTool(workspaceId: string, workspaceDir: string) {
   const log = createLogger("execCommand");
   return tool(
     async ({ command }) => {
-      // Normalize each token to a relative workspace path and check against the privilege registry.
-      const isPrivilegedCommand = command.split(/\s+/).some((t) => {
-        const rel = t.startsWith("/workspace/") ? t.slice("/workspace/".length) : t;
-        return isPrivileged(workspaceId, rel);
-      });
+      // Privileged routing gate: only the actual program being run (the first token, or the script
+      // argument of an interpreter) may elevate to root — NOT any path that merely appears as a
+      // token. This stops the agent from smuggling commands to root by naming a privileged path as a
+      // decoy (`chmod ...; : deploy.sh`) or wrapping it in another program (`cat deploy.sh`).
+      const lex = lexCommand(command);
+      const programRel = resolveProgramRel(lex.tokens);
+      const isPrivilegedCommand = programRel !== null && isPrivileged(workspaceId, programRel);
 
       if (isPrivilegedCommand) {
-        // Privileged script: run the full original command as root with secrets injected.
+        // The invocation must be a single plain command: an unbalanced quote leaves the argv
+        // ambiguous, and any shell operator (chaining, pipe, redirection, substitution) would also
+        // run as root. Refuse both — legitimate piping/redirection belongs INSIDE the trusted script.
+        if (lex.error) {
+          return `Refused: could not parse the privileged invocation (${lex.error}). Invoke the script plainly: <script> [args...].`;
+        }
+        if (lex.hadOperator) {
+          return "Refused: a privileged script must be invoked on its own, without shell operators "
+            + "(; && || | < > $() ` etc.). Move any chaining, piping, or redirection inside the "
+            + "trusted script itself, then re-run it as just: <script> [args...].";
+        }
+        // Privileged script: run ONLY this program as root (direct argv — no shell to inject into),
+        // with workspace secrets injected. Arguments are passed literally and never interpreted.
         await ensureContainer(workspaceId, workspaceDir);
         const secretArgs = getSecretEnvArgs(workspaceId);
         log.info({ workspaceId, command }, "auto-routing privileged script");
@@ -38,7 +119,7 @@ export function buildExecCommandTool(workspaceId: string, workspaceDir: string) 
           const proc = spawn("docker", [
             "exec", "-i", "-u", "root", ...secretArgs,
             "-w", "/workspace", `ws_${workspaceId}`,
-            "/bin/bash", "-c", command,
+            ...lex.tokens,
           ]);
           proc.stdin.end();
 

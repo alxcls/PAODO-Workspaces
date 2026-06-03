@@ -5,9 +5,11 @@
 // file_read, cat, grep, or any shell command. A privileged (root) script can still consume them, and
 // the user still views them through the file-tree viewer.
 //
-// Hiding also LOCKS the path (it's root-owned), and hidden/privileged are mutually exclusive. Stored
-// as PLAINTEXT relative paths in a JSON file outside any workspace's bind mount. Same global-cached,
-// atomic-write pattern as privilegeStore / permissionStore.
+// Hiding also makes the path root-owned (so it's unwritable by the agent). Hidden is independent of
+// lock and privilege: a hidden file may also be [R], [P], or any combination. A hidden+privileged
+// file stays invisible to the agent — since non-privileged scripts run as `developer`, it remains
+// unreadable even when executed. Stored as PLAINTEXT relative paths in a JSON file outside any
+// workspace's bind mount. Same global-cached, atomic-write pattern as privilegeStore / permissionStore.
 import { readFileSync, writeFileSync, mkdirSync, renameSync } from "fs";
 import path from "path";
 import { createLogger } from "./logger";

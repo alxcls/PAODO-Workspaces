@@ -48,7 +48,7 @@ Rules of the model — all automatic and enforced:
 
 > As a citizen developer, I want to mark a script as trusted so the agent cannot edit or replace it, while I know it runs exactly the script I approved.
 
-> As a consultant under NDA, I want to hide a folder of client data so the agent can run scripts that process it but can never read its contents.
+> As a consultant under NDA, I want to hide a folder of client data so a trusted privileged script can process it but the agent can never read its contents.
 
 > As a citizen developer, I want the agent to tell me exactly what to unlock, grant privilege to, or reveal when it is blocked — instead of failing confusingly or inventing a workaround.
 

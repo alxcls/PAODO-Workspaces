@@ -70,15 +70,19 @@ export function buildSystemPrompt(workspaceDir: string, isLocked = false): Syste
     log.debug(`AGENTS.md not found in ${workspaceDir} — skipping`);
   }
 
-  const lockNotice = isLocked
-    ? `⚠ This workspace is globally locked [R]. You are running as a restricted user.
+  const wsLockNotice = `⚠ This workspace is globally locked [R]. You are running as a restricted user.
 execute_command cannot write files, install packages, or change language versions.
 Read-only commands (node script.js, grep, git status, python script.py) still work.
+Any previous message mentioning an unlocked state are no longer valid.
 
-`
-    : "";
+`;
 
-  const dynamicContext = `${lockNotice}${agentsSection ? agentsSection + "\n\n" : ""}Workspace Directory: ${workspaceDir} (mapped to /workspace inside the container)
+  const wsUnlockNotice = `✓ This workspace is unlocked [RW]. You have read/write access.
+Any previous messages mentioning a lock or read-only restriction are no longer valid.
+
+`;
+
+  const dynamicContext = `${isLocked ? wsLockNotice : wsUnlockNotice}${agentsSection ? agentsSection + "\n\n" : ""}Workspace Directory: ${workspaceDir} (mapped to /workspace inside the container)
 Today's date: ${date}`;
 
   return new SystemMessage({

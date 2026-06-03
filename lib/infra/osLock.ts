@@ -171,16 +171,37 @@ export async function unhidePathOnDisk(workspaceId: string, relPath: string): Pr
 
 // Brings the whole workspace into the canonical on-disk state. Called at the end of
 // `_ensureContainer` so locks + privileged scripts survive container restart/recreate.
-export async function reconcileOsPermissions(workspaceId: string): Promise<void> {
+//
+// `reclaimRootFiles` (off by default) widens the file-normalize sweep to ALSO chown root-owned files
+// back to `developer` and restore group/other read. This is used ONLY after a privileged script runs
+// (run as root → its incidental output is root-owned and otherwise unreadable by the app server). It
+// is safe despite briefly demoting hidden/locked files to `developer` before the re-protect tail
+// below re-applies them: reconcile runs synchronously inside the `run_privileged_script` tool call,
+// during which the ReAct agent loop is blocked on the tool result, so no agent action can observe the
+// window (the same property startup reconcile relies on — the agent can't exec until the container is
+// ready). Note a privileged script runs with secrets in its env; reclaim makes its OUTPUT FILES
+// agent-readable, which matches the ADR's scope — secrets travel via env, never disk.
+//
+// At restart / after apt, `reclaimRootFiles` stays false: root ownership remains the durable
+// "protected" signal and unregistered root files are left untouched.
+export async function reconcileOsPermissions(
+  workspaceId: string,
+  opts: { reclaimRootFiles?: boolean } = {},
+): Promise<void> {
   const snap = await readPermissionSnapshot(workspaceId);
+  const reclaim = opts.reclaimRootFiles ?? false;
+  // reclaim: drop the `! -uid 0` guard so root-owned orphans get chowned to developer, and add
+  // `a+rX` (group/other read, exec bits preserved) so the app server (node, "other") can read them.
+  const fileFilter = reclaim ? [] : ["!", "-uid", "0"];
+  const fileMode = reclaim ? "u+w,a+rX" : "u+w";
 
   // Normalize so the agent can do normal work. Files: chown non-root-owned to developer and make
-  // them owner-writable (root-owned = protected, left alone). Dirs: developer:developer 01775 —
-  // sticky bit protects root-owned (locked/hidden) entries; lockOnDisk/hideOnDisk below re-assert
-  // root ownership on the immediate parent of each protected path.
+  // them owner-writable (root-owned = protected, left alone — unless reclaiming). Dirs:
+  // developer:developer 01775 — sticky bit protects root-owned (locked/hidden) entries;
+  // lockOnDisk/hideOnDisk below re-assert root ownership on the immediate parent of each protected path.
   await Promise.all([
-    runRoot(workspaceId, ["find", "/workspace", "-type", "f", "!", "-uid", "0", "-exec", "chown", DEVELOPER, "{}", "+"]),
-    runRoot(workspaceId, ["find", "/workspace", "-type", "f", "!", "-uid", "0", "-exec", "chmod", "u+w", "{}", "+"]),
+    runRoot(workspaceId, ["find", "/workspace", "-type", "f", ...fileFilter, "-exec", "chown", DEVELOPER, "{}", "+"]),
+    runRoot(workspaceId, ["find", "/workspace", "-type", "f", ...fileFilter, "-exec", "chmod", fileMode, "{}", "+"]),
     runRoot(workspaceId, ["find", "/workspace", "-type", "d", "-exec", "chown", DEVELOPER, "{}", "+"]),
     runRoot(workspaceId, ["find", "/workspace", "-type", "d", "-exec", "chmod", "01775", "{}", "+"]),
   ]);

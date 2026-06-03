@@ -12,6 +12,7 @@ import { spawn } from "child_process";
 import path from "path";
 import { broadcastToWorkspace } from "../../infra/wsHub";
 import { ensureContainer } from "../../infra/containerManager";
+import { reconcileOsPermissions } from "../../infra/osLock";
 import { getSecretEnvArgs } from "../../infra/secretStore";
 import { isPrivileged, listPrivileged } from "../../infra/privilegeStore";
 import { createLogger } from "../../infra/logger";
@@ -103,9 +104,19 @@ export function buildRunPrivilegedScriptTool(workspaceId: string, workspaceDir: 
           broadcastToWorkspace(workspaceId, JSON.stringify({ type: "stderr", workspaceId, data: text }));
         });
 
-        proc.on("close", (code) => {
+        proc.on("close", async (code) => {
           clearInterval(heartbeat);
           broadcastToWorkspace(workspaceId, JSON.stringify({ type: "exec_done", workspaceId, exitCode: code }));
+          // The script ran as root, so any files it created/modified are root-owned and unreadable by
+          // the app server (node, "other"). Reclaim incidental output back to developer:developer 0644
+          // (registered locked/hidden/privileged paths are re-protected from the registries). Awaited
+          // before resolving so the agent's next step sees correct perms. Fires after a timeout SIGTERM
+          // kill too (close still fires), so a killed script's partial output is also reclaimed.
+          try {
+            await reconcileOsPermissions(workspaceId, { reclaimRootFiles: true });
+          } catch (err) {
+            log.warn({ workspaceId, script_path, err }, "post-privileged reconcile failed");
+          }
           const stderrOut = stderr.trim() ? `[stderr]: ${stderr.trim()}` : "";
           const parts = [stdout.trim(), stderrOut].filter(Boolean);
           resolve(parts.join("\n") || "Script executed successfully with no output.");

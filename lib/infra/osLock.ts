@@ -55,7 +55,7 @@ function containerName(workspaceId: string): string {
 // Runs a command as root inside the (already-running) workspace container. Does NOT ensure the
 // container exists — callers must guarantee that (reconcile runs right after start; the route
 // calls ensureContainer first). cmdArgs go straight to execvp — no shell, so no injection.
-function runRoot(workspaceId: string, cmdArgs: string[]): Promise<{ stdout: string; stderr: string; code: number }> {
+export function runRoot(workspaceId: string, cmdArgs: string[]): Promise<{ stdout: string; stderr: string; code: number }> {
   return new Promise((resolve) => {
     let stdout = "";
     let stderr = "";

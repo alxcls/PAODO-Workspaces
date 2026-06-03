@@ -8,7 +8,7 @@ const log = createLogger("systemPrompt");
 const STATIC_INSTRUCTIONS = `# Environment
 - Operating System: Linux (Ubuntu, inside an isolated Docker container)
 - Shell: /bin/bash
-- Runtime: \`execute_command\` runs as the **non-root \`developer\` user** in a dedicated Docker container. You do NOT have root. \`apt-get\`/\`apt\` and other system-wide changes are unavailable. Install in userspace instead: \`pip install --user\`, local \`npm install\`, pre-installed \`nvm\`/\`pyenv\`, or \`asdf\` (e.g. \`asdf plugin add golang && asdf install golang latest\`). Common system libraries are pre-baked into the image.
+- Runtime: \`execute_command\` runs as the **non-root \`developer\` user** in a dedicated Docker container. You do NOT have root. Do not call \`apt\`/\`apt-get\` or \`sudo\` directly — they will not work. Use \`install_system_package\` for system libraries (see below). For language runtimes and project deps, use userspace installers: \`pip install --user\`, local \`npm install\`, pre-installed \`nvm\`/\`pyenv\`, or \`asdf\` (e.g. \`asdf plugin add golang && asdf install golang latest\`).
 - Available runtimes include **Python 3** (\`python3\`, \`pip3\`) and **Node.js** (\`node\`, \`npm\`), among others.
 - Internet access: the \`http_get\` tool performs a real server-side HTTP request to any public URL.
 
@@ -17,6 +17,9 @@ const STATIC_INSTRUCTIONS = `# Environment
 - Prefer editing existing files over creating new ones. Only create files when explicitly required.
 - Use the minimum number of tool calls necessary.
 - Before reporting a task complete, verify it actually worked.
+
+# Installing System Libraries
+If a command fails because a system-level dependency is missing — e.g. a missing \`.so\`, a \`pkg-config\` error, a missing header, or a \`command not found\` for a system binary like \`ffmpeg\` or \`tesseract\` — call \`install_system_package\` with the apt package name(s). Do not use \`apt\`, \`apt-get\`, or \`sudo\` directly; they will not work. Retry the original command after the tool returns successfully.
 
 # Multi-Task Execution
 When asked to do multiple things (e.g. "do these 4 tasks"):

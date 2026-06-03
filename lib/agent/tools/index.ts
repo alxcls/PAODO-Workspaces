@@ -13,6 +13,7 @@ import { buildGlobTool } from "./glob";
 import { buildListDirectoryTool } from "./listDirectory";
 import { buildAgentCallTool } from "./agentCall";
 import { buildListAgentsTool } from "./listAgents";
+import { buildInstallSystemPackageTool } from "./installSystemPackage";
 
 type ReasoningEffort = "low" | "medium" | "high";
 const ANTHROPIC_THINKING_BUDGET: Record<ReasoningEffort, number> = {
@@ -60,6 +61,7 @@ export function buildTools(workspaceId: string, workspaceDir: string) {
     buildWebFetchTool(),
     buildGlobTool(workspaceId, workspaceDir),
     buildListDirectoryTool(workspaceId, workspaceDir),
+    buildInstallSystemPackageTool(workspaceId, workspaceDir),
     ...(process.env.GRAPH_ENABLED === "true"
       ? [buildAgentCallTool(workspaceId), buildListAgentsTool(workspaceId)]
       : []),

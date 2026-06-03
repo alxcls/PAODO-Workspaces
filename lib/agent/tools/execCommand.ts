@@ -23,9 +23,14 @@ const RESTRICTED_USER = "agent";
 const SILENCE_TIMEOUT_MS = parseInt(process.env.EXEC_SILENCE_TIMEOUT_MS ?? "", 10) || 60_000;
 const MAX_TIMEOUT_MS = parseInt(process.env.EXEC_MAX_TIMEOUT_MS ?? "", 10) || 30 * 60_000;
 
-// Programs that execute a script passed as an argument — for these the privileged target is the
-// first non-flag argument (e.g. `bash deploy.sh`, `python3 -u build.py`), not the interpreter itself.
-const INTERPRETERS = new Set(["bash", "sh", "dash", "zsh", "ksh", "python", "python3", "node", "ruby", "perl", "php"]);
+// Programs that run a script handed to them as an argument — language interpreters (`bash deploy.sh`,
+// `python3 -u build.py`) and JS/TS launchers (`npx tsx script.ts`, `ts-node script.ts`). The
+// privileged target is the first non-flag token AFTER any chain of these, so nested launchers like
+// `npx tsx <script>` resolve to the script itself, not to `npx`.
+const INTERPRETERS = new Set([
+  "bash", "sh", "dash", "zsh", "ksh", "python", "python3", "ruby", "perl", "php",
+  "node", "npx", "tsx", "ts-node",
+]);
 
 // Shell metacharacters that introduce additional commands, redirection, or substitution. A privileged
 // invocation must contain none of them (outside quotes): each would otherwise run as root too.
@@ -72,17 +77,24 @@ function toWorkspaceRel(token: string): string {
   return token;
 }
 
-// The program a command actually runs: the first token, unless it's a known interpreter, in which
-// case it's the interpreter's first non-flag argument (the script). Returns null if indeterminable.
+// The program a command actually runs: walk past any chain of interpreter/launcher tokens and their
+// flags (e.g. `npx tsx --flag <script>`) to reach the first real target token. Returns null if the
+// command is only interpreters/flags. The target must still sit immediately after the launcher chain —
+// junk before it (`npx tsx junk script.ts`) resolves to the junk, so a privileged script only elevates
+// when it's the genuine program, never when buried as a later argument.
 function resolveProgramRel(tokens: string[]): string | null {
-  if (tokens.length === 0) return null;
-  const first = toWorkspaceRel(tokens[0]);
-  const base = first.split("/").pop() ?? first;
-  if (INTERPRETERS.has(base)) {
-    const scriptArg = tokens.slice(1).find((t) => !t.startsWith("-"));
-    return scriptArg ? toWorkspaceRel(scriptArg) : null;
+  let i = 0;
+  while (i < tokens.length) {
+    const rel = toWorkspaceRel(tokens[i]);
+    const base = rel.split("/").pop() ?? rel;
+    if (INTERPRETERS.has(base)) {
+      i++;
+      while (i < tokens.length && tokens[i].startsWith("-")) i++;
+      continue;
+    }
+    return rel;
   }
-  return first;
+  return null;
 }
 
 export function buildExecCommandTool(workspaceId: string, workspaceDir: string) {

@@ -40,13 +40,13 @@ State of record lives in JSON stores **outside** the bind mount, and is reconcil
 | Tier | Registry | On-disk (enforced) | Agent tag |
 |------|----------|--------------------|-----------|
 | Lock | `lib/infra/permissionStore.ts` (`.agent-permissions/<id>.json`) | files `root:root 0444`, dirs `root:root 0555` (no write or delete for `developer`) | `[R]` / `[RW]` |
-| Privileged script | `lib/infra/privilegeStore.ts` (`.privileged-scripts.json`) | locked (root-owned, tamper-proof) — execution is the same as any other script | `[P]` / `[U]` |
+| Privileged script | `lib/infra/privilegeStore.ts` (`.privileged-scripts.json`) | locked (root-owned, tamper-proof) — executed as root with workspace secrets injected as env vars | `[P]` / `[U]` |
 | Hidden | `lib/infra/hiddenStore.ts` (`.hidden-files.json`) | files `root:APP_GID 0640`, dirs `root:APP_GID 0755` (no read for `developer`) | `[H]` / `[V]` |
 
 Unlocked files are `developer:developer 0644`. **Workspace directories** (including `/workspace` itself) are always `root:developer 01775` — sticky bit + group-write. `developer` is in the `developer` group, so it can create files and delete files it owns; the sticky bit prevents it from deleting or renaming entries it does not own (i.e. root-owned locked/hidden paths), even via a script it writes. `lockOnDisk` and `hideOnDisk` also immediately fix the parent directory to `root:developer 01775` so that directories created by the agent between reconcile cycles are hardened at the moment a file inside them is protected.
 
 - **Global lock** mounts the whole volume `:ro` and drops the agent to `agent` (UID 999) — strongest, mount-level enforcement.
-- **Privileged scripts** are a trust marker: the user has approved the script's content and auto-locked it so the agent cannot tamper with it. Execution is identical to any other script — all scripts run as `developer` with the same kernel restrictions. The agent cannot self-grant the status.
+- **Privileged scripts** are a trust marker: the user has approved the script's content and auto-locked it so the agent cannot tamper with it. When the agent runs a privileged script, `execCommand` re-routes execution to `docker exec -u root` with workspace secrets injected as environment variables — meaning the script runs as root, can write locked files and folders, and has access to workspace secrets. The agent cannot self-grant the status.
 - **Hidden** uses a *two-way identity split*: the app server's group `APP_GID` reads (the user's file-tree viewer, host-side), and `developer` falls to "other" with no read — this applies equally to the agent and to any scripts it runs. Names stay visible (directories remain listable); only content is blocked.
 
 ### Coupling: privilege ↔ lock (one direction only); hidden is fully independent
@@ -63,10 +63,10 @@ Unlocked files are `developer:developer 0644`. **Workspace directories** (includ
 |-------|:--------:|:---------:|:-----------:|
 | Unlocked `[RW]` | ✓ | ✓ | ✓ |
 | Locked `[R]` | ✓ | ✗ | ✓ |
-| Privileged `[P]` + locked | ✓ | ✗ | ✓ |
+| Privileged `[P]` + locked | ✓ | ✓ (runs as root) | ✓ |
 | Hidden `[H]` | name only | ✗ | ✗ |
 
-All scripts run as `developer` regardless of privilege tag — the `[P]` flag is a tamper-protection marker, not an execution tier. Locked scripts retain the execute bit (`chmod a-w`, not `a-wx`): lock = write protection, not execution prevention.
+Non-privileged scripts run as `developer` with full kernel restrictions. Privileged scripts run as `root` — they bypass write locks and receive workspace secrets. Locked scripts retain the execute bit (`chmod a-w`, not `a-wx`): lock = write protection, not execution prevention.
 
 The agent always sees all three tags explicitly (`[write] [privilege] [visibility]`); only the user can change any of them.
 

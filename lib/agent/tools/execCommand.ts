@@ -2,19 +2,15 @@
 // Streams stdout and stderr live to connected WebSocket clients so they appear in the console panel,
 // and returns the combined output to the agent as the tool result.
 //
-// When the command references a privileged script, the tool silently re-routes: it runs that script
-// as root with workspace secrets injected — transparent to the agent. Only the fixed interpreter +
-// script path are used; any extra flags or chained commands in the original command string are
-// discarded so the agent cannot inject arbitrary root commands by composing them alongside a
-// privileged script reference.
+// When the command references a privileged script, the tool silently re-routes: it runs the full
+// original command as root with workspace secrets injected — transparent to the agent.
 import { tool } from "@langchain/core/tools";
 import { z } from "zod";
 import { spawn } from "child_process";
-import path from "path";
 import { broadcastToWorkspace } from "../../infra/wsHub";
 import { ensureContainer } from "../../infra/containerManager";
 import { getGlobalLock } from "../../infra/permissionStore";
-import { listPrivileged } from "../../infra/privilegeStore";
+import { isPrivileged } from "../../infra/privilegeStore";
 import { getSecretEnvArgs } from "../../infra/secretStore";
 import { createLogger } from "../../infra/logger";
 
@@ -22,34 +18,27 @@ const RESTRICTED_USER = "agent";
 const SILENCE_TIMEOUT_MS = parseInt(process.env.EXEC_SILENCE_TIMEOUT_MS ?? "", 10) || 60_000;
 const MAX_TIMEOUT_MS = parseInt(process.env.EXEC_MAX_TIMEOUT_MS ?? "", 10) || 30 * 60_000;
 
-function interpreterFor(relPath: string): string[] {
-  const ext = path.extname(relPath).toLowerCase();
-  if (ext === ".py") return ["python3"];
-  if (ext === ".js" || ext === ".mjs") return ["node"];
-  return ["bash"];
-}
-
 export function buildExecCommandTool(workspaceId: string, workspaceDir: string) {
   const log = createLogger("execCommand");
   return tool(
     async ({ command }) => {
-      const privilegedRef = listPrivileged(workspaceId).find(
-        (p) => command.includes(p) || command.includes(path.posix.basename(p)),
-      );
+      // Normalize each token to a relative workspace path and check against the privilege registry.
+      const isPrivilegedCommand = command.split(/\s+/).some((t) => {
+        const rel = t.startsWith("/workspace/") ? t.slice("/workspace/".length) : t;
+        return isPrivileged(workspaceId, rel);
+      });
 
-      if (privilegedRef) {
-        // Privileged script: run as root with secrets. Only the fixed interpreter + path are used —
-        // any extra flags or chained commands in `command` are intentionally dropped.
+      if (isPrivilegedCommand) {
+        // Privileged script: run the full original command as root with secrets injected.
         await ensureContainer(workspaceId, workspaceDir);
         const secretArgs = getSecretEnvArgs(workspaceId);
-        const interp = interpreterFor(privilegedRef);
-        log.info({ workspaceId, script: privilegedRef }, "auto-routing privileged script");
+        log.info({ workspaceId, command }, "auto-routing privileged script");
 
         return new Promise<string>((resolve) => {
           const proc = spawn("docker", [
             "exec", "-i", "-u", "root", ...secretArgs,
             "-w", "/workspace", `ws_${workspaceId}`,
-            ...interp, `/workspace/${privilegedRef}`,
+            "/bin/bash", "-c", command,
           ]);
           proc.stdin.end();
 

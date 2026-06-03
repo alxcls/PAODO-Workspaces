@@ -125,9 +125,9 @@ export async function PUT(
       if (code === "EACCES" || code === "EPERM") {
         // File is root-owned from agent writes via Docker — write via container and fix ownership.
         const relPath = path.relative(ws.dir, resolved);
-        const r = await dockerExec(ws.id, ws.dir, ["tee", `/workspace/${relPath}`], { stdin: body.content });
+        const r = await dockerExec(ws.id, ws.dir, ["tee", `/workspace/${relPath}`], { stdin: body.content, user: "root" });
         if (r.code !== 0) throw new Error(r.stderr || "docker write failed");
-        await dockerExec(ws.id, ws.dir, ["chown", "developer:developer", `/workspace/${relPath}`]);
+        await dockerExec(ws.id, ws.dir, ["chown", "developer:developer", `/workspace/${relPath}`], { user: "root" });
       } else {
         throw writeErr;
       }

@@ -83,19 +83,20 @@ function runRoot(workspaceId: string, cmdArgs: string[]): Promise<{ stdout: stri
 // Idempotent.
 async function lockOnDisk(workspaceId: string, relPath: string): Promise<void> {
   const target = `/workspace/${relPath}`;
+  const parentDir = path.posix.dirname(target);
+  const parentCmds = parentDir !== "/"
+    ? [
+        runRoot(workspaceId, ["chown", "root:developer", parentDir]),
+        runRoot(workspaceId, ["chmod", "01775", parentDir]),
+      ]
+    : [];
   const [r1, r2] = await Promise.all([
     runRoot(workspaceId, ["chown", "-R", "root:root", target]),
     runRoot(workspaceId, ["chmod", "-R", "a-w", target]),
+    ...parentCmds,
   ]);
   if (r1.code !== 0 || r2.code !== 0) {
     log.warn({ workspaceId, relPath, chown: r1.stderr, chmod: r2.stderr }, "lockOnDisk failed");
-  }
-  const parentDir = path.posix.dirname(target);
-  if (parentDir !== "/") {
-    await Promise.all([
-      runRoot(workspaceId, ["chown", "root:developer", parentDir]),
-      runRoot(workspaceId, ["chmod", "01775", parentDir]),
-    ]);
   }
 }
 
@@ -122,21 +123,31 @@ async function unlockOnDisk(workspaceId: string, relPath: string): Promise<void>
 // (sticky) so developer cannot `rm` the hidden entry. Idempotent.
 async function hideOnDisk(workspaceId: string, relPath: string): Promise<void> {
   const target = `/workspace/${relPath}`;
+  const parentDir = path.posix.dirname(target);
+  const parentCmds = parentDir !== "/"
+    ? [
+        runRoot(workspaceId, ["chown", "root:developer", parentDir]),
+        runRoot(workspaceId, ["chmod", "01775", parentDir]),
+      ]
+    : [];
   const [r1, r2, r3] = await Promise.all([
     runRoot(workspaceId, ["chown", "-R", `root:${APP_GID}`, target]),
     runRoot(workspaceId, ["find", target, "-type", "f", "-exec", "chmod", "0640", "{}", "+"]),
     runRoot(workspaceId, ["find", target, "-type", "d", "-exec", "chmod", "0755", "{}", "+"]),
+    ...parentCmds,
   ]);
   if (r1.code !== 0 || r2.code !== 0 || r3.code !== 0) {
     log.warn({ workspaceId, relPath, chown: r1.stderr, chmodF: r2.stderr, chmodD: r3.stderr }, "hideOnDisk failed");
   }
-  const parentDir = path.posix.dirname(target);
-  if (parentDir !== "/") {
-    await Promise.all([
-      runRoot(workspaceId, ["chown", "root:developer", parentDir]),
-      runRoot(workspaceId, ["chmod", "01775", parentDir]),
-    ]);
-  }
+}
+
+// Makes the entire /workspace unwritable for all users (global lock). Two parallel find sweeps —
+// one for files, one for dirs — so a single docker exec round-trip covers the whole tree.
+export async function lockWorkspaceOnDisk(workspaceId: string): Promise<void> {
+  await Promise.all([
+    runRoot(workspaceId, ["find", "/workspace", "-type", "f", "-exec", "chmod", "a-w", "{}", "+"]),
+    runRoot(workspaceId, ["find", "/workspace", "-type", "d", "-exec", "chmod", "a-w", "{}", "+"]),
+  ]);
 }
 
 // Public: lock/unlock a single path. Callers (the permissions/privileged-scripts routes) must have ensured the
@@ -161,32 +172,28 @@ export async function unhidePathOnDisk(workspaceId: string, relPath: string): Pr
 
 // Brings the whole workspace into the canonical on-disk state. Called at the end of
 // `_ensureContainer` so locks + privileged scripts survive container restart/recreate.
-//
-// While the workspace is GLOBALLY locked the bind mount is read-only (`:ro`), which enforces
-// everything at the mount level and would make chown/chmod fail — so we skip the per-path work.
 export async function reconcileOsPermissions(workspaceId: string): Promise<void> {
   const snap = await readPermissionSnapshot(workspaceId);
-  if (snap.globalLock) return; // read-only mount already enforces it
 
-  // Normalize so the agent can do normal work.
+  // Normalize so the agent can do normal work. All four find traversals are independent —
+  // run them in parallel: files (chown + chmod) and dirs (chown + chmod) at the same time.
   // Files: chown non-root-owned files to developer (root-owned = protected, leave alone) and make
   // them owner-writable. The re-lock loop below will re-assert a-w on the protected set.
-  await runRoot(workspaceId, ["find", "/workspace", "-type", "f", "!", "-uid", "0", "-exec", "chown", DEVELOPER, "{}", "+"]);
-  await runRoot(workspaceId, ["find", "/workspace", "-type", "f", "!", "-uid", "0", "-exec", "chmod", "u+w", "{}", "+"]);
   // Directories: set all to root:developer 01775 (sticky + group-write). This includes /workspace
-  // itself (no -mindepth 1 restriction), fixing it so developer can write/delete its own files
-  // there. Sticky bit means developer — despite having group-write — can only unlink files it owns,
-  // so root-owned (locked/hidden) entries survive `rm`. The re-lock loop re-asserts a-w on locked
-  // directory subtrees after this baseline is set.
-  await runRoot(workspaceId, ["find", "/workspace", "-type", "d", "-exec", "chown", "root:developer", "{}", "+"]);
-  await runRoot(workspaceId, ["find", "/workspace", "-type", "d", "-exec", "chmod", "01775", "{}", "+"]);
+  // itself, fixing it so developer can write/delete its own files there. Sticky bit means developer
+  // — despite having group-write — can only unlink files it owns, so root-owned (locked/hidden)
+  // entries survive `rm`. The re-lock loop re-asserts a-w on locked directory subtrees after this.
+  await Promise.all([
+    runRoot(workspaceId, ["find", "/workspace", "-type", "f", "!", "-uid", "0", "-exec", "chown", DEVELOPER, "{}", "+"]),
+    runRoot(workspaceId, ["find", "/workspace", "-type", "f", "!", "-uid", "0", "-exec", "chmod", "u+w", "{}", "+"]),
+    runRoot(workspaceId, ["find", "/workspace", "-type", "d", "-exec", "chown", "root:developer", "{}", "+"]),
+    runRoot(workspaceId, ["find", "/workspace", "-type", "d", "-exec", "chmod", "01775", "{}", "+"]),
+  ]);
 
   // Hidden paths get root:APP_GID 0640 (content unreadable by the agent). Apply these FIRST and
-  // exclude them from the lock set below so the lock's 0444/a-w doesn't clobber the hide mode bits.
+  // exclude them from the lock set below so the lock's a-w doesn't clobber the hide mode bits.
   const hidden = listHidden(workspaceId);
-  for (const relPath of hidden) {
-    await hideOnDisk(workspaceId, relPath);
-  }
+  await Promise.all(hidden.map(relPath => hideOnDisk(workspaceId, relPath)));
 
   // Then re-lock the protected set: registered per-path locks + privileged scripts (which are locked
   // so the agent can't edit them), minus anything already hidden. Dedupe so a path that's both
@@ -195,10 +202,13 @@ export async function reconcileOsPermissions(workspaceId: string): Promise<void>
   const protectedPaths = new Set<string>(
     [...snap.locked, ...listPrivileged(workspaceId)].filter((p) => !hiddenSet.has(p))
   );
-  for (const relPath of protectedPaths) {
-    await lockOnDisk(workspaceId, relPath);
-  }
+  await Promise.all([...protectedPaths].map(relPath => lockOnDisk(workspaceId, relPath)));
+
   if (protectedPaths.size > 0 || hidden.length > 0) {
     log.debug({ workspaceId, locked: protectedPaths.size, hidden: hidden.length }, "reconciled OS permissions");
   }
+
+  // Global lock is enforced via chmod (no :ro mount needed on Linux/VirtioFS). Apply as an
+  // overlay after per-path state is restored so the workspace-wide a-w is the final word.
+  if (snap.globalLock) await lockWorkspaceOnDisk(workspaceId);
 }

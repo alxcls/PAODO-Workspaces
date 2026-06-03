@@ -45,13 +45,17 @@ export async function PATCH(
   try {
     if (hidden) {
       // Hide = register + apply OS root:APP_GID 0640 so the agent can't read content.
+      // Skip disk op while globally locked — workspace-wide a-w already blocks the agent;
+      // reconcile re-applies hideOnDisk when the global lock is toggled off.
       hideFile(ws.id, relPath);
       if (!(await getGlobalLock(ws.id))) {
         await ensureContainer(ws.id, ws.dir);
         await hidePathOnDisk(ws.id, relPath);
       }
     } else {
-      // Unhide = unregister, then restore the disk state dictated by the current lock setting.
+      // Unhide = unregister, then restore the disk state dictated by the current lock/privilege state.
+      // Skip while globally locked: calling unlockOnDisk would make the file writable against the
+      // global lock; reconcile restores the correct state when the global lock is toggled off.
       unhideFile(ws.id, relPath);
       if (!(await getGlobalLock(ws.id))) {
         await ensureContainer(ws.id, ws.dir);

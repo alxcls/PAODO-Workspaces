@@ -8,6 +8,7 @@ import { listPrivileged } from "@/lib/infra/privilegeStore";
 import { listHidden } from "@/lib/infra/hiddenStore";
 import { dockerExec } from "@/lib/infra/containerManager";
 import { permissionTags, isCovered } from "./tags";
+import { isLockedFromSnapshot } from "./pathUtils";
 
 // Convert a single glob segment (no path separators) to a regex.
 function segmentToRegex(segment: string): RegExp {
@@ -38,19 +39,6 @@ function matchParts(patParts: string[], pathParts: string[]): boolean {
 
 function matchGlob(pattern: string, relpath: string): boolean {
   return matchParts(pattern.split("/"), relpath.split("/"));
-}
-
-// Pure check against a pre-fetched permission snapshot.
-function isLockedFromSnapshot(
-  snapshot: { globalLock: boolean; locked: string[] },
-  relPath: string,
-): boolean {
-  if (snapshot.globalLock) return true;
-  const parts = relPath.split("/");
-  for (let i = 1; i <= parts.length; i++) {
-    if (snapshot.locked.includes(parts.slice(0, i).join("/"))) return true;
-  }
-  return false;
 }
 
 export function buildGlobTool(workspaceId: string, workspaceDir: string) {

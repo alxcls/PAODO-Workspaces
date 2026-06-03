@@ -4,7 +4,7 @@ import { setPermission, setGlobalPermission, getGlobalLock } from "@/lib/infra/p
 import { isPrivileged, revokePrivilege } from "@/lib/infra/privilegeStore";
 import { isHidden } from "@/lib/infra/hiddenStore";
 import { ensureContainer } from "@/lib/infra/containerManager";
-import { lockPathOnDisk, unlockPathOnDisk } from "@/lib/infra/osLock";
+import { lockPathOnDisk, unlockPathOnDisk, lockWorkspaceOnDisk, reconcileOsPermissions } from "@/lib/infra/osLock";
 import path from "path";
 import { createLogger } from "@/lib/infra/logger";
 
@@ -37,9 +37,10 @@ export async function PATCH(
 
     await setPermission(ws.id, relPath, permission);
 
-    // Mirror the registry change into real OS permissions. Skipped while globally locked (:ro
-    // mount already enforces it) or while the file is hidden (hideOnDisk is already in place and
-    // is more restrictive than lockOnDisk — restore happens when the file is revealed).
+    // Mirror the registry change into real OS permissions. Skipped while hidden (hideOnDisk is more
+    // restrictive — restore happens on reveal) or while globally locked (calling unlockPathOnDisk
+    // while the workspace-wide a-w is in effect would make the file writable; reconcile restores the
+    // correct per-path state when the global lock is toggled off).
     if (!isHidden(ws.id, relPath) && !(await getGlobalLock(ws.id))) {
       await ensureContainer(ws.id, ws.dir);
       if (permission === "R") await lockPathOnDisk(ws.id, relPath);
@@ -67,10 +68,12 @@ export async function PUT(
 
   try {
     await setGlobalPermission(ws.id, permission);
-    // Recreate the container so the volume is mounted read-only (R) or read-write (RW). The
-    // mismatch between the stored lock label and the new state triggers recreation inside
-    // ensureContainer, and reconcileOsPermissions then re-applies any per-path locks.
+    // Ensure the container is running (no-op if already up — no recreation needed).
+    // Then enforce the new state via OS permissions: lock = chmod a-w sweep; unlock = full reconcile
+    // (restores per-path ownership and mode bits from the registries).
     await ensureContainer(ws.id, ws.dir);
+    if (permission === "R") await lockWorkspaceOnDisk(ws.id);
+    else await reconcileOsPermissions(ws.id);
   } catch (err) {
     createLogger("api").error({ err, workspaceId: id }, "failed to set global permission");
     return NextResponse.json({ error: "failed to set global permission" }, { status: 500 });

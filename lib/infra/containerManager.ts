@@ -11,7 +11,6 @@ import { createHash } from "crypto";
 import { readFile, rm } from "fs/promises";
 import path from "path";
 import { createLogger } from "./logger";
-import { getGlobalLock } from "./permissionStore";
 import { reconcileOsPermissions } from "./osLock";
 
 const log = createLogger("container");
@@ -29,9 +28,9 @@ const WORKSPACES_VOLUME_NAME = process.env.WORKSPACES_VOLUME_NAME ?? "";
 const idleTimers = new Map<string, ReturnType<typeof setTimeout>>();
 // Prevents concurrent docker run/start calls for the same workspace.
 const startLocks = new Map<string, Promise<void>>();
-// Tracks containers we know are running with a specific lock state so ensureContainer can skip
-// docker inspect on repeated calls. Cleared on stop/remove to force a re-check.
-const runningCache = new Map<string, { isLocked: boolean }>();
+// Tracks containers we know are running so ensureContainer can skip docker inspect on repeated calls.
+// Cleared on stop/remove to force a re-check.
+const runningCache = new Set<string>();
 
 function containerName(workspaceId: string): string {
   return `ws_${workspaceId}`;
@@ -88,66 +87,48 @@ function resetIdleTimer(workspaceId: string): void {
   idleTimers.set(workspaceId, t);
 }
 
-const LOCK_LABEL = "paodo.workspace-locked";
-
 // Builds the volume args for docker run.
 // When WORKSPACES_VOLUME_NAME is set (production / Docker Compose), uses Docker 25+ volume
 // subpath mounting — necessary because the Docker daemon sees host paths, not app-container
 // paths, so a plain -v /app/data/<name>:/workspace would point at a non-existent host path.
 // When unset (local dev, app runs directly on host), falls back to a plain bind mount using
 // the resolved host path so local workspaces work without Docker Compose.
-// readOnly mounts /workspace with MS_RDONLY — blocks all writes regardless of user or UID
-// mapping (important on macOS where VirtioFS bind mounts ignore container user permissions).
-function buildVolumeArg(workspaceDir: string, readOnly: boolean): string[] {
+function buildVolumeArg(workspaceDir: string): string[] {
   if (!WORKSPACES_VOLUME_NAME) {
-    return ["-v", `${workspaceDir}:/workspace${readOnly ? ":ro" : ""}`];
+    return ["-v", `${workspaceDir}:/workspace`];
   }
   const workspaceName = path.basename(workspaceDir);
   return [
     "--mount",
-    `type=volume,source=${WORKSPACES_VOLUME_NAME},target=/workspace,volume-subpath=${workspaceName}${readOnly ? ",readonly" : ""}`,
+    `type=volume,source=${WORKSPACES_VOLUME_NAME},target=/workspace,volume-subpath=${workspaceName}`,
   ];
 }
 
-async function getContainerLockLabel(workspaceId: string): Promise<boolean> {
-  const r = await dockerCmd("inspect", "--format", `{{index .Config.Labels "${LOCK_LABEL}"}}`, containerName(workspaceId));
-  return r.code === 0 && r.stdout === "true";
-}
-
 async function _ensureContainer(workspaceId: string, workspaceDir: string): Promise<void> {
-  const isLocked = await getGlobalLock(workspaceId);
-
-  // Fast path: skip docker inspect if we already know the container is running with the right state.
-  const cached = runningCache.get(workspaceId);
-  if (cached && cached.isLocked === isLocked) return;
+  // Fast path: skip docker inspect if we already know the container is running.
+  if (runningCache.has(workspaceId)) return;
 
   const status = await getContainerStatus(workspaceId);
 
-  if (status === "running" || status === "stopped") {
-    const containerLocked = await getContainerLockLabel(workspaceId);
-    if (containerLocked === isLocked) {
-      if (status === "running") {
-        runningCache.set(workspaceId, { isLocked });
-        return;
-      }
-      // stopped, same lock state — just restart it
-      log.debug({ workspaceId }, "starting stopped container");
-      await ensureNetwork(workspaceId);
-      const connect = await dockerCmd("network", "connect", networkName(workspaceId), containerName(workspaceId));
-      if (connect.code !== 0) throw new Error(`docker network connect failed: ${connect.stderr}`);
-      const r = await dockerCmd("start", containerName(workspaceId));
-      if (r.code !== 0) throw new Error(`docker start failed: ${r.stderr}`);
-      // Re-apply OS-level locks/privileged scripts after restart (state survives in the JSON registries).
-      await reconcileOsPermissions(workspaceId);
-      runningCache.set(workspaceId, { isLocked });
-      return;
-    }
-    // Lock state changed — remove so we recreate with the correct mount mode below.
-    log.debug({ workspaceId, isLocked }, "lock state changed — recreating container with updated mount");
-    await removeContainer(workspaceId);
+  if (status === "running") {
+    runningCache.add(workspaceId);
+    return;
   }
 
-  // missing (or just removed) — create and start
+  if (status === "stopped") {
+    log.debug({ workspaceId }, "starting stopped container");
+    await ensureNetwork(workspaceId);
+    const connect = await dockerCmd("network", "connect", networkName(workspaceId), containerName(workspaceId));
+    if (connect.code !== 0) throw new Error(`docker network connect failed: ${connect.stderr}`);
+    const r = await dockerCmd("start", containerName(workspaceId));
+    if (r.code !== 0) throw new Error(`docker start failed: ${r.stderr}`);
+    // Re-apply OS-level locks/privileged scripts after restart (state survives in the JSON registries).
+    await reconcileOsPermissions(workspaceId);
+    runningCache.add(workspaceId);
+    return;
+  }
+
+  // missing — create and start
   log.debug({ workspaceId }, "creating container");
   await ensureNetwork(workspaceId);
   const r = await dockerCmd(
@@ -156,8 +137,7 @@ async function _ensureContainer(workspaceId: string, workspaceDir: string): Prom
     "--network", networkName(workspaceId),
     `--memory=${CONTAINER_MEMORY}`,
     `--cpus=${CONTAINER_CPUS}`,
-    ...buildVolumeArg(workspaceDir, isLocked),
-    "--label", `${LOCK_LABEL}=${isLocked}`,
+    ...buildVolumeArg(workspaceDir),
     "--security-opt", "no-new-privileges:true",
     CONTAINER_IMAGE,
     "sleep", "infinity",
@@ -165,9 +145,9 @@ async function _ensureContainer(workspaceId: string, workspaceDir: string): Prom
   if (r.code !== 0) throw new Error(`docker run failed: ${r.stderr}`);
   // Establish canonical ownership (workspace → developer) and re-apply any locked/privileged paths.
   // Safe to call here: the container is now running and we are NOT inside a dockerExec→ensureContainer
-  // cycle (osLock spawns docker exec directly). No-op while globally locked (read-only mount).
+  // cycle (osLock spawns docker exec directly).
   await reconcileOsPermissions(workspaceId);
-  runningCache.set(workspaceId, { isLocked });
+  runningCache.add(workspaceId);
 }
 
 export function ensureContainer(workspaceId: string, workspaceDir: string): Promise<void> {
@@ -193,16 +173,15 @@ export async function dockerExec(
   workspaceId: string,
   workspaceDir: string,
   cmdArgs: string[],
-  opts: { stdin?: string; asAgent?: boolean } = {},
+  opts: { stdin?: string } = {},
 ): Promise<DockerResult> {
   await ensureContainer(workspaceId, workspaceDir);
-  const userArgs = opts.asAgent ? ["-u", "agent"] : [];
   return new Promise((resolve) => {
     let stdout = "";
     let stderr = "";
     let proc: ReturnType<typeof spawn>;
     try {
-      proc = spawn("docker", ["exec", "-i", ...userArgs, "-w", "/workspace", containerName(workspaceId), ...cmdArgs]);
+      proc = spawn("docker", ["exec", "-i", "-w", "/workspace", containerName(workspaceId), ...cmdArgs]);
     } catch (err) {
       resolve({ stdout: "", stderr: (err as Error).message, code: 1 });
       return;
@@ -225,7 +204,7 @@ export async function stopContainer(workspaceId: string): Promise<void> {
   const t = idleTimers.get(workspaceId);
   if (t) { clearTimeout(t); idleTimers.delete(workspaceId); }
   runningCache.delete(workspaceId);
-  const r = await dockerCmd("stop", containerName(workspaceId));
+  const r = await dockerCmd("stop", "-t", "0", containerName(workspaceId));
   if (r.code !== 0) log.warn({ workspaceId, stderr: r.stderr }, "docker stop failed");
   await dockerCmd("network", "disconnect", networkName(workspaceId), containerName(workspaceId));
   const net = await dockerCmd("network", "rm", networkName(workspaceId));
@@ -238,7 +217,7 @@ export async function removeContainer(workspaceId: string): Promise<void> {
   startLocks.delete(workspaceId);
   runningCache.delete(workspaceId);
   // Non-zero exit codes are expected if the container/network was never created.
-  const stop = await dockerCmd("stop", containerName(workspaceId));
+  const stop = await dockerCmd("stop", "-t", "0", containerName(workspaceId));
   if (stop.code !== 0) log.debug({ workspaceId, stderr: stop.stderr }, "docker stop on remove (may not exist)");
   const rm = await dockerCmd("rm", containerName(workspaceId));
   if (rm.code !== 0) log.debug({ workspaceId, stderr: rm.stderr }, "docker rm on remove (may not exist)");

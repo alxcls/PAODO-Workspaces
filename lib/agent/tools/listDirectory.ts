@@ -2,32 +2,12 @@
 // Uses a single docker exec find call, then resolves permissions via a batched snapshot.
 import { tool } from "@langchain/core/tools";
 import { z } from "zod";
-import path from "path";
 import { readPermissionSnapshot } from "@/lib/infra/permissionStore";
 import { listPrivileged } from "@/lib/infra/privilegeStore";
 import { listHidden } from "@/lib/infra/hiddenStore";
 import { dockerExec } from "@/lib/infra/containerManager";
 import { permissionTags, isCovered } from "./tags";
-
-function normalizeRelpath(dirPath: string): string | null {
-  if (!dirPath || dirPath === ".") return ".";
-  const normalized = path.posix.normalize(dirPath);
-  if (normalized.startsWith("..") || normalized.startsWith("/")) return null;
-  return normalized;
-}
-
-// Pure check against a pre-fetched permission snapshot — avoids N disk reads for N entries.
-function isLockedFromSnapshot(
-  snapshot: { globalLock: boolean; locked: string[] },
-  relPath: string,
-): boolean {
-  if (snapshot.globalLock) return true;
-  const parts = relPath.split("/");
-  for (let i = 1; i <= parts.length; i++) {
-    if (snapshot.locked.includes(parts.slice(0, i).join("/"))) return true;
-  }
-  return false;
-}
+import { normalizeRelpath, isLockedFromSnapshot } from "./pathUtils";
 
 function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes}B`;

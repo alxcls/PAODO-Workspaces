@@ -15,15 +15,10 @@ import { ensureContainer } from "../../infra/containerManager";
 import { getSecretEnvArgs } from "../../infra/secretStore";
 import { isPrivileged, listPrivileged } from "../../infra/privilegeStore";
 import { createLogger } from "../../infra/logger";
+import { normalizeRelpath } from "./pathUtils";
 
 const SILENCE_TIMEOUT_MS = parseInt(process.env.EXEC_SILENCE_TIMEOUT_MS ?? "", 10) || 60_000;
 const MAX_TIMEOUT_MS = parseInt(process.env.EXEC_MAX_TIMEOUT_MS ?? "", 10) || 30 * 60_000;
-
-function normalizeRelpath(filePath: string): string | null {
-  const normalized = path.posix.normalize(filePath.replace(/\\/g, "/"));
-  if (normalized.startsWith("..") || normalized.startsWith("/")) return null;
-  return normalized;
-}
 
 // Maps an extension to the interpreter argv prefix. The interpreter + absolute path are fixed by
 // the server — the agent cannot inject flags or extra commands.

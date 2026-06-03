@@ -6,12 +6,7 @@ import path from "path";
 import { isAgentLocked } from "@/lib/infra/permissionStore";
 import { isHidden } from "@/lib/infra/hiddenStore";
 import { dockerExec } from "@/lib/infra/containerManager";
-
-function normalizeRelpath(filePath: string): string | null {
-  const normalized = path.posix.normalize(filePath);
-  if (normalized.startsWith("..") || normalized.startsWith("/")) return null;
-  return normalized;
-}
+import { normalizeRelpath } from "./pathUtils";
 
 export function buildFileWriteTool(workspaceId: string, workspaceDir: string) {
   return tool(

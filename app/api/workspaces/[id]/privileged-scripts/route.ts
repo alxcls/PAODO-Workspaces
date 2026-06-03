@@ -51,6 +51,8 @@ export async function PATCH(
       // If the file is hidden, hideOnDisk already prevents agent access — skip disk lock (more restrictive).
       grantPrivilege(ws.id, relPath);
       await setPermission(ws.id, relPath, "R");
+      // Skip OS lock while hidden (hideOnDisk is more restrictive) or globally locked
+      // (workspace-wide a-w already enforces it; reconcile re-asserts on global unlock).
       if (!isHidden(ws.id, relPath) && !(await getGlobalLock(ws.id))) {
         await ensureContainer(ws.id, ws.dir);
         await lockPathOnDisk(ws.id, relPath);

@@ -8,14 +8,7 @@ import { isPrivileged } from "@/lib/infra/privilegeStore";
 import { isHidden } from "@/lib/infra/hiddenStore";
 import { dockerExec } from "@/lib/infra/containerManager";
 import { permissionTags } from "./tags";
-
-// Normalizes a caller-supplied relative path and guards against directory traversal.
-// Uses path.posix because container paths are always POSIX regardless of dev host OS.
-function normalizeRelpath(filePath: string): string | null {
-  const normalized = path.posix.normalize(filePath);
-  if (normalized.startsWith("..") || normalized.startsWith("/")) return null;
-  return normalized;
-}
+import { normalizeRelpath } from "./pathUtils";
 
 export function buildFileReadTool(workspaceId: string, workspaceDir: string) {
   return tool(

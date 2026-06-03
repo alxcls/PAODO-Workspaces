@@ -12,6 +12,7 @@ import fs from "fs/promises";
 import path from "path";
 import JSZip from "jszip";
 import { createLogger } from "@/lib/infra/logger";
+import { ensureContainer, dockerExec } from "@/lib/infra/containerManager";
 
 const MAX_BYTES = 100 * 1024 * 1024;       // 100 MB — single file
 const MAX_ARCHIVE_BYTES = 500 * 1024 * 1024; // 500 MB — ZIP archive
@@ -56,6 +57,11 @@ export async function POST(
     );
   }
 
+  // Workspace dirs are developer:developer after first agent connection. The app server
+  // (node, UID 1000) is "other" on those dirs and cannot write directly. Detect upfront
+  // and fall back to writing through the container as developer — matching DELETE/PUT.
+  const wsWritable = await fs.access(wsDir, fs.constants.W_OK).then(() => true, () => false);
+
   // ---- ZIP archive upload ----
   if (isZip) {
     let zip: JSZip;
@@ -66,6 +72,22 @@ export async function POST(
     }
 
     const entries = Object.entries(zip.files).filter(([, entry]) => !entry.dir);
+
+    if (!wsWritable) {
+      // Fallback: pipe the entire ZIP into the container and extract in one exec.
+      // Running as developer so extracted files are developer-owned from the start.
+      await ensureContainer(ws.id, wsDir);
+      const r = await dockerExec(ws.id, wsDir,
+        ["sh", "-c", "base64 -d > /tmp/u.zip && unzip -q -o /tmp/u.zip -d /workspace/ && rm /tmp/u.zip"],
+        { stdin: buf.toString("base64"), user: "developer" },
+      );
+      if (r.code !== 0) {
+        createLogger("api").error({ workspaceId: id, stderr: r.stderr }, "container ZIP extraction failed");
+        return NextResponse.json({ ok: false, count: 0, failures: ["<archive>"] }, { status: 207 });
+      }
+      return NextResponse.json({ ok: true, count: entries.length });
+    }
+
     let count = 0;
     const failures: string[] = [];
 
@@ -105,8 +127,26 @@ export async function POST(
     await fs.mkdir(path.dirname(resolved), { recursive: true });
     await fs.writeFile(resolved, buf);
   } catch (err) {
-    createLogger("api").error({ err, workspaceId: id, filePath }, "failed to write uploaded file");
-    return NextResponse.json({ error: "failed to write file" }, { status: 500 });
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code !== "EACCES" && code !== "EPERM") {
+      createLogger("api").error({ err, workspaceId: id, filePath }, "failed to write uploaded file");
+      return NextResponse.json({ error: "failed to write file" }, { status: 500 });
+    }
+    // Fallback: write through the container as developer.
+    await ensureContainer(ws.id, wsDir);
+    const rel = path.relative(wsDir, resolved).split(path.sep).join("/");
+    const dirInContainer = `/workspace/${path.posix.dirname(rel)}`;
+    const fileInContainer = `/workspace/${rel}`;
+    const mk = await dockerExec(ws.id, wsDir, ["mkdir", "-p", dirInContainer], { user: "developer" });
+    if (mk.code !== 0) {
+      createLogger("api").error({ workspaceId: id, filePath, stderr: mk.stderr }, "container mkdir failed");
+      return NextResponse.json({ error: "failed to write file" }, { status: 500 });
+    }
+    const wr = await dockerExec(ws.id, wsDir, ["tee", fileInContainer], { stdin: buf, user: "developer" });
+    if (wr.code !== 0) {
+      createLogger("api").error({ workspaceId: id, filePath, stderr: wr.stderr }, "container write failed");
+      return NextResponse.json({ error: "failed to write file" }, { status: 500 });
+    }
   }
 
   return NextResponse.json({ ok: true });

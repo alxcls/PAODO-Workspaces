@@ -173,7 +173,7 @@ export async function dockerExec(
   workspaceId: string,
   workspaceDir: string,
   cmdArgs: string[],
-  opts: { stdin?: string } = {},
+  opts: { stdin?: string | Buffer; user?: string } = {},
 ): Promise<DockerResult> {
   await ensureContainer(workspaceId, workspaceDir);
   return new Promise((resolve) => {
@@ -181,7 +181,8 @@ export async function dockerExec(
     let stderr = "";
     let proc: ReturnType<typeof spawn>;
     try {
-      proc = spawn("docker", ["exec", "-i", "-w", "/workspace", containerName(workspaceId), ...cmdArgs]);
+      const userArgs = opts.user ? ["-u", opts.user] : [];
+      proc = spawn("docker", ["exec", "-i", ...userArgs, "-w", "/workspace", containerName(workspaceId), ...cmdArgs]);
     } catch (err) {
       resolve({ stdout: "", stderr: (err as Error).message, code: 1 });
       return;

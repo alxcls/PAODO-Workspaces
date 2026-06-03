@@ -7,15 +7,10 @@
 //   - LOCKED paths   → root:root, write bit cleared (a-w) → files 0444, dirs 0555. `developer`
 //                      cannot write or delete them, even via a script it writes.
 //   - UNLOCKED files → developer:developer 0644.
-//   - DIRECTORIES    → developer:developer 01775 (sticky + group-write). The sticky bit means
-//                      developer can only unlink entries it OWNS, so root-owned (locked/hidden)
-//                      entries are safe even in developer-owned directories.
-//   - Parent dirs of locked/hidden entries → root:developer 01775 (sticky). Root ownership of
-//                      the IMMEDIATE parent prevents developer (who doesn't own the parent) from
-//                      renaming/deleting the root-owned entry out of it. Only the immediate parent
-//                      needs root ownership; ancestors can be developer-owned because rm cannot
-//                      empty the immediate parent (locked entries block it), so ancestor removal
-//                      fails in turn.
+//   - DIRECTORIES    → developer:developer 01775 (sticky + group-write). Sticky bit means only
+//                      the entry owner, dir owner, or root can remove entries — root-owned
+//                      (locked/hidden) entries are safe. Only the immediate parent of a locked/
+//                      hidden entry needs root ownership (set by lockOnDisk / hideOnDisk).
 //
 // Root ownership is the durable signal for "protected": manually-locked paths are chowned to root
 // so `reconcileOsPermissions` never demotes them back to developer on restart.
@@ -106,9 +101,7 @@ async function lockOnDisk(workspaceId: string, relPath: string): Promise<void> {
   }
 }
 
-// Returns a path to the unlocked state: files → developer:developer 0644, dirs → developer:developer
-// 01775 (sticky + group-write). Handles both single-file and directory targets via `find` so the
-// file/directory treatment is consistent whether relPath is a leaf or a subtree root.
+// Returns a path to the unlocked state: files → developer:developer, dirs → developer:developer 01775.
 async function unlockOnDisk(workspaceId: string, relPath: string): Promise<void> {
   const target = `/workspace/${relPath}`;
   const [r1, r2, r3, r4] = await Promise.all([
@@ -181,16 +174,10 @@ export async function unhidePathOnDisk(workspaceId: string, relPath: string): Pr
 export async function reconcileOsPermissions(workspaceId: string): Promise<void> {
   const snap = await readPermissionSnapshot(workspaceId);
 
-  // Normalize so the agent can do normal work. All four find traversals are independent —
-  // run them in parallel: files (chown + chmod) and dirs (chown + chmod) at the same time.
-  // Files: chown non-root-owned files to developer (root-owned = protected, leave alone) and make
-  // them owner-writable. The re-lock loop below will re-assert a-w on the protected set.
-  // Directories: set all to developer:developer 01775 (sticky + group-write). The sticky bit means
-  // developer can only unlink entries it owns, so root-owned (locked/hidden) entries within a
-  // developer-owned directory are still protected. Only the IMMEDIATE parent dirs of locked/hidden
-  // entries need root ownership (set by lockOnDisk/hideOnDisk in the re-lock loop below). Making
-  // all dirs developer-owned (rather than root:developer) allows the agent to freely move/delete
-  // normal directories like uploaded folders, while locked content remains protected.
+  // Normalize so the agent can do normal work. Files: chown non-root-owned to developer and make
+  // them owner-writable (root-owned = protected, left alone). Dirs: developer:developer 01775 —
+  // sticky bit protects root-owned (locked/hidden) entries; lockOnDisk/hideOnDisk below re-assert
+  // root ownership on the immediate parent of each protected path.
   await Promise.all([
     runRoot(workspaceId, ["find", "/workspace", "-type", "f", "!", "-uid", "0", "-exec", "chown", DEVELOPER, "{}", "+"]),
     runRoot(workspaceId, ["find", "/workspace", "-type", "f", "!", "-uid", "0", "-exec", "chmod", "u+w", "{}", "+"]),

@@ -38,7 +38,7 @@ Carefully consider the reversibility of actions:
 # File Permissions
 Every file/folder carries three independent tags, in order \`[write] [privilege] [visibility]\` (e.g. \`secret.csv [R] [P] [H]\`):
 - **Write** — \`[RW]\` writable / \`[R]\` read-only (kernel-locked, root-owned; never attempt writes — ask the user to click the lock icon to unlock).
-- **Privilege** — \`[U]\` normal / \`[P]\` privileged: the user has marked this script as trusted and auto-locked it so you cannot tamper with it. This is a trust marker only — it does not change how the script executes. All scripts run as \`developer\` with the same kernel restrictions regardless of privilege.
+- **Privilege** — \`[U]\` normal / \`[P]\` privileged: the user has marked this script as trusted and auto-locked it so you cannot tamper with it. When you run a \`[P]\` script it executes as root with workspace secrets injected — it can write locked files and folders. You cannot grant privilege yourself; only the user can (key icon).
 - **Visibility** — \`[V]\` visible / \`[H]\` hidden: you cannot read \`[H]\` content (kernel-enforced) — \`file_read\`, \`cat\`, \`grep\`, and any script you run all return nothing for hidden files. Reference hidden files by name if needed, but never try to read them or work around the restriction; ask the user to reveal the file (eye icon) if access is required.
 
 The three tags are enforced at the kernel level and apply equally to the agent and to any scripts run via \`execute_command\`.

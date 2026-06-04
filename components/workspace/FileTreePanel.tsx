@@ -12,6 +12,8 @@ interface TreeNode {
   type: "file" | "directory";
   path: string;
   permission?: "R" | "RW";
+  privileged?: boolean;
+  hidden?: boolean;
   children?: TreeNode[];
 }
 
@@ -96,22 +98,28 @@ const PermBadge = ({
     const relPath = node.path.startsWith(wsDir)
       ? node.path.slice(wsDir.length).replace(/^\//, "")
       : node.path;
-    await fetch(`/api/workspaces/${workspaceId}/permissions`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ path: relPath, permission: next }),
-    });
-    onPermissionChange(node.path, next);
-    onRefresh();
-    setBusy(false);
+    try {
+      const res = await fetch(`/api/workspaces/${workspaceId}/permissions`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path: relPath, permission: next }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      onPermissionChange(node.path, next);
+      onRefresh();
+    } finally {
+      setBusy(false);
+    }
   };
+
+  const title = perm === "R" ? "Read-only — click to unlock" : "Read-write — click to lock";
 
   return (
     <span
-      className="flex-shrink-0 inline-flex items-center justify-center w-[18px] h-[18px] rounded-[3px] cursor-pointer select-none ml-1 text-text-2 hover:text-text hover:bg-black/[.12] transition-colors"
+      className="flex-shrink-0 inline-flex items-center justify-center w-[18px] h-[18px] rounded-[3px] cursor-pointer select-none ml-1 hover:bg-black/[.12] transition-colors"
       onClick={toggle}
-      title={perm === "R" ? "Read-only — click to unlock" : "Read-write — click to lock"}
-      style={{ opacity: busy ? 0.4 : 1 }}
+      title={title}
+      style={{ opacity: busy ? 0.4 : undefined, color: perm === "R" ? "#7c3aed" : "var(--color-text-3)" }}
     >
       {perm === "R" ? (
         <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -122,6 +130,109 @@ const PermBadge = ({
         <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
           <rect width="18" height="11" x="3" y="11" rx="2" ry="2" />
           <path d="M7 11V7a5 5 0 0 1 9.9-1" />
+        </svg>
+      )}
+    </span>
+  );
+};
+
+// ---- Key badge ----
+// Granting privilege authorizes a script to run with workspace secrets and auto-locks it (server-side).
+// Revoking privilege is metadata-only — the lock stays. Unlocking a privileged file auto-revokes privilege.
+const KeyBadge = ({
+  node, workspaceId, wsDir, onRefresh,
+}: {
+  node: TreeNode; workspaceId: string; wsDir: string; onRefresh: () => void;
+}) => {
+  const [busy, setBusy] = useState(false);
+  const privileged = node.privileged ?? false;
+
+  const toggle = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (busy) return;
+    setBusy(true);
+    const relPath = node.path.startsWith(wsDir)
+      ? node.path.slice(wsDir.length).replace(/^\//, "")
+      : node.path;
+    try {
+      const res = await fetch(`/api/workspaces/${workspaceId}/privileged-scripts`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path: relPath, privileged: !privileged }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      onRefresh();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <span
+      className="flex-shrink-0 inline-flex items-center justify-center w-[18px] h-[18px] rounded-[3px] cursor-pointer select-none ml-1 hover:bg-black/[.12] transition-colors"
+      onClick={toggle}
+      title={privileged ? "Privileged — runs with secrets injected. Click to revoke." : "Grant privilege — let this script run with secrets (locks it so it can't be tampered with)."}
+      style={{ opacity: busy ? 0.4 : 1, color: privileged ? "#7c3aed" : "var(--color-text-3)" }}
+    >
+      <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <circle cx="7.5" cy="12" r="4.5" />
+        <line x1="12" y1="12" x2="22" y2="12" />
+        <line x1="19" y1="12" x2="19" y2="15" />
+        <line x1="17" y1="12" x2="17" y2="14" />
+      </svg>
+    </span>
+  );
+};
+
+// ---- Eye badge ----
+// Hiding makes a file's CONTENT invisible to the agent (kernel-enforced root:app-group ownership)
+// while the user still sees it here. Visibility is independent of lock and privilege.
+const EyeBadge = ({
+  node, workspaceId, wsDir, onRefresh,
+}: {
+  node: TreeNode; workspaceId: string; wsDir: string; onRefresh: () => void;
+}) => {
+  const [busy, setBusy] = useState(false);
+  const hidden = node.hidden ?? false;
+
+  const toggle = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (busy) return;
+    setBusy(true);
+    const relPath = node.path.startsWith(wsDir)
+      ? node.path.slice(wsDir.length).replace(/^\//, "")
+      : node.path;
+    try {
+      const res = await fetch(`/api/workspaces/${workspaceId}/hidden`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path: relPath, hidden: !hidden }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      onRefresh();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <span
+      className="flex-shrink-0 inline-flex items-center justify-center w-[18px] h-[18px] rounded-[3px] cursor-pointer select-none ml-1 hover:bg-black/[.12] transition-colors"
+      onClick={toggle}
+      title={hidden ? "Hidden — content invisible to the agent. Click to reveal." : "Visible — click to hide its content from the agent."}
+      style={{ opacity: busy ? 0.4 : 1, color: hidden ? "#7c3aed" : "var(--color-text-3)" }}
+    >
+      {hidden ? (
+        <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M9.88 9.88a3 3 0 0 0 4.24 4.24" />
+          <path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68" />
+          <path d="M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61" />
+          <line x1="2" y1="2" x2="22" y2="22" />
+        </svg>
+      ) : (
+        <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z" />
+          <circle cx="12" cy="12" r="3" />
         </svg>
       )}
     </span>
@@ -221,7 +332,11 @@ const TreeNodeList = ({
                   </span>
                   <span className="text-text-2 inline-flex flex-shrink-0"><FolderIcon /></span>
                   <span className="flex-1 whitespace-nowrap overflow-hidden text-ellipsis">{node.name}</span>
-                  <PermBadge node={node} workspaceId={workspaceId} wsDir={wsDir} onRefresh={onRefresh} onPermissionChange={onPermissionChange} />
+                  <>
+                    <EyeBadge node={node} workspaceId={workspaceId} wsDir={wsDir} onRefresh={onRefresh} />
+                    <KeyBadge node={node} workspaceId={workspaceId} wsDir={wsDir} onRefresh={onRefresh} />
+                    <PermBadge node={node} workspaceId={workspaceId} wsDir={wsDir} onRefresh={onRefresh} onPermissionChange={onPermissionChange} />
+                  </>
                 </div>
               </button>
               {isOpen && node.children && (
@@ -256,7 +371,11 @@ const TreeNodeList = ({
             <div className="flex items-center gap-1.5 flex-1 min-w-0 overflow-hidden" style={{ marginLeft: 6 + depth * 14 + 14 }}>
               <span className={`inline-flex flex-shrink-0 ${isActive ? "text-primary" : "text-text-2"}`}><FileIcon /></span>
               <span className="flex-1 whitespace-nowrap overflow-hidden text-ellipsis">{node.name}</span>
-              <PermBadge node={node} workspaceId={workspaceId} wsDir={wsDir} onRefresh={onRefresh} onPermissionChange={onPermissionChange} />
+              <>
+                <EyeBadge node={node} workspaceId={workspaceId} wsDir={wsDir} onRefresh={onRefresh} />
+                <KeyBadge node={node} workspaceId={workspaceId} wsDir={wsDir} onRefresh={onRefresh} />
+                <PermBadge node={node} workspaceId={workspaceId} wsDir={wsDir} onRefresh={onRefresh} onPermissionChange={onPermissionChange} />
+              </>
             </div>
           </button>
         );

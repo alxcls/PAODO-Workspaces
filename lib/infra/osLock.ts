@@ -82,6 +82,8 @@ export async function reconcileOsPermissions(workspaceId: string, relPath?: stri
         isHiddenFromSnapshot(snapshot, relPath),
         isLockedFromSnapshot(snapshot, relPath),
       );
+      // applyMode issues a literal chmod NNN which strips +x. Re-apply it for any keyed scripts.
+      await reconcileKeyedExecutable(workspaceId);
       return;
     }
 

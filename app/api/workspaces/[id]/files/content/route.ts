@@ -5,7 +5,7 @@ export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
 import { getWorkspace } from "@/lib/infra/workspaceStore";
-import { hasAgentLockedDescendant, isAgentLocked } from "@/lib/infra/permissionStore";
+import { hasAgentLockedDescendant, isAgentHidden, isAgentLocked } from "@/lib/infra/permissionStore";
 import { dockerExec } from "@/lib/infra/containerManager";
 import { reconcileOsPermissions } from "@/lib/infra/osLock";
 import fs from "fs/promises";
@@ -58,6 +58,36 @@ async function classifyBuffer(buf: Buffer): Promise<FileClass> {
   }
 }
 
+const PERM_DENIED = new Set(["EACCES", "EPERM"]);
+
+async function readViaAppUser(workspaceId: string, workspaceDir: string, relPath: string): Promise<Buffer> {
+  const normalizedRel = relPath || ".";
+  const target = JSON.stringify(`/workspace/${normalizedRel}`);
+  const script = `import base64,sys,pathlib;data=pathlib.Path(${target}).read_bytes();sys.stdout.write(base64.b64encode(data).decode())`;
+  const r = await dockerExec(workspaceId, workspaceDir, ["python3", "-c", script], { asAppUser: true });
+  if (r.code !== 0) throw new Error(r.stderr || "docker read failed");
+  return Buffer.from(r.stdout, "base64");
+}
+
+async function readWorkspaceFile(
+  workspaceId: string,
+  workspaceDir: string,
+  absPath: string,
+  relPath: string,
+  forceContainerRead: boolean,
+): Promise<Buffer> {
+  if (forceContainerRead) {
+    return readViaAppUser(workspaceId, workspaceDir, relPath);
+  }
+  try {
+    return await fs.readFile(absPath);
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code ?? "";
+    if (!PERM_DENIED.has(code)) throw err;
+    return readViaAppUser(workspaceId, workspaceDir, relPath);
+  }
+}
+
 export async function GET(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
@@ -73,14 +103,17 @@ export async function GET(
   const log = createLogger("api").child({ workspaceId: id, route: "files/content" });
   try {
     const resolved = await assertInsideWorkspace(ws.dir, filePath);
-    const buf = await fs.readFile(resolved);
+    const relPath = path.relative(ws.dir, resolved).split(path.sep).join("/");
+    const hidden = await isAgentHidden(ws.id, ws.dir, resolved);
+    const buf = await readWorkspaceFile(ws.id, ws.dir, resolved, relPath, hidden);
     const classified = await classifyBuffer(buf);
 
     // ?raw=1 — serve raw bytes for <img src> and download links
     if (searchParams.get("raw") === "1") {
       const mime = classified.type === "image" ? classified.mimeType : "application/octet-stream";
       const isDownload = searchParams.get("download") === "1";
-      return new Response(buf, {
+      const rawBody = new Uint8Array(buf);
+      return new Response(rawBody, {
         headers: {
           "Content-Type": mime,
           ...(isDownload ? { "Content-Disposition": `attachment; filename="${path.basename(resolved)}"` } : {}),

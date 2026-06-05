@@ -31,7 +31,7 @@ Root is used transiently only inside the container for `chown`/`chmod` reconcili
 | Lock | 998 | 1001 | 644 | 755 | r | r (group) | rw (owner) |
 | Eye-off + Lock | 998 | 1001 | 640 | 750 | — | r (group) | rw (owner) |
 
-Normal directories carry setgid + sticky so new files inherit `group=access` while the agent cannot unlink privd-owned entries. Eye-off directories now keep both bits but drop the read bit for "other", leaving only `wx` so the agent can reach known paths without listing them. When the workspace is globally locked—or when a locked/keyed path sits directly at the workspace root—`/workspace` itself flips to privd ownership with mode `3775`, removing the agent's directory write bit while preserving group write for the UI user.
+Normal directories carry setgid + sticky so new files inherit `group=access` while the agent cannot unlink privd-owned entries. Eye-off directories now keep both bits but drop the read bit for "other", leaving only `wx` so the agent can reach known paths without listing them. When the workspace is globally locked—or when a locked/keyed path sits directly at the workspace root—`/workspace` itself flips to privd ownership. Under global lock it lands at mode `3775` (read-only); otherwise it uses `3777` so the agent can still add new root entries while sticky-bit rules stop it from deleting privd-owned files.
 
 ### Eye — read visibility
 

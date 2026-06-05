@@ -6,7 +6,7 @@ import { z } from "zod";
 import { spawn } from "child_process";
 import { broadcastToWorkspace } from "../../infra/wsHub";
 import { ensureContainer } from "../../infra/containerManager";
-import { getGlobalLock, isKeyed } from "../../infra/permissionStore";
+import { getGlobalLock } from "../../infra/permissionStore";
 import { createLogger } from "../../infra/logger";
 
 const RESTRICTED_USER = "agent";
@@ -19,16 +19,11 @@ export function buildExecCommandTool(workspaceId: string, workspaceDir: string) 
   const log = createLogger("execCommand");
   return tool(
     async ({ command }) => {
-      const [, isLocked, commandIsKeyed] = await Promise.all([
+      const [, isLocked] = await Promise.all([
         ensureContainer(workspaceId, workspaceDir),
         getGlobalLock(workspaceId),
-        // isKeyed checks whether the first token of the command (the script path) has the key symbol.
-        isKeyed(workspaceId, command.trim().split(/\s+/)[0]),
       ]);
-      // Always run as agent (uid 999). Switch to privd (uid 998) for keyed scripts so they
-      // can write locked files. Global lock overrides keyed — the mount is read-only.
-      const execUser = (!isLocked && commandIsKeyed) ? "privd" : RESTRICTED_USER;
-      const userArgs = ["-u", execUser];
+      const userArgs = ["-u", RESTRICTED_USER];
 
       return new Promise<string>((resolve) => {
         const proc = spawn("docker", ["exec", "-i", ...userArgs, "-w", "/workspace", `ws_${workspaceId}`, "/bin/bash", "-c", command]);
@@ -93,7 +88,7 @@ export function buildExecCommandTool(workspaceId: string, workspaceDir: string) 
           } else if (stderrOut.includes("Permission denied")) {
             stderrOut += isLocked
               ? "\n[permission] The workspace is globally locked — commands run as agent (uid 999) which cannot write files or install packages. Ask the user to unlock the workspace first."
-              : "\n[permission] A file or directory along this path is locked [locked] or hidden [eye-off]. Use list_directory or glob to check permissions. To write a locked file, the operator can unlock it or add the [key] symbol to a script that runs with elevated access.";
+              : "\n[permission] A file or directory is locked [locked] or hidden [eye-off]. Check permissions with list_directory. To write locked files: unlock in the file tree, or mark a script [keyed] and run it with sudo.";
           }
           const parts = [stdout.trim(), stderrOut].filter(Boolean);
           resolve(parts.join("\n") || "Command executed successfully with no output.");

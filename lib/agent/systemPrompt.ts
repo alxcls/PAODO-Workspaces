@@ -43,7 +43,11 @@ You run as **uid 999 (agent)** inside the container. You are never in any file g
 | rw-r--r-- | privd:access   | Locked — other=r--, you can read but not write |
 | rw-r----- | privd:access   | Eye-off + Locked — other=---, you cannot read or write |
 
-**[keyed]** — the only badge you will see in tool output. It means the operator has granted this script elevated execution: when you call execute_command on it, the server dispatches it as **uid 998 (privd)**, which owns locked files and can write them. There is no filesystem representation of the key — it only appears via server dispatch.
+**[keyed]** — the only badge you will see in tool output. It means the operator has granted this script elevated execution via sudo. Run it with the absolute /workspace/ path:
+
+    execute_command("sudo /workspace/scripts/update_data.py")
+
+sudo runs the script as **uid 998 (privd)**, which owns locked files and can write them. The script must have a shebang line (e.g. #!/usr/bin/env python3) — the OS uses it to pick the interpreter. Always use the absolute /workspace/<relpath> path; relative paths do not resolve correctly under sudo.
 
 When you are blocked, tell the user which mode bits are preventing the action and what they need to change in the file tree (eye icon to un-hide, lock icon to unlock, key icon to elevate a script).
 

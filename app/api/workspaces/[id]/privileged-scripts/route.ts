@@ -1,9 +1,9 @@
-import { NextRequest, NextResponse } from "next/server";
 import { getWorkspace } from "@/lib/infra/workspaceStore";
-import { setKeyed } from "@/lib/infra/permissionStore";
+import { setKeyed, setPermission } from "@/lib/infra/permissionStore";
 import { reconcileOsPermissions } from "@/lib/infra/osLock";
 import path from "path";
 import { createLogger } from "@/lib/infra/logger";
+import { NextResponse } from "next/server";
 
 const log = createLogger("api");
 
@@ -12,7 +12,7 @@ const log = createLogger("api");
 // After toggling, chmod +x so the script is executable when dispatched.
 // body: { path: string; keyed: boolean }
 export async function PATCH(
-  req: NextRequest,
+  req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
@@ -32,6 +32,9 @@ export async function PATCH(
   }
 
   try {
+    if (keyed) {
+      await setPermission(ws.id, relPath, "R");
+    }
     await setKeyed(ws.id, relPath, keyed);
     // Best-effort OS reconcile so keyed scripts are owned by privd and locked down immediately.
     await reconcileOsPermissions(ws.id, relPath).catch(() => {});

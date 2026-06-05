@@ -120,6 +120,7 @@ export async function setPermission(
     store.locked = store.locked.filter(
       (p) => p !== relPath && !p.startsWith(relPath + "/")
     );
+    store.keyed = store.keyed.filter((p) => p !== relPath && !p.startsWith(relPath + "/"));
   }
   await writeStore(workspaceId, store);
 }

@@ -22,6 +22,8 @@ import { createLogger } from "./logger";
 
 const log = createLogger("osLock");
 
+type PermissionSnapshot = Awaited<ReturnType<typeof readPermissionSnapshot>>;
+
 // Runs cmdArgs as root (container default user — no USER set in Dockerfile) inside the workspace container.
 export async function runRoot(workspaceId: string, cmdArgs: string[]): Promise<DockerResult> {
   const ws = getWorkspace(workspaceId);
@@ -57,6 +59,54 @@ function resolveMode(isHidden: boolean, isLocked: boolean, isKeyed: boolean): Mo
   return                           { uid: 999,  gid: 1001, fileMode: "664", dirMode: "3775" };
 }
 
+function gatherDirectoriesToFix(relPaths: string[]): string[] {
+  const dirs = new Set<string>();
+  for (const relPath of relPaths) {
+    if (!relPath || relPath === ".") continue;
+    const segments = relPath.split("/");
+    for (let i = 1; i < segments.length; i++) {
+      dirs.add(segments.slice(0, i).join("/"));
+    }
+  }
+  dirs.add(".");
+  return Array.from(dirs).sort((a, b) => a.split("/").length - b.split("/").length);
+}
+
+function hasPrivilegedDescendant(snapshot: PermissionSnapshot, relPath: string): boolean {
+  const prefixes = [snapshot.locked, snapshot.keyed];
+  const target = relPath === "." ? "" : `${relPath}/`;
+  return prefixes.some((paths) =>
+    paths.some((p) => p === relPath || (target !== "" ? p.startsWith(target) : p.length > 0)),
+  );
+}
+
+async function applyDirectoryMode(
+  workspaceId: string,
+  relPath: string,
+  snapshot: PermissionSnapshot,
+): Promise<void> {
+  const isHidden = isHiddenFromSnapshot(snapshot, relPath);
+  const isLocked = isLockedFromSnapshot(snapshot, relPath);
+  const isKeyed = isKeyedFromSnapshot(snapshot, relPath);
+  let { uid, gid, dirMode } = resolveMode(isHidden, isLocked, isKeyed);
+
+  if (
+    relPath !== "." &&
+    !isHidden &&
+    !isLocked &&
+    !isKeyed &&
+    hasPrivilegedDescendant(snapshot, relPath)
+  ) {
+    uid = 998;
+    gid = 1001;
+    dirMode = "3775";
+  }
+
+  const containerPath = relPath === "." ? "/workspace" : `/workspace/${relPath}`;
+  await runRoot(workspaceId, ["chmod", dirMode, containerPath]);
+  await runRoot(workspaceId, ["chown", `${uid}:${gid}`, containerPath]);
+}
+
 // Applies correct ownership and mode to a single path (and recursively to its subtree).
 async function applyMode(workspaceId: string, relPath: string, isHidden: boolean, isLocked: boolean, isKeyed: boolean): Promise<void> {
   const { uid, gid, fileMode, dirMode } = resolveMode(isHidden, isLocked, isKeyed);
@@ -88,6 +138,12 @@ export async function reconcileOsPermissions(workspaceId: string, relPath?: stri
         isLockedFromSnapshot(snapshot, relPath),
         isKeyedFromSnapshot(snapshot, relPath),
       );
+
+      const dirsToFix = gatherDirectoriesToFix([relPath]);
+      for (const dir of dirsToFix) {
+        await applyDirectoryMode(workspaceId, dir, snapshot);
+      }
+
       // applyMode issues a literal chmod NNN which strips +x. Re-apply it for any keyed scripts.
       await reconcileKeyedExecutable(workspaceId);
       return;
@@ -111,6 +167,11 @@ export async function reconcileOsPermissions(workspaceId: string, relPath?: stri
         isLockedFromSnapshot(snapshot, p),
         isKeyedFromSnapshot(snapshot, p),
       );
+    }
+
+    const dirsToFix = gatherDirectoriesToFix(allConfigured);
+    for (const dir of dirsToFix) {
+      await applyDirectoryMode(workspaceId, dir, snapshot);
     }
 
     // 4. Ensure keyed scripts are executable.

@@ -27,8 +27,8 @@ export async function PATCH(
 
   try {
     await setPermission(ws.id, relPath, permission);
-    // Best-effort OS reconcile — software checks enforce during the reconcile window.
-    reconcileOsPermissions(ws.id, relPath).catch(() => {});
+    // Best-effort OS reconcile — await so directory guards land before the response.
+    await reconcileOsPermissions(ws.id, relPath).catch(() => {});
   } catch (err) {
     createLogger("api").error({ err, workspaceId: id, path: relPath }, "failed to set permission");
     return NextResponse.json({ error: "failed to set permission" }, { status: 500 });

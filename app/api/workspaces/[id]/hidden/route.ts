@@ -31,8 +31,8 @@ export async function PATCH(
 
   try {
     await setHidden(ws.id, relPath, hidden);
-    // Best-effort OS reconcile — software checks enforce during the reconcile window.
-    reconcileOsPermissions(ws.id, relPath).catch(() => {});
+    // Best-effort OS reconcile — await so directory guards land before the response.
+    await reconcileOsPermissions(ws.id, relPath).catch(() => {});
   } catch (err) {
     log.error({ err, workspaceId: id, path: relPath }, "failed to set hidden");
     return NextResponse.json({ error: "failed to set hidden" }, { status: 500 });

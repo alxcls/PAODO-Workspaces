@@ -26,12 +26,12 @@ Root is used transiently only inside the container for `chown`/`chmod` reconcili
 
 | State | Owner UID | Group GID | File mode | Dir mode | Agent (999) | App user (1002) | Privd (998) |
 |---|---|---|---|---|---|---|---|
-| Normal | 999 | 1001 | 664 | 2775 | rw | rw (group) | rw (group) |
+| Normal | 999 | 1001 | 664 | 3775 | rw | rw (group) | rw (group) |
 | Eye-off | 1002 | 1001 | 660 | 2770 | — | rw (owner) | rw (group) |
 | Lock | 998 | 1001 | 644 | 755 | r | r (group) | rw (owner) |
 | Eye-off + Lock | 998 | 1001 | 640 | 750 | — | r (group) | rw (owner) |
 
-Normal and Eye-off directories carry the setgid bit so new files inherit `group=access`.
+Normal directories carry setgid + sticky so new files inherit `group=access` while the agent cannot unlink privd-owned entries. Eye-off directories keep setgid for the same inheritance behaviour.
 
 ### Eye — read visibility
 
@@ -39,7 +39,7 @@ Hidden paths are `chown`ed to uid 1002 with mode `660`/`640`. uid 999 is always 
 
 ### Lock — write protection
 
-Locked paths are `chown`ed to uid 998 with mode `644`/`755`. uid 999 is "other" with only the read bit; the kernel denies all write syscalls from both the agent and shell. uid 1002 is in `access` but also only has the read bit via group — the UI editor is blocked by the kernel too. `fileWrite`/`fileEdit` call `isAgentLocked()` for a clean error message; again UX only.
+Locked paths are `chown`ed to uid 998 with mode `644`/`755`. uid 999 is "other" with only the read bit; the kernel denies all write syscalls from both the agent and shell. uid 1002 is in `access` but also only has the read bit via group — the UI editor is blocked by the kernel too. `fileWrite`/`fileEdit` call `isAgentLocked()` for a clean error message; again UX only. Ancestor directories (excluding the workspace root) that contain any locked/keyed entry are also `chown`ed to uid 998 with mode `3775`, so the agent (uid 999) loses directory write/rename permission and cannot delete-and-recreate locked files via TOCTOU shell tricks.
 
 ### Key — privileged script execution
 
@@ -80,6 +80,7 @@ Permission state is persisted to `.agent-permissions/<workspaceId>.json` on the 
 - `reconcileOsPermissions` must be called after every toggle and every apt install to keep OS state consistent with the store.
 - A chmod applied by `applyMode` strips `+x`; `reconcileKeyedExecutable` must always follow to restore it.
 - Workspace container must be rebuilt if UIDs change (`docker rmi paodo-workspace`).
+- Non-root directories automatically flip between agent-owned (Normal) and privd-owned (guarded) based on whether they contain locked/keyed descendants, closing unlink/replace races while restoring write access once the descendant list is empty.
 - `listDirectory` runs as root to list hidden paths — the agent sees their names but not their content.
 
 ## Alternatives rejected

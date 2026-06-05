@@ -34,7 +34,7 @@ export async function PATCH(
   try {
     await setKeyed(ws.id, relPath, keyed);
     // Best-effort OS reconcile so keyed scripts are owned by privd and locked down immediately.
-    reconcileOsPermissions(ws.id, relPath).catch(() => {});
+    await reconcileOsPermissions(ws.id, relPath).catch(() => {});
   } catch (err) {
     log.error({ err, workspaceId: id, path: relPath }, "failed to set keyed");
     return NextResponse.json({ error: "failed to set keyed" }, { status: 500 });

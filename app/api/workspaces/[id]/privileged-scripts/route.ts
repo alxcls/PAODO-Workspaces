@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getWorkspace } from "@/lib/infra/workspaceStore";
 import { setKeyed } from "@/lib/infra/permissionStore";
-import { reconcileKeyedExecutable } from "@/lib/infra/osLock";
+import { reconcileOsPermissions } from "@/lib/infra/osLock";
 import path from "path";
 import { createLogger } from "@/lib/infra/logger";
 
@@ -33,7 +33,8 @@ export async function PATCH(
 
   try {
     await setKeyed(ws.id, relPath, keyed);
-    await reconcileKeyedExecutable(ws.id);
+    // Best-effort OS reconcile so keyed scripts are owned by privd and locked down immediately.
+    reconcileOsPermissions(ws.id, relPath).catch(() => {});
   } catch (err) {
     log.error({ err, workspaceId: id, path: relPath }, "failed to set keyed");
     return NextResponse.json({ error: "failed to set keyed" }, { status: 500 });

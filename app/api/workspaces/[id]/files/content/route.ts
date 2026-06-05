@@ -161,14 +161,24 @@ export async function DELETE(
     if (await isAgentLocked(ws.id, ws.dir, resolved)) {
       return NextResponse.json({ error: "File is read-only" }, { status: 403 });
     }
-    await fs.access(path.dirname(resolved), fs.constants.W_OK).catch(() => {
-      throw new Error("Directory is locked");
-    });
     const stat = await fs.stat(resolved);
-    if (stat.isDirectory()) {
-      await fs.rm(resolved, { recursive: true });
-    } else {
-      await fs.unlink(resolved);
+    const relPath = path.relative(ws.dir, resolved);
+    try {
+      if (stat.isDirectory()) {
+        await fs.rm(resolved, { recursive: true });
+      } else {
+        await fs.unlink(resolved);
+      }
+    } catch (rmErr) {
+      const code = (rmErr as NodeJS.ErrnoException).code;
+      if (code === "EACCES" || code === "EPERM") {
+        // App process (node uid 1000) lacks write access to the workspace volume in production;
+        // fall back to running rm inside the container as root, same pattern as PUT.
+        const r = await dockerExec(ws.id, ws.dir, ["rm", "-rf", `/workspace/${relPath}`]);
+        if (r.code !== 0) throw new Error(r.stderr || "rm failed");
+      } else {
+        throw rmErr;
+      }
     }
     return NextResponse.json({ ok: true });
   } catch (err) {

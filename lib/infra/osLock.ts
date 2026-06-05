@@ -3,16 +3,19 @@
 // reconcileOsPermissions — aligns actual file ownership+mode with the permission store state.
 // reconcileKeyedExecutable — chmod +x keyed scripts so privd dispatch works after key toggles.
 //
-// Ownership/mode scheme (ADR §2):
-//   Normal:        uid 999 : gid 1001,  file=664 / dir=2775
+// Ownership/mode scheme:
+//   Normal:        uid 999  : gid 1001, file=664 / dir=3775 (sticky — agent can't delete privd-owned files)
 //   Eye-off:       uid 1002 : gid 1001, file=660 / dir=2770
 //   Lock:          uid 998  : gid 1001, file=644 / dir=755
 //   Eye-off+Lock:  uid 998  : gid 1001, file=640 / dir=750
+//   Keyed:         uid 998  : gid 1001, file=755 / dir=755  (privd-owned; agent has r-x, cannot write)
+//   Keyed+Eye-off: uid 998  : gid 1001, file=750 / dir=750
 import { dockerExec, ensureContainer, applyKeyedExecutable, type DockerResult } from "./containerManager";
 import {
   readPermissionSnapshot,
   isHiddenFromSnapshot,
   isLockedFromSnapshot,
+  isKeyedFromSnapshot,
 } from "./permissionStore";
 import { getWorkspace } from "./workspaceStore";
 import { createLogger } from "./logger";
@@ -45,16 +48,18 @@ interface ModeSpec {
   dirMode: string;
 }
 
-function resolveMode(isHidden: boolean, isLocked: boolean): ModeSpec {
+function resolveMode(isHidden: boolean, isLocked: boolean, isKeyed: boolean): ModeSpec {
+  if (isKeyed && isHidden) return { uid: 998, gid: 1001, fileMode: "750", dirMode: "750" };
+  if (isKeyed)             return { uid: 998, gid: 1001, fileMode: "755", dirMode: "755" };
   if (isHidden && isLocked) return { uid: 998, gid: 1001, fileMode: "640", dirMode: "750" };
   if (isLocked)             return { uid: 998, gid: 1001, fileMode: "644", dirMode: "755" };
   if (isHidden)             return { uid: 1002, gid: 1001, fileMode: "660", dirMode: "2770" };
-  return                           { uid: 999,  gid: 1001, fileMode: "664", dirMode: "2775" };
+  return                           { uid: 999,  gid: 1001, fileMode: "664", dirMode: "3775" };
 }
 
 // Applies correct ownership and mode to a single path (and recursively to its subtree).
-async function applyMode(workspaceId: string, relPath: string, isHidden: boolean, isLocked: boolean): Promise<void> {
-  const { uid, gid, fileMode, dirMode } = resolveMode(isHidden, isLocked);
+async function applyMode(workspaceId: string, relPath: string, isHidden: boolean, isLocked: boolean, isKeyed: boolean): Promise<void> {
+  const { uid, gid, fileMode, dirMode } = resolveMode(isHidden, isLocked, isKeyed);
   const containerPath = relPath === "." ? "/workspace" : `/workspace/${relPath}`;
 
   // chmod files first (while still under current ownership), then chown
@@ -81,6 +86,7 @@ export async function reconcileOsPermissions(workspaceId: string, relPath?: stri
         relPath,
         isHiddenFromSnapshot(snapshot, relPath),
         isLockedFromSnapshot(snapshot, relPath),
+        isKeyedFromSnapshot(snapshot, relPath),
       );
       // applyMode issues a literal chmod NNN which strips +x. Re-apply it for any keyed scripts.
       await reconcileKeyedExecutable(workspaceId);
@@ -95,7 +101,7 @@ export async function reconcileOsPermissions(workspaceId: string, relPath?: stri
     await runRoot(workspaceId, ["find", "/workspace", "-user", "root", "-exec", "chown", "999:1001", "{}", "+"]);
 
     // 3. Re-apply configured paths (shallower first so deeper paths override parent-level settings).
-    const allConfigured = [...new Set([...snapshot.locked, ...snapshot.hidden])]
+    const allConfigured = [...new Set([...snapshot.locked, ...snapshot.hidden, ...snapshot.keyed])]
       .sort((a, b) => a.split("/").length - b.split("/").length);
     for (const p of allConfigured) {
       await applyMode(
@@ -103,6 +109,7 @@ export async function reconcileOsPermissions(workspaceId: string, relPath?: stri
         p,
         isHiddenFromSnapshot(snapshot, p),
         isLockedFromSnapshot(snapshot, p),
+        isKeyedFromSnapshot(snapshot, p),
       );
     }
 

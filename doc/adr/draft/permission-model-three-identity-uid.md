@@ -4,74 +4,88 @@ Status: Draft
 
 ## Context
 
-Two gaps in the existing access-control layer:
-1. The agent can read every file, including secrets.
-2. Per-file locks block tool calls (software gate) but not shell commands — no OS-level enforcement.
-
-The PRD (`doc/prd/draft/prd-permission-model.md`) introduces Eye / Lock / Key to close both gaps using standard Linux UID semantics inside the workspace container.
+Two gaps in the original access-control layer:
+1. The agent could read every file in the workspace, including secrets.
+2. Per-file software locks blocked tool calls but not shell commands spawned via `execCommand` — no OS-level enforcement of write protection.
 
 ## Decision
 
+Three named identities run inside the workspace container. The kernel enforces access based on UID/GID; the server mediates which identity executes each operation.
+
 ### Identities
 
-| Identity | UID | User | Group | Purpose |
+| Identity | UID | Name | Group membership | Purpose |
 |---|---|---|---|---|
-| Agent | 999 | `agent` | `agentgroup` | AI tool calls and shell commands; sandboxed by OS |
-| Privileged | 998 | `privd` | `access` | Owns locked files; runs keyed scripts and apt installs |
-| App user | 1002 | `appuser` | `access` | UI editor writes inside the workspace container |
+| Agent | 999 | `agent` | none (`access`) | AI tool calls and shell; always "other" on locked/hidden files |
+| Privileged | 998 | `privd` | `access` (gid 1001) | Owns locked files; runs keyed scripts |
+| App user | 1002 | `appuser` | `access` (gid 1001) | UI editor writes in the workspace |
 
-Shared group **`access` (gid 1001)**: uid 998 and uid 1002 are members; uid 999 is not — it is always "other" on every file. Root is used transiently only for `chown`/`chmod` reconciliation and `apt-get install`.
+Root is used transiently only inside the container for `chown`/`chmod` reconciliation and `apt-get install`; it is never an ongoing execution identity.
 
-### Ownership and mode scheme
+### Ownership and mode matrix
 
-**Files:**
+| State | Owner UID | Group GID | File mode | Dir mode | Agent (999) | App user (1002) | Privd (998) |
+|---|---|---|---|---|---|---|---|
+| Normal | 999 | 1001 | 664 | 2775 | rw | rw (group) | rw (group) |
+| Eye-off | 1002 | 1001 | 660 | 2770 | — | rw (owner) | rw (group) |
+| Lock | 998 | 1001 | 644 | 755 | r | r (group) | rw (owner) |
+| Eye-off + Lock | 998 | 1001 | 640 | 750 | — | r (group) | rw (owner) |
 
-| State | Owner | Mode | uid 999 | uid 1002 | uid 998 |
-|---|---|---|---|---|---|
-| Normal | 999 | `664` | rw | rw (group) | rw (group) |
-| Eye-off | 1002 | `660` | — | rw (owner) | rw (group) |
-| Lock | 998 | `644` | r | r (group) | rw (owner) |
-| Eye-off + Lock | 998 | `640` | — | r (group) | rw (owner) |
-
-Group is `access` (gid 1001) in all states.
-
-**Directories** follow the same owner logic with modes `2775` / `2770` / `755` / `750`. Normal and Eye-off dirs carry setgid so new files automatically inherit `group=access`.
+Normal and Eye-off directories carry the setgid bit so new files inherit `group=access`.
 
 ### Eye — read visibility
 
-Hidden paths are `chown`ed to uid 1002, mode `660` (or `640` if also locked). uid 999 is always "other"; other bits are `0`, so the kernel denies `open()` unconditionally. `fileRead` also calls `isAgentHidden()` before `dockerExec` to return a descriptive error instead of raw `EACCES` — UX only, not enforcement.
+Hidden paths are `chown`ed to uid 1002 with mode `660`/`640`. uid 999 is always "other" with `o=0`, so the kernel denies `open()` before any tool logic runs. `fileRead` additionally calls `isAgentHidden()` to return a descriptive error rather than raw `EACCES`; this is UX only.
 
 ### Lock — write protection
 
-Locked paths are `chown`ed to uid 998, mode `644` / `755`. uid 999 is "other" with only the read bit; the kernel denies any write syscall. uid 1002 is in `access` and also only has the read bit via group — the UI editor is blocked by the kernel too. `fileWrite` and `fileEdit` call `isAgentLocked()` for a clean error message; again UX only.
+Locked paths are `chown`ed to uid 998 with mode `644`/`755`. uid 999 is "other" with only the read bit; the kernel denies all write syscalls from both the agent and shell. uid 1002 is in `access` but also only has the read bit via group — the UI editor is blocked by the kernel too. `fileWrite`/`fileEdit` call `isAgentLocked()` for a clean error message; again UX only.
 
-### Key — elevated execution via server dispatch
+### Key — privileged script execution
 
-The Linux kernel disables setuid for interpreted scripts (`.sh`, `.py`, `.ts`), so there is no kernel path to auto-elevate a script. Instead: `permissionStore` stores `keyed: string[]`; when `execCommand` sees `isKeyed()` return true for the command path, the server uses `docker exec -u privd` instead of `docker exec -u agent`. The agent never elevates itself — the server mediates the switch. Key can only be granted by the operator via the UI.
+The Linux kernel disables setuid for interpreted scripts, so there is no kernel path to auto-elevate. Instead, `permissionStore` maintains a `keyed: string[]` list. When `execCommand` detects `sudo` in the agent command, it:
 
-### Tool execution identities
+1. Matches the script path against `/workspace/<relPath>`.
+2. Checks `isKeyedFromSnapshot()` — rejects if the path is not marked keyed.
+3. Strips all `sudo` tokens from the command string.
+4. Runs the command via `docker exec -u privd` instead of `docker exec -u agent`.
+
+The agent never self-elevates; the server is the sole authority for the identity switch. Key is granted only by the operator via the UI.
+
+### Tool-to-identity dispatch
 
 | Tool | Runs as |
 |---|---|
-| `fileRead`, `fileWrite`, `fileEdit`, `glob` | uid 999 (`{ asAgent: true }`) |
-| `execCommand` | uid 999; uid 998 if path is keyed |
-| `listDirectory` | root (no `-u` flag) — must `stat()` hidden files too |
-| `install_system_package` | root via `runRoot()` |
+| `fileRead`, `fileWrite`, `fileEdit`, `glob` | uid 999 (`asAgent: true`) |
+| `execCommand` (normal) | uid 999 (`-u agent`) |
+| `execCommand` (keyed path with sudo) | uid 998 (`-u privd`) |
+| `listDirectory` | root (no `-u` flag — must stat hidden files) |
+| `install_system_package` | root via `runRoot()` in `aptBroker` |
 
-### apt install and reconciliation
+### Reconciliation
 
-`apt-get install` runs as root via `runRoot()` (server-mediated, package name validated against `PKG_RE`). After every apt install and every permission toggle, `reconcileOsPermissions()` runs as root to `chown`/`chmod` the affected paths back to the correct state. Configured paths are processed shallower-first so deeper paths override parent-level settings.
+`reconcileOsPermissions(workspaceId, relPath?)` (in `lib/infra/osLock.ts`) re-applies correct ownership and modes via `docker exec` as root. It has two modes:
+
+- **Targeted** (`relPath` provided): `chown`/`chmod` that path's subtree, then restore `+x` on all keyed scripts via `reconcileKeyedExecutable`.
+- **Full sweep** (no `relPath`): first normalises any root-owned artifacts left by `apt-get` to Normal state (uid 999), then re-applies each configured path shallower-first so deeper paths override parent settings, then restores keyed `+x`.
+
+Called after every permission toggle and every `apt-get install`. `applyKeyedExecutable` is also called at container start so keyed scripts survive container recreation.
+
+Permission state is persisted to `.agent-permissions/<workspaceId>.json` on the host (outside the container), with fields: `globalLock`, `locked[]`, `hidden[]`, `keyed[]`.
 
 ## Consequences
 
-- Agent cannot read hidden files or write locked files via any path — tool calls and shell commands hit the same kernel rules.
-- Keyed scripts can write locked files; no other identity can.
-- `reconcileOsPermissions` must be called after every toggle and apt install.
-- Workspace container must be rebuilt when UIDs change (`docker rmi paodo-workspace`).
+- Agent cannot read hidden files or write locked files via any execution path — tool calls and raw shell commands both hit the same kernel rules.
+- Keyed scripts run as privd and can write locked files; no other identity can.
+- `reconcileOsPermissions` must be called after every toggle and every apt install to keep OS state consistent with the store.
+- A chmod applied by `applyMode` strips `+x`; `reconcileKeyedExecutable` must always follow to restore it.
+- Workspace container must be rebuilt if UIDs change (`docker rmi paodo-workspace`).
+- `listDirectory` runs as root to list hidden paths — the agent sees their names but not their content.
 
 ## Alternatives rejected
 
-- **Software-only gates:** leaves `execCommand` as an unguarded bypass.
-- **setuid on scripts:** kernel disables it for interpreted scripts.
-- **Owner-only scheme (no shared group):** cannot express Eye-off+Lock without ACLs.
-- **Root for keyed scripts:** unbounded blast radius; PRD prohibits root as ongoing identity.
+- **Software-only gates:** `execCommand` is an unguarded bypass; shell writes ignore tool-level checks.
+- **setuid on scripts:** kernel disables it for interpreted scripts (`.sh`, `.py`, `.ts`).
+- **Owner-only scheme (no shared group):** cannot express Eye-off+Lock simultaneously without ACLs.
+- **Root for keyed scripts:** unbounded blast radius; rejected by design.
+- **sudo inside the container:** no-new-privileges flag on the container disables privilege escalation; intercepted at the server layer instead.

@@ -123,11 +123,14 @@ export async function PUT(
     } catch (writeErr) {
       const code = (writeErr as NodeJS.ErrnoException).code;
       if (code === "EACCES" || code === "EPERM") {
-        // File is root-owned from agent writes via Docker — write via container and fix ownership.
+        // File ownership is managed by the permission model — write via container as appuser (uid 1002).
+        // appuser is in the access group and can write Normal/Eye-off files; locked files (mode 644)
+        // are blocked by the kernel.
         const relPath = path.relative(ws.dir, resolved);
-        const r = await dockerExec(ws.id, ws.dir, ["tee", `/workspace/${relPath}`], { stdin: body.content });
+        const r = await dockerExec(ws.id, ws.dir, ["tee", `/workspace/${relPath}`], { stdin: body.content, asAppUser: true });
         if (r.code !== 0) throw new Error(r.stderr || "docker write failed");
-        await dockerExec(ws.id, ws.dir, ["chown", "1000:1000", `/workspace/${relPath}`]);
+        // Ensure mode 664 (Normal) — tee inherits the shell umask for new files.
+        await dockerExec(ws.id, ws.dir, ["chmod", "664", `/workspace/${relPath}`], { asAppUser: true });
       } else {
         throw writeErr;
       }

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getWorkspace } from "@/lib/infra/workspaceStore";
 import { setPermission, setGlobalPermission } from "@/lib/infra/permissionStore";
+import { reconcileOsPermissions } from "@/lib/infra/osLock";
 import path from "path";
 import { createLogger } from "@/lib/infra/logger";
 
@@ -26,6 +27,8 @@ export async function PATCH(
 
   try {
     await setPermission(ws.id, relPath, permission);
+    // Best-effort OS reconcile — software checks enforce during the reconcile window.
+    reconcileOsPermissions(ws.id, relPath).catch(() => {});
   } catch (err) {
     createLogger("api").error({ err, workspaceId: id, path: relPath }, "failed to set permission");
     return NextResponse.json({ error: "failed to set permission" }, { status: 500 });

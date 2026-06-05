@@ -3,7 +3,7 @@
 import { tool } from "@langchain/core/tools";
 import { z } from "zod";
 import path from "path";
-import { isAgentLocked } from "@/lib/infra/permissionStore";
+import { isAgentHidden } from "@/lib/infra/permissionStore";
 import { dockerExec } from "@/lib/infra/containerManager";
 
 // Normalizes a caller-supplied relative path and guards against directory traversal.
@@ -20,26 +20,29 @@ export function buildFileReadTool(workspaceId: string, workspaceDir: string) {
       const relpath = normalizeRelpath(file_path);
       if (relpath === null) return "Error: path is outside the workspace";
       try {
-        const perm = (await isAgentLocked(workspaceId, workspaceDir, path.join(workspaceDir, relpath)))
-          ? "[R]" : "[RW]";
-        const header = `${perm} ${file_path}\n`;
+        const absPath = path.join(workspaceDir, relpath);
+        // Pre-check for hidden files: return a clear message instead of a raw EACCES error.
+        // Kernel enforcement is unconditional; this is UX only.
+        if (await isAgentHidden(workspaceId, workspaceDir, absPath)) {
+          return `Cannot read ${file_path}: the operator has hidden this file from the agent (other bits = 0, owner = appuser). Toggle the eye icon in the file tree to allow access.`;
+        }
 
         if (offset === undefined && limit === undefined) {
-          const r = await dockerExec(workspaceId, workspaceDir, ["cat", `/workspace/${relpath}`]);
+          const r = await dockerExec(workspaceId, workspaceDir, ["cat", `/workspace/${relpath}`], { asAgent: true });
           if (r.code !== 0) return `Error: ${r.stderr || "file not found or unreadable"}`;
           const lines = r.stdout.split("\n");
-          return header + lines.map((line, i) => `${i + 1}\t${line}`).join("\n");
+          return lines.map((line, i) => `${i + 1}\t${line}`).join("\n");
         } else {
           // sed uses 1-based line numbers; offset is 0-based
           const startLine = (offset ?? 0) + 1;
           const endLine = limit !== undefined ? (offset ?? 0) + limit : "$";
           const r = await dockerExec(workspaceId, workspaceDir, [
             "sed", "-n", `${startLine},${endLine}p`, `/workspace/${relpath}`,
-          ]);
+          ], { asAgent: true });
           if (r.code !== 0) return `Error: ${r.stderr || "file not found or unreadable"}`;
           const start = offset ?? 0;
           const lines = r.stdout.split("\n");
-          return header + lines.map((line, i) => `${start + i + 1}\t${line}`).join("\n");
+          return lines.map((line, i) => `${start + i + 1}\t${line}`).join("\n");
         }
       } catch (err: unknown) {
         return `Error: ${err instanceof Error ? err.message : String(err)}`;

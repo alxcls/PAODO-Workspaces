@@ -3,7 +3,7 @@
 import { tool } from "@langchain/core/tools";
 import { z } from "zod";
 import path from "path";
-import { readPermissionSnapshot } from "@/lib/infra/permissionStore";
+import { readPermissionSnapshot, isKeyedFromSnapshot } from "@/lib/infra/permissionStore";
 import { dockerExec } from "@/lib/infra/containerManager";
 
 function normalizeRelpath(dirPath: string): string | null {
@@ -13,18 +13,6 @@ function normalizeRelpath(dirPath: string): string | null {
   return normalized;
 }
 
-// Pure check against a pre-fetched permission snapshot — avoids N disk reads for N entries.
-function isLockedFromSnapshot(
-  snapshot: { globalLock: boolean; locked: string[] },
-  relPath: string,
-): boolean {
-  if (snapshot.globalLock) return true;
-  const parts = relPath.split("/");
-  for (let i = 1; i <= parts.length; i++) {
-    if (snapshot.locked.includes(parts.slice(0, i).join("/"))) return true;
-  }
-  return false;
-}
 
 function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes}B`;
@@ -40,26 +28,31 @@ export function buildListDirectoryTool(workspaceId: string, workspaceDir: string
       try {
         const containerDir = relDir === "." ? "/workspace" : `/workspace/${relDir}`;
 
-        // Single find call: type (%y), size in bytes (%s), filename (%f) for each direct child
+        // Single find call per direct child.
+        // Fields: type (%y), size (%s), symbolic mode (%M, e.g. -rw-rw-r--),
+        //         owner name (%U), group name (%G), filename (%f).
+        // listDirectory runs without asAgent so it can stat all files regardless of visibility.
         const r = await dockerExec(workspaceId, workspaceDir, [
           "find", containerDir,
           "-maxdepth", "1",
           "-mindepth", "1",
-          "-printf", "%y\t%s\t%f\n",
+          "-printf", "%y\t%s\t%M\t%U\t%G\t%f\n",
         ]);
         if (r.code !== 0) return `Error: ${r.stderr || "directory not found or unreadable"}`;
 
         const rawLines = r.stdout.split("\n").filter(Boolean);
         if (rawLines.length === 0) return "(empty directory)";
 
-        interface Entry { type: string; sizeBytes: number; name: string }
+        interface Entry { type: string; sizeBytes: number; mode: string; owner: string; group: string; name: string }
         const entries: Entry[] = rawLines.map((line) => {
-          const tab1 = line.indexOf("\t");
-          const tab2 = line.indexOf("\t", tab1 + 1);
+          const parts = line.split("\t");
           return {
-            type: line.slice(0, tab1),
-            sizeBytes: parseInt(line.slice(tab1 + 1, tab2), 10) || 0,
-            name: line.slice(tab2 + 1),
+            type: parts[0],
+            sizeBytes: parseInt(parts[1], 10) || 0,
+            mode: parts[2],   // e.g. -rw-rw-r--
+            owner: parts[3],  // e.g. agent, appuser, privd
+            group: parts[4],  // e.g. access, agentgroup
+            name: parts[5],
           };
         });
 
@@ -76,12 +69,13 @@ export function buildListDirectoryTool(workspaceId: string, workspaceDir: string
 
         const lines = entries.map((entry) => {
           const isDir = entry.type === "d";
-          const typeChar = isDir ? "d" : "-";
           const suffix = isDir ? "/" : "";
-          const size = isDir ? "" : `  ${formatSize(entry.sizeBytes)}`;
+          const size = isDir ? "       " : `  ${formatSize(entry.sizeBytes).padEnd(7)}`;
           const entryRelPath = relDir === "." ? entry.name : `${relDir}/${entry.name}`;
-          const perm = isLockedFromSnapshot(snapshot, entryRelPath) ? " [R]" : " [RW]";
-          return `${typeChar}  ${entry.name}${suffix}${size}${perm}`;
+          // Only [keyed] is appended — Eye and Lock are already visible in the mode bits and owner name.
+          const tagLabel = isKeyedFromSnapshot(snapshot, entryRelPath) ? "  [keyed]" : "";
+          // e.g.: -  .env         2.3KB    -rw-rw---- appuser:access   [eye-off]
+          return `${entry.mode}  ${entry.owner}:${entry.group}  ${entry.name}${suffix}${size}${tagLabel}`;
         });
 
         return lines.join("\n");
@@ -92,7 +86,13 @@ export function buildListDirectoryTool(workspaceId: string, workspaceDir: string
     {
       name: "list_directory",
       description: `List the contents of a directory in the workspace. Returns entries sorted with directories first.
-Each line: type (d=directory, -=file), name, and file size.
+Each line shows Linux mode bits, owner:group, name, and size — exactly like ls -l.
+Read the "other" bits (last 3 chars) to know what you can do: you run as uid 999 (agent) and are always "other" on every file.
+  rw-rw-r--  agent:access   → Normal — you can read and write
+  rw-rw----  appuser:access → Eye-off — other=0, you cannot read (kernel will deny)
+  rw-r--r--  privd:access   → Locked — other=r, you can read but not write
+  rw-r-----  privd:access   → Eye-off+Lock — other=0, you cannot read or write
+[keyed] is appended for scripts that run as privd (uid 998) via server dispatch — they can write locked files.
 Use this instead of ls. For recursive or pattern-based search use glob instead.`,
       schema: z.object({
         dir_path: z.string().optional().describe("Directory path relative to workspace root. Omit or use '.' for the workspace root."),

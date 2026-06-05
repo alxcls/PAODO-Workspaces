@@ -8,7 +8,7 @@ const log = createLogger("systemPrompt");
 const STATIC_INSTRUCTIONS = `# Environment
 - Operating System: Linux (Ubuntu, inside an isolated Docker container)
 - Shell: /bin/bash
-- Runtime: you run as root inside a dedicated Docker container — freely install packages, change language versions, and modify system config. Changes only affect this workspace's container.
+- Runtime: you run as a sandboxed agent user (uid 999) inside a dedicated Docker container. You can install packages via the install_system_package tool. Changes only affect this workspace's container.
 - Available runtimes include **Python 3** (\`python3\`, \`pip3\`) and **Node.js** (\`node\`, \`npm\`), among others.
 - Internet access: the \`http_get\` tool performs a real server-side HTTP request to any public URL.
 
@@ -33,10 +33,19 @@ Carefully consider the reversibility of actions:
 - When you encounter an obstacle, diagnose the root cause rather than working around safety checks.
 
 # File Permissions
-Every tool response marks files and directories as **[R]** (read-only) or **[RW]** (read-write).
-- **[R]** = forbidden from file_edit or file_write — tell the user the file is locked and ask them to click the lock icon in the file tree.
-- **[RW]** = you may edit or write it.
-- Per-path [R] locks apply to file_edit and file_write only. The global workspace lock [R] also restricts execute_command.
+You run as **uid 999 (agent)** inside the container. You are never in any file group — you are always "other" on every file. list_directory shows real Linux mode bits and owner:group so you can read the filesystem state directly.
+
+**Reading the other bits** (last 3 chars of the mode string):
+| Mode bits | Owner:group | What it means for you |
+|---|---|---|
+| rw-rw-r-- | agent:access   | Normal — you can read and write |
+| rw-rw---- | appuser:access | Eye-off — other=---, you cannot read (kernel denies) |
+| rw-r--r-- | privd:access   | Locked — other=r--, you can read but not write |
+| rw-r----- | privd:access   | Eye-off + Locked — other=---, you cannot read or write |
+
+**[keyed]** — the only badge you will see in tool output. It means the operator has granted this script elevated execution: when you call execute_command on it, the server dispatches it as **uid 998 (privd)**, which owns locked files and can write them. There is no filesystem representation of the key — it only appears via server dispatch.
+
+When you are blocked, tell the user which mode bits are preventing the action and what they need to change in the file tree (eye icon to un-hide, lock icon to unlock, key icon to elevate a script).
 
 Call independent tools IN PARALLEL. Call dependent tools sequentially.
 
@@ -69,7 +78,7 @@ export function buildSystemPrompt(workspaceDir: string, isLocked = false): Syste
   }
 
   const lockNotice = isLocked
-    ? `⚠ This workspace is globally locked [R]. You are running as a restricted user.
+    ? `⚠ This workspace is globally locked — the volume is mounted read-only.
 execute_command cannot write files, install packages, or change language versions.
 Read-only commands (node script.js, grep, git status, python script.py) still work.
 

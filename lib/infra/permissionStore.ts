@@ -1,6 +1,6 @@
 // Per-workspace file permission store, persisted to `.agent-permissions/<workspaceId>.json`.
-// Tracks a global read-only lock and a list of individually locked paths (files or directories).
-// The agent checks these before writing; the UI exposes controls to set or lift locks.
+// Tracks a global read-only lock, individually locked/hidden paths, and keyed (privileged) paths.
+// Eye/Lock are OS-enforced (chown/chmod via osLock.reconcileOsPermissions); Key is server-dispatched.
 import fs from "fs/promises";
 import path from "path";
 import { createLogger } from "./logger";
@@ -17,14 +17,22 @@ function getStorePath(workspaceId: string): string {
 interface PermStore {
   globalLock: boolean;
   locked: string[]; // relative paths (files or directories)
+  hidden: string[]; // Eye-off: agent cannot read; appuser (1002) and privd (998) can
+  keyed: string[];  // Key: scripts run as privd (uid 998) via server dispatch
 }
 
 async function readStore(workspaceId: string): Promise<PermStore> {
   try {
     const raw = await fs.readFile(getStorePath(workspaceId), "utf8");
-    return JSON.parse(raw) as PermStore;
+    const parsed = JSON.parse(raw) as Partial<PermStore>;
+    return {
+      globalLock: parsed.globalLock ?? false,
+      locked: parsed.locked ?? [],
+      hidden: parsed.hidden ?? [],
+      keyed: parsed.keyed ?? [],
+    };
   } catch {
-    return { globalLock: false, locked: [] };
+    return { globalLock: false, locked: [], hidden: [], keyed: [] };
   }
 }
 
@@ -39,20 +47,64 @@ async function writeStore(workspaceId: string, store: PermStore): Promise<void> 
   }
 }
 
-export async function isAgentLocked(workspaceId: string, workspaceDir: string, absPath: string): Promise<boolean> {
-  const rel = path.relative(workspaceDir, absPath);
-  const store = await readStore(workspaceId);
-  if (store.globalLock) return true;
+// --- Snapshot-level helpers (pure, no I/O — reuse a pre-fetched snapshot) ---
 
-  const parts = rel.split(path.sep);
+export function isLockedFromSnapshot(
+  snapshot: Pick<PermStore, "globalLock" | "locked">,
+  relPath: string,
+): boolean {
+  if (snapshot.globalLock) return true;
+  const parts = relPath.split("/");
   for (let i = 1; i <= parts.length; i++) {
-    if (store.locked.includes(parts.slice(0, i).join(path.sep))) return true;
+    if (snapshot.locked.includes(parts.slice(0, i).join("/"))) return true;
   }
   return false;
 }
 
-// Read-only snapshot helper to avoid repeated disk reads during large tree walks.
-export async function readPermissionSnapshot(workspaceId: string): Promise<{ globalLock: boolean; locked: string[] }> {
+export function isHiddenFromSnapshot(
+  snapshot: Pick<PermStore, "hidden">,
+  relPath: string,
+): boolean {
+  const parts = relPath.split("/");
+  for (let i = 1; i <= parts.length; i++) {
+    if (snapshot.hidden.includes(parts.slice(0, i).join("/"))) return true;
+  }
+  return false;
+}
+
+export function isKeyedFromSnapshot(
+  snapshot: Pick<PermStore, "keyed">,
+  relPath: string,
+): boolean {
+  const parts = relPath.split("/");
+  for (let i = 1; i <= parts.length; i++) {
+    if (snapshot.keyed.includes(parts.slice(0, i).join("/"))) return true;
+  }
+  return false;
+}
+
+// --- Async helpers (each reads the store once) ---
+
+export async function isAgentLocked(workspaceId: string, workspaceDir: string, absPath: string): Promise<boolean> {
+  const rel = path.relative(workspaceDir, absPath).split(path.sep).join("/");
+  const store = await readStore(workspaceId);
+  return isLockedFromSnapshot(store, rel);
+}
+
+export async function isAgentHidden(workspaceId: string, workspaceDir: string, absPath: string): Promise<boolean> {
+  const rel = path.relative(workspaceDir, absPath).split(path.sep).join("/");
+  const store = await readStore(workspaceId);
+  return isHiddenFromSnapshot(store, rel);
+}
+
+export async function isKeyed(workspaceId: string, relPath: string): Promise<boolean> {
+  const store = await readStore(workspaceId);
+  return isKeyedFromSnapshot(store, relPath);
+}
+
+// Read-only snapshot of the full permission state. Callers use snapshot helpers above
+// to avoid repeated disk reads during large tree walks.
+export async function readPermissionSnapshot(workspaceId: string): Promise<PermStore> {
   return readStore(workspaceId);
 }
 
@@ -66,8 +118,28 @@ export async function setPermission(
     if (!store.locked.includes(relPath)) store.locked.push(relPath);
   } else {
     store.locked = store.locked.filter(
-      (p) => p !== relPath && !p.startsWith(relPath + path.sep)
+      (p) => p !== relPath && !p.startsWith(relPath + "/")
     );
+  }
+  await writeStore(workspaceId, store);
+}
+
+export async function setHidden(workspaceId: string, relPath: string, hidden: boolean): Promise<void> {
+  const store = await readStore(workspaceId);
+  if (hidden) {
+    if (!store.hidden.includes(relPath)) store.hidden.push(relPath);
+  } else {
+    store.hidden = store.hidden.filter((p) => p !== relPath && !p.startsWith(relPath + "/"));
+  }
+  await writeStore(workspaceId, store);
+}
+
+export async function setKeyed(workspaceId: string, relPath: string, keyed: boolean): Promise<void> {
+  const store = await readStore(workspaceId);
+  if (keyed) {
+    if (!store.keyed.includes(relPath)) store.keyed.push(relPath);
+  } else {
+    store.keyed = store.keyed.filter((p) => p !== relPath && !p.startsWith(relPath + "/"));
   }
   await writeStore(workspaceId, store);
 }

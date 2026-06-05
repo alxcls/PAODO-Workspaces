@@ -22,19 +22,19 @@ export function buildFileEditTool(workspaceId: string, workspaceDir: string) {
         // Create new file branch
         const absDir = path.dirname(path.join(workspaceDir, relpath));
         if (await isAgentLocked(workspaceId, workspaceDir, absDir)) {
-          return `Error: The target directory is locked [R] — toggle the lock in the file tree to allow writes.`;
+          return `Error: The target directory is locked [locked] — toggle the lock in the file tree to allow writes.`;
         }
         try {
           const dirRelpath = path.posix.dirname(relpath);
           if (dirRelpath && dirRelpath !== ".") {
             const mkdirR = await dockerExec(workspaceId, workspaceDir, [
               "mkdir", "-p", `/workspace/${dirRelpath}`,
-            ]);
+            ], { asAgent: true });
             if (mkdirR.code !== 0) return `Error: could not create directory: ${mkdirR.stderr}`;
           }
           const writeR = await dockerExec(workspaceId, workspaceDir, [
             "tee", `/workspace/${relpath}`,
-          ], { stdin: new_string });
+          ], { stdin: new_string, asAgent: true });
           if (writeR.code !== 0) return `Error: ${writeR.stderr || "write failed"}`;
           return `Created ${file_path}`;
         } catch (err: unknown) {
@@ -45,11 +45,11 @@ export function buildFileEditTool(workspaceId: string, workspaceDir: string) {
       // Edit existing file branch
       const absFile = path.join(workspaceDir, relpath);
       if (await isAgentLocked(workspaceId, workspaceDir, absFile)) {
-        return `Error: "${file_path}" is read-only [R] — ask the user to click the lock icon next to the file in the file tree to unlock it.`;
+        return `Error: "${file_path}" is locked [locked] — the operator can unlock it in the file tree, or use a keyed script to modify it.`;
       }
       try {
         // Read exact content — stdout must NOT be trimmed (preserves trailing newlines for correct string matching)
-        const readR = await dockerExec(workspaceId, workspaceDir, ["cat", `/workspace/${relpath}`]);
+        const readR = await dockerExec(workspaceId, workspaceDir, ["cat", `/workspace/${relpath}`], { asAgent: true });
         if (readR.code !== 0) return `Error: ${readR.stderr || "file not found or unreadable"}`;
 
         const content = readR.stdout;
@@ -66,7 +66,7 @@ export function buildFileEditTool(workspaceId: string, workspaceDir: string) {
 
         const writeR = await dockerExec(workspaceId, workspaceDir, [
           "tee", `/workspace/${relpath}`,
-        ], { stdin: updated });
+        ], { stdin: updated, asAgent: true });
         if (writeR.code !== 0) return `Error: ${writeR.stderr || "write failed"}`;
         return `Updated ${file_path}`;
       } catch (err: unknown) {
@@ -78,7 +78,7 @@ export function buildFileEditTool(workspaceId: string, workspaceDir: string) {
       description: `Edit a file by replacing an exact string. Use this instead of sed or awk.
 
 - You MUST call file_read first. Editing a file you haven't read will produce wrong results.
-- If file_read shows [R] for the file, DO NOT call this tool — tell the user the file is locked instead.
+- If list_directory shows the file is owned by privd (locked), DO NOT call this tool — tell the user the file is locked instead.
 - old_string must match exactly — including whitespace, indentation, and newlines.
 - Fails if old_string appears more than once. Add more surrounding lines for uniqueness, or set replace_all: true.
 - Set old_string to "" to create a new file (new_string becomes the full content).`,

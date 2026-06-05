@@ -24,16 +24,16 @@ export function buildFileWriteTool(workspaceId: string, workspaceDir: string) {
         // Check whether the file already exists to decide which lock to enforce
         const statR = await dockerExec(workspaceId, workspaceDir, [
           "find", `/workspace/${relpath}`, "-maxdepth", "0", "-type", "f",
-        ]);
+        ], { asAgent: true });
         const fileExists = statR.code === 0 && statR.stdout.trim() !== "";
 
         if (fileExists) {
           if (await isAgentLocked(workspaceId, workspaceDir, absFile)) {
-            throw new Error(`"${file_path}" is read-only [R] — ask the user to click the lock icon in the file tree to unlock it.`);
+            throw new Error(`"${file_path}" is locked [locked] — the operator can unlock it in the file tree, or use a keyed script to modify it.`);
           }
         } else {
           if (await isAgentLocked(workspaceId, workspaceDir, absDir)) {
-            throw new Error(`The target directory is locked [R] — ask the user to click the lock icon in the file tree to unlock it.`);
+            throw new Error(`The target directory is locked [locked] — the operator can unlock it in the file tree, or use a keyed script to write there.`);
           }
         }
 
@@ -41,17 +41,18 @@ export function buildFileWriteTool(workspaceId: string, workspaceDir: string) {
         if (dirRelpath && dirRelpath !== ".") {
           const mkdirR = await dockerExec(workspaceId, workspaceDir, [
             "mkdir", "-p", `/workspace/${dirRelpath}`,
-          ]);
+          ], { asAgent: true });
           if (mkdirR.code !== 0) return `Error: could not create directory: ${mkdirR.stderr}`;
         }
 
         const writeR = await dockerExec(workspaceId, workspaceDir, [
           "tee", `/workspace/${relpath}`,
-        ], { stdin: content });
+        ], { stdin: content, asAgent: true });
         if (writeR.code !== 0) return `Error: ${writeR.stderr || "write failed"}`;
 
-        // Transfer ownership to the app server user so the UI can save the file later.
-        await dockerExec(workspaceId, workspaceDir, ["chown", "1000:1000", `/workspace/${relpath}`]);
+        // New files written by uid 999 land as owner=999:gid=access, mode from umask.
+        // Set to 664 (Normal file mode) explicitly so group bits are always correct.
+        await dockerExec(workspaceId, workspaceDir, ["chmod", "664", `/workspace/${relpath}`], { asAgent: true });
 
         return `Written ${file_path} (${content.length} chars)`;
       } catch (err: unknown) {
@@ -64,7 +65,7 @@ export function buildFileWriteTool(workspaceId: string, workspaceDir: string) {
 ALWAYS use this when the user asks you to "write", "create", or "save" a file — never output the content as a code block in text.
 Use for creating new files or complete rewrites. For targeted edits to existing files, prefer file_edit.
 If the file already exists and you need to preserve or merge its content, read it first with file_read. If you are replacing it wholesale or creating a new file, skip the read.
-If file_read shows [R] for the file, or list_directory shows [R] for the target directory, DO NOT call this tool — tell the user the file or folder is locked instead.`,
+If list_directory shows the file or target directory is owned by privd (locked), DO NOT call this tool — tell the user the path is locked and ask them to unlock it in the file tree.`,
       schema: z.object({
         file_path: z.string().describe("File path relative to workspace root"),
         content: z.string().describe("Full content to write to the file"),

@@ -158,7 +158,7 @@ const KeyBadge = ({
       const res = await fetch(`/api/workspaces/${workspaceId}/privileged-scripts`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ path: relPath, privileged: !privileged }),
+        body: JSON.stringify({ path: relPath, keyed: !privileged }),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       onRefresh();

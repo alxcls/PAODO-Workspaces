@@ -2,7 +2,12 @@
 // Recursively walks the workspace directory up to 5 levels deep, skipping common build/dependency folders.
 import { NextResponse } from "next/server";
 import { getWorkspace } from "@/lib/infra/workspaceStore";
-import { readPermissionSnapshot } from "@/lib/infra/permissionStore";
+import {
+  readPermissionSnapshot,
+  isLockedFromSnapshot,
+  isHiddenFromSnapshot,
+  isKeyedFromSnapshot,
+} from "@/lib/infra/permissionStore";
 import fs from "fs/promises";
 import path from "path";
 import { createLogger } from "@/lib/infra/logger";
@@ -12,6 +17,8 @@ export interface TreeNode {
   type: "file" | "directory";
   path: string;
   permission?: "R" | "RW";
+  hidden?: boolean;
+  privileged?: boolean;
   children?: TreeNode[];
 }
 
@@ -20,7 +27,7 @@ const IGNORED = [".git", "__pycache__", ".mypy_cache", ".pytest_cache", ".ruff_c
 async function buildTree(
   dirPath: string,
   workspaceDir: string,
-  permSnapshot: { globalLock: boolean; locked: string[] },
+  permSnapshot: Awaited<ReturnType<typeof readPermissionSnapshot>>,
   depth = 0
 ): Promise<TreeNode[]> {
   if (depth >= 5) return [];
@@ -36,25 +43,23 @@ async function buildTree(
   const nodes: TreeNode[] = [];
   for (const e of filtered) {
     const fullPath = path.join(dirPath, e.name);
-    const rel = path.relative(workspaceDir, fullPath);
-    let locked = permSnapshot.globalLock;
-    if (!locked) {
-      const parts = rel.split(path.sep);
-      for (let i = 1; i <= parts.length; i++) {
-        if (permSnapshot.locked.includes(parts.slice(0, i).join(path.sep))) { locked = true; break; }
-      }
-    }
-    const permission: "R" | "RW" = locked ? "R" : "RW";
+    // Use forward slashes for snapshot lookups (permissionStore normalises to /)
+    const rel = path.relative(workspaceDir, fullPath).split(path.sep).join("/");
+    const permission: "R" | "RW" = isLockedFromSnapshot(permSnapshot, rel) ? "R" : "RW";
+    const hidden = isHiddenFromSnapshot(permSnapshot, rel);
+    const privileged = isKeyedFromSnapshot(permSnapshot, rel);
     if (e.isDirectory()) {
       nodes.push({
         name: e.name,
         type: "directory",
         path: fullPath,
         permission,
+        hidden,
+        privileged,
         children: await buildTree(fullPath, workspaceDir, permSnapshot, depth + 1),
       });
     } else {
-      nodes.push({ name: e.name, type: "file", path: fullPath, permission });
+      nodes.push({ name: e.name, type: "file", path: fullPath, permission, hidden, privileged });
     }
   }
 

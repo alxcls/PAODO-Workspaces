@@ -175,10 +175,10 @@ export async function dockerExec(
   workspaceId: string,
   workspaceDir: string,
   cmdArgs: string[],
-  opts: { stdin?: string; asAgent?: boolean } = {},
+  opts: { stdin?: string; asAgent?: boolean; asPrivd?: boolean; asAppUser?: boolean } = {},
 ): Promise<DockerResult> {
   await ensureContainer(workspaceId, workspaceDir);
-  const userArgs = opts.asAgent ? ["-u", "agent"] : [];
+  const userArgs = opts.asPrivd ? ["-u", "privd"] : opts.asAgent ? ["-u", "agent"] : opts.asAppUser ? ["-u", "appuser"] : [];
   return new Promise((resolve) => {
     let stdout = "";
     let stderr = "";
@@ -227,7 +227,7 @@ export async function removeContainer(workspaceId: string): Promise<void> {
 }
 
 // Deletes a workspace directory from the volume as root so that files created by the agent
-// (which runs as root inside containers) can be removed even though the app runs as node (UID 1000).
+// (which runs as root inside containers) can be removed even though the app runs as the host user.
 // In production (WORKSPACES_VOLUME_NAME set) mounts the full volume and removes the subdir.
 // In local dev falls back to a plain fs.rm since the app runs as the host user.
 export async function deleteWorkspaceDir(workspaceDir: string): Promise<void> {

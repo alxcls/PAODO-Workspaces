@@ -14,12 +14,25 @@ RUN apt-get update && apt-get install -y \
     rm -rf /var/lib/apt/lists/* && \
     ln -sf /usr/bin/python3 /usr/bin/python
 
-# Two execution identities:
-#   developer (UID 1000) — owns nvm/pyenv install dirs; root can also write (bypasses permissions).
-#   agent     (UID 999)  — restricted; can read/execute but not write; used when workspace is globally locked.
+# Three execution identities (ADR: permission-model-three-identity-uid):
+#   agent     (UID 999)  — restricted; sandboxed by OS permissions (other bits on all files).
+#   privd     (UID 998)  — privileged; owns locked files and runs keyed scripts via server dispatch.
+#   appuser   (UID 1002) — proxy for UI editor writes; only group membership (access) matters.
+#   developer (UID 1001) — owns nvm/pyenv install dirs (toolchain only, not a workspace identity).
+#
+# access (GID 1001) — shared group for uid 1000 and uid 998; uid 999 is NOT a member.
+# This lets app user and privd share file access via group bits without conflating their identities.
 RUN groupadd -g 999 agentgroup && \
+    groupadd -g 1001 access && \
     useradd -r -u 999 -g agentgroup -M -s /bin/bash agent && \
+    useradd -r -u 998 -g access -M -s /bin/bash privd && \
     useradd -u 1001 -m -s /bin/bash developer
+
+# appuser (UID 1002) — proxy identity for UI editor writes inside the workspace container.
+# UID 1000 is reserved by ubuntu:24.04's built-in 'ubuntu' user; 1002 is the next free UID.
+# The specific UID doesn't matter — only group membership (access, GID 1001) is load-bearing.
+# Belongs to access so it can read/write Normal files and read (but not write) Locked files.
+RUN useradd -u 1002 -g access -M -s /bin/bash appuser
 
 # nvm + Node LTS — installed as developer so only developer (and root) can write to the install dirs.
 # chmod -R 755 makes nvm dirs world-readable/executable so the agent user can execute node/npm.
@@ -41,5 +54,11 @@ RUN git clone --depth=1 https://github.com/pyenv/pyenv.git $PYENV_ROOT && \
     cd $PYENV_ROOT && src/configure && make -C src && \
     chown -R developer:developer $PYENV_ROOT && \
     chmod -R 755 $PYENV_ROOT
+
+# /workspace: owned by agent (999) with setgid so new files inherit group=access automatically.
+# uid 999 can create/write; uid 1000 and uid 998 can read/enter via group=access.
+RUN mkdir -p /workspace && \
+    chown 999:1001 /workspace && \
+    chmod 2775 /workspace
 
 WORKDIR /workspace

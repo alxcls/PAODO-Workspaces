@@ -6,7 +6,7 @@ import { z } from "zod";
 import { spawn } from "child_process";
 import { broadcastToWorkspace } from "../../infra/wsHub";
 import { ensureContainer } from "../../infra/containerManager";
-import { getGlobalLock } from "../../infra/permissionStore";
+import { getGlobalLock, isKeyed } from "../../infra/permissionStore";
 import { createLogger } from "../../infra/logger";
 
 const RESTRICTED_USER = "agent";
@@ -19,11 +19,16 @@ export function buildExecCommandTool(workspaceId: string, workspaceDir: string) 
   const log = createLogger("execCommand");
   return tool(
     async ({ command }) => {
-      const [, isLocked] = await Promise.all([
+      const [, isLocked, commandIsKeyed] = await Promise.all([
         ensureContainer(workspaceId, workspaceDir),
         getGlobalLock(workspaceId),
+        // isKeyed checks whether the first token of the command (the script path) has the key symbol.
+        isKeyed(workspaceId, command.trim().split(/\s+/)[0]),
       ]);
-      const userArgs = isLocked ? ["-u", RESTRICTED_USER] : [];
+      // Always run as agent (uid 999). Switch to privd (uid 998) for keyed scripts so they
+      // can write locked files. Global lock overrides keyed — the mount is read-only.
+      const execUser = (!isLocked && commandIsKeyed) ? "privd" : RESTRICTED_USER;
+      const userArgs = ["-u", execUser];
 
       return new Promise<string>((resolve) => {
         const proc = spawn("docker", ["exec", "-i", ...userArgs, "-w", "/workspace", `ws_${workspaceId}`, "/bin/bash", "-c", command]);
@@ -87,8 +92,8 @@ export function buildExecCommandTool(workspaceId: string, workspaceDir: string) 
             stderrOut += "\n[setup] The workspace container was built before UID enforcement was added. The user needs to run: docker rmi paodo-workspace && docker rm ws_" + workspaceId + " — the server will rebuild automatically on the next command.";
           } else if (stderrOut.includes("Permission denied")) {
             stderrOut += isLocked
-              ? "\n[permission] The workspace is globally locked [R] — commands run as a restricted user that cannot write files or install packages. Ask the user to unlock the workspace first."
-              : "\n[permission] One or more files involved are read-only [R]. Use list_directory or glob to check permissions before retrying.";
+              ? "\n[permission] The workspace is globally locked — commands run as agent (uid 999) which cannot write files or install packages. Ask the user to unlock the workspace first."
+              : "\n[permission] A file or directory along this path is locked [locked] or hidden [eye-off]. Use list_directory or glob to check permissions. To write a locked file, the operator can unlock it or add the [key] symbol to a script that runs with elevated access.";
           }
           const parts = [stdout.trim(), stderrOut].filter(Boolean);
           resolve(parts.join("\n") || "Command executed successfully with no output.");
@@ -117,7 +122,8 @@ Covers all shell operations including:
 Do NOT use for: reading file contents (use file_read), editing file contents (use file_edit), writing new file contents (use file_write).
 USE THIS for: renaming files (mv), moving files, deleting files (rm), creating symlinks, and any other shell file-system operation that doesn't involve reading or writing file content.
 Always use POSIX/bash syntax. Never use PowerShell syntax.
-When the workspace is globally locked [R], write operations (npm install, file writes, apt-get, nvm install) are blocked — only read-only commands work.`,
+When the workspace is globally locked (volume mounted read-only), write operations (npm install, file writes, apt-get, nvm install) are blocked — only read-only commands work.
+When a path is locked (owned by privd, other=r--), shell writes to it are also blocked by the kernel. Run list_directory to read mode bits before operating on unfamiliar paths.`,
       schema: z.object({
         command: z.string().describe("The bash command to execute"),
       }),

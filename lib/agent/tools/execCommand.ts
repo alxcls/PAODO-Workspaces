@@ -6,7 +6,7 @@ import { z } from "zod";
 import { spawn } from "child_process";
 import { broadcastToWorkspace } from "../../infra/wsHub";
 import { ensureContainer } from "../../infra/containerManager";
-import { getGlobalLock } from "../../infra/permissionStore";
+import { getGlobalLock, readPermissionSnapshot, isKeyedFromSnapshot } from "../../infra/permissionStore";
 import { createLogger } from "../../infra/logger";
 
 const RESTRICTED_USER = "agent";
@@ -19,14 +19,33 @@ export function buildExecCommandTool(workspaceId: string, workspaceDir: string) 
   const log = createLogger("execCommand");
   return tool(
     async ({ command }) => {
+      // Intercept sudo — keyed scripts are dispatched as privd (uid 998) via server-side docker exec.
+      // sudo is non-functional inside the container (no-new-privileges flag).
+      let execUser = RESTRICTED_USER;
+      let effectiveCommand = command.trimStart();
+
+      if (effectiveCommand.startsWith("sudo ")) {
+        const sudoMatch = effectiveCommand.match(/^sudo\s+(?:-\S+\s+)*(\/workspace\/\S+)/);
+        if (!sudoMatch) {
+          return "sudo denied: only keyed scripts at an absolute /workspace/ path are supported.";
+        }
+        const relPath = sudoMatch[1].slice("/workspace/".length);
+        const snapshot = await readPermissionSnapshot(workspaceId);
+        if (!isKeyedFromSnapshot(snapshot, relPath)) {
+          return `sudo denied: "${relPath}" is not marked [keyed]. Toggle the key icon in the file tree to enable privileged execution.`;
+        }
+        execUser = "privd";
+        effectiveCommand = effectiveCommand.replace(/^sudo\s+/, "");
+      }
+
       const [, isLocked] = await Promise.all([
         ensureContainer(workspaceId, workspaceDir),
         getGlobalLock(workspaceId),
       ]);
-      const userArgs = ["-u", RESTRICTED_USER];
+      const userArgs = ["-u", execUser];
 
       return new Promise<string>((resolve) => {
-        const proc = spawn("docker", ["exec", "-i", ...userArgs, "-w", "/workspace", `ws_${workspaceId}`, "/bin/bash", "-c", command]);
+        const proc = spawn("docker", ["exec", "-i", ...userArgs, "-w", "/workspace", `ws_${workspaceId}`, "/bin/bash", "-c", effectiveCommand]);
 
         // Close stdin immediately so commands that read from stdin when no path
         // is given (e.g. `rg pattern` without a path) don't hang waiting for input.

@@ -25,40 +25,17 @@ const IDLE_TIMEOUT_MS = parseInt(process.env.CONTAINER_IDLE_MS ?? "", 10) || 10 
 // so local dev (app running directly on host) still works without Docker Compose.
 const WORKSPACES_VOLUME_NAME = process.env.WORKSPACES_VOLUME_NAME ?? "";
 
-function buildSudoersContent(keyed: string[]): string {
-  return [
-    "# managed by paodo — do not edit",
-    "Defaults:agent runas_default=privd",
-    ...keyed.map(kp => `agent ALL=(privd) NOPASSWD: /workspace/${kp} *`),
-  ].join("\n") + "\n";
-}
-
-// Writes /etc/sudoers.d/keyed-scripts inside the named container.
-// Uses dockerCmd + stdin piping (never dockerExec) so it is safe to call during _ensureContainer
-// without deadlocking on startLocks.  All other callers go through reconcileKeyedSudoers in osLock.
-export async function applyKeyedSudoers(workspaceId: string): Promise<void> {
+// Ensures all keyed scripts are executable so privd dispatch works after container recreation.
+// Called at container start and after key toggles via reconcileKeyedExecutable in osLock.
+export async function applyKeyedExecutable(workspaceId: string): Promise<void> {
   try {
     const snapshot = await readPermissionSnapshot(workspaceId);
+    if (snapshot.keyed.length === 0) return;
     const name = containerName(workspaceId);
-    if (snapshot.keyed.length > 0) {
-      await dockerCmd("exec", name, "chmod", "+x", ...snapshot.keyed.map(kp => `/workspace/${kp}`));
-    }
-    const content = buildSudoersContent(snapshot.keyed);
-    await new Promise<void>((resolve) => {
-      const proc = spawn("docker", ["exec", "-i", name, "bash", "-c",
-        "cat > /etc/sudoers.d/keyed-scripts && chmod 440 /etc/sudoers.d/keyed-scripts",
-      ]);
-      proc.stdout!.on("data", () => {}); proc.stdout!.on("error", () => {});
-      proc.stderr!.on("data", () => {}); proc.stderr!.on("error", () => {});
-      proc.stdin!.write(content, () => proc.stdin!.end());
-      proc.on("close", (code) => {
-        if (code !== 0) log.warn({ workspaceId, code }, "keyed sudoers write failed");
-        resolve();
-      });
-      proc.on("error", () => resolve());
-    });
+    const r = await dockerCmd("exec", name, "chmod", "+x", ...snapshot.keyed.map(kp => `/workspace/${kp}`));
+    if (r.code !== 0) log.warn({ workspaceId, stderr: r.stderr }, "applyKeyedExecutable chmod failed");
   } catch (err) {
-    log.warn({ err, workspaceId }, "applyKeyedSudoers failed");
+    log.warn({ err, workspaceId }, "applyKeyedExecutable failed");
   }
 }
 
@@ -194,7 +171,7 @@ async function _ensureContainer(workspaceId: string, workspaceDir: string): Prom
   // on startLocks while we're still inside _ensureContainer.
   await dockerCmd("exec", containerName(workspaceId), "chown", "999:1001", "/workspace");
   await dockerCmd("exec", containerName(workspaceId), "chmod", "2775", "/workspace");
-  await applyKeyedSudoers(workspaceId);
+  await applyKeyedExecutable(workspaceId);
 }
 
 export function ensureContainer(workspaceId: string, workspaceDir: string): Promise<void> {

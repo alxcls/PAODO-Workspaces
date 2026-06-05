@@ -1,14 +1,14 @@
 // OS-level permission enforcement for the three-identity model (Eye / Lock / Key).
 // runRoot — runs a command as root inside the container (for chown/chmod).
 // reconcileOsPermissions — aligns actual file ownership+mode with the permission store state.
-// reconcileKeyedSudoers — writes /etc/sudoers.d/keyed-scripts so agent can run keyed scripts as privd.
+// reconcileKeyedExecutable — chmod +x keyed scripts so privd dispatch works after key toggles.
 //
 // Ownership/mode scheme (ADR §2):
 //   Normal:        uid 999 : gid 1001,  file=664 / dir=2775
 //   Eye-off:       uid 1002 : gid 1001, file=660 / dir=2770
 //   Lock:          uid 998  : gid 1001, file=644 / dir=755
 //   Eye-off+Lock:  uid 998  : gid 1001, file=640 / dir=750
-import { dockerExec, ensureContainer, applyKeyedSudoers, type DockerResult } from "./containerManager";
+import { dockerExec, ensureContainer, applyKeyedExecutable, type DockerResult } from "./containerManager";
 import {
   readPermissionSnapshot,
   isHiddenFromSnapshot,
@@ -27,15 +27,13 @@ export async function runRoot(workspaceId: string, cmdArgs: string[]): Promise<D
   return dockerExec(workspaceId, ws.dir, cmdArgs);
 }
 
-// Regenerates /etc/sudoers.d/keyed-scripts after a key toggle or full permission sweep.
-// Ensures the container is running first so the write succeeds even when called on an idle workspace.
-// Delegates the actual write to applyKeyedSudoers (raw dockerCmd) which is safe to call both here
-// and during _ensureContainer without deadlocking on startLocks.
-export async function reconcileKeyedSudoers(workspaceId: string): Promise<void> {
+// Ensures keyed scripts are chmod +x after a key toggle or full permission sweep.
+// Ensures the container is running first so the chmod succeeds even when called on an idle workspace.
+export async function reconcileKeyedExecutable(workspaceId: string): Promise<void> {
   const ws = getWorkspace(workspaceId);
   if (!ws) return;
   await ensureContainer(workspaceId, ws.dir);
-  await applyKeyedSudoers(workspaceId);
+  await applyKeyedExecutable(workspaceId);
 }
 
 // --- OS permission reconciliation ---
@@ -106,8 +104,8 @@ export async function reconcileOsPermissions(workspaceId: string, relPath?: stri
       );
     }
 
-    // 4. Sync sudoers for keyed scripts.
-    await reconcileKeyedSudoers(workspaceId);
+    // 4. Ensure keyed scripts are executable.
+    await reconcileKeyedExecutable(workspaceId);
   } catch (err) {
     log.warn({ err, workspaceId, relPath }, "reconcileOsPermissions failed — software checks still enforce");
   }

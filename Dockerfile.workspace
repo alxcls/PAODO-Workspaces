@@ -9,12 +9,10 @@ RUN apt-get update && apt-get install -y \
     libssl-dev zlib1g-dev libbz2-dev libreadline-dev libsqlite3-dev \
     libffi-dev liblzma-dev ca-certificates \
     python3 python3-pip python3-venv \
-    ripgrep fd-find tree unzip zip nano vim procps sudo && \
+    ripgrep fd-find tree unzip zip nano vim procps && \
     update-ca-certificates && \
     rm -rf /var/lib/apt/lists/* && \
-    ln -sf /usr/bin/python3 /usr/bin/python && \
-    # Seed empty sudoers file for keyed scripts; content is written at container start.
-    touch /etc/sudoers.d/keyed-scripts && chmod 440 /etc/sudoers.d/keyed-scripts
+    ln -sf /usr/bin/python3 /usr/bin/python
 
 # Three execution identities (ADR: permission-model-three-identity-uid):
 #   agent     (UID 999)  — restricted; sandboxed by OS permissions (other bits on all files).

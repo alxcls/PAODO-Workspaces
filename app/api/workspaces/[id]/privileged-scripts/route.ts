@@ -1,15 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getWorkspace } from "@/lib/infra/workspaceStore";
 import { setKeyed } from "@/lib/infra/permissionStore";
-import { reconcileKeyedSudoers } from "@/lib/infra/osLock";
+import { reconcileKeyedExecutable } from "@/lib/infra/osLock";
 import path from "path";
 import { createLogger } from "@/lib/infra/logger";
 
 const log = createLogger("api");
 
 // PATCH — toggle the Key (keyed) symbol on a file or directory.
-// Keyed scripts run as privd (uid 998) via sudo inside the container.
-// After toggling, regenerate /etc/sudoers.d/keyed-scripts to match.
+// Keyed scripts run as privd (uid 998) via server-side docker exec dispatch (no sudo in container).
+// After toggling, chmod +x so the script is executable when dispatched.
 // body: { path: string; keyed: boolean }
 export async function PATCH(
   req: NextRequest,
@@ -33,7 +33,7 @@ export async function PATCH(
 
   try {
     await setKeyed(ws.id, relPath, keyed);
-    await reconcileKeyedSudoers(ws.id);
+    await reconcileKeyedExecutable(ws.id);
   } catch (err) {
     log.error({ err, workspaceId: id, path: relPath }, "failed to set keyed");
     return NextResponse.json({ error: "failed to set keyed" }, { status: 500 });

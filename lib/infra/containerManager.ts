@@ -150,6 +150,13 @@ async function _ensureContainer(workspaceId: string, workspaceDir: string): Prom
     "sleep", "infinity",
   );
   if (r.code !== 0) throw new Error(`docker run failed: ${r.stderr}`);
+
+  // The workspace dir is created by the app process (uid 1000) so the volume-mounted /workspace
+  // lands with host ownership that the agent (uid 999) can't write to.  Fix it now as root before
+  // any agent command runs.  Use dockerCmd directly — dockerExec → ensureContainer would deadlock
+  // on startLocks while we're still inside _ensureContainer.
+  await dockerCmd("exec", containerName(workspaceId), "chown", "999:1001", "/workspace");
+  await dockerCmd("exec", containerName(workspaceId), "chmod", "2775", "/workspace");
 }
 
 export function ensureContainer(workspaceId: string, workspaceDir: string): Promise<void> {

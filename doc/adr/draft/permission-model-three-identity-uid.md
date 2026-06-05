@@ -31,7 +31,7 @@ Root is used transiently only inside the container for `chown`/`chmod` reconcili
 | Lock | 998 | 1001 | 644 | 755 | r | r (group) | rw (owner) |
 | Eye-off + Lock | 998 | 1001 | 640 | 750 | — | r (group) | rw (owner) |
 
-Normal directories carry setgid + sticky so new files inherit `group=access` while the agent cannot unlink privd-owned entries. Eye-off directories keep setgid for the same inheritance behaviour.
+Normal directories carry setgid + sticky so new files inherit `group=access` while the agent cannot unlink privd-owned entries. Eye-off directories keep setgid for the same inheritance behaviour. When the workspace is globally locked—or when a locked/keyed path sits directly at the workspace root—`/workspace` itself flips to privd ownership with mode `3775`, removing the agent's directory write bit while preserving group write for the UI user.
 
 ### Eye — read visibility
 
@@ -39,7 +39,7 @@ Hidden paths are `chown`ed to uid 1002 with mode `660`/`640`. uid 999 is always 
 
 ### Lock — write protection
 
-Locked paths are `chown`ed to uid 998 with mode `644`/`755`. uid 999 is "other" with only the read bit; the kernel denies all write syscalls from both the agent and shell. uid 1002 is in `access` but also only has the read bit via group — the UI editor is blocked by the kernel too. `fileWrite`/`fileEdit` call `isAgentLocked()` for a clean error message; again UX only. Ancestor directories (excluding the workspace root) that contain any locked/keyed entry are also `chown`ed to uid 998 with mode `3775`, so the agent (uid 999) loses directory write/rename permission and cannot delete-and-recreate locked files via TOCTOU shell tricks.
+Locked paths are `chown`ed to uid 998 with mode `644`/`755`. uid 999 is "other" with only the read bit; the kernel denies all write syscalls from both the agent and shell. uid 1002 is in `access` but also only has the read bit via group — the UI editor is blocked by the kernel too. `fileWrite`/`fileEdit` call `isAgentLocked()` for a clean error message; again UX only. Ancestor directories that contain any locked/keyed entry are also `chown`ed to uid 998 with mode `3775`, and the workspace root enters the same state whenever a guarded entry lives directly under it or `globalLock` is enabled. This prevents the agent (uid 999) from deleting-and-recreating locked files via TOCTOU shell tricks, even when the files are stored at the top level.
 
 ### Key — privileged script execution
 
@@ -78,6 +78,7 @@ Permission state is persisted to `.agent-permissions/<workspaceId>.json` on the 
 - Agent cannot read hidden files or write locked files via any execution path — tool calls and raw shell commands both hit the same kernel rules.
 - Keyed scripts run as privd and can write locked files; no other identity can.
 - `reconcileOsPermissions` must be called after every toggle and every apt install to keep OS state consistent with the store.
+- `install_system_package` (agent tool) and the apt broker refuse to run while `globalLock` is enabled; operators must unlock or run a privileged install flow first.
 - A chmod applied by `applyMode` strips `+x`; `reconcileKeyedExecutable` must always follow to restore it.
 - Workspace container must be rebuilt if UIDs change (`docker rmi paodo-workspace`).
 - Non-root directories automatically flip between agent-owned (Normal) and privd-owned (guarded) based on whether they contain locked/keyed descendants, closing unlink/replace races while restoring write access once the descendant list is empty.

@@ -4,6 +4,7 @@
 // Calls are serialized per container because dpkg holds a global lock.
 import { runRoot, reconcileOsPermissions } from "./osLock";
 import { createLogger } from "./logger";
+import { getGlobalLock } from "./permissionStore";
 
 const log = createLogger("aptBroker");
 
@@ -31,6 +32,15 @@ export async function aptInstall(workspaceId: string, packages: string[]): Promi
   const invalid = packages.filter((p) => !PKG_RE.test(p));
   if (invalid.length > 0) {
     return { installed: [], stdout: "", stderr: `Invalid package name(s): ${invalid.join(", ")}`, code: 1 };
+  }
+
+  if (await getGlobalLock(workspaceId)) {
+    return {
+      installed: [],
+      stdout: "",
+      stderr: "Workspace is globally locked — package installation is not allowed.",
+      code: 1,
+    };
   }
 
   return serialize(workspaceId, async () => {

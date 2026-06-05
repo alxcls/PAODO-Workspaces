@@ -10,6 +10,7 @@ import path from "path";
 import fs from "fs";
 import fsAsync from "fs/promises";
 import { createLogger } from "./logger";
+import { reconcileOsPermissions } from "./osLock";
 
 const log = createLogger("store");
 import type { BaseMessage } from "@langchain/core/messages";
@@ -111,6 +112,11 @@ The agent will follow these instructions on every request.
     "utf8"
   );
   await setPermission(id, "AGENTS.md", "R");
+  try {
+    await reconcileOsPermissions(id, "AGENTS.md");
+  } catch (err) {
+    log.warn({ err, workspaceId: id }, "failed to reconcile AGENTS.md lock during create");
+  }
 
   const workspace: Workspace = {
     id,

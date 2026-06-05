@@ -78,7 +78,7 @@ Permission state is persisted to `.agent-permissions/<workspaceId>.json` on the 
 - Agent cannot read hidden files or write locked files via any execution path — tool calls and raw shell commands both hit the same kernel rules.
 - Keyed scripts run as privd and can write locked files; no other identity can.
 - `reconcileOsPermissions` must be called after every toggle and every apt install to keep OS state consistent with the store.
-- `install_system_package` (agent tool) and the apt broker refuse to run while `globalLock` is enabled; operators must unlock or run a privileged install flow first.
+- `install_system_package` (agent tool) and the apt broker refuse to run while `globalLock` is enabled; the workspace volume is remounted read-only so no identity (even root) can modify files until it is lifted.
 - A chmod applied by `applyMode` strips `+x`; `reconcileKeyedExecutable` must always follow to restore it.
 - Workspace container must be rebuilt if UIDs change (`docker rmi paodo-workspace`).
 - Non-root directories automatically flip between agent-owned (Normal) and privd-owned (guarded) based on whether they contain locked/keyed descendants, closing unlink/replace races while restoring write access once the descendant list is empty.

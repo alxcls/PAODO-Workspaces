@@ -91,7 +91,7 @@ async function applyDirectoryMode(
   let { uid, gid, dirMode } = resolveMode(isHidden, isLocked, isKeyed);
 
   const hasTopLevelPrivileged = snapshot.locked.concat(snapshot.keyed).some((p) => p && !p.includes("/"));
-  const shouldGuardRoot = relPath === "." && (snapshot.globalLock || hasTopLevelPrivileged);
+  const shouldGuardRoot = relPath === "." && snapshot.globalLock;
 
   if (shouldGuardRoot) {
     uid = 998;

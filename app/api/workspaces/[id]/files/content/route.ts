@@ -149,9 +149,6 @@ export async function PUT(
     const filePath = path.isAbsolute(body.path) ? body.path : path.join(ws.dir, body.path);
     const resolved = await assertInsideWorkspace(ws.dir, filePath);
     const relPath = path.relative(ws.dir, resolved).split(path.sep).join("/") || ".";
-    if (await isAgentLocked(ws.id, ws.dir, resolved)) {
-      return NextResponse.json({ error: "File is read-only" }, { status: 403 });
-    }
     await fs.mkdir(path.dirname(resolved), { recursive: true });
     try {
       await fs.writeFile(resolved, body.content, "utf-8");

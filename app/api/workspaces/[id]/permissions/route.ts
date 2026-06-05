@@ -27,7 +27,7 @@ export async function PATCH(
   const relPath = path.relative(ws.dir, abs).split(path.sep).join("/") || ".";
 
   try {
-    await setPermission(ws.id, relPath, permission);
+    await setPermission(ws.id, relPath, permission, abs);
     // Best-effort OS reconcile — await so directory guards land before the response.
     await reconcileOsPermissions(ws.id, relPath).catch(() => {});
   } catch (err) {

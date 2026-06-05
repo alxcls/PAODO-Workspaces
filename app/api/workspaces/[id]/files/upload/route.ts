@@ -12,9 +12,37 @@ import fs from "fs/promises";
 import path from "path";
 import JSZip from "jszip";
 import { createLogger } from "@/lib/infra/logger";
+import { reconcileOsPermissions } from "@/lib/infra/osLock";
 
 const MAX_BYTES = 100 * 1024 * 1024;       // 100 MB — single file
 const MAX_ARCHIVE_BYTES = 500 * 1024 * 1024; // 500 MB — ZIP archive
+
+const log = createLogger("api");
+
+function normalizeRelPath(root: string, absPath: string): string {
+  const rel = path.relative(root, absPath).split(path.sep).join("/");
+  return rel === "" ? "." : rel;
+}
+
+async function reconcileTouchedPaths(workspaceId: string, paths: Set<string>): Promise<void> {
+  if (paths.size === 0) return;
+  const relPaths = Array.from(paths);
+  if (relPaths.length > 50) {
+    try {
+      await reconcileOsPermissions(workspaceId);
+    } catch (err) {
+      log.warn({ err, workspaceId }, "failed to reconcile workspace after large upload");
+    }
+    return;
+  }
+  for (const relPath of relPaths) {
+    try {
+      await reconcileOsPermissions(workspaceId, relPath);
+    } catch (err) {
+      log.warn({ err, workspaceId, path: relPath }, "failed to reconcile uploaded file");
+    }
+  }
+}
 
 export async function POST(
   req: NextRequest,
@@ -24,7 +52,7 @@ export async function POST(
   const rl = checkRateLimit(ip, { max: 200, bucket: "upload" });
   if (!rl.ok) {
     const { id } = await params;
-    createLogger("api").warn({ workspaceId: id, ip }, "rate limit exceeded");
+    log.warn({ workspaceId: id, ip }, "rate limit exceeded");
     return new Response("Too Many Requests", {
       status: 429,
       headers: { "Retry-After": String(rl.retryAfter) },
@@ -66,6 +94,7 @@ export async function POST(
     }
 
     const entries = Object.entries(zip.files).filter(([, entry]) => !entry.dir);
+    const touched = new Set<string>();
     let count = 0;
     const failures: string[] = [];
 
@@ -79,12 +108,15 @@ export async function POST(
         const content = await entry.async("nodebuffer");
         await fs.mkdir(path.dirname(resolved), { recursive: true });
         await fs.writeFile(resolved, content);
+        touched.add(normalizeRelPath(wsDir, resolved));
         count++;
       } catch (err) {
-        createLogger("api").error({ err, workspaceId: id, zipPath }, "failed to write archive entry");
+        log.error({ err, workspaceId: id, zipPath }, "failed to write archive entry");
         failures.push(zipPath);
       }
     }
+
+    await reconcileTouchedPaths(ws.id, touched);
 
     if (failures.length > 0) {
       return NextResponse.json({ ok: false, count, failures }, { status: 207 });
@@ -105,9 +137,11 @@ export async function POST(
     await fs.mkdir(path.dirname(resolved), { recursive: true });
     await fs.writeFile(resolved, buf);
   } catch (err) {
-    createLogger("api").error({ err, workspaceId: id, filePath }, "failed to write uploaded file");
+    log.error({ err, workspaceId: id, filePath }, "failed to write uploaded file");
     return NextResponse.json({ error: "failed to write file" }, { status: 500 });
   }
+
+  await reconcileTouchedPaths(ws.id, new Set([normalizeRelPath(wsDir, resolved)]));
 
   return NextResponse.json({ ok: true });
 }

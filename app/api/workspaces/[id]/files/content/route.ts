@@ -7,6 +7,7 @@ import { NextResponse } from "next/server";
 import { getWorkspace } from "@/lib/infra/workspaceStore";
 import { isAgentLocked } from "@/lib/infra/permissionStore";
 import { dockerExec } from "@/lib/infra/containerManager";
+import { reconcileOsPermissions } from "@/lib/infra/osLock";
 import fs from "fs/promises";
 import path from "path";
 import { createLogger } from "@/lib/infra/logger";
@@ -114,6 +115,7 @@ export async function PUT(
   try {
     const filePath = path.isAbsolute(body.path) ? body.path : path.join(ws.dir, body.path);
     const resolved = await assertInsideWorkspace(ws.dir, filePath);
+    const relPath = path.relative(ws.dir, resolved).split(path.sep).join("/") || ".";
     if (await isAgentLocked(ws.id, ws.dir, resolved)) {
       return NextResponse.json({ error: "File is read-only" }, { status: 403 });
     }
@@ -126,7 +128,6 @@ export async function PUT(
         // File ownership is managed by the permission model — write via container as appuser (uid 1002).
         // appuser is in the access group and can write Normal/Eye-off files; locked files (mode 644)
         // are blocked by the kernel.
-        const relPath = path.relative(ws.dir, resolved);
         const r = await dockerExec(ws.id, ws.dir, ["tee", `/workspace/${relPath}`], { stdin: body.content, asAppUser: true });
         if (r.code !== 0) throw new Error(r.stderr || "docker write failed");
         // Ensure mode 664 (Normal) — tee inherits the shell umask for new files.
@@ -134,6 +135,11 @@ export async function PUT(
       } else {
         throw writeErr;
       }
+    }
+    try {
+      await reconcileOsPermissions(ws.id, relPath);
+    } catch (err) {
+      log.warn({ err, path: relPath }, "failed to reconcile permissions after file write");
     }
     return NextResponse.json({ ok: true });
   } catch (err) {
@@ -162,7 +168,7 @@ export async function DELETE(
       return NextResponse.json({ error: "File is read-only" }, { status: 403 });
     }
     const stat = await fs.stat(resolved);
-    const relPath = path.relative(ws.dir, resolved);
+    const relPath = path.relative(ws.dir, resolved).split(path.sep).join("/") || ".";
     try {
       if (stat.isDirectory()) {
         await fs.rm(resolved, { recursive: true });
@@ -179,6 +185,11 @@ export async function DELETE(
       } else {
         throw rmErr;
       }
+    }
+    try {
+      await reconcileOsPermissions(ws.id, relPath);
+    } catch (err) {
+      log.warn({ err, path: relPath }, "failed to reconcile permissions after delete");
     }
     return NextResponse.json({ ok: true });
   } catch (err) {

@@ -61,6 +61,17 @@ export function isLockedFromSnapshot(
   return false;
 }
 
+export function hasLockedDescendantFromSnapshot(
+  snapshot: Pick<PermStore, "locked" | "keyed">,
+  relPath: string,
+): boolean {
+  const prefixes = [...snapshot.locked, ...snapshot.keyed];
+  if (!prefixes.length) return false;
+  if (!relPath || relPath === ".") return prefixes.length > 0;
+  const target = relPath.endsWith("/") ? relPath : `${relPath}/`;
+  return prefixes.some((p) => p === relPath || p.startsWith(target));
+}
+
 export function isHiddenFromSnapshot(
   snapshot: Pick<PermStore, "hidden">,
   relPath: string,
@@ -89,6 +100,16 @@ export async function isAgentLocked(workspaceId: string, workspaceDir: string, a
   const rel = path.relative(workspaceDir, absPath).split(path.sep).join("/");
   const store = await readStore(workspaceId);
   return isLockedFromSnapshot(store, rel);
+}
+
+export async function hasAgentLockedDescendant(
+  workspaceId: string,
+  workspaceDir: string,
+  absPath: string,
+): Promise<boolean> {
+  const rel = path.relative(workspaceDir, absPath).split(path.sep).join("/") || ".";
+  const store = await readStore(workspaceId);
+  return hasLockedDescendantFromSnapshot(store, rel);
 }
 
 export async function isAgentHidden(workspaceId: string, workspaceDir: string, absPath: string): Promise<boolean> {

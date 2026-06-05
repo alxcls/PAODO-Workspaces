@@ -5,7 +5,7 @@ export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
 import { getWorkspace } from "@/lib/infra/workspaceStore";
-import { isAgentLocked } from "@/lib/infra/permissionStore";
+import { hasAgentLockedDescendant, isAgentLocked } from "@/lib/infra/permissionStore";
 import { dockerExec } from "@/lib/infra/containerManager";
 import { reconcileOsPermissions } from "@/lib/infra/osLock";
 import fs from "fs/promises";
@@ -169,6 +169,11 @@ export async function DELETE(
     }
     const stat = await fs.stat(resolved);
     const relPath = path.relative(ws.dir, resolved).split(path.sep).join("/") || ".";
+    if (stat.isDirectory()) {
+      if (await hasAgentLockedDescendant(ws.id, ws.dir, resolved)) {
+        return NextResponse.json({ error: "Directory contains read-only entries" }, { status: 403 });
+      }
+    }
     try {
       if (stat.isDirectory()) {
         await fs.rm(resolved, { recursive: true });

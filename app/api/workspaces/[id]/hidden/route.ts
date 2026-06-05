@@ -18,16 +18,17 @@ export async function PATCH(
   if (!ws) return NextResponse.json({ error: "Workspace not found" }, { status: 404 });
 
   const body = await req.json();
-  const { path: relPath, hidden } = body as { path: string; hidden: boolean };
+  const { path: inputPath, hidden } = body as { path: string; hidden: boolean };
 
-  if (!relPath || typeof hidden !== "boolean") {
+  if (!inputPath || typeof hidden !== "boolean") {
     return NextResponse.json({ error: "Invalid request" }, { status: 400 });
   }
 
-  const abs = path.resolve(ws.dir, relPath);
+  const abs = path.resolve(ws.dir, inputPath);
   if (!abs.startsWith(ws.dir + path.sep) && abs !== ws.dir) {
     return NextResponse.json({ error: "Path outside workspace" }, { status: 403 });
   }
+  const relPath = path.relative(ws.dir, abs).split(path.sep).join("/") || ".";
 
   try {
     await setHidden(ws.id, relPath, hidden);

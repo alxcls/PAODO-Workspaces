@@ -1,9 +1,10 @@
 import { getWorkspace } from "@/lib/infra/workspaceStore";
+import { getWorkspace } from "@/lib/infra/workspaceStore";
 import { setKeyed, setPermission } from "@/lib/infra/permissionStore";
 import { reconcileOsPermissions } from "@/lib/infra/osLock";
 import path from "path";
 import { createLogger } from "@/lib/infra/logger";
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 
 const log = createLogger("api");
 
@@ -12,7 +13,7 @@ const log = createLogger("api");
 // After toggling, chmod +x so the script is executable when dispatched.
 // body: { path: string; keyed: boolean }
 export async function PATCH(
-  req: Request,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;

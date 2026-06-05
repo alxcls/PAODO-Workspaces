@@ -152,6 +152,9 @@ export async function setGlobalPermission(
   const store = await readStore(workspaceId);
   store.globalLock = perm === "R";
   store.locked = [];
+  if (perm === "RW") {
+    store.keyed = [];
+  }
   await writeStore(workspaceId, store);
 }
 

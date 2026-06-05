@@ -5,7 +5,7 @@
 //
 // Ownership/mode scheme:
 //   Normal:        uid 999  : gid 1001, file=664 / dir=3775 (sticky — agent can't delete privd-owned files)
-//   Eye-off:       uid 1002 : gid 1001, file=660 / dir=2770
+//   Eye-off:       uid 1002 : gid 1001, file=662 / dir=3773 (agent keeps -w- but no read bit)
 //   Lock:          uid 998  : gid 1001, file=644 / dir=755
 //   Eye-off+Lock:  uid 998  : gid 1001, file=640 / dir=750
 //   Keyed:         uid 998  : gid 1001, file=755 / dir=755  (privd-owned; agent has r-x, cannot write)
@@ -55,7 +55,7 @@ function resolveMode(isHidden: boolean, isLocked: boolean, isKeyed: boolean): Mo
   if (isKeyed)             return { uid: 998, gid: 1001, fileMode: "755", dirMode: "755" };
   if (isHidden && isLocked) return { uid: 998, gid: 1001, fileMode: "640", dirMode: "750" };
   if (isLocked)             return { uid: 998, gid: 1001, fileMode: "644", dirMode: "755" };
-  if (isHidden)             return { uid: 1002, gid: 1001, fileMode: "660", dirMode: "2770" };
+  if (isHidden)             return { uid: 1002, gid: 1001, fileMode: "662", dirMode: "3773" };
   return                           { uid: 999,  gid: 1001, fileMode: "664", dirMode: "3775" };
 }
 

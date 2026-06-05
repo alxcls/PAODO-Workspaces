@@ -27,15 +27,15 @@ Root is used transiently only inside the container for `chown`/`chmod` reconcili
 | State | Owner UID | Group GID | File mode | Dir mode | Agent (999) | App user (1002) | Privd (998) |
 |---|---|---|---|---|---|---|---|
 | Normal | 999 | 1001 | 664 | 3775 | rw | rw (group) | rw (group) |
-| Eye-off | 1002 | 1001 | 660 | 2770 | — | rw (owner) | rw (group) |
+| Eye-off | 1002 | 1001 | 662 | 3773 | -w- | rw (owner) | rw (group) |
 | Lock | 998 | 1001 | 644 | 755 | r | r (group) | rw (owner) |
 | Eye-off + Lock | 998 | 1001 | 640 | 750 | — | r (group) | rw (owner) |
 
-Normal directories carry setgid + sticky so new files inherit `group=access` while the agent cannot unlink privd-owned entries. Eye-off directories keep setgid for the same inheritance behaviour. When the workspace is globally locked—or when a locked/keyed path sits directly at the workspace root—`/workspace` itself flips to privd ownership with mode `3775`, removing the agent's directory write bit while preserving group write for the UI user.
+Normal directories carry setgid + sticky so new files inherit `group=access` while the agent cannot unlink privd-owned entries. Eye-off directories now keep both bits but drop the read bit for "other", leaving only `wx` so the agent can reach known paths without listing them. When the workspace is globally locked—or when a locked/keyed path sits directly at the workspace root—`/workspace` itself flips to privd ownership with mode `3775`, removing the agent's directory write bit while preserving group write for the UI user.
 
 ### Eye — read visibility
 
-Hidden paths are `chown`ed to uid 1002 with mode `660`/`640`. uid 999 is always "other" with `o=0`, so the kernel denies `open()` before any tool logic runs. `fileRead` additionally calls `isAgentHidden()` to return a descriptive error rather than raw `EACCES`; this is UX only.
+Hidden paths are `chown`ed to uid 1002. Files get mode `662` (agent user retains `-w-` but no read bit) and directories get `3773` (agent has `wx` so it can target known paths without listing contents). uid 999 remains "other" so the kernel denies reads before any tool logic runs, while still allowing pure write syscalls. `fileRead` additionally calls `isAgentHidden()` to return a descriptive error rather than raw `EACCES`; this is UX only.
 
 ### Lock — write protection
 

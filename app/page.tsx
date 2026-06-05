@@ -6,7 +6,6 @@ import { useRouter } from "next/navigation";
 import DescriptionBlock, { loadDesc } from "@/components/home/DescriptionBlock";
 import ApiAccessBlock from "@/components/home/ApiAccessBlock";
 import AgentLoopBlock from "@/components/home/AgentLoopBlock";
-import SecretsBlock from "@/components/home/SecretsBlock";
 import TopBar from "@/components/layout/TopBar";
 
 interface WorkspaceItem { id: string; name: string; createdAt: string; }
@@ -240,7 +239,6 @@ export default function HomePage() {
               <DescriptionBlock wsId={selected.id} value={description} onChange={setDescription} />
               <ApiAccessBlock key={selected.id} wsId={selected.id} />
               <AgentLoopBlock key={`loop-${selected.id}`} wsId={selected.id} />
-              <SecretsBlock key={`secrets-${selected.id}`} wsId={selected.id} />
             </div>
           ) : (
             <div className="mt-20 text-center text-text-2">

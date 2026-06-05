@@ -124,12 +124,6 @@ The agent will follow these instructions on every request.
 `,
     "utf8"
   );
-  await setPermission(id, "AGENTS.md", "R");
-  try {
-    await reconcileOsPermissions(id);
-  } catch (err) {
-    log.warn({ err, workspaceId: id }, "failed to reconcile permissions during create");
-  }
 
   const workspace: Workspace = {
     id,
@@ -141,6 +135,19 @@ The agent will follow these instructions on every request.
   };
 
   workspaces.set(id, workspace);
+
+  try {
+    await setPermission(id, "AGENTS.md", "R");
+  } catch (err) {
+    workspaces.delete(id);
+    throw err;
+  }
+  try {
+    await reconcileOsPermissions(id);
+  } catch (err) {
+    log.warn({ err, workspaceId: id }, "failed to reconcile permissions during create");
+  }
+
   try {
     saveRegistry();
   } catch (err) {

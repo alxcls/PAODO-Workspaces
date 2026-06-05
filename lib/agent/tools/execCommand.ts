@@ -21,21 +21,22 @@ export function buildExecCommandTool(workspaceId: string, workspaceDir: string) 
     async ({ command }) => {
       // Intercept sudo — keyed scripts are dispatched as privd (uid 998) via server-side docker exec.
       // sudo is non-functional inside the container (no-new-privileges flag).
+      // Match sudo anywhere in the command (e.g. "cd /workspace && sudo /workspace/script.py").
       let execUser = RESTRICTED_USER;
       let effectiveCommand = command.trimStart();
 
-      if (effectiveCommand.startsWith("sudo ")) {
-        const sudoMatch = effectiveCommand.match(/^sudo\s+(?:-\S+\s+)*(\/workspace\/\S+)/);
-        if (!sudoMatch) {
-          return "sudo denied: only keyed scripts at an absolute /workspace/ path are supported.";
-        }
+      const sudoMatch = effectiveCommand.match(/sudo\s+(?:-\S+\s+)*(\/workspace\/\S+)/);
+      if (sudoMatch) {
         const relPath = sudoMatch[1].slice("/workspace/".length);
         const snapshot = await readPermissionSnapshot(workspaceId);
         if (!isKeyedFromSnapshot(snapshot, relPath)) {
           return `sudo denied: "${relPath}" is not marked [keyed]. Toggle the key icon in the file tree to enable privileged execution.`;
         }
         execUser = "privd";
-        effectiveCommand = effectiveCommand.replace(/^sudo\s+/, "");
+        // Strip all sudo tokens so the command runs cleanly as privd.
+        effectiveCommand = effectiveCommand.replace(/sudo\s+/g, "");
+      } else if (/\bsudo\b/.test(effectiveCommand)) {
+        return "sudo denied: only keyed scripts at an absolute /workspace/ path are supported.";
       }
 
       const [, isLocked] = await Promise.all([

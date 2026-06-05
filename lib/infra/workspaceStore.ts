@@ -92,7 +92,20 @@ function saveRegistry(): void {
   fs.renameSync(tmp, REGISTRY_FILE);
 }
 
-if (freshMap) loadRegistry();
+async function reconcileLoadedWorkspaces(): Promise<void> {
+  for (const [id] of workspaces) {
+    try {
+      await reconcileOsPermissions(id);
+    } catch (err) {
+      log.warn({ err, workspaceId: id }, "failed to reconcile permissions during startup");
+    }
+  }
+}
+
+if (freshMap) {
+  loadRegistry();
+  void reconcileLoadedWorkspaces();
+}
 
 export async function createWorkspace(name: string): Promise<Workspace> {
   assertSafeWorkspaceName(name);

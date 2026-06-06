@@ -53,13 +53,9 @@ interface ModeSpec {
 function resolveMode(isHidden: boolean, isLocked: boolean, isKeyed: boolean): ModeSpec {
   if (isKeyed && isHidden) return { uid: 998, gid: 1001, fileMode: "750", dirMode: "750" };
   if (isKeyed)             return { uid: 998, gid: 1001, fileMode: "755", dirMode: "755" };
-  // Hidden paths are now treated as fully agent-inaccessible (no read or write); both
-  // Hidden and Hidden+Locked collapse to the same privd-owned 640/750 mode. This avoids
-  // relying on subtle write-only semantics for the agent and keeps OS behavior simple:
-  // only appuser/privd (via UI or keyed scripts) can access the content.
   if (isHidden && isLocked) return { uid: 998, gid: 1001, fileMode: "640", dirMode: "750" };
-  if (isHidden)             return { uid: 998, gid: 1001, fileMode: "640", dirMode: "750" };
   if (isLocked)             return { uid: 998, gid: 1001, fileMode: "644", dirMode: "755" };
+  if (isHidden)             return { uid: 1002, gid: 1001, fileMode: "662", dirMode: "3773" };
   return                           { uid: 999,  gid: 1001, fileMode: "664", dirMode: "3775" };
 }
 

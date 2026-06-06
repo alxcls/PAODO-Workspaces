@@ -14,6 +14,10 @@ const RESTRICTED_USER = "agent";
 const SILENCE_TIMEOUT_MS = parseInt(process.env.EXEC_SILENCE_TIMEOUT_MS ?? "", 10) || 60_000;
 // Absolute ceiling regardless of output activity.
 const MAX_TIMEOUT_MS = parseInt(process.env.EXEC_MAX_TIMEOUT_MS ?? "", 10) || 30 * 60_000;
+const PRIVILEGED_HINT = "Need elevated changes while locked? Ask the operator to mark a script [keyed] in the file tree and rerun it as sudo /workspace/<script>.";
+const WORKSPACE_PATH_RE = /\/workspace(?:\/|\b)/;
+const RUNTIME_PATH_RE = /\/(usr\/local\/bin|usr\/bin|usr\/sbin|opt|home\/[^\s/:]+\/(\.nvm|\.pyenv))/;
+const DEFAULT_PATH = "/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin";
 
 export function buildExecCommandTool(workspaceId: string, workspaceDir: string) {
   const log = createLogger("execCommand");
@@ -44,9 +48,15 @@ export function buildExecCommandTool(workspaceId: string, workspaceDir: string) 
         getGlobalLock(workspaceId),
       ]);
       const userArgs = ["-u", execUser];
+      const envArgs = execUser === RESTRICTED_USER
+        ? ["-e", "HOME=/home/agent"]
+        : [];
+      const commandToRun = execUser === RESTRICTED_USER
+        ? `export PATH=${DEFAULT_PATH}:$PATH; ${effectiveCommand}`
+        : effectiveCommand;
 
       return new Promise<string>((resolve) => {
-        const proc = spawn("docker", ["exec", "-i", ...userArgs, "-w", "/workspace", `ws_${workspaceId}`, "/bin/bash", "-c", effectiveCommand]);
+        const proc = spawn("docker", ["exec", "-i", ...userArgs, ...envArgs, "-w", "/workspace", `ws_${workspaceId}`, "/bin/bash", "-c", commandToRun]);
 
         // Close stdin immediately so commands that read from stdin when no path
         // is given (e.g. `rg pattern` without a path) don't hang waiting for input.
@@ -106,9 +116,16 @@ export function buildExecCommandTool(workspaceId: string, workspaceDir: string) 
           if (stderrOut.includes("no matching entries in passwd file")) {
             stderrOut += "\n[setup] The workspace container was built before UID enforcement was added. The user needs to run: docker rmi paodo-workspace && docker rm ws_" + workspaceId + " — the server will rebuild automatically on the next command.";
           } else if (stderrOut.includes("Permission denied")) {
-            stderrOut += isLocked
-              ? "\n[permission] The workspace is globally locked — commands run as agent (uid 999) which cannot write files or install packages. Ask the user to unlock the workspace first."
-              : "\n[permission] A file or directory is locked [locked] or hidden [eye-off]. Check permissions with list_directory. To write locked files: unlock in the file tree, or mark a script [keyed] and run it with sudo.";
+            const touchesWorkspacePath = WORKSPACE_PATH_RE.test(stderrOut);
+            const touchesRuntimePath = RUNTIME_PATH_RE.test(stderrOut);
+            if (!touchesWorkspacePath && touchesRuntimePath) {
+              stderrOut += "\n[runtime] A system/runtime executable exists but is not accessible to the agent identity. This is not a workspace [locked]/[eye-off] permission. Rebuild/fix the workspace image so runtimes are exposed from neutral executable paths (for example /usr/local/bin -> /opt/*), not private home directories.";
+            } else {
+              const permissionMsg = isLocked
+                ? "\n[permission] The workspace is globally locked — commands run as agent (uid 999) which cannot write files or install packages. Ask the user to unlock the workspace first."
+                : "\n[permission] A file or directory is locked [locked] or hidden [eye-off]. Check permissions with list_directory. Unlock it in the file tree before writing.";
+              stderrOut += `${permissionMsg}\n[privileged] ${PRIVILEGED_HINT}`;
+            }
           }
           const parts = [stdout.trim(), stderrOut].filter(Boolean);
           resolve(parts.join("\n") || "Command executed successfully with no output.");

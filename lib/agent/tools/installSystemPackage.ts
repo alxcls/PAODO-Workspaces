@@ -19,7 +19,8 @@ export function buildInstallSystemPackageTool(workspaceId: string, _workspaceDir
       name: "install_system_package",
       description:
         "Install one or more system packages into the workspace container via apt. " +
-        "Use when a command fails with a missing .so, a pkg-config error, or a missing header. " +
+        "Use for system libraries/headers or interpreter/runtime packages provided by Ubuntu repositories. " +
+        "If a command fails with missing .so, pkg-config, compiler, or headers, install apt packages first. " +
         "Packages must come from official Ubuntu repositories. " +
         "After the tool returns, retry the original command.",
       schema: z.object({

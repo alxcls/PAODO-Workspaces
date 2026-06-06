@@ -11,6 +11,7 @@ import { buildTodoWriteTool } from "./todoWrite";
 import { buildWebFetchTool } from "./webFetch";
 import { buildGlobTool } from "./glob";
 import { buildListDirectoryTool } from "./listDirectory";
+import { buildInstallSystemPackageTool } from "./installSystemPackage";
 import { buildAgentCallTool } from "./agentCall";
 import { buildListAgentsTool } from "./listAgents";
 
@@ -60,6 +61,7 @@ export function buildTools(workspaceId: string, workspaceDir: string) {
     buildWebFetchTool(),
     buildGlobTool(workspaceId, workspaceDir),
     buildListDirectoryTool(workspaceId, workspaceDir),
+    buildInstallSystemPackageTool(workspaceId, workspaceDir),
     ...(process.env.GRAPH_ENABLED === "true"
       ? [buildAgentCallTool(workspaceId), buildListAgentsTool(workspaceId)]
       : []),

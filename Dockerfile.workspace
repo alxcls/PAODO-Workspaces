@@ -38,18 +38,21 @@ RUN mkdir -p /home/agent && chown agent:agentgroup /home/agent && chmod 755 /hom
 # Belongs to access so it can read/write Normal files and read (but not write) Locked files.
 RUN useradd -u 1002 -g access -M -s /bin/bash appuser
 
-# nvm + Node LTS — installed as developer so only developer (and root) can write to the install dirs.
-# chmod -R 755 makes nvm dirs world-readable/executable so the agent user can execute node/npm.
-# Symlinking real binaries (not the nvm script wrapper) into /usr/local/bin so they work in any shell
-# without sourcing nvm.sh, and so the agent user can follow the symlink without needing /root access.
+# nvm + Node LTS — installed as developer (build-time owner for toolchain setup only).
+# Runtime binaries are copied to /opt/node and symlinked into /usr/local/bin so agent execution does
+# not depend on traversing /home/developer permissions.
 ENV NVM_DIR=/home/developer/.nvm
 RUN su - developer -c "curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash" && \
     su - developer -c ". $NVM_DIR/nvm.sh && nvm install --lts && nvm alias default node" && \
     chmod -R 755 /home/developer/.nvm && \
     NVM_BIN=$(su - developer -c ". $NVM_DIR/nvm.sh && dirname \$(which node)") && \
-    ln -sf "$NVM_BIN/node" /usr/local/bin/node && \
-    ln -sf "$NVM_BIN/npm"  /usr/local/bin/npm  && \
-    ln -sf "$NVM_BIN/npx"  /usr/local/bin/npx
+    NODE_ROOT=$(dirname "$NVM_BIN") && \
+    rm -rf /opt/node && \
+    cp -a "$NODE_ROOT" /opt/node && \
+    chmod -R a+rX /opt/node && \
+    ln -sf /opt/node/bin/node /usr/local/bin/node && \
+    ln -sf /opt/node/bin/npm  /usr/local/bin/npm  && \
+    ln -sf /opt/node/bin/npx  /usr/local/bin/npx
 
 # pyenv — same ownership pattern: developer owns, chmod 755 lets agent read/execute but not write.
 ENV PYENV_ROOT=/home/developer/.pyenv

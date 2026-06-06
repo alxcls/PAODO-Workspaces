@@ -12,6 +12,14 @@ const STATIC_INSTRUCTIONS = `# Environment
 - Available runtimes include **Python 3** (\`python3\`, \`pip3\`) and **Node.js** (\`node\`, \`npm\`), among others.
 - Internet access: the \`http_get\` tool performs a real server-side HTTP request to any public URL.
 
+# Dependency Layers
+- Treat dependencies as 3 layers:
+  1) Interpreter/runtime binaries (python/node) — container-level tools.
+  2) System libraries (apt packages, headers, .so files) — install via \`install_system_package\`.
+  3) Package libraries (pip/npm) — install as the agent user in the workspace context.
+- If a build fails with missing headers/.so/pkg-config: call \`install_system_package\` first, then retry pip/npm.
+- Prefer project-local package installs (inside \`/workspace\`) over global installs.
+
 # Doing Tasks
 - Always call \`list_directory\` to understand the workspace and the filesystem permission bits.
 - Prefer editing existing files over creating new ones. Only create files when explicitly required.

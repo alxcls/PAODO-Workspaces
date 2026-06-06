@@ -163,7 +163,36 @@ export async function reconcileOsPermissions(workspaceId: string, relPath?: stri
     // 2. Chown any remaining root-owned files to Normal state (uid 999).
     await runRoot(workspaceId, ["find", "/workspace", "-user", "root", "-exec", "chown", "999:1001", "{}", "+"]);
 
-    // 3. Re-apply configured paths (shallower first so deeper paths override parent-level settings).
+    // 3. Normalize any paths that still carry hidden/locked/keyed ownership but are no longer
+    // configured in the permission store. This closes drift where the JSON store was updated
+    // successfully (e.g. hidden/locked cleared) but a prior OS reconcile failed.
+    const configured = new Set<string>([...snapshot.locked, ...snapshot.hidden, ...snapshot.keyed]);
+    const isUnderConfigured = (p: string): boolean => {
+      if (!p || p === ".") return false;
+      for (const base of configured) {
+        if (!base) continue;
+        if (p === base || p.startsWith(base + "/")) return true;
+      }
+      return false;
+    };
+
+    const orphanScan = await runRoot(workspaceId, [
+      "find", "/workspace",
+      "-xdev",
+      "-uid", "998", "-o", "-uid", "1002",
+      "-printf", "%P\n",
+    ]);
+    if (orphanScan.code === 0 && orphanScan.stdout) {
+      const orphanRelPaths = orphanScan.stdout.split("\n").filter(Boolean);
+      for (const rel of orphanRelPaths) {
+        if (isUnderConfigured(rel)) continue;
+        // Reset to Normal state for any path that is no longer configured but still carries
+        // privd/appuser ownership from a previous permission setting.
+        await applyMode(workspaceId, rel, false, false, false);
+      }
+    }
+
+    // 4. Re-apply configured paths (shallower first so deeper paths override parent-level settings).
     const allConfigured = [...new Set([...snapshot.locked, ...snapshot.hidden, ...snapshot.keyed])]
       .sort((a, b) => a.split("/").length - b.split("/").length);
     for (const p of allConfigured) {
@@ -181,7 +210,7 @@ export async function reconcileOsPermissions(workspaceId: string, relPath?: stri
       await applyDirectoryMode(workspaceId, dir, snapshot);
     }
 
-    // 4. Ensure keyed scripts are executable.
+    // 5. Ensure keyed scripts are executable.
     await reconcileKeyedExecutable(workspaceId);
   } catch (err) {
     log.warn({ err, workspaceId, relPath }, "reconcileOsPermissions failed — software checks still enforce");

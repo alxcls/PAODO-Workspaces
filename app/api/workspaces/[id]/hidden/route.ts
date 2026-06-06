@@ -32,8 +32,9 @@ export async function PATCH(
 
   try {
     await setHidden(ws.id, relPath, hidden, abs);
-    // Best-effort OS reconcile — await so directory guards land before the response.
-    await reconcileOsPermissions(ws.id, relPath).catch(() => {});
+    // OS reconcile must succeed for the store + kernel state to stay in sync.
+    // If this fails, surface an error so the user knows the toggle did not fully apply.
+    await reconcileOsPermissions(ws.id, relPath);
   } catch (err) {
     log.error({ err, workspaceId: id, path: relPath }, "failed to set hidden");
     return NextResponse.json({ error: "failed to set hidden" }, { status: 500 });

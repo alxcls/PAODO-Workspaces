@@ -28,6 +28,9 @@ RUN groupadd -g 999 agentgroup && \
     useradd -r -u 998 -g access -M -s /bin/bash privd && \
     useradd -u 1001 -m -s /bin/bash developer
 
+# Ensure the restricted agent user has a home directory so pip user installs work.
+RUN mkdir -p /home/agent && chown agent:agent /home/agent && chmod 755 /home/agent
+
 # appuser (UID 1002) — proxy identity for UI editor writes inside the workspace container.
 # UID 1000 is reserved by ubuntu:24.04's built-in 'ubuntu' user; 1002 is the next free UID.
 # The specific UID doesn't matter — only group membership (access, GID 1001) is load-bearing.

@@ -4,6 +4,17 @@ import path from "path";
 import { dockerExec } from "@/lib/infra/containerManager";
 import { readPermissionSnapshot, isKeyedFromSnapshot } from "@/lib/infra/permissionStore";
 
+type RuntimeKey = "python" | "python3" | "node" | "bash" | "sh" | "go_run";
+
+const RUNTIME_PREFIX: Record<RuntimeKey, string[]> = {
+  python: ["python"],
+  python3: ["python3"],
+  node: ["node"],
+  bash: ["bash"],
+  sh: ["sh"],
+  go_run: ["go", "run"],
+};
+
 function normalizeRelPath(inputPath: string): string | null {
   if (inputPath.startsWith("/workspace/")) {
     return inputPath.slice("/workspace/".length);
@@ -30,9 +41,26 @@ export function buildRunKeyedScriptTool(workspaceId: string, workspaceDir: strin
       const extraArgs = args ?? [];
 
       let cmdArgs: string[];
-      if (runtime && runtime.trim().length > 0) {
-        const runtimeTokens = runtime.trim().split(/\s+/);
-        cmdArgs = [...runtimeTokens, scriptAbs, ...extraArgs];
+      if (runtime) {
+        const prefix = RUNTIME_PREFIX[runtime];
+        if (!prefix) {
+          return "Error: unsupported runtime. Use a supported runtime or a wrapper script.";
+        }
+
+        // Special-case go_run so privd has a writable cache/home.
+        if (runtime === "go_run") {
+          const cacheBase = "/workspace/.cache/privd-go";
+          cmdArgs = [
+            "env",
+            `HOME=${cacheBase}`,
+            `GOCACHE=${cacheBase}-build`,
+            ...prefix,
+            scriptAbs,
+            ...extraArgs,
+          ];
+        } else {
+          cmdArgs = [...prefix, scriptAbs, ...extraArgs];
+        }
       } else {
         cmdArgs = [scriptAbs, ...extraArgs];
       }
@@ -55,10 +83,11 @@ export function buildRunKeyedScriptTool(workspaceId: string, workspaceDir: strin
           .string()
           .describe("Workspace-relative path or /workspace/<path> to a keyed script, e.g. scripts/migrate.py"),
         runtime: z
-          .string()
+          .enum(["python", "python3", "node", "bash", "sh", "go_run"] as [RuntimeKey, ...RuntimeKey[]])
           .optional()
           .describe(
-            "Optional runtime prefix, e.g. 'python', 'python3', 'node', 'bash', 'go run'. If omitted, the script is executed directly.",
+            "Optional runtime mode for the script: 'python', 'python3', 'node', 'bash', 'sh', or 'go_run' (for 'go run'). " +
+              "If omitted, the script is executed directly.",
           ),
         args: z
           .array(z.string())

@@ -43,12 +43,14 @@ Locked paths are `chown`ed to uid 998 with mode `644`/`755`. uid 999 is "other" 
 
 ### Key — privileged script execution
 
-The Linux kernel disables setuid for interpreted scripts, so there is no kernel path to auto-elevate. Instead, `permissionStore` maintains a `keyed: string[]` list. When `execCommand` detects `sudo` in the agent command, it:
+The Linux kernel disables setuid for interpreted scripts, so there is no kernel path to auto-elevate. Instead, `permissionStore` maintains a `keyed: string[]` list.
 
-1. Matches the script path against `/workspace/<relPath>`.
-2. Checks `isKeyedFromSnapshot()` — rejects if the path is not marked keyed.
-3. Strips all `sudo` tokens from the command string.
-4. Runs the command via `docker exec -u privd` instead of `docker exec -u agent`.
+Privileged execution happens via a dedicated `run_keyed_script` tool:
+
+1. The agent passes a workspace path (and optional runtime/args) to `run_keyed_script`.
+2. The server resolves the path under `/workspace` and checks it via `isKeyedFromSnapshot()` — rejects if the path is not marked keyed.
+3. If keyed, the server builds the command line (optionally prefixed with the requested runtime) and runs it as `privd` (uid 998) via `docker exec`.
+4. `execCommand` always runs as `agent` (uid 999) and rejects any use of `sudo`, directing the agent to `run_keyed_script` instead.
 
 The agent never self-elevates; the server is the sole authority for the identity switch. Key is granted only by the operator via the UI.
 
@@ -57,8 +59,8 @@ The agent never self-elevates; the server is the sole authority for the identity
 | Tool | Runs as |
 |---|---|
 | `fileRead`, `fileWrite`, `fileEdit`, `glob` | uid 999 (`asAgent: true`) |
-| `execCommand` (normal) | uid 999 (`-u agent`) |
-| `execCommand` (keyed path with sudo) | uid 998 (`-u privd`) |
+| `execCommand` | uid 999 (`-u agent`) |
+| `run_keyed_script` | uid 998 (`asPrivd: true`) |
 | `listDirectory` | root (no `-u` flag — must stat hidden files) |
 | `install_system_package` | root via `runRoot()` in `aptBroker` |
 

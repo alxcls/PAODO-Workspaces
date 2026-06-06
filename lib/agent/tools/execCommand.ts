@@ -6,7 +6,7 @@ import { z } from "zod";
 import { spawn } from "child_process";
 import { broadcastToWorkspace } from "../../infra/wsHub";
 import { ensureContainer } from "../../infra/containerManager";
-import { getGlobalLock, readPermissionSnapshot, isKeyedFromSnapshot } from "../../infra/permissionStore";
+import { getGlobalLock } from "../../infra/permissionStore";
 import { createLogger } from "../../infra/logger";
 
 const RESTRICTED_USER = "agent";
@@ -14,7 +14,7 @@ const RESTRICTED_USER = "agent";
 const SILENCE_TIMEOUT_MS = parseInt(process.env.EXEC_SILENCE_TIMEOUT_MS ?? "", 10) || 60_000;
 // Absolute ceiling regardless of output activity.
 const MAX_TIMEOUT_MS = parseInt(process.env.EXEC_MAX_TIMEOUT_MS ?? "", 10) || 30 * 60_000;
-const PRIVILEGED_HINT = "Need elevated changes while locked? Ask the operator to mark a script [keyed] in the file tree and rerun it as sudo /workspace/<script>.";
+const PRIVILEGED_HINT = "Need elevated changes while locked? Ask the operator to mark a script [keyed] in the file tree and rerun it using the run_keyed_script tool.";
 const WORKSPACE_PATH_RE = /\/workspace(?:\/|\b)/;
 const RUNTIME_PATH_RE = /\/(usr\/local\/bin|usr\/bin|usr\/sbin|opt|home\/[^\s/:]+\/(\.nvm|\.pyenv))/;
 const DEFAULT_PATH = "/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin";
@@ -23,24 +23,11 @@ export function buildExecCommandTool(workspaceId: string, workspaceDir: string) 
   const log = createLogger("execCommand");
   return tool(
     async ({ command }) => {
-      // Intercept sudo — keyed scripts are dispatched as privd (uid 998) via server-side docker exec.
-      // sudo is non-functional inside the container (no-new-privileges flag).
-      // Match sudo anywhere in the command (e.g. "cd /workspace && sudo /workspace/script.py").
       let execUser = RESTRICTED_USER;
       let effectiveCommand = command.trimStart();
 
-      const sudoMatch = effectiveCommand.match(/sudo\s+(?:-\S+\s+)*(\/workspace\/\S+)/);
-      if (sudoMatch) {
-        const relPath = sudoMatch[1].slice("/workspace/".length);
-        const snapshot = await readPermissionSnapshot(workspaceId);
-        if (!isKeyedFromSnapshot(snapshot, relPath)) {
-          return `sudo denied: "${relPath}" is not marked [keyed]. Toggle the key icon in the file tree to enable privileged execution.`;
-        }
-        execUser = "privd";
-        // Strip all sudo tokens so the command runs cleanly as privd.
-        effectiveCommand = effectiveCommand.replace(/sudo\s+/g, "");
-      } else if (/\bsudo\b/.test(effectiveCommand)) {
-        return "sudo denied: only keyed scripts at an absolute /workspace/ path are supported.";
+      if (/\bsudo\b/.test(effectiveCommand)) {
+        return "sudo is disabled for execute_command. To run a [keyed] script with elevated privileges, use the run_keyed_script tool instead.";
       }
 
       const [, isLocked] = await Promise.all([

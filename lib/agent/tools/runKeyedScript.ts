@@ -4,7 +4,19 @@ import path from "path";
 import { dockerExec } from "@/lib/infra/containerManager";
 import { readPermissionSnapshot, isKeyedFromSnapshot } from "@/lib/infra/permissionStore";
 
-type RuntimeKey = "python" | "python3" | "node" | "bash" | "sh" | "go_run";
+type RuntimeKey =
+  | "python"
+  | "python3"
+  | "node"
+  | "bash"
+  | "sh"
+  | "go_run"
+  | "ruby"
+  | "php"
+  | "perl"
+  | "deno_run"
+  | "java_jar"
+  | "dotnet";
 
 const RUNTIME_PREFIX: Record<RuntimeKey, string[]> = {
   python: ["python"],
@@ -13,6 +25,12 @@ const RUNTIME_PREFIX: Record<RuntimeKey, string[]> = {
   bash: ["bash"],
   sh: ["sh"],
   go_run: ["go", "run"],
+  ruby: ["ruby"],
+  php: ["php"],
+  perl: ["perl"],
+  deno_run: ["deno", "run"],
+  java_jar: ["java", "-jar"],
+  dotnet: ["dotnet"],
 };
 
 function normalizeRelPath(inputPath: string): string | null {
@@ -47,13 +65,40 @@ export function buildRunKeyedScriptTool(workspaceId: string, workspaceDir: strin
           return "Error: unsupported runtime. Use a supported runtime or a wrapper script.";
         }
 
-        // Special-case go_run so privd has a writable cache/home.
+        // Special-case some runtimes so privd has a writable cache/home.
         if (runtime === "go_run") {
           const cacheBase = "/workspace/.cache/privd-go";
           cmdArgs = [
             "env",
             `HOME=${cacheBase}`,
             `GOCACHE=${cacheBase}-build`,
+            ...prefix,
+            scriptAbs,
+            ...extraArgs,
+          ];
+        } else if (runtime === "java_jar") {
+          const cacheBase = "/workspace/.cache/privd-java";
+          cmdArgs = [
+            "env",
+            `HOME=${cacheBase}`,
+            ...prefix,
+            scriptAbs,
+            ...extraArgs,
+          ];
+        } else if (runtime === "dotnet") {
+          const cacheBase = "/workspace/.cache/privd-dotnet";
+          cmdArgs = [
+            "env",
+            `HOME=${cacheBase}`,
+            ...prefix,
+            scriptAbs,
+            ...extraArgs,
+          ];
+        } else if (runtime === "deno_run") {
+          const cacheBase = "/workspace/.cache/privd-deno";
+          cmdArgs = [
+            "env",
+            `HOME=${cacheBase}`,
             ...prefix,
             scriptAbs,
             ...extraArgs,
@@ -83,10 +128,26 @@ export function buildRunKeyedScriptTool(workspaceId: string, workspaceDir: strin
           .string()
           .describe("Workspace-relative path or /workspace/<path> to a keyed script, e.g. scripts/migrate.py"),
         runtime: z
-          .enum(["python", "python3", "node", "bash", "sh", "go_run"] as [RuntimeKey, ...RuntimeKey[]])
+          .enum(
+            [
+              "python",
+              "python3",
+              "node",
+              "bash",
+              "sh",
+              "go_run",
+              "ruby",
+              "php",
+              "perl",
+              "deno_run",
+              "java_jar",
+              "dotnet",
+            ] as [RuntimeKey, ...RuntimeKey[]],
+          )
           .optional()
           .describe(
-            "Optional runtime mode for the script: 'python', 'python3', 'node', 'bash', 'sh', or 'go_run' (for 'go run'). " +
+            "Optional runtime mode for the script. Supported values: " +
+              "'python', 'python3', 'node', 'bash', 'sh', 'go_run' (for 'go run'), 'ruby', 'php', 'perl', 'deno_run' (for 'deno run'), 'java_jar' (for 'java -jar'), and 'dotnet'. " +
               "If omitted, the script is executed directly.",
           ),
         args: z

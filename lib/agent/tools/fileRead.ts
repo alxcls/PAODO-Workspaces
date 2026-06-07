@@ -3,7 +3,6 @@
 import { tool } from "@langchain/core/tools";
 import { z } from "zod";
 import path from "path";
-import { isAgentLocked } from "@/lib/infra/permissionStore";
 import { dockerExec } from "@/lib/infra/containerManager";
 
 // Normalizes a caller-supplied relative path and guards against directory traversal.
@@ -20,9 +19,7 @@ export function buildFileReadTool(workspaceId: string, workspaceDir: string) {
       const relpath = normalizeRelpath(file_path);
       if (relpath === null) return "Error: path is outside the workspace";
       try {
-        const perm = (await isAgentLocked(workspaceId, workspaceDir, path.join(workspaceDir, relpath)))
-          ? "[R]" : "[RW]";
-        const header = `${perm} ${file_path}\n`;
+        const header = `${file_path}\n`;
 
         if (offset === undefined && limit === undefined) {
           const r = await dockerExec(workspaceId, workspaceDir, ["cat", `/workspace/${relpath}`]);

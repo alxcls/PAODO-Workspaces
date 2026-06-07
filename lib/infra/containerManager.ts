@@ -11,7 +11,6 @@ import { createHash } from "crypto";
 import { readFile, rm } from "fs/promises";
 import path from "path";
 import { createLogger } from "./logger";
-import { getGlobalLock } from "./permissionStore";
 
 const log = createLogger("container");
 
@@ -84,43 +83,40 @@ function resetIdleTimer(workspaceId: string): void {
   idleTimers.set(workspaceId, t);
 }
 
-const LOCK_LABEL = "paodo.workspace-locked";
-
 // Builds the volume args for docker run.
 // When WORKSPACES_VOLUME_NAME is set (production / Docker Compose), uses Docker 25+ volume
 // subpath mounting — necessary because the Docker daemon sees host paths, not app-container
 // paths, so a plain -v /app/data/<name>:/workspace would point at a non-existent host path.
 // When unset (local dev, app runs directly on host), falls back to a plain bind mount using
 // the resolved host path so local workspaces work without Docker Compose.
-// readOnly mounts /workspace with MS_RDONLY — blocks all writes regardless of user or UID
-// mapping (important on macOS where VirtioFS bind mounts ignore container user permissions).
-function buildVolumeArg(workspaceDir: string, readOnly: boolean): string[] {
+function buildVolumeArg(workspaceDir: string): string[] {
   if (!WORKSPACES_VOLUME_NAME) {
-    return ["-v", `${workspaceDir}:/workspace${readOnly ? ":ro" : ""}`];
+    return ["-v", `${workspaceDir}:/workspace`];
   }
   const workspaceName = path.basename(workspaceDir);
   return [
     "--mount",
-    `type=volume,source=${WORKSPACES_VOLUME_NAME},target=/workspace,volume-subpath=${workspaceName}${readOnly ? ",readonly" : ""}`,
+    `type=volume,source=${WORKSPACES_VOLUME_NAME},target=/workspace,volume-subpath=${workspaceName}`,
   ];
 }
 
-async function getContainerLockLabel(workspaceId: string): Promise<boolean> {
-  const r = await dockerCmd("inspect", "--format", `{{index .Config.Labels "${LOCK_LABEL}"}}`, containerName(workspaceId));
-  return r.code === 0 && r.stdout === "true";
+// The container is labelled with the Dockerfile.workspace hash it was created from. When the image
+// is rebuilt (new uid model, new tooling), this lets us detect stale containers and recreate them
+// so the new image actually takes effect — otherwise a running container would be reused forever.
+async function getContainerImageHash(workspaceId: string): Promise<string | null> {
+  const r = await dockerCmd("inspect", "--format", `{{index .Config.Labels "${HASH_LABEL}"}}`, containerName(workspaceId));
+  return r.code === 0 ? r.stdout : null;
 }
 
 async function _ensureContainer(workspaceId: string, workspaceDir: string): Promise<void> {
-  const [status, isLocked] = await Promise.all([
-    getContainerStatus(workspaceId),
-    getGlobalLock(workspaceId),
-  ]);
+  const status = await getContainerStatus(workspaceId);
+  const hash = await dockerfileHash();
 
   if (status === "running" || status === "stopped") {
-    const containerLocked = await getContainerLockLabel(workspaceId);
-    if (containerLocked === isLocked) {
+    const containerHash = await getContainerImageHash(workspaceId);
+    if (!hash || containerHash === hash) {
       if (status === "running") return;
-      // stopped, same lock state — just restart it
+      // stopped, image unchanged — just restart it
       log.debug({ workspaceId }, "starting stopped container");
       await ensureNetwork(workspaceId);
       const connect = await dockerCmd("network", "connect", networkName(workspaceId), containerName(workspaceId));
@@ -129,8 +125,8 @@ async function _ensureContainer(workspaceId: string, workspaceDir: string): Prom
       if (r.code !== 0) throw new Error(`docker start failed: ${r.stderr}`);
       return;
     }
-    // Lock state changed — remove so we recreate with the correct mount mode below.
-    log.debug({ workspaceId, isLocked }, "lock state changed — recreating container with updated mount");
+    // Image changed — remove so we recreate from the current image below.
+    log.debug({ workspaceId }, "workspace image changed — recreating container");
     await removeContainer(workspaceId);
   }
 
@@ -143,13 +139,31 @@ async function _ensureContainer(workspaceId: string, workspaceDir: string): Prom
     "--network", networkName(workspaceId),
     `--memory=${CONTAINER_MEMORY}`,
     `--cpus=${CONTAINER_CPUS}`,
-    ...buildVolumeArg(workspaceDir, isLocked),
-    "--label", `${LOCK_LABEL}=${isLocked}`,
+    ...buildVolumeArg(workspaceDir),
+    ...(hash ? ["--label", `${HASH_LABEL}=${hash}`] : []),
+    // Drop all Linux capabilities, then add back only the minimal set dpkg/apt and the chown sweep
+    // need when run as root via `docker exec -u 0` (apt_install tool, ownership sweep). The agent's
+    // shell is non-root with no setuid path, so it cannot use these caps — they are reachable only
+    // by the app-initiated root execs. Combined with no-new-privileges this blocks setuid escalation.
+    "--cap-drop", "ALL",
+    "--cap-add", "CHOWN",
+    "--cap-add", "DAC_OVERRIDE",
+    "--cap-add", "FOWNER",
+    "--cap-add", "FSETID",
+    "--cap-add", "SETGID",
+    "--cap-add", "SETUID",
     "--security-opt", "no-new-privileges:true",
     CONTAINER_IMAGE,
     "sleep", "infinity",
   );
   if (r.code !== 0) throw new Error(`docker run failed: ${r.stderr}`);
+
+  // One-time ownership sweep: legacy workspaces created when the agent ran as root hold root-owned
+  // files the uid-1000 agent/app can no longer manage. Chown the tree to 1000:1000 so both can.
+  // Runs as root (-u 0) for this single bootstrap command only; uses dockerCmd to avoid re-entering
+  // ensureContainer. Idempotent and cheap on already-1000-owned trees.
+  const chown = await dockerCmd("exec", "-u", "0", containerName(workspaceId), "chown", "-R", "1000:1000", "/workspace");
+  if (chown.code !== 0) log.debug({ workspaceId, stderr: chown.stderr }, "workspace chown sweep failed (non-fatal)");
 }
 
 export function ensureContainer(workspaceId: string, workspaceDir: string): Promise<void> {
@@ -175,16 +189,15 @@ export async function dockerExec(
   workspaceId: string,
   workspaceDir: string,
   cmdArgs: string[],
-  opts: { stdin?: string; asAgent?: boolean } = {},
+  opts: { stdin?: string } = {},
 ): Promise<DockerResult> {
   await ensureContainer(workspaceId, workspaceDir);
-  const userArgs = opts.asAgent ? ["-u", "agent"] : [];
   return new Promise((resolve) => {
     let stdout = "";
     let stderr = "";
     let proc: ReturnType<typeof spawn>;
     try {
-      proc = spawn("docker", ["exec", "-i", ...userArgs, "-w", "/workspace", containerName(workspaceId), ...cmdArgs]);
+      proc = spawn("docker", ["exec", "-i", "-w", "/workspace", containerName(workspaceId), ...cmdArgs]);
     } catch (err) {
       resolve({ stdout: "", stderr: (err as Error).message, code: 1 });
       return;
@@ -200,6 +213,36 @@ export async function dockerExec(
     } else {
       proc.stdin!.end();
     }
+  });
+}
+
+// Runs a command inside the workspace container AS ROOT (-u 0). This is the single sanctioned root
+// exec path for agent-facing functionality — used only by the `apt_install` tool to install system
+// packages. cmdArgs are passed as argv (no shell), so callers must still validate untrusted input.
+// The regular agent shell (dockerExec / execute_command) never runs as root.
+export async function dockerExecAsRoot(
+  workspaceId: string,
+  workspaceDir: string,
+  cmdArgs: string[],
+): Promise<DockerResult> {
+  await ensureContainer(workspaceId, workspaceDir);
+  return new Promise((resolve) => {
+    let stdout = "";
+    let stderr = "";
+    let proc: ReturnType<typeof spawn>;
+    try {
+      proc = spawn("docker", ["exec", "-u", "0", "-w", "/workspace", containerName(workspaceId), ...cmdArgs]);
+    } catch (err) {
+      resolve({ stdout: "", stderr: (err as Error).message, code: 1 });
+      return;
+    }
+    proc.stdout!.on("data", (d: Buffer) => (stdout += d.toString()));
+    proc.stderr!.on("data", (d: Buffer) => (stderr += d.toString()));
+    proc.stdout!.on("error", () => {});
+    proc.stderr!.on("error", () => {});
+    proc.on("close", (code) => resolve({ stdout: stdout.trim(), stderr: stderr.trim(), code: code ?? 1 }));
+    proc.on("error", (err) => resolve({ stdout: "", stderr: err.message, code: 1 }));
+    proc.stdin!.end();
   });
 }
 
@@ -226,14 +269,15 @@ export async function removeContainer(workspaceId: string): Promise<void> {
   if (net.code !== 0) log.debug({ workspaceId, stderr: net.stderr }, "docker network rm on remove (may not exist)");
 }
 
-// Deletes a workspace directory from the volume as root so that files created by the agent
-// (which runs as root inside containers) can be removed even though the app runs as node (UID 1000).
-// In production (WORKSPACES_VOLUME_NAME set) mounts the full volume and removes the subdir.
+// Deletes a workspace directory from the volume. In production (WORKSPACES_VOLUME_NAME set) it
+// mounts the full volume and removes the subdir as root (-u 0) — the agent now runs as uid 1000 so
+// its files are normally removable directly, but a throwaway root rm also clears any legacy
+// root-owned files left by workspaces created before the non-root migration.
 // In local dev falls back to a plain fs.rm since the app runs as the host user.
 export async function deleteWorkspaceDir(workspaceDir: string): Promise<void> {
   if (WORKSPACES_VOLUME_NAME) {
     const workspaceName = path.basename(workspaceDir);
-    const r = await dockerCmd("run", "--rm",
+    const r = await dockerCmd("run", "--rm", "-u", "0",
       "-v", `${WORKSPACES_VOLUME_NAME}:/data`,
       CONTAINER_IMAGE, "rm", "-rf", `/data/${workspaceName}`,
     );

@@ -4,6 +4,7 @@
 import { ChatOpenAI } from "@langchain/openai";
 import { ChatAnthropic } from "@langchain/anthropic";
 import { buildExecCommandTool } from "./execCommand";
+import { buildAptInstallTool } from "./aptInstall";
 import { buildFileReadTool } from "./fileRead";
 import { buildFileEditTool } from "./fileEdit";
 import { buildFileWriteTool } from "./fileWrite";
@@ -53,6 +54,7 @@ export function buildTools(workspaceId: string, workspaceDir: string) {
 
   const tools = [
     buildExecCommandTool(workspaceId, workspaceDir),
+    buildAptInstallTool(workspaceId, workspaceDir),
     buildFileReadTool(workspaceId, workspaceDir),
     buildFileEditTool(workspaceId, workspaceDir),
     buildFileWriteTool(workspaceId, workspaceDir),

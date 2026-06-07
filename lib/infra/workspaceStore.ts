@@ -14,8 +14,8 @@ import { createLogger } from "./logger";
 const log = createLogger("store");
 import type { BaseMessage } from "@langchain/core/messages";
 import { buildSystemPrompt } from "../agent/systemPrompt";
+
 import { removeContainer, deleteWorkspaceDir } from "./containerManager";
-import { getGlobalLock, setPermission } from "./permissionStore";
 
 export interface Workspace {
   id: string;
@@ -110,7 +110,6 @@ The agent will follow these instructions on every request.
 `,
     "utf8"
   );
-  await setPermission(id, "AGENTS.md", "R");
 
   const workspace: Workspace = {
     id,
@@ -180,7 +179,6 @@ export async function deleteWorkspace(id: string): Promise<boolean> {
     await Promise.all([
       removeContainer(id),
       deleteWorkspaceDir(ws.dir),
-      fsAsync.rm(path.join(WORKSPACES_ROOT, ".agent-permissions", `${id}.json`), { force: true }),
     ]);
   } catch (err) {
     log.error({ err, id, dir: ws.dir }, "failed to remove workspace files or container");
@@ -200,6 +198,5 @@ export function setWorkspaceMaxIterations(id: string, n: number): boolean {
 export async function resetWorkspaceMessages(id: string): Promise<void> {
   const ws = workspaces.get(id);
   if (!ws) return;
-  const isLocked = await getGlobalLock(id);
-  ws.messages = [buildSystemPrompt(ws.dir, isLocked)];
+  ws.messages = [buildSystemPrompt(ws.dir)];
 }

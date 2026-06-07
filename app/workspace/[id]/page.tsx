@@ -14,9 +14,7 @@ import { useWorkspaceSocket } from "@/lib/hooks/useWorkspaceSocket";
 export default function WorkspacePage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const [workspaceName, setWorkspaceName] = useState<string>("");
-  const [workspaceDir, setWorkspaceDir] = useState<string>("");
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
-  const [selectedPermission, setSelectedPermission] = useState<"R" | "RW">("RW");
   const [viewerOpen, setViewerOpen] = useState(false);
 
   const [leftWidth, setLeftWidth] = useState(220);
@@ -37,7 +35,6 @@ export default function WorkspacePage({ params }: { params: Promise<{ id: string
       .then((data) => {
         const ws = data as { name: string; dir: string };
         setWorkspaceName(ws.name);
-        setWorkspaceDir(ws.dir);
       })
       .catch(() => {});
   }, [id]);
@@ -104,10 +101,9 @@ export default function WorkspacePage({ params }: { params: Promise<{ id: string
       {isDragging && <div style={{ position: "fixed", inset: 0, zIndex: 9999 }} />}
 
       <FileTreePanel
-        workspaceId={id} workspaceName={workspaceName} wsDir={workspaceDir}
+        workspaceId={id} workspaceName={workspaceName}
         selectedPath={selectedFile}
-        onFileSelect={(path, permission) => { setSelectedFile(path); setSelectedPermission(permission); setViewerOpen(true); }}
-        onPermissionChange={(path, perm) => { if (path === null || path === selectedFile) setSelectedPermission(perm); }}
+        onFileSelect={(path) => { setSelectedFile(path); setViewerOpen(true); }}
         onDeletedPaths={(paths) => {
           if (selectedFile && paths.includes(selectedFile)) { setSelectedFile(null); setViewerOpen(false); }
         }}
@@ -121,7 +117,7 @@ export default function WorkspacePage({ params }: { params: Promise<{ id: string
           <section className="flex-1 flex flex-col min-w-0 min-h-0 bg-bg">
             <FileViewer
               ref={viewerRef}
-              workspaceId={id} filePath={selectedFile} permission={selectedPermission}
+              workspaceId={id} filePath={selectedFile}
               onClose={() => setViewerOpen(false)}
               onSelfWrite={(path) => sendMessage({ type: "self_write", path })}
             />

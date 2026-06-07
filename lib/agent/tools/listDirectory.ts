@@ -1,9 +1,8 @@
 // Agent tool that lists the contents of a workspace directory.
-// Uses a single docker exec find call, then resolves permissions via a batched snapshot.
+// Uses a single docker exec find call.
 import { tool } from "@langchain/core/tools";
 import { z } from "zod";
 import path from "path";
-import { readPermissionSnapshot } from "@/lib/infra/permissionStore";
 import { dockerExec } from "@/lib/infra/containerManager";
 
 function normalizeRelpath(dirPath: string): string | null {
@@ -11,19 +10,6 @@ function normalizeRelpath(dirPath: string): string | null {
   const normalized = path.posix.normalize(dirPath);
   if (normalized.startsWith("..") || normalized.startsWith("/")) return null;
   return normalized;
-}
-
-// Pure check against a pre-fetched permission snapshot — avoids N disk reads for N entries.
-function isLockedFromSnapshot(
-  snapshot: { globalLock: boolean; locked: string[] },
-  relPath: string,
-): boolean {
-  if (snapshot.globalLock) return true;
-  const parts = relPath.split("/");
-  for (let i = 1; i <= parts.length; i++) {
-    if (snapshot.locked.includes(parts.slice(0, i).join("/"))) return true;
-  }
-  return false;
 }
 
 function formatSize(bytes: number): string {
@@ -71,17 +57,12 @@ export function buildListDirectoryTool(workspaceId: string, workspaceDir: string
           return a.name.localeCompare(b.name);
         });
 
-        // One disk read for all lock checks
-        const snapshot = await readPermissionSnapshot(workspaceId);
-
         const lines = entries.map((entry) => {
           const isDir = entry.type === "d";
           const typeChar = isDir ? "d" : "-";
           const suffix = isDir ? "/" : "";
           const size = isDir ? "" : `  ${formatSize(entry.sizeBytes)}`;
-          const entryRelPath = relDir === "." ? entry.name : `${relDir}/${entry.name}`;
-          const perm = isLockedFromSnapshot(snapshot, entryRelPath) ? " [R]" : " [RW]";
-          return `${typeChar}  ${entry.name}${suffix}${size}${perm}`;
+          return `${typeChar}  ${entry.name}${suffix}${size}`;
         });
 
         return lines.join("\n");

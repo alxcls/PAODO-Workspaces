@@ -3,7 +3,6 @@
 import { tool } from "@langchain/core/tools";
 import { z } from "zod";
 import path from "path";
-import { isAgentLocked } from "@/lib/infra/permissionStore";
 import { dockerExec } from "@/lib/infra/containerManager";
 
 function normalizeRelpath(filePath: string): string | null {
@@ -18,25 +17,6 @@ export function buildFileWriteTool(workspaceId: string, workspaceDir: string) {
       const relpath = normalizeRelpath(file_path);
       if (relpath === null) return "Error: path is outside the workspace";
       try {
-        const absFile = path.join(workspaceDir, relpath);
-        const absDir = path.dirname(absFile);
-
-        // Check whether the file already exists to decide which lock to enforce
-        const statR = await dockerExec(workspaceId, workspaceDir, [
-          "find", `/workspace/${relpath}`, "-maxdepth", "0", "-type", "f",
-        ]);
-        const fileExists = statR.code === 0 && statR.stdout.trim() !== "";
-
-        if (fileExists) {
-          if (await isAgentLocked(workspaceId, workspaceDir, absFile)) {
-            throw new Error(`"${file_path}" is read-only [R] — ask the user to click the lock icon in the file tree to unlock it.`);
-          }
-        } else {
-          if (await isAgentLocked(workspaceId, workspaceDir, absDir)) {
-            throw new Error(`The target directory is locked [R] — ask the user to click the lock icon in the file tree to unlock it.`);
-          }
-        }
-
         const dirRelpath = path.posix.dirname(relpath);
         if (dirRelpath && dirRelpath !== ".") {
           const mkdirR = await dockerExec(workspaceId, workspaceDir, [
@@ -50,9 +30,6 @@ export function buildFileWriteTool(workspaceId: string, workspaceDir: string) {
         ], { stdin: content });
         if (writeR.code !== 0) return `Error: ${writeR.stderr || "write failed"}`;
 
-        // Transfer ownership to the app server user so the UI can save the file later.
-        await dockerExec(workspaceId, workspaceDir, ["chown", "1000:1000", `/workspace/${relpath}`]);
-
         return `Written ${file_path} (${content.length} chars)`;
       } catch (err: unknown) {
         return `Error: ${err instanceof Error ? err.message : String(err)}`;
@@ -63,8 +40,7 @@ export function buildFileWriteTool(workspaceId: string, workspaceDir: string) {
       description: `Write full content to a file, creating or overwriting it.
 ALWAYS use this when the user asks you to "write", "create", or "save" a file — never output the content as a code block in text.
 Use for creating new files or complete rewrites. For targeted edits to existing files, prefer file_edit.
-If the file already exists and you need to preserve or merge its content, read it first with file_read. If you are replacing it wholesale or creating a new file, skip the read.
-If file_read shows [R] for the file, or list_directory shows [R] for the target directory, DO NOT call this tool — tell the user the file or folder is locked instead.`,
+If the file already exists and you need to preserve or merge its content, read it first with file_read. If you are replacing it wholesale or creating a new file, skip the read.`,
       schema: z.object({
         file_path: z.string().describe("File path relative to workspace root"),
         content: z.string().describe("Full content to write to the file"),

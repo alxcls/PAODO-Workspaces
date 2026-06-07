@@ -3,7 +3,6 @@
 // Returns paths relative to the workspace root, sorted alphabetically.
 import { tool } from "@langchain/core/tools";
 import { z } from "zod";
-import { readPermissionSnapshot } from "@/lib/infra/permissionStore";
 import { dockerExec } from "@/lib/infra/containerManager";
 
 // Convert a single glob segment (no path separators) to a regex.
@@ -35,19 +34,6 @@ function matchParts(patParts: string[], pathParts: string[]): boolean {
 
 function matchGlob(pattern: string, relpath: string): boolean {
   return matchParts(pattern.split("/"), relpath.split("/"));
-}
-
-// Pure check against a pre-fetched permission snapshot.
-function isLockedFromSnapshot(
-  snapshot: { globalLock: boolean; locked: string[] },
-  relPath: string,
-): boolean {
-  if (snapshot.globalLock) return true;
-  const parts = relPath.split("/");
-  for (let i = 1; i <= parts.length; i++) {
-    if (snapshot.locked.includes(parts.slice(0, i).join("/"))) return true;
-  }
-  return false;
 }
 
 export function buildGlobTool(workspaceId: string, workspaceDir: string) {
@@ -82,12 +68,7 @@ export function buildGlobTool(workspaceId: string, workspaceDir: string) {
 
         if (matched.length === 0) return "No files matched.";
 
-        // One disk read for all lock checks
-        const snapshot = await readPermissionSnapshot(workspaceId);
-
-        return matched
-          .map((rel) => `${rel}${isLockedFromSnapshot(snapshot, rel) ? " [R]" : " [RW]"}`)
-          .join("\n");
+        return matched.join("\n");
       } catch (err: unknown) {
         return `Error: ${err instanceof Error ? err.message : String(err)}`;
       }

@@ -8,12 +8,13 @@ const log = createLogger("systemPrompt");
 const STATIC_INSTRUCTIONS = `# Environment
 - Operating System: Linux (Ubuntu, inside an isolated Docker container)
 - Shell: /bin/bash
-- Runtime: you run as root inside a dedicated Docker container — freely install packages, change language versions, and modify system config. Changes only affect this workspace's container.
+- Runtime: you run as a NON-ROOT user (uid 1000) confined to the workspace container. You cannot read or modify system paths (/root, /etc, /usr) — attempts will fail with "Permission denied". Changes only affect this workspace.
+- Packages: install language packages freely via \`npm\`/\`pip3\` and language versions via \`nvm\`/\`pyenv\` from execute_command. To install SYSTEM packages (apt) use the \`apt_install\` tool — \`apt-get\`/\`sudo\` are NOT available in the shell.
 - Available runtimes include **Python 3** (\`python3\`, \`pip3\`) and **Node.js** (\`node\`, \`npm\`), among others.
 - Internet access: the \`http_get\` tool performs a real server-side HTTP request to any public URL.
 
 # Doing Tasks
-- At the start of every session, call \`list_directory\` to orient yourself — File access is determined solely by the \`[R]\`/\`[RW]\` tags in tool responses, not by filesystem permission bits.
+- At the start of every session, call \`list_directory\` to orient yourself.
 - Prefer editing existing files over creating new ones. Only create files when explicitly required.
 - Use the minimum number of tool calls necessary.
 - Before reporting a task complete, verify it actually worked.
@@ -31,12 +32,6 @@ Carefully consider the reversibility of actions:
 - Actions that modify files, install packages, or change git history: execute if the user asked for it; confirm only when intent is ambiguous.
 - Never automatically execute destructive commands: rm -rf, git reset --hard, git push --force.
 - When you encounter an obstacle, diagnose the root cause rather than working around safety checks.
-
-# File Permissions
-Every tool response marks files and directories as **[R]** (read-only) or **[RW]** (read-write).
-- **[R]** = forbidden from file_edit or file_write — tell the user the file is locked and ask them to click the lock icon in the file tree.
-- **[RW]** = you may edit or write it.
-- Per-path [R] locks apply to file_edit and file_write only. The global workspace lock [R] also restricts execute_command.
 
 Call independent tools IN PARALLEL. Call dependent tools sequentially.
 
@@ -57,7 +52,7 @@ const response = await fetch(\`\${url}?t=\${Date.now()}\`);
 The viewer injects a \`<base href="...">\` tag pointing to the workspace serve route, so \`document.baseURI\` always resolves correctly relative to the HTML file's location.
 `;
 
-export function buildSystemPrompt(workspaceDir: string, isLocked = false): SystemMessage {
+export function buildSystemPrompt(workspaceDir: string): SystemMessage {
   const date = new Date().toDateString();
 
   let agentsSection = "";
@@ -68,15 +63,7 @@ export function buildSystemPrompt(workspaceDir: string, isLocked = false): Syste
     log.debug(`AGENTS.md not found in ${workspaceDir} — skipping`);
   }
 
-  const lockNotice = isLocked
-    ? `⚠ This workspace is globally locked [R]. You are running as a restricted user.
-execute_command cannot write files, install packages, or change language versions.
-Read-only commands (node script.js, grep, git status, python script.py) still work.
-
-`
-    : "";
-
-  const dynamicContext = `${lockNotice}${agentsSection ? agentsSection + "\n\n" : ""}Workspace Directory: ${workspaceDir} (mapped to /workspace inside the container)
+  const dynamicContext = `${agentsSection ? agentsSection + "\n\n" : ""}Workspace Directory: ${workspaceDir} (mapped to /workspace inside the container)
 Today's date: ${date}`;
 
   return new SystemMessage({

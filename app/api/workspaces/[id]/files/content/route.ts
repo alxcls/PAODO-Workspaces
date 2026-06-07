@@ -5,7 +5,6 @@ export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
 import { getWorkspace } from "@/lib/infra/workspaceStore";
-import { isAgentLocked } from "@/lib/infra/permissionStore";
 import { dockerExec } from "@/lib/infra/containerManager";
 import fs from "fs/promises";
 import path from "path";
@@ -114,20 +113,18 @@ export async function PUT(
   try {
     const filePath = path.isAbsolute(body.path) ? body.path : path.join(ws.dir, body.path);
     const resolved = await assertInsideWorkspace(ws.dir, filePath);
-    if (await isAgentLocked(ws.id, ws.dir, resolved)) {
-      return NextResponse.json({ error: "File is read-only" }, { status: 403 });
-    }
     await fs.mkdir(path.dirname(resolved), { recursive: true });
     try {
       await fs.writeFile(resolved, body.content, "utf-8");
     } catch (writeErr) {
       const code = (writeErr as NodeJS.ErrnoException).code;
       if (code === "EACCES" || code === "EPERM") {
-        // File is root-owned from agent writes via Docker — write via container and fix ownership.
+        // Fallback for legacy root-owned files (created before the non-root migration, not yet
+        // swept): write through the container. New agent writes are uid-1000-owned so the direct
+        // fs.writeFile above succeeds and this path is not hit.
         const relPath = path.relative(ws.dir, resolved);
         const r = await dockerExec(ws.id, ws.dir, ["tee", `/workspace/${relPath}`], { stdin: body.content });
         if (r.code !== 0) throw new Error(r.stderr || "docker write failed");
-        await dockerExec(ws.id, ws.dir, ["chown", "1000:1000", `/workspace/${relPath}`]);
       } else {
         throw writeErr;
       }
@@ -155,11 +152,8 @@ export async function DELETE(
   const log = createLogger("api").child({ workspaceId: id, route: "files/content" });
   try {
     const resolved = await assertInsideWorkspace(ws.dir, filePath);
-    if (await isAgentLocked(ws.id, ws.dir, resolved)) {
-      return NextResponse.json({ error: "File is read-only" }, { status: 403 });
-    }
     await fs.access(path.dirname(resolved), fs.constants.W_OK).catch(() => {
-      throw new Error("Directory is locked");
+      throw new Error("Directory is not writable");
     });
     const stat = await fs.stat(resolved);
     if (stat.isDirectory()) {

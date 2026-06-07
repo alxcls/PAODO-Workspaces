@@ -41,12 +41,12 @@ export interface FileViewerHandle {
 }
 
 interface Props {
-  workspaceId: string; filePath: string | null; permission?: "R" | "RW";
+  workspaceId: string; filePath: string | null;
   onClose: () => void; onSelfWrite?: (path: string) => void;
 }
 
 const FileViewer = forwardRef<FileViewerHandle, Props>(function FileViewer(
-  { workspaceId, filePath, permission = "RW", onClose, onSelfWrite },
+  { workspaceId, filePath, onClose, onSelfWrite },
   ref
 ) {
   const [fileType, setFileType] = useState<"text" | "image" | "binary" | null>(null);
@@ -185,7 +185,6 @@ const FileViewer = forwardRef<FileViewerHandle, Props>(function FileViewer(
     try { return JSON.parse(draft) as object; } catch { return null; }
   }, [draft, lang]);
 
-  const isLocked = permission === "R";
   const isDirty = fileType === "text" && draft !== content;
   isDirtyRef.current = isDirty;
   const displayPath = filePath ? filePath.split("/").slice(-3).join("/") : "";
@@ -231,8 +230,7 @@ const FileViewer = forwardRef<FileViewerHandle, Props>(function FileViewer(
               <button
                 className="btn btn-sm btn-primary"
                 onClick={handleSave}
-                disabled={!isDirty || saving || isLocked}
-                title={isLocked ? "Unlock file in the tree to edit" : undefined}
+                disabled={!isDirty || saving}
               >
                 {saving ? "Saving…" : "Save"}
               </button>
@@ -240,8 +238,7 @@ const FileViewer = forwardRef<FileViewerHandle, Props>(function FileViewer(
             <button
               className="btn btn-sm text-danger"
               onClick={handleDelete}
-              disabled={deleting || isLocked}
-              title={isLocked ? "Unlock file in the tree to delete" : undefined}
+              disabled={deleting}
             >
               {deleting ? "Deleting…" : "Delete"}
             </button>
@@ -292,7 +289,7 @@ const FileViewer = forwardRef<FileViewerHandle, Props>(function FileViewer(
                   dangerouslySetInnerHTML={{ __html: highlightedHtml + "\n" }} />
                 <textarea ref={taRef} className="code-editor-input" value={draft}
                   onChange={e => setDraft(e.target.value)} onScroll={syncScroll}
-                  spellCheck={false} wrap="off" readOnly={isLocked} />
+                  spellCheck={false} wrap="off" />
               </div>
             </>
           )}

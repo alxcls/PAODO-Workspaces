@@ -11,7 +11,6 @@ interface TreeNode {
   name: string;
   type: "file" | "directory";
   path: string;
-  permission?: "R" | "RW";
   children?: TreeNode[];
 }
 
@@ -78,115 +77,17 @@ const Checkbox = ({ state, onClick }: { state: CheckState; onClick: (e: React.Mo
   </span>
 );
 
-// ---- Permission badge ----
-const PermBadge = ({
-  node, workspaceId, wsDir, onRefresh, onPermissionChange,
-}: {
-  node: TreeNode; workspaceId: string; wsDir: string;
-  onRefresh: () => void; onPermissionChange: (path: string, perm: "R" | "RW") => void;
-}) => {
-  const [busy, setBusy] = useState(false);
-  const perm = node.permission ?? "RW";
-
-  const toggle = async (e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (busy) return;
-    setBusy(true);
-    const next: "R" | "RW" = perm === "R" ? "RW" : "R";
-    const relPath = node.path.startsWith(wsDir)
-      ? node.path.slice(wsDir.length).replace(/^\//, "")
-      : node.path;
-    await fetch(`/api/workspaces/${workspaceId}/permissions`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ path: relPath, permission: next }),
-    });
-    onPermissionChange(node.path, next);
-    onRefresh();
-    setBusy(false);
-  };
-
-  return (
-    <span
-      className="flex-shrink-0 inline-flex items-center justify-center w-[18px] h-[18px] rounded-[3px] cursor-pointer select-none ml-1 text-text-2 hover:text-text hover:bg-black/[.12] transition-colors"
-      onClick={toggle}
-      title={perm === "R" ? "Read-only — click to unlock" : "Read-write — click to lock"}
-      style={{ opacity: busy ? 0.4 : 1 }}
-    >
-      {perm === "R" ? (
-        <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <rect width="18" height="11" x="3" y="11" rx="2" ry="2" />
-          <path d="M7 11V7a5 5 0 0 1 10 0v4" />
-        </svg>
-      ) : (
-        <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <rect width="18" height="11" x="3" y="11" rx="2" ry="2" />
-          <path d="M7 11V7a5 5 0 0 1 9.9-1" />
-        </svg>
-      )}
-    </span>
-  );
-};
-
-// ---- Master lock button ----
-const MasterLockButton = ({
-  workspaceId, globalLock, onRefresh, onGlobalPermissionChange,
-}: {
-  workspaceId: string; globalLock: boolean;
-  onRefresh: () => void; onGlobalPermissionChange: (perm: "R" | "RW") => void;
-}) => {
-  const [busy, setBusy] = useState(false);
-
-  const toggle = async (e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (busy) return;
-    setBusy(true);
-    const next: "R" | "RW" = globalLock ? "RW" : "R";
-    await fetch(`/api/workspaces/${workspaceId}/permissions`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ permission: next }),
-    });
-    onGlobalPermissionChange(next);
-    onRefresh();
-    setBusy(false);
-  };
-
-  return (
-    <button
-      className="iconbtn"
-      onClick={toggle}
-      title={globalLock ? "Workspace locked — click to unlock all" : "Click to lock all files"}
-      style={{ opacity: busy ? 0.4 : 1 }}
-    >
-      {globalLock ? (
-        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <rect width="18" height="11" x="3" y="11" rx="2" ry="2" />
-          <path d="M7 11V7a5 5 0 0 1 10 0v4" />
-        </svg>
-      ) : (
-        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <rect width="18" height="11" x="3" y="11" rx="2" ry="2" />
-          <path d="M7 11V7a5 5 0 0 1 9.9-1" />
-        </svg>
-      )}
-    </button>
-  );
-};
-
 // ---- Tree node list ----
 interface TreeListProps {
   nodes: TreeNode[]; depth: number; expanded: Record<string, boolean>;
   onToggle: (path: string) => void; activePath: string | null;
   selected: Set<string>; onSelect: (paths: string[], on: boolean) => void;
-  onPick: (path: string, permission: "R" | "RW") => void;
-  workspaceId: string; wsDir: string; onRefresh: () => void;
-  onPermissionChange: (path: string, perm: "R" | "RW") => void;
+  onPick: (path: string) => void;
 }
 
 const TreeNodeList = ({
   nodes, depth, expanded, onToggle, activePath, selected,
-  onSelect, onPick, workspaceId, wsDir, onRefresh, onPermissionChange,
+  onSelect, onPick,
 }: TreeListProps) => {
   const sorted = [...nodes].sort((a, b) => {
     if (a.type !== b.type) return a.type === "directory" ? -1 : 1;
@@ -221,7 +122,6 @@ const TreeNodeList = ({
                   </span>
                   <span className="text-text-2 inline-flex flex-shrink-0"><FolderIcon /></span>
                   <span className="flex-1 whitespace-nowrap overflow-hidden text-ellipsis">{node.name}</span>
-                  <PermBadge node={node} workspaceId={workspaceId} wsDir={wsDir} onRefresh={onRefresh} onPermissionChange={onPermissionChange} />
                 </div>
               </button>
               {isOpen && node.children && (
@@ -229,8 +129,6 @@ const TreeNodeList = ({
                   nodes={node.children} depth={depth + 1} expanded={expanded}
                   onToggle={onToggle} activePath={activePath} selected={selected}
                   onSelect={onSelect} onPick={onPick}
-                  workspaceId={workspaceId} wsDir={wsDir} onRefresh={onRefresh}
-                  onPermissionChange={onPermissionChange}
                 />
               )}
             </div>
@@ -247,7 +145,7 @@ const TreeNodeList = ({
                 ? "bg-primary-tint border-l-primary text-primary"
                 : `border-l-transparent text-text hover:bg-black/[.04] ${isSel ? "bg-select-tint" : ""}`
               }`}
-            onClick={() => onPick(node.path, node.permission ?? "RW")}
+            onClick={() => onPick(node.path)}
           >
             <Checkbox
               state={isSel ? "all" : "none"}
@@ -256,7 +154,6 @@ const TreeNodeList = ({
             <div className="flex items-center gap-1.5 flex-1 min-w-0 overflow-hidden" style={{ marginLeft: 6 + depth * 14 + 14 }}>
               <span className={`inline-flex flex-shrink-0 ${isActive ? "text-primary" : "text-text-2"}`}><FileIcon /></span>
               <span className="flex-1 whitespace-nowrap overflow-hidden text-ellipsis">{node.name}</span>
-              <PermBadge node={node} workspaceId={workspaceId} wsDir={wsDir} onRefresh={onRefresh} onPermissionChange={onPermissionChange} />
             </div>
           </button>
         );
@@ -386,21 +283,19 @@ const UploadMenu = ({ workspaceId, onUploaded }: { workspaceId: string; onUpload
 
 // ---- Main component ----
 interface Props {
-  workspaceId: string; workspaceName: string; wsDir: string;
+  workspaceId: string; workspaceName: string;
   selectedPath: string | null;
-  onFileSelect: (path: string, permission: "R" | "RW") => void;
-  onPermissionChange?: (path: string | null, perm: "R" | "RW") => void;
+  onFileSelect: (path: string) => void;
   onDeletedPaths?: (paths: string[]) => void;
   style?: React.CSSProperties; refreshKey?: number;
 }
 
 export default function FileTreePanel({
-  workspaceId, workspaceName, wsDir, selectedPath,
-  onFileSelect, onPermissionChange, onDeletedPaths, style, refreshKey,
+  workspaceId, workspaceName, selectedPath,
+  onFileSelect, onDeletedPaths, style, refreshKey,
 }: Props) {
   const router = useRouter();
   const [tree, setTree] = useState<TreeNode[]>([]);
-  const [globalLock, setGlobalLock] = useState(false);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [deleteError, setDeleteError] = useState<string | null>(null);
@@ -430,9 +325,8 @@ export default function FileTreePanel({
     try {
       const res = await fetch(`/api/workspaces/${workspaceId}/files`);
       if (!res.ok) return;
-      const { tree: data, globalLock: gl } = (await res.json()) as { tree: TreeNode[]; globalLock: boolean };
+      const { tree: data } = (await res.json()) as { tree: TreeNode[] };
       setTree(data);
-      setGlobalLock(gl);
       setExpanded((prev) => Object.keys(prev).length > 0 ? prev : {});
     } catch { /* silent */ }
   }, [workspaceId]);
@@ -458,10 +352,6 @@ export default function FileTreePanel({
         <span className="font-semibold text-[15px] tracking-[-0.01em] whitespace-nowrap overflow-hidden text-ellipsis flex-1" title={workspaceName}>
           {workspaceName}
         </span>
-        <MasterLockButton
-          workspaceId={workspaceId} globalLock={globalLock} onRefresh={fetchTree}
-          onGlobalPermissionChange={(perm) => onPermissionChange?.(null, perm)}
-        />
       </div>
 
       <div className="flex gap-1.5 px-3 pb-2.5 border-b border-border">
@@ -472,9 +362,7 @@ export default function FileTreePanel({
         <TreeNodeList
           nodes={tree} depth={0} expanded={expanded} onToggle={toggleExpanded}
           activePath={selectedPath} selected={selected} onSelect={handleSelect}
-          onPick={onFileSelect} workspaceId={workspaceId} wsDir={wsDir}
-          onRefresh={fetchTree}
-          onPermissionChange={(path, perm) => onPermissionChange?.(path, perm)}
+          onPick={onFileSelect}
         />
       </div>
 

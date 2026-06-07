@@ -2,7 +2,6 @@
 // Runs the agent loop and streams events (tokens, tool calls, errors) back as Server-Sent Events.
 import type { NextRequest } from "next/server";
 import { getWorkspace } from "@/lib/infra/workspaceStore";
-import { getGlobalLock } from "@/lib/infra/permissionStore";
 import { runAgent, type AgentEvent } from "@/lib/agent/runner";
 import { buildSystemPrompt } from "@/lib/agent/systemPrompt";
 import { createLogger } from "@/lib/infra/logger";
@@ -32,7 +31,7 @@ export async function POST(
   if (!body.message?.trim()) return new Response("message is required", { status: 400 });
 
   // Refresh the system prompt on every request so AGENTS.md changes are always picked up.
-  ws.messages[0] = buildSystemPrompt(ws.dir, await getGlobalLock(ws.id));
+  ws.messages[0] = buildSystemPrompt(ws.dir);
 
   log.info("chat stream started");
   const encoder = new TextEncoder();

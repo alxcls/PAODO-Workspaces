@@ -3,7 +3,6 @@
 import { tool } from "@langchain/core/tools";
 import { z } from "zod";
 import path from "path";
-import { isAgentLocked } from "@/lib/infra/permissionStore";
 import { dockerExec } from "@/lib/infra/containerManager";
 
 function normalizeRelpath(filePath: string): string | null {
@@ -20,10 +19,6 @@ export function buildFileEditTool(workspaceId: string, workspaceDir: string) {
 
       if (old_string === "") {
         // Create new file branch
-        const absDir = path.dirname(path.join(workspaceDir, relpath));
-        if (await isAgentLocked(workspaceId, workspaceDir, absDir)) {
-          return `Error: The target directory is locked [R] — toggle the lock in the file tree to allow writes.`;
-        }
         try {
           const dirRelpath = path.posix.dirname(relpath);
           if (dirRelpath && dirRelpath !== ".") {
@@ -43,10 +38,6 @@ export function buildFileEditTool(workspaceId: string, workspaceDir: string) {
       }
 
       // Edit existing file branch
-      const absFile = path.join(workspaceDir, relpath);
-      if (await isAgentLocked(workspaceId, workspaceDir, absFile)) {
-        return `Error: "${file_path}" is read-only [R] — ask the user to click the lock icon next to the file in the file tree to unlock it.`;
-      }
       try {
         // Read exact content — stdout must NOT be trimmed (preserves trailing newlines for correct string matching)
         const readR = await dockerExec(workspaceId, workspaceDir, ["cat", `/workspace/${relpath}`]);
@@ -78,7 +69,6 @@ export function buildFileEditTool(workspaceId: string, workspaceDir: string) {
       description: `Edit a file by replacing an exact string. Use this instead of sed or awk.
 
 - You MUST call file_read first. Editing a file you haven't read will produce wrong results.
-- If file_read shows [R] for the file, DO NOT call this tool — tell the user the file is locked instead.
 - old_string must match exactly — including whitespace, indentation, and newlines.
 - Fails if old_string appears more than once. Add more surrounding lines for uniqueness, or set replace_all: true.
 - Set old_string to "" to create a new file (new_string becomes the full content).`,

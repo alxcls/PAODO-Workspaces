@@ -6,6 +6,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import JSZip from "jszip";
 import { useRouter } from "next/navigation";
+import { isExecutable } from "@/lib/utils/fileType";
 
 interface TreeNode {
   name: string;
@@ -307,6 +308,7 @@ const TreeNodeList = ({
   return (
     <>
       {sorted.map((node) => {
+        const canHide = !isExecutable(node.name) && !node.privileged;
         if (node.type === "directory") {
           const isOpen = expanded[node.path] ?? false;
           const state = getNodeCheckState(node, selected);
@@ -333,7 +335,9 @@ const TreeNodeList = ({
                   <span className="text-text-2 inline-flex flex-shrink-0"><FolderIcon /></span>
                   <span className="flex-1 whitespace-nowrap overflow-hidden text-ellipsis">{node.name}</span>
                   <>
-                    <EyeBadge node={node} workspaceId={workspaceId} wsDir={wsDir} onRefresh={onRefresh} />
+                    {canHide && (
+                      <EyeBadge node={node} workspaceId={workspaceId} wsDir={wsDir} onRefresh={onRefresh} />
+                    )}
                     <KeyBadge node={node} workspaceId={workspaceId} wsDir={wsDir} onRefresh={onRefresh} />
                     <PermBadge node={node} workspaceId={workspaceId} wsDir={wsDir} onRefresh={onRefresh} onPermissionChange={onPermissionChange} />
                   </>
@@ -372,7 +376,9 @@ const TreeNodeList = ({
               <span className={`inline-flex flex-shrink-0 ${isActive ? "text-primary" : "text-text-2"}`}><FileIcon /></span>
               <span className="flex-1 whitespace-nowrap overflow-hidden text-ellipsis">{node.name}</span>
               <>
-                <EyeBadge node={node} workspaceId={workspaceId} wsDir={wsDir} onRefresh={onRefresh} />
+                {canHide && (
+                  <EyeBadge node={node} workspaceId={workspaceId} wsDir={wsDir} onRefresh={onRefresh} />
+                )}
                 <KeyBadge node={node} workspaceId={workspaceId} wsDir={wsDir} onRefresh={onRefresh} />
                 <PermBadge node={node} workspaceId={workspaceId} wsDir={wsDir} onRefresh={onRefresh} onPermissionChange={onPermissionChange} />
               </>

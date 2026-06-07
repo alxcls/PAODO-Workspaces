@@ -4,6 +4,7 @@ import { setHidden } from "@/lib/infra/permissionStore";
 import { reconcileOsPermissions } from "@/lib/infra/osLock";
 import path from "path";
 import { createLogger } from "@/lib/infra/logger";
+import { isExecutable } from "@/lib/utils/fileType";
 
 const log = createLogger("api");
 
@@ -30,8 +31,15 @@ export async function PATCH(
   }
   const relPath = path.relative(ws.dir, abs).split(path.sep).join("/") || ".";
 
+  if (hidden && isExecutable(path.basename(abs))) {
+    return NextResponse.json(
+      { error: "Eye permission cannot be applied to executable scripts" },
+      { status: 400 }
+    );
+  }
+
   try {
-    await setHidden(ws.id, relPath, hidden, abs);
+    await setHidden(ws.id, relPath, hidden);
     // OS reconcile must succeed for the store + kernel state to stay in sync.
     // If this fails, surface an error so the user knows the toggle did not fully apply.
     await reconcileOsPermissions(ws.id, relPath);

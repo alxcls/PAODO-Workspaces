@@ -25,12 +25,9 @@ RUN apt-get update && apt-get install -y \
 # This lets app user and privd share file access via group bits without conflating their identities.
 RUN groupadd -g 999 agentgroup && \
     groupadd -g 1001 access && \
-    useradd -r -u 999 -g agentgroup -M -s /bin/bash agent && \
-    useradd -r -u 998 -g access -M -s /bin/bash privd && \
+    useradd -r -u 999 -g agentgroup -m -d /home/agent -s /bin/bash agent && \
+    useradd -r -u 998 -g access -m -d /home/privd -s /bin/bash privd && \
     useradd -u 1001 -m -s /bin/bash developer
-
-# Ensure the restricted agent user has a home directory so pip user installs work.
-RUN mkdir -p /home/agent && chown agent:agentgroup /home/agent && chmod 755 /home/agent
 
 # appuser (UID 1002) — proxy identity for UI editor writes inside the workspace container.
 # UID 1000 is reserved by ubuntu:24.04's built-in 'ubuntu' user; 1002 is the next free UID.

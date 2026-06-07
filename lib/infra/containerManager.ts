@@ -32,7 +32,7 @@ export async function applyKeyedExecutable(workspaceId: string): Promise<void> {
     const snapshot = await readPermissionSnapshot(workspaceId);
     if (snapshot.keyed.length === 0) return;
     const name = containerName(workspaceId);
-    const r = await dockerCmd("exec", name, "chmod", "+x", ...snapshot.keyed.map(kp => `/workspace/${kp}`));
+    const r = await dockerCmd("exec", name, "chmod", "ug+x", ...snapshot.keyed.map(kp => `/workspace/${kp}`));
     if (r.code !== 0) log.warn({ workspaceId, stderr: r.stderr }, "applyKeyedExecutable chmod failed");
   } catch (err) {
     log.warn({ err, workspaceId }, "applyKeyedExecutable failed");
@@ -201,12 +201,13 @@ export async function dockerExec(
 ): Promise<DockerResult> {
   await ensureContainer(workspaceId, workspaceDir);
   const userArgs = opts.asPrivd ? ["-u", "privd"] : opts.asAgent ? ["-u", "agent"] : opts.asAppUser ? ["-u", "appuser"] : [];
+  const envArgs = opts.asPrivd ? ["-e", "HOME=/home/privd"] : [];
   return new Promise((resolve) => {
     let stdout = "";
     let stderr = "";
     let proc: ReturnType<typeof spawn>;
     try {
-      proc = spawn("docker", ["exec", "-i", ...userArgs, "-w", "/workspace", containerName(workspaceId), ...cmdArgs]);
+      proc = spawn("docker", ["exec", "-i", ...userArgs, ...envArgs, "-w", "/workspace", containerName(workspaceId), ...cmdArgs]);
     } catch (err) {
       resolve({ stdout: "", stderr: (err as Error).message, code: 1 });
       return;

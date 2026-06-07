@@ -129,50 +129,46 @@ export async function readPermissionSnapshot(workspaceId: string): Promise<PermS
   return readStore(workspaceId);
 }
 
-function isSamePath(entry: string, rel: string, abs?: string): boolean {
-  return entry === rel || (abs ? entry === abs : false);
+function isSamePath(entry: string, rel: string): boolean {
+  return entry === rel;
 }
 
-function isDescendant(entry: string, rel: string, abs?: string): boolean {
-  const relPrefix = rel === "." ? null : `${rel}/`;
-  const absPrefix = abs ? (abs.endsWith(path.sep) ? abs : `${abs}${path.sep}`) : null;
-  return (relPrefix ? entry.startsWith(relPrefix) : false) || (absPrefix ? entry.startsWith(absPrefix) : false);
+function isDescendant(entry: string, rel: string): boolean {
+  if (rel === ".") return false;
+  return entry.startsWith(`${rel}/`);
 }
 
 export async function setPermission(
   workspaceId: string,
   relPath: string,
   perm: "R" | "RW",
-  absPath?: string,
 ): Promise<void> {
   const store = await readStore(workspaceId);
   if (perm === "R") {
-    if (!store.locked.some((p) => isSamePath(p, relPath, absPath))) store.locked.push(relPath);
+    if (!store.locked.some((p) => isSamePath(p, relPath))) store.locked.push(relPath);
   } else {
-    store.locked = store.locked.filter(
-      (p) => !isSamePath(p, relPath, absPath) && !isDescendant(p, relPath, absPath)
-    );
-    store.keyed = store.keyed.filter((p) => !isSamePath(p, relPath, absPath) && !isDescendant(p, relPath, absPath));
+    store.locked = store.locked.filter((p) => !isSamePath(p, relPath) && !isDescendant(p, relPath));
+    store.keyed = store.keyed.filter((p) => !isSamePath(p, relPath) && !isDescendant(p, relPath));
   }
   await writeStore(workspaceId, store);
 }
 
-export async function setHidden(workspaceId: string, relPath: string, hidden: boolean, absPath?: string): Promise<void> {
+export async function setHidden(workspaceId: string, relPath: string, hidden: boolean): Promise<void> {
   const store = await readStore(workspaceId);
   if (hidden) {
-    if (!store.hidden.some((p) => isSamePath(p, relPath, absPath))) store.hidden.push(relPath);
+    if (!store.hidden.some((p) => isSamePath(p, relPath))) store.hidden.push(relPath);
   } else {
-    store.hidden = store.hidden.filter((p) => !isSamePath(p, relPath, absPath) && !isDescendant(p, relPath, absPath));
+    store.hidden = store.hidden.filter((p) => !isSamePath(p, relPath) && !isDescendant(p, relPath));
   }
   await writeStore(workspaceId, store);
 }
 
-export async function setKeyed(workspaceId: string, relPath: string, keyed: boolean, absPath?: string): Promise<void> {
+export async function setKeyed(workspaceId: string, relPath: string, keyed: boolean): Promise<void> {
   const store = await readStore(workspaceId);
   if (keyed) {
-    if (!store.keyed.some((p) => isSamePath(p, relPath, absPath))) store.keyed.push(relPath);
+    if (!store.keyed.some((p) => isSamePath(p, relPath))) store.keyed.push(relPath);
   } else {
-    store.keyed = store.keyed.filter((p) => !isSamePath(p, relPath, absPath) && !isDescendant(p, relPath, absPath));
+    store.keyed = store.keyed.filter((p) => !isSamePath(p, relPath) && !isDescendant(p, relPath));
   }
   await writeStore(workspaceId, store);
 }

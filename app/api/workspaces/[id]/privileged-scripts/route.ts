@@ -34,9 +34,9 @@ export async function PATCH(
 
   try {
     if (keyed) {
-      await setPermission(ws.id, relPath, "R", abs);
+      await setPermission(ws.id, relPath, "R");
     }
-    await setKeyed(ws.id, relPath, keyed, abs);
+    await setKeyed(ws.id, relPath, keyed);
     // Best-effort OS reconcile so keyed scripts are owned by privd and locked down immediately.
     await reconcileOsPermissions(ws.id, relPath).catch(() => {});
   } catch (err) {

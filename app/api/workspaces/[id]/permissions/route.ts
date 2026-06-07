@@ -27,7 +27,7 @@ export async function PATCH(
   const relPath = path.relative(ws.dir, abs).split(path.sep).join("/") || ".";
 
   try {
-    await setPermission(ws.id, relPath, permission, abs);
+    await setPermission(ws.id, relPath, permission);
     // OS reconcile must succeed for the store + kernel state to stay in sync.
     await reconcileOsPermissions(ws.id, relPath);
   } catch (err) {

@@ -3,20 +3,7 @@ import { z } from "zod";
 import path from "path";
 import { dockerExec } from "@/lib/infra/containerManager";
 import { readPermissionSnapshot, isKeyedFromSnapshot } from "@/lib/infra/permissionStore";
-
-type RuntimeKey =
-  | "python"
-  | "python3"
-  | "node"
-  | "bash"
-  | "sh"
-  | "go_run"
-  | "ruby"
-  | "php"
-  | "perl"
-  | "deno_run"
-  | "java_jar"
-  | "dotnet";
+import type { RuntimeKey } from "@/lib/utils/fileType";
 
 const RUNTIME_PREFIX: Record<RuntimeKey, string[]> = {
   python: ["python"],
@@ -64,48 +51,7 @@ export function buildRunKeyedScriptTool(workspaceId: string, workspaceDir: strin
         if (!prefix) {
           return "Error: unsupported runtime. Use a supported runtime or a wrapper script.";
         }
-
-        // Special-case some runtimes so privd has a writable cache/home.
-        if (runtime === "go_run") {
-          const cacheBase = "/workspace/.cache/privd-go";
-          cmdArgs = [
-            "env",
-            `HOME=${cacheBase}`,
-            `GOCACHE=${cacheBase}-build`,
-            ...prefix,
-            scriptAbs,
-            ...extraArgs,
-          ];
-        } else if (runtime === "java_jar") {
-          const cacheBase = "/workspace/.cache/privd-java";
-          cmdArgs = [
-            "env",
-            `HOME=${cacheBase}`,
-            ...prefix,
-            scriptAbs,
-            ...extraArgs,
-          ];
-        } else if (runtime === "dotnet") {
-          const cacheBase = "/workspace/.cache/privd-dotnet";
-          cmdArgs = [
-            "env",
-            `HOME=${cacheBase}`,
-            ...prefix,
-            scriptAbs,
-            ...extraArgs,
-          ];
-        } else if (runtime === "deno_run") {
-          const cacheBase = "/workspace/.cache/privd-deno";
-          cmdArgs = [
-            "env",
-            `HOME=${cacheBase}`,
-            ...prefix,
-            scriptAbs,
-            ...extraArgs,
-          ];
-        } else {
-          cmdArgs = [...prefix, scriptAbs, ...extraArgs];
-        }
+        cmdArgs = [...prefix, scriptAbs, ...extraArgs];
       } else {
         cmdArgs = [scriptAbs, ...extraArgs];
       }

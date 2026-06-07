@@ -137,7 +137,7 @@ The agent will follow these instructions on every request.
   workspaces.set(id, workspace);
 
   try {
-    await setPermission(id, "AGENTS.md", "R", path.join(dir, "AGENTS.md"));
+    await setPermission(id, "AGENTS.md", "R");
   } catch (err) {
     workspaces.delete(id);
     throw err;

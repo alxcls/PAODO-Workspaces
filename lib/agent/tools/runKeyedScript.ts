@@ -56,7 +56,9 @@ export function buildRunKeyedScriptTool(workspaceId: string, workspaceDir: strin
         cmdArgs = [scriptAbs, ...extraArgs];
       }
 
-      const result = await dockerExec(workspaceId, workspaceDir, cmdArgs, { asPrivd: true });
+      const scriptDir = path.posix.dirname(relPath);
+      const cwd = scriptDir === "." ? "/workspace" : `/workspace/${scriptDir}`;
+      const result = await dockerExec(workspaceId, workspaceDir, cmdArgs, { asPrivd: true, cwd });
       if (result.code !== 0) {
         const stderr = result.stderr || "unknown error";
         return `Error (run_keyed_script exit ${result.code}): ${stderr}`;

@@ -308,9 +308,8 @@ const TreeNodeList = ({
   return (
     <>
       {sorted.map((node) => {
-        const isSystemFile = node.name === "AGENTS.md" && node.type === "file";
-        const canHide = !isSystemFile && !isExecutable(node.name) && !node.privileged;
-        const canKey  = !isSystemFile && (isExecutable(node.name) || (node.privileged ?? false));
+        const canHide = !isExecutable(node.name) && !node.privileged;
+        const canKey  = isExecutable(node.name) || (node.privileged ?? false);
         if (node.type === "directory") {
           const isOpen = expanded[node.path] ?? false;
           const state = getNodeCheckState(node, selected);

@@ -67,6 +67,32 @@ apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker
 
 ---
 
+## Step 2b — Required kernel setting for the permission model
+
+The workspace permission model (the three-identity Eye / Lock / Key scheme) relies on
+world-writable **sticky** directories shared between the in-container `agent` (uid 999)
+and `privd` (uid 998) users. The Linux kernel hardening `fs.protected_regular` (default
+`2` on Debian 13) is incompatible with this: it overrides the sticky bit and blocks a
+`privd`-run **keyed** script from overwriting (`O_CREAT`) a file the agent created — so
+any keyed script that saves output (e.g. anything using `openpyxl`) fails with
+`PermissionError: [Errno 13] Permission denied`. Disable it on the host:
+
+```bash
+cat > /etc/sysctl.d/99-paodo-permission-model.conf <<'EOF'
+# Required by the PAODO_WS permission model: agent (999) and privd (998) share
+# /workspace via world-writable sticky dirs. Do NOT re-enable — re-enabling breaks
+# keyed-script output writes (privd can no longer overwrite agent-created files).
+fs.protected_regular = 0
+EOF
+sysctl --system
+sysctl fs.protected_regular   # must print: fs.protected_regular = 0
+```
+
+This is a host-global kernel setting (it is not namespaced, so it cannot be scoped to a
+single container) and applies to all workspace containers immediately.
+
+---
+
 ## Step 3 — Clone and configure
 
 ```bash

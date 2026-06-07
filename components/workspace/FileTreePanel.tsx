@@ -309,6 +309,7 @@ const TreeNodeList = ({
     <>
       {sorted.map((node) => {
         const canHide = !isExecutable(node.name) && !node.privileged;
+        const canKey  = isExecutable(node.name) || (node.privileged ?? false);
         if (node.type === "directory") {
           const isOpen = expanded[node.path] ?? false;
           const state = getNodeCheckState(node, selected);
@@ -338,7 +339,7 @@ const TreeNodeList = ({
                     {canHide && (
                       <EyeBadge node={node} workspaceId={workspaceId} wsDir={wsDir} onRefresh={onRefresh} />
                     )}
-                    <KeyBadge node={node} workspaceId={workspaceId} wsDir={wsDir} onRefresh={onRefresh} />
+                    {canKey && <KeyBadge node={node} workspaceId={workspaceId} wsDir={wsDir} onRefresh={onRefresh} />}
                     <PermBadge node={node} workspaceId={workspaceId} wsDir={wsDir} onRefresh={onRefresh} onPermissionChange={onPermissionChange} />
                   </>
                 </div>

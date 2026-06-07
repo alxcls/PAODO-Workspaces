@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getWorkspace } from "@/lib/infra/workspaceStore";
-import { setHidden } from "@/lib/infra/permissionStore";
+import { setHidden, readPermissionSnapshot, isKeyedFromSnapshot } from "@/lib/infra/permissionStore";
 import { reconcileOsPermissions } from "@/lib/infra/osLock";
 import path from "path";
 import { createLogger } from "@/lib/infra/logger";
@@ -36,6 +36,16 @@ export async function PATCH(
       { error: "Eye permission cannot be applied to executable scripts" },
       { status: 400 }
     );
+  }
+
+  if (hidden) {
+    const snapshot = await readPermissionSnapshot(ws.id);
+    if (isKeyedFromSnapshot(snapshot, relPath)) {
+      return NextResponse.json(
+        { error: "Eye permission cannot be applied to keyed scripts" },
+        { status: 400 }
+      );
+    }
   }
 
   try {

@@ -7,9 +7,9 @@
 //   Normal:        uid 999  : gid 1001, file=664 / dir=3775 (sticky — agent can't delete privd-owned files)
 //   Eye-off:       uid 1002 : gid 1001, file=662 / dir=3773 (agent keeps -w- but no read bit)
 //   Lock:          uid 998  : gid 1001, file=644 / dir=755
-//   Eye-off+Lock:  uid 998  : gid 1001, file=640 / dir=750
+//   Eye-off+Lock:  uid 998  : gid 1001, file=640 / dir=750  (privd owns; agent gets ---)
 //   Keyed:         uid 998  : gid 1001, file=755 / dir=755  (privd-owned; agent has r-x, cannot write)
-//   Keyed+Eye-off: uid 998  : gid 1001, file=750 / dir=750
+//   Key+Eye is not a valid combination: Eye is for non-executable data files, Key is for scripts only.
 import { dockerExec, ensureContainer, applyKeyedExecutable, type DockerResult } from "./containerManager";
 import {
   readPermissionSnapshot,
@@ -51,7 +51,6 @@ interface ModeSpec {
 }
 
 function resolveMode(isHidden: boolean, isLocked: boolean, isKeyed: boolean): ModeSpec {
-  if (isKeyed && isHidden) return { uid: 998, gid: 1001, fileMode: "750", dirMode: "750" };
   if (isKeyed)             return { uid: 998, gid: 1001, fileMode: "755", dirMode: "755" };
   if (isHidden && isLocked) return { uid: 998, gid: 1001, fileMode: "640", dirMode: "750" };
   if (isLocked)             return { uid: 998, gid: 1001, fileMode: "644", dirMode: "755" };

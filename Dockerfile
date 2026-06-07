@@ -32,7 +32,8 @@ COPY lib/ ./lib/
 COPY app/ ./app/
 COPY components/ ./components/
 
-RUN mkdir -p /app/data && \
+RUN addgroup -g 1001 access && adduser node access && \
+    mkdir -p /app/data && \
     chown -R node:node /app
 USER node
 

@@ -318,17 +318,25 @@ async function ensureWorkspaceImage(): Promise<void> {
     log.info({ image: CONTAINER_IMAGE }, "workspace image not found — building now (takes a few minutes)...");
   }
 
-  const buildArgs = ["build", "-f", "Dockerfile.workspace", "-t", CONTAINER_IMAGE];
+  // Dockerfile.workspace has no COPY/ADD, so the build needs no context. Pipe the Dockerfile on
+  // stdin with an empty context ("-") instead of "." — sending "." would tar the whole cwd, which
+  // at runtime is /app and includes the mounted /app/data workspace volume. Those files are owned
+  // by the agent (uid 1000) and not always readable by the app, so tarring them fails the build
+  // ("no permission to read from /app/data/..."). An empty context sidesteps that entirely.
+  const dockerfile = await readFile("Dockerfile.workspace");
+  const buildArgs = ["build", "-t", CONTAINER_IMAGE];
   if (hash) buildArgs.push("--label", `${HASH_LABEL}=${hash}`);
-  buildArgs.push(".");
+  buildArgs.push("-");
 
   await new Promise<void>((resolve, reject) => {
-    const proc = spawn("docker", buildArgs, { stdio: ["ignore", "inherit", "inherit"] });
+    const proc = spawn("docker", buildArgs, { stdio: ["pipe", "inherit", "inherit"] });
     proc.on("close", (code: number | null) => {
       if (code === 0) resolve();
       else reject(new Error(`docker build exited with code ${code}`));
     });
     proc.on("error", reject);
+    proc.stdin!.write(dockerfile);
+    proc.stdin!.end();
   });
 
   log.info({ image: CONTAINER_IMAGE }, "workspace image ready");

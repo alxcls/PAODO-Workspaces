@@ -3,22 +3,8 @@ import { z } from "zod";
 import path from "path";
 import { dockerExec } from "@/lib/infra/containerManager";
 import { readPermissionSnapshot, isKeyedFromSnapshot } from "@/lib/infra/permissionStore";
+import { RUNTIME_PREFIX } from "@/lib/utils/fileType";
 import type { RuntimeKey } from "@/lib/utils/fileType";
-
-const RUNTIME_PREFIX: Record<RuntimeKey, string[]> = {
-  python: ["python"],
-  python3: ["python3"],
-  node: ["node"],
-  bash: ["bash"],
-  sh: ["sh"],
-  go_run: ["go", "run"],
-  ruby: ["ruby"],
-  php: ["php"],
-  perl: ["perl"],
-  deno_run: ["deno", "run"],
-  java_jar: ["java", "-jar"],
-  dotnet: ["dotnet"],
-};
 
 function normalizeRelPath(inputPath: string): string | null {
   if (inputPath.startsWith("/workspace/")) {
@@ -38,6 +24,9 @@ export function buildRunKeyedScriptTool(workspaceId: string, workspaceDir: strin
       }
 
       const snapshot = await readPermissionSnapshot(workspaceId);
+      if (snapshot.globalLock) {
+        return "Error: workspace is globally locked. Unlock the workspace before running keyed scripts.";
+      }
       if (!isKeyedFromSnapshot(snapshot, relPath)) {
         return `Error: "${relPath}" is not marked [keyed]. Toggle the key icon in the file tree to enable privileged execution.`;
       }
@@ -90,12 +79,19 @@ export function buildRunKeyedScriptTool(workspaceId: string, workspaceDir: strin
               "deno_run",
               "java_jar",
               "dotnet",
+              "lua",
+              "rscript",
+              "swift",
+              "awk",
+              "tcl",
             ] as [RuntimeKey, ...RuntimeKey[]],
           )
           .optional()
           .describe(
             "Optional runtime mode for the script. Supported values: " +
-              "'python', 'python3', 'node', 'bash', 'sh', 'go_run' (for 'go run'), 'ruby', 'php', 'perl', 'deno_run' (for 'deno run'), 'java_jar' (for 'java -jar'), and 'dotnet'. " +
+              "'python', 'python3', 'node', 'bash', 'sh', 'go_run' (for 'go run'), 'ruby', 'php', 'perl', " +
+              "'deno_run' (for 'deno run'), 'java_jar' (for 'java -jar'), 'dotnet', " +
+              "'lua', 'rscript' (for Rscript), 'swift', 'awk' (for 'awk -f'), 'tcl' (for tclsh). " +
               "If omitted, the script is executed directly.",
           ),
         args: z

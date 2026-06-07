@@ -134,7 +134,7 @@ function isSamePath(entry: string, rel: string): boolean {
 }
 
 function isDescendant(entry: string, rel: string): boolean {
-  if (rel === ".") return false;
+  if (rel === ".") return entry.length > 0;
   return entry.startsWith(`${rel}/`);
 }
 
@@ -169,6 +169,24 @@ export async function setKeyed(workspaceId: string, relPath: string, keyed: bool
     if (!store.keyed.some((p) => isSamePath(p, relPath))) store.keyed.push(relPath);
   } else {
     store.keyed = store.keyed.filter((p) => !isSamePath(p, relPath) && !isDescendant(p, relPath));
+  }
+  await writeStore(workspaceId, store);
+}
+
+// Atomically updates both locked[] and keyed[] in one write, eliminating the torn-state
+// window that exists when setPermission and setKeyed are called as two separate awaits.
+export async function setKeyedWithPermission(
+  workspaceId: string,
+  relPath: string,
+  keyed: boolean,
+): Promise<void> {
+  const store = await readStore(workspaceId);
+  if (keyed) {
+    if (!store.locked.some((p) => isSamePath(p, relPath))) store.locked.push(relPath);
+    if (!store.keyed.some((p) => isSamePath(p, relPath))) store.keyed.push(relPath);
+  } else {
+    store.locked = store.locked.filter((p) => !isSamePath(p, relPath) && !isDescendant(p, relPath));
+    store.keyed  = store.keyed.filter( (p) => !isSamePath(p, relPath) && !isDescendant(p, relPath));
   }
   await writeStore(workspaceId, store);
 }

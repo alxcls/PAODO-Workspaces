@@ -52,6 +52,9 @@ export async function PUT(
 
   try {
     await setGlobalPermission(ws.id, permission);
+    // Full-workspace reconcile: global lock must immediately update OS file modes,
+    // not just the JSON store, or kernel enforcement is absent until the next toggle.
+    await reconcileOsPermissions(ws.id);
   } catch (err) {
     createLogger("api").error({ err, workspaceId: id }, "failed to set global permission");
     return NextResponse.json({ error: "failed to set global permission" }, { status: 500 });

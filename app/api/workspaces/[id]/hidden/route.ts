@@ -4,7 +4,7 @@ import { setHidden, readPermissionSnapshot, isKeyedFromSnapshot } from "@/lib/in
 import { reconcileOsPermissions } from "@/lib/infra/osLock";
 import path from "path";
 import { createLogger } from "@/lib/infra/logger";
-import { isExecutable } from "@/lib/utils/fileType";
+import { getFileCategory } from "@/lib/utils/fileType";
 
 const log = createLogger("api");
 
@@ -31,7 +31,7 @@ export async function PATCH(
   }
   const relPath = path.relative(ws.dir, abs).split(path.sep).join("/") || ".";
 
-  if (hidden && isExecutable(path.basename(abs))) {
+  if (hidden && getFileCategory(path.basename(abs)) === "executable") {
     return NextResponse.json(
       { error: "Eye permission cannot be applied to executable scripts" },
       { status: 400 }

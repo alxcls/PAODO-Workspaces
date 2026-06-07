@@ -20,43 +20,49 @@ All three are Linux process identities (UIDs) inside the workspace container. No
 
 | Identity | What it is |
 |---|---|
-| App user | The platform server process (uid 1000, `node`) |
+| App user | The UI editor proxy (uid 1002, `appuser`); member of the `access` group |
 | Agent | The AI executing commands in the workspace container (uid 999, `agent`) |
-| Privileged | An elevated execution context — the UID that keyed scripts run under, granting them write access to locked files |
+| Privileged | An elevated execution context — the UID that keyed scripts run under (uid 998, `privd`), granting them write access to locked files |
 
-**Three symbols**
+**Three symbols — assigned by file type**
 
-### Eye — visibility
+Eye and Lock/Key are mutually exclusive by file type:
 
-Controls whether an identity can see the file content.
+| Symbol | Applies to | Purpose |
+|---|---|---|
+| Eye | Non-executable files (data, config, `.env`, …) | Hide content from the agent |
+| Lock | Executable files (scripts: `.py`, `.ts`, `.sh`, …) | Prevent the agent from modifying scripts |
+| Key | Executable files only | Run the script as the privileged identity |
+
+### Eye — visibility (non-executables only)
+
+When the eye is off the agent cannot read the file. It still sees the filename in the tree and can write to it (e.g. append config). Eye cannot be set on executable scripts: the kernel must read a script to execute it, so hiding one would silently break execution.
 
 | Identity | Eye on | Eye off |
 |---|---|---|
-| App user | can read the file | — |
-| Agent | — | cannot read the file content |
-| Privileged | can read the file | — |
+| App user | can read | can read |
+| Agent | can read | cannot read |
+| Privileged | can read | can read |
 
-When the eye is off for the agent, the file exists in the tree but its content is never returned to the agent — reads return empty or a redacted placeholder.
+### Lock — write protection (executables only)
 
-### Lock — write protection
-
-Controls whether an identity can modify the file or folder.
+Prevents the agent from modifying a script before it runs as privd. The lock is OS-enforced: even raw shell commands from the agent cannot write past it.
 
 | Identity | Locked | Unlocked |
 |---|---|---|
-| App user | cannot edit the file or folder | — |
-| Agent | cannot edit the file; cannot edit any file inside a locked folder | — |
-| Privileged | can edit the file | — |
+| App user | cannot edit | can edit |
+| Agent | cannot edit | can edit |
+| Privileged | can edit | can edit |
 
-The lock on a folder is recursive for the agent: it cannot modify any file inside, even if those files are individually unlocked.
+The lock on a folder is recursive for the agent: it cannot modify any executable inside, even if those files are individually unlocked.
 
-### Key — elevated execution
+### Key — elevated execution (executables only)
 
-Grants an executable file (any script: `.py`, `.ts`, `.sh`, …) the privilege to modify and execute other files, overriding the lock.
+Grants a script the privilege to modify locked files when run as privd. **Setting the key automatically applies the lock** — a keyed script is always write-protected from the agent; only privd can execute it.
 
-- Set on a file: that specific script can write to locked files and invoke other executables.
-- Set on a folder: every executable file inside inherits the key.
-- Only the privileged user can grant or revoke the key — the agent cannot.
+- Set on a file: that specific script runs as privd and can write to locked files.
+- Set on a folder: every executable inside inherits the key.
+- Only the operator can grant or revoke the key via the UI — the agent cannot.
 
 ## Non-goals
 
@@ -77,7 +83,7 @@ Grants an executable file (any script: `.py`, `.ts`, `.sh`, …) the privilege t
 ### Must have
 
 - Three identities are enforced at the OS level inside the workspace container (distinct UIDs, no root).
-- Eye, lock, and key are toggleable from the file tree UI as icon badges on each file and folder.
+- Eye, lock, and key are toggleable from the file tree UI as icon badges; eye is shown only on non-executables, lock/key only on executables.
 - The agent receives a clear error when it attempts to read a hidden file or write a locked file.
 - The key can only be granted or revoked by the human operator through the UI — there is no agent tool or prompt path to set it.
 - Key on a folder propagates to all executables inside at runtime (no need to badge each file individually).

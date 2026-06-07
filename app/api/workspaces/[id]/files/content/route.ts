@@ -214,8 +214,10 @@ export async function DELETE(
       const code = (rmErr as NodeJS.ErrnoException).code;
       if (code === "EACCES" || code === "EPERM") {
         // App process (node uid 1000) lacks write access to the workspace volume in production;
-        // fall back to running rm inside the container as root, same pattern as PUT.
-        const r = await dockerExec(ws.id, ws.dir, ["rm", "-rf", `/workspace/${relPath}`]);
+        // fall back to running rm as appuser (uid 1002, access group). appuser has group-write
+        // on Normal/Eye-off files (mode 664/262) but not on locked files (mode 644/640, uid 998),
+        // so this correctly refuses deletion of locked files without bypassing kernel enforcement.
+        const r = await dockerExec(ws.id, ws.dir, ["rm", "-rf", `/workspace/${relPath}`], { asAppUser: true });
         if (r.code !== 0) throw new Error(r.stderr || "rm failed");
       } else {
         throw rmErr;

@@ -102,9 +102,13 @@ async function reconcileLoadedWorkspaces(): Promise<void> {
   }
 }
 
+// Exported so the HTTP server can await full OS-state restoration before accepting requests
+// if desired (e.g. in server.ts: await startupReconcile before listen()).
+// Without that, there is a short window after restart where OS modes have not been re-applied.
+export let startupReconcile: Promise<void> = Promise.resolve();
 if (freshMap) {
   loadRegistry();
-  void reconcileLoadedWorkspaces();
+  startupReconcile = reconcileLoadedWorkspaces();
 }
 
 export async function createWorkspace(name: string): Promise<Workspace> {

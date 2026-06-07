@@ -1,8 +1,9 @@
 import { getWorkspace } from "@/lib/infra/workspaceStore";
-import { setKeyed, setPermission } from "@/lib/infra/permissionStore";
+import { setKeyedWithPermission } from "@/lib/infra/permissionStore";
 import { reconcileOsPermissions } from "@/lib/infra/osLock";
-import { isExecutable } from "@/lib/utils/fileType";
+import { getFileCategory } from "@/lib/utils/fileType";
 import path from "path";
+import fs from "fs/promises";
 import { createLogger } from "@/lib/infra/logger";
 import { NextRequest, NextResponse } from "next/server";
 
@@ -33,22 +34,22 @@ export async function PATCH(
   }
   const relPath = path.relative(ws.dir, abs).split(path.sep).join("/") || ".";
 
-  if (keyed && !isExecutable(path.basename(abs))) {
-    return NextResponse.json(
-      { error: "Key permission can only be applied to executable scripts" },
-      { status: 400 }
-    );
+  if (keyed && getFileCategory(path.basename(abs)) !== "executable") {
+    // Directories are allowed — Key on a folder propagates to all executables inside at runtime.
+    let isDir = false;
+    try { isDir = (await fs.stat(abs)).isDirectory(); } catch { /* path may not exist yet */ }
+    if (!isDir) {
+      return NextResponse.json(
+        { error: "Key permission can only be applied to executable scripts or directories" },
+        { status: 400 }
+      );
+    }
   }
 
   try {
-    if (keyed) {
-      await setPermission(ws.id, relPath, "R");
-      await setKeyed(ws.id, relPath, true);
-    } else {
-      // Key always implies Lock — un-keying must also un-lock to keep state consistent.
-      await setPermission(ws.id, relPath, "RW");
-      await setKeyed(ws.id, relPath, false);
-    }
+    // Atomic single-write: avoids a torn state where locked[] is cleared but keyed[] is not
+    // (or vice versa) if the process crashes between two separate store writes.
+    await setKeyedWithPermission(ws.id, relPath, keyed);
     // Best-effort OS reconcile so keyed scripts are owned by privd and locked down immediately.
     await reconcileOsPermissions(ws.id, relPath).catch(() => {});
   } catch (err) {

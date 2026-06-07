@@ -254,14 +254,20 @@ const MasterLockButton = ({
     if (busy) return;
     setBusy(true);
     const next: "R" | "RW" = globalLock ? "RW" : "R";
-    await fetch(`/api/workspaces/${workspaceId}/permissions`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ permission: next }),
-    });
-    onGlobalPermissionChange(next);
-    onRefresh();
-    setBusy(false);
+    try {
+      const res = await fetch(`/api/workspaces/${workspaceId}/permissions`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ permission: next }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      onGlobalPermissionChange(next);
+      onRefresh();
+    } catch (err) {
+      console.error("failed to toggle global lock", err);
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (
@@ -309,7 +315,7 @@ const TreeNodeList = ({
     <>
       {sorted.map((node) => {
         const canHide = !isExecutable(node.name) && !node.privileged;
-        const canKey  = isExecutable(node.name) || (node.privileged ?? false);
+        const canKey  = node.type === "directory" || isExecutable(node.name) || (node.privileged ?? false);
         if (node.type === "directory") {
           const isOpen = expanded[node.path] ?? false;
           const state = getNodeCheckState(node, selected);

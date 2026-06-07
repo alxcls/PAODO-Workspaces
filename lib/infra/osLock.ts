@@ -178,8 +178,8 @@ export async function reconcileOsPermissions(workspaceId: string, relPath?: stri
     const orphanScan = await runRoot(workspaceId, [
       "find", "/workspace",
       "-xdev",
-      "-uid", "998", "-o", "-uid", "1002", "-o",
-      "(", "-uid", "999", "-perm", "262", ")",
+      "(", "-uid", "998", "-o", "-uid", "1002", "-o",
+      "(", "-uid", "999", "-perm", "262", ")", ")",
       "-printf", "%P\n",
     ]);
     if (orphanScan.code === 0 && orphanScan.stdout) {

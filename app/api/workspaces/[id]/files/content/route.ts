@@ -213,12 +213,18 @@ export async function DELETE(
     } catch (rmErr) {
       const code = (rmErr as NodeJS.ErrnoException).code;
       if (code === "EACCES" || code === "EPERM") {
-        // App process (node uid 1000) lacks write access to the workspace volume in production;
-        // fall back to running rm as appuser (uid 1002, access group). appuser has group-write
-        // on Normal/Eye-off files (mode 664/262) but not on locked files (mode 644/640, uid 998),
-        // so this correctly refuses deletion of locked files without bypassing kernel enforcement.
-        const r = await dockerExec(ws.id, ws.dir, ["rm", "-rf", `/workspace/${relPath}`], { asAppUser: true });
-        if (r.code !== 0) throw new Error(r.stderr || "rm failed");
+        // App process (node uid 1000) lacks write access to the workspace volume in production.
+        // First try as appuser (uid 1002, access group): handles node-unwritable files and
+        // preserves kernel enforcement on locked files (mode 640/644, uid 998) — appuser
+        // cannot delete privd-owned files even if the app-level lock check has a bug.
+        const r1 = await dockerExec(ws.id, ws.dir, ["rm", "-rf", `/workspace/${relPath}`], { asAppUser: true });
+        if (r1.code !== 0) {
+          // appuser failed (sticky bit: file is agent-owned, uid 999). Escalate to privd
+          // (directory owner) which the sticky bit exempts. Safe because the lock gate
+          // above already rejected any locked file before we reached this point.
+          const r2 = await dockerExec(ws.id, ws.dir, ["rm", "-rf", `/workspace/${relPath}`], { asPrivd: true });
+          if (r2.code !== 0) throw new Error(r2.stderr || "rm failed");
+        }
       } else {
         throw rmErr;
       }

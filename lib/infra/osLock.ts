@@ -109,8 +109,10 @@ async function applyDirectoryMode(
   }
 
   const containerPath = relPath === "." ? "/workspace" : `/workspace/${relPath}`;
-  await runRoot(workspaceId, ["chmod", dirMode, containerPath]);
-  await runRoot(workspaceId, ["chown", `${uid}:${gid}`, containerPath]);
+  await Promise.all([
+    runRoot(workspaceId, ["chmod", dirMode, containerPath]),
+    runRoot(workspaceId, ["chown", `${uid}:${gid}`, containerPath]),
+  ]);
 }
 
 // Applies correct ownership and mode to a single path (and recursively to its subtree).
@@ -118,10 +120,11 @@ async function applyMode(workspaceId: string, relPath: string, isHidden: boolean
   const { uid, gid, fileMode, dirMode } = resolveMode(isHidden, isLocked, isKeyed);
   const containerPath = relPath === "." ? "/workspace" : `/workspace/${relPath}`;
 
-  // chmod files first (while still under current ownership), then chown
-  await runRoot(workspaceId, ["find", containerPath, "-type", "f", "-exec", "chmod", fileMode, "{}", "+"]);
-  await runRoot(workspaceId, ["find", containerPath, "-type", "d", "-exec", "chmod", dirMode, "{}", "+"]);
-  await runRoot(workspaceId, ["find", containerPath, "-exec", "chown", `${uid}:${gid}`, "{}", "+"]);
+  await Promise.all([
+    runRoot(workspaceId, ["find", containerPath, "-type", "f", "-exec", "chmod", fileMode, "{}", "+"]),
+    runRoot(workspaceId, ["find", containerPath, "-type", "d", "-exec", "chmod", dirMode, "{}", "+"]),
+    runRoot(workspaceId, ["find", containerPath, "-exec", "chown", `${uid}:${gid}`, "{}", "+"]),
+  ]);
 }
 
 // Reconciles actual container file ownership/mode with the current permission store state.
@@ -146,9 +149,7 @@ export async function reconcileOsPermissions(workspaceId: string, relPath?: stri
       );
 
       const dirsToFix = gatherDirectoriesToFix([relPath]);
-      for (const dir of dirsToFix) {
-        await applyDirectoryMode(workspaceId, dir, snapshot);
-      }
+      await Promise.all(dirsToFix.map(dir => applyDirectoryMode(workspaceId, dir, snapshot)));
 
       // applyMode issues a literal chmod NNN which strips +x. Re-apply it for any keyed scripts.
       await reconcileKeyedExecutable(workspaceId);
@@ -156,9 +157,12 @@ export async function reconcileOsPermissions(workspaceId: string, relPath?: stri
     }
 
     // Full sweep — used after apt installs to fix root-owned artifacts.
-    // 1. Fix mode bits on any root-owned files before changing ownership.
-    await runRoot(workspaceId, ["find", "/workspace", "-user", "root", "-type", "f", "-exec", "chmod", "664", "{}", "+"]);
-    await runRoot(workspaceId, ["find", "/workspace", "-user", "root", "-type", "d", "-exec", "chmod", "2775", "{}", "+"]);
+    // 1. Fix mode bits on any root-owned files before changing ownership. Chmod files and dirs
+    //    can run in parallel; chown must come after both so the -user root filter still matches.
+    await Promise.all([
+      runRoot(workspaceId, ["find", "/workspace", "-user", "root", "-type", "f", "-exec", "chmod", "664", "{}", "+"]),
+      runRoot(workspaceId, ["find", "/workspace", "-user", "root", "-type", "d", "-exec", "chmod", "2775", "{}", "+"]),
+    ]);
     // 2. Chown any remaining root-owned files to Normal state (uid 999).
     await runRoot(workspaceId, ["find", "/workspace", "-user", "root", "-exec", "chown", "999:1001", "{}", "+"]);
 
@@ -184,12 +188,12 @@ export async function reconcileOsPermissions(workspaceId: string, relPath?: stri
     ]);
     if (orphanScan.code === 0 && orphanScan.stdout) {
       const orphanRelPaths = orphanScan.stdout.split("\n").filter(Boolean);
-      for (const rel of orphanRelPaths) {
-        if (isUnderConfigured(rel)) continue;
-        // Reset to Normal state for any path that is no longer configured but still carries
-        // privd/appuser ownership from a previous permission setting.
-        await applyMode(workspaceId, rel, false, false, false);
-      }
+      // Reset orphans to Normal state — all target the same mode, so fully independent.
+      await Promise.all(
+        orphanRelPaths
+          .filter(rel => !isUnderConfigured(rel))
+          .map(rel => applyMode(workspaceId, rel, false, false, false))
+      );
     }
 
     // 4. Re-apply configured paths (shallower first so deeper paths override parent-level settings).
@@ -206,9 +210,7 @@ export async function reconcileOsPermissions(workspaceId: string, relPath?: stri
     }
 
     const dirsToFix = gatherDirectoriesToFix(allConfigured);
-    for (const dir of dirsToFix) {
-      await applyDirectoryMode(workspaceId, dir, snapshot);
-    }
+    await Promise.all(dirsToFix.map(dir => applyDirectoryMode(workspaceId, dir, snapshot)));
 
     // 5. Ensure keyed scripts are executable.
     await reconcileKeyedExecutable(workspaceId);

@@ -87,11 +87,11 @@ export function buildListDirectoryTool(workspaceId: string, workspaceDir: string
       name: "list_directory",
       description: `List the contents of a directory in the workspace. Returns entries sorted with directories first.
 Each line shows Linux mode bits, owner:group, name, and size — exactly like ls -l.
-Read the "other" bits (last 3 chars) to know what you can do: you run as uid 999 (agent) and are always "other" on every file.
-  rw-rw-r--  agent:access   → Normal — you can read and write
-  rw-rw----  appuser:access → Eye-off — other=0, you cannot read (kernel will deny)
-  rw-r--r--  privd:access   → Locked — other=r, you can read but not write
-  rw-r-----  privd:access   → Eye-off+Lock — other=0, you cannot read or write
+You run as uid 999 (agent). If the owner column shows "agent", use the OWNER bits (first 3 after the leading type char); otherwise you are "other" — use the OTHER bits (last 3).
+  rw-rw-r--  agent:access  → Normal — you can read and write
+  -w-rw--w-  agent:access  → Eye-off — owner=-w-, you can write and delete, but not read (kernel will deny reads)
+  rw-r--r--  privd:access  → Locked — other=r, you can read but not write
+  rw-r-----  privd:access  → Eye-off+Lock — other=0, you cannot read or write
 [keyed] is appended for scripts that run as privd (uid 998) via server dispatch — they can write locked files.
 Use this instead of ls. For recursive or pattern-based search use glob instead.`,
       schema: z.object({

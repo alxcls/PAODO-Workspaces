@@ -133,12 +133,12 @@ Covers all shell operations including:
 - Content search:     grep -rn "pattern" --include="*.ts" (exclude node_modules/.git/.next automatically)
 - File deletion:      rm filename
 - Git operations:     git status, git log --oneline, git diff
-- Running scripts:    node script.js, npm run build, python3 script.py
+- Running scripts:    node script.js, npm run build, python3 script.py  (non-[keyed] scripts only)
 - Package management: npm install, pnpm install, pip3 install <package>
 - JSON extraction:    jq '.key' file.json
 - Piping/chaining:    cmd1 | cmd2, cmd1 && cmd2
 
-Do NOT use for: reading file contents (use file_read), editing file contents (use file_edit), writing new file contents (use file_write).
+Do NOT use for: reading file contents (use file_read), editing file contents (use file_edit), writing new file contents (use file_write), running [keyed] scripts (use run_keyed_script — executing them here bypasses privilege injection).
 USE THIS for: renaming files (mv), moving files, deleting files (rm), creating symlinks, and any other shell file-system operation that doesn't involve reading or writing file content.
 Always use POSIX/bash syntax. Never use PowerShell syntax.
 When the workspace is globally locked (volume mounted read-only), write operations (npm install, file writes, apt-get, nvm install) are blocked — only read-only commands work.

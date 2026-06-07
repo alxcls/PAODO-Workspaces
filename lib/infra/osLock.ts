@@ -5,7 +5,7 @@
 //
 // Ownership/mode scheme:
 //   Normal:        uid 999  : gid 1001, file=664 / dir=3775 (sticky — agent can't delete privd-owned files)
-//   Eye-off:       uid 1002 : gid 1001, file=662 / dir=3773 (agent keeps -w- but no read bit)
+//   Eye-off:       uid 999  : gid 1001, file=262 / dir=3775 (agent owns files; dir readable by server so user sees contents)
 //   Lock:          uid 998  : gid 1001, file=644 / dir=755
 //   Eye-off+Lock:  uid 998  : gid 1001, file=640 / dir=750  (privd owns; agent gets ---)
 //   Keyed:         uid 998  : gid 1001, file=755 / dir=755  (privd-owned; agent has r-x, cannot write)
@@ -54,7 +54,7 @@ function resolveMode(isHidden: boolean, isLocked: boolean, isKeyed: boolean): Mo
   if (isKeyed)             return { uid: 998, gid: 1001, fileMode: "755", dirMode: "755" };
   if (isHidden && isLocked) return { uid: 998, gid: 1001, fileMode: "640", dirMode: "750" };
   if (isLocked)             return { uid: 998, gid: 1001, fileMode: "644", dirMode: "755" };
-  if (isHidden)             return { uid: 1002, gid: 1001, fileMode: "662", dirMode: "3773" };
+  if (isHidden)             return { uid: 999,  gid: 1001, fileMode: "262", dirMode: "3775" };
   return                           { uid: 999,  gid: 1001, fileMode: "664", dirMode: "3775" };
 }
 
@@ -178,7 +178,8 @@ export async function reconcileOsPermissions(workspaceId: string, relPath?: stri
     const orphanScan = await runRoot(workspaceId, [
       "find", "/workspace",
       "-xdev",
-      "-uid", "998", "-o", "-uid", "1002",
+      "-uid", "998", "-o", "-uid", "1002", "-o",
+      "(", "-uid", "999", "-perm", "262", ")",
       "-printf", "%P\n",
     ]);
     if (orphanScan.code === 0 && orphanScan.stdout) {

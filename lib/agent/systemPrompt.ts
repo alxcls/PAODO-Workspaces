@@ -21,7 +21,7 @@ const STATIC_INSTRUCTIONS = `# Environment
 - Prefer project-local package installs (inside \`/workspace\`) over global installs.
 
 # Doing Tasks
-- Always call \`list_directory\` to understand the workspace and the filesystem permission bits.
+- Before operating on any file or directory (running a script, reading, editing, deleting, moving), call \`list_directory\` on its parent directory first to verify ownership and permission bits.
 - Prefer editing existing files over creating new ones. Only create files when explicitly required.
 - Use the minimum number of tool calls necessary.
 - Before reporting a task complete, verify it actually worked.

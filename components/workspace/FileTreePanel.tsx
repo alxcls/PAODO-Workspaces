@@ -314,8 +314,9 @@ const TreeNodeList = ({
   return (
     <>
       {sorted.map((node) => {
-        const canHide = !isExecutable(node.name) && !node.privileged;
-        const canKey  = node.type === "directory" || isExecutable(node.name) || (node.privileged ?? false);
+        const isExec = isExecutable(node.name);
+        const canHide = !isExec;  // directories and non-executable files: Eye badge
+        const canKey  = isExec;   // executable scripts only: Key badge
         if (node.type === "directory") {
           const isOpen = expanded[node.path] ?? false;
           const state = getNodeCheckState(node, selected);

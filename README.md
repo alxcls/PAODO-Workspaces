@@ -9,7 +9,6 @@ A self-hosted platform for running small, grounded AI-managed services. Each **w
 - **Workspaces**: isolated Docker containers, each with its own agent and `AGENTS.md` instruction file, all files and shell operations run inside the container
 - **ReAct agent loop**: streams tool calls in real time over SSE; final response delivered as a single event once the loop completes
 - **Full tool set**: file read/edit/write, shell execution, glob search, directory listing, web fetch, todo list
-- **Lock mechanism**: per-file and per-directory R/RW toggle protects workspace files from accidental agent edits without blocking script execution
 - **File browser**: view, edit, upload, and download files from the UI with syntax highlighting and preview for .html, .md and .json
 - **API access**: every workspace exposes an HTTP endpoint with a per-workspace API key to trigger the workspace agent exernally
 - **Live console**: shell output and file-change notifications stream over WebSocket in real time
@@ -79,7 +78,7 @@ Browser / API client
 
 **Agent loop**: each turn the model receives a system prompt (built from the standard system prompt and workspace's `AGENTS.md`), the conversation history, and tool results, then emits either a tool call or a final answer. Tool calls are executed, their output appended to history, and the loop continues until the model stops calling tools. Events (`tool_start`, `tool_result`, `token`, `done`) are streamed over SSE so the UI updates word by word.
 
-**Sandboxing**: all agent tool calls — file reads, writes, edits, directory listings, glob searches, and shell commands — are executed inside a per-workspace Docker container (`ws_<id>`). The container is started when a session begins, stopped after an idle timeout, and restarted automatically on the next tool call. Only that workspace's directory is mounted into the container (`/workspace`), enforcing isolation at the container level. A global lock mounts the workspace read-only inside the container, blocking all writes at the OS level; shell commands additionally run as a restricted user (`agent`, UID 999) that can read and execute but not write.
+**Sandboxing**: all agent tool calls — file reads, writes, edits, directory listings, glob searches, and shell commands — are executed inside a per-workspace Docker container (`ws_<id>`). The container is started when a session begins, stopped after an idle timeout, and restarted automatically on the next tool call. Only that workspace's directory is mounted into the container (`/workspace`), enforcing isolation at the container level. Shell commands run as a restricted non-root user (`agent`, UID 999) with dropped capabilities, limiting what the agent can do even within the container.
 
 **Persistence** is intentionally lightweight: workspace metadata and the agent network graph live in JSON files under `data/`; conversation history is in-memory only and resets on restart or tab close.
 
@@ -90,16 +89,6 @@ A workspace is a self-contained project environment stored under `/data/<workspa
 Workspaces are isolated from one another: file edits and shell commands are confined to that workspace directory. A common workflow is to create one workspace per service, then add project-specific instructions or secrets as needed.
 
 ![Data visualization](doc/images/DATA_VIZ.png)
-
-## File locks
-
-Every file and directory in a workspace can be marked **read-only** or **read-write** from the file tree panel. Click the lock icon next to any item to toggle it; the master lock button at the top locks or unlocks the entire workspace at once. Lock state persists across server restarts.
-
-Locked scripts can still be executed, locked files can still be updated by scripts.
-
-> **Caveat:** per-file locks only block the agent's file tools. A script the agent writes and runs via the shell can still overwrite a locked file. The master lock is the only fully airtight protection. See [doc/agent-lock-bypass.md](doc/agent-lock-bypass.md).
-
-![Lock Mechanism](doc/images/LOCK_MECHANISM.png)
 
 ## Agent network *(experimental, opt-in)*
 
@@ -159,9 +148,7 @@ doc/                         Architecture docs, PRDs, ADRs
   - **External API** (`/agent`): stateless, every request starts with a fresh context: multi-turn conversations require the caller to pass history themselves
   - **Agent-to-agent calls** (`call_agent`): stateless, each call starts fresh regardless of the caller's own history
 
-- **Concurrent agent sessions work**: multiple agents can target the same workspace simultaneously with isolated memory and a shared console stream; however there is no file locking or queue, so simultaneous writes to the same file are unprotected and could silently overwrite each other under high load.
-
-- **Per-file locks do not prevent shell-level writes**: locking a file blocks the agent's `file_edit` and `file_write` tools, but the agent can write a script to an unlocked path and run it via `execute_command`, bypassing lock checks entirely. The global lock is the only currently airtight enforcement. See [doc/agent-lock-bypass.md](doc/agent-lock-bypass.md).
+- **Concurrent agent sessions work**: multiple agents can target the same workspace simultaneously with isolated memory and a shared console stream; however there is no file queue, so simultaneous writes to the same file are unprotected and could silently overwrite each other under high load.
 
 - **No image reading**: the agent has no tool to read or interpret image files; it can manipulate them as raw files but cannot see their content.
 

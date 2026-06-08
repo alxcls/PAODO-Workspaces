@@ -1,6 +1,6 @@
 # PRD — Agent Loop Control
 
-**Status:** Accepted  
+**Status:** Implemented  
 **Author:** alxcls  
 **Related:** [VISION.md](../VISION.md), [agent-loop.md](../agent-loop.md)
 

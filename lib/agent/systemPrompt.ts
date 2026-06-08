@@ -18,7 +18,6 @@ const STATIC_INSTRUCTIONS = `# Environment
 - Prefer editing existing files over creating new ones. Only create files when explicitly required.
 - Use the minimum number of tool calls necessary.
 - Before reporting a task complete, verify it actually worked.
-- Servers: start with \`nohup <cmd> &\`, stop with \`pkill -x <name>\`. Never use \`pgrep -f\` — it matches the running shell and kills it. Only restart if the server file itself changed.
 
 # Multi-Task Execution
 When asked to do multiple things (e.g. "do these 4 tasks"):
@@ -40,15 +39,7 @@ Call independent tools IN PARALLEL. Call dependent tools sequentially.
 Always format responses using Markdown.
 
 # HTML previews
-HTML files are loaded through the platform's file viewer as a \`srcDoc\` iframe — the origin is the app, not any server running in the workspace.
-
-**Static workspace files** (JSON, images, etc.) — the platform injects \`<base href>\` so \`document.baseURI\` is always the correct base (\`location.href\` is \`about:srcdoc\` and cannot be used):
-\`\`\`js
-const url = new URL('path/to/file.json', document.baseURI).href;
-const response = await fetch(\`\${url}?t=\${Date.now()}\`);
-\`\`\`
-
-**Container server data** — start your server on \`0.0.0.0:8080\`; the platform injects \`window.API_BASE\` as the proxy URL (always present, no fallback needed):
+Start your server on \`0.0.0.0:8080\`. To call it from an HTML file, use \`window.API_BASE\` (injected by the platform):
 \`\`\`js
 const response = await fetch(\`\${window.API_BASE}/your-endpoint\`);
 \`\`\`

@@ -9,6 +9,7 @@
 import { spawn } from "child_process";
 import { createHash } from "crypto";
 import { readFile, rm } from "fs/promises";
+import { createServer } from "net";
 import path from "path";
 import { createLogger } from "./logger";
 
@@ -27,6 +28,33 @@ const WORKSPACES_VOLUME_NAME = process.env.WORKSPACES_VOLUME_NAME ?? "";
 const idleTimers = new Map<string, ReturnType<typeof setTimeout>>();
 // Prevents concurrent docker run/start calls for the same workspace.
 const startLocks = new Map<string, Promise<void>>();
+// In-memory cache of workspaceId → allocated host port for the container's port 8080.
+const portMap = new Map<string, number>();
+
+function getFreePort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const srv = createServer();
+    srv.listen(0, () => {
+      const { port } = srv.address() as { port: number };
+      srv.close(() => resolve(port));
+    });
+    srv.on("error", reject);
+  });
+}
+
+/** Returns the host port mapped to container port 8080, or null if no mapping exists. */
+export async function getContainerServerPort(workspaceId: string): Promise<number | null> {
+  const cached = portMap.get(workspaceId);
+  if (cached !== undefined) return cached;
+  const r = await dockerCmd("port", containerName(workspaceId), "8080");
+  if (r.code !== 0 || !r.stdout) return null;
+  // Output format: "0.0.0.0:PORT" or ":::PORT"
+  const match = r.stdout.match(/:(\d+)$/m);
+  if (!match) return null;
+  const port = parseInt(match[1], 10);
+  portMap.set(workspaceId, port);
+  return port;
+}
 
 function containerName(workspaceId: string): string {
   return `ws_${workspaceId}`;
@@ -114,31 +142,39 @@ async function _ensureContainer(workspaceId: string, workspaceDir: string): Prom
 
   if (status === "running" || status === "stopped") {
     const containerHash = await getContainerImageHash(workspaceId);
+    const portMissing = (await getContainerServerPort(workspaceId)) === null;
     if (!hash || containerHash === hash) {
-      if (status === "running") return;
-      // stopped, image unchanged — just restart it
-      log.debug({ workspaceId }, "starting stopped container");
-      await ensureNetwork(workspaceId);
-      const connect = await dockerCmd("network", "connect", networkName(workspaceId), containerName(workspaceId));
-      if (connect.code !== 0) throw new Error(`docker network connect failed: ${connect.stderr}`);
-      const r = await dockerCmd("start", containerName(workspaceId));
-      if (r.code !== 0) throw new Error(`docker start failed: ${r.stderr}`);
-      return;
+      if (!portMissing) {
+        if (status === "running") return;
+        // stopped, image unchanged, port mapped — just restart it
+        log.debug({ workspaceId }, "starting stopped container");
+        await ensureNetwork(workspaceId);
+        const connect = await dockerCmd("network", "connect", networkName(workspaceId), containerName(workspaceId));
+        if (connect.code !== 0) throw new Error(`docker network connect failed: ${connect.stderr}`);
+        const r = await dockerCmd("start", containerName(workspaceId));
+        if (r.code !== 0) throw new Error(`docker start failed: ${r.stderr}`);
+        return;
+      }
+      // Port mapping missing (container predates this feature) — recreate to add it.
+      log.debug({ workspaceId }, "container missing server port mapping — recreating");
+    } else {
+      // Image changed — remove so we recreate from the current image below.
+      log.debug({ workspaceId }, "workspace image changed — recreating container");
     }
-    // Image changed — remove so we recreate from the current image below.
-    log.debug({ workspaceId }, "workspace image changed — recreating container");
     await removeContainer(workspaceId);
   }
 
   // missing (or just removed) — create and start
   log.debug({ workspaceId }, "creating container");
   await ensureNetwork(workspaceId);
+  const serverPort = await getFreePort();
   const r = await dockerCmd(
     "run", "-d",
     "--name", containerName(workspaceId),
     "--network", networkName(workspaceId),
     `--memory=${CONTAINER_MEMORY}`,
     `--cpus=${CONTAINER_CPUS}`,
+    "-p", `127.0.0.1:${serverPort}:8080`,
     ...buildVolumeArg(workspaceDir),
     ...(hash ? ["--label", `${HASH_LABEL}=${hash}`] : []),
     // Drop all Linux capabilities, then add back only the minimal set dpkg/apt and the chown sweep
@@ -157,6 +193,7 @@ async function _ensureContainer(workspaceId: string, workspaceDir: string): Prom
     "sleep", "infinity",
   );
   if (r.code !== 0) throw new Error(`docker run failed: ${r.stderr}`);
+  portMap.set(workspaceId, serverPort);
 
   // One-time ownership sweep: legacy workspaces created when the agent ran as root hold root-owned
   // files the uid-1000 agent/app can no longer manage. Chown the tree to 1000:1000 so both can.
@@ -260,6 +297,7 @@ export async function removeContainer(workspaceId: string): Promise<void> {
   const t = idleTimers.get(workspaceId);
   if (t) { clearTimeout(t); idleTimers.delete(workspaceId); }
   startLocks.delete(workspaceId);
+  portMap.delete(workspaceId);
   // Non-zero exit codes are expected if the container/network was never created.
   const stop = await dockerCmd("stop", containerName(workspaceId));
   if (stop.code !== 0) log.debug({ workspaceId, stderr: stop.stderr }, "docker stop on remove (may not exist)");

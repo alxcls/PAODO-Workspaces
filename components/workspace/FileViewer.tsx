@@ -163,7 +163,8 @@ const FileViewer = forwardRef<FileViewerHandle, Props>(function FileViewer(
     const dirSegments = filePath.split("/").slice(0, -1);
     const encodedDir = dirSegments.map(encodeURIComponent).join("/");
     const base = `${window.location.origin}/api/workspaces/${workspaceId}/serve/${encodedDir}/`;
-    const baseTag = `<base href="${base}">`;
+    const apiBase = `/api/workspaces/${workspaceId}/proxy`;
+    const baseTag = `<base href="${base}"><script>window.API_BASE=${JSON.stringify(apiBase)}</script>`;
     const html = /<head(\s[^>]*)?>/.test(draft)
       ? draft.replace(/<head(\s[^>]*)?>/, `$&${baseTag}`)
       : baseTag + draft;

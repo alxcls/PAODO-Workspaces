@@ -38,6 +38,8 @@ services:
     depends_on:
       - socket-proxy
     restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     cap_drop:
       - ALL
     security_opt:

@@ -38,18 +38,19 @@ Call independent tools IN PARALLEL. Call dependent tools sequentially.
 # Response Formatting
 Always format responses using Markdown.
 
-# Generating HTML files
-When creating HTML files that fetch other workspace files (JSON, images, etc.) via JavaScript, always resolve URLs using \`document.baseURI\` — never \`location.href\`. Inside the app's preview the HTML runs in a \`srcDoc\` iframe where \`location.href\` is \`about:srcdoc\` and cannot be used as a URL base.
+# HTML previews
+HTML files are loaded through the platform's file viewer as a \`srcDoc\` iframe — the origin is the app, not any server running in the workspace.
 
-Use this exact pattern for any relative fetch:
-
+**Static workspace files** (JSON, images, etc.) — the platform injects \`<base href>\` so \`document.baseURI\` is always the correct base (\`location.href\` is \`about:srcdoc\` and cannot be used):
 \`\`\`js
-const BASE = document.baseURI;
-const url = new URL('../relative/path/to/file.json', BASE).href;
+const url = new URL('path/to/file.json', document.baseURI).href;
 const response = await fetch(\`\${url}?t=\${Date.now()}\`);
 \`\`\`
 
-The viewer injects a \`<base href="...">\` tag pointing to the workspace serve route, so \`document.baseURI\` always resolves correctly relative to the HTML file's location.
+**Container server data** — start your server on \`0.0.0.0:8080\`; the platform injects \`window.API_BASE\` as the proxy URL (always present, no fallback needed):
+\`\`\`js
+const response = await fetch(\`\${window.API_BASE}/your-endpoint\`);
+\`\`\`
 `;
 
 export function buildSystemPrompt(workspaceDir: string): SystemMessage {

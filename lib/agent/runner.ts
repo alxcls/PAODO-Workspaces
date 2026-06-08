@@ -136,6 +136,10 @@ export async function* runAgent(
             }
           }
         }
+        const reasoningContent = (chunk as unknown as { additional_kwargs?: { reasoning_content?: string } })
+          .additional_kwargs?.reasoning_content;
+        if (reasoningContent) yield { type: "reasoning", content: reasoningContent };
+
         for (const tcc of chunk.tool_call_chunks ?? []) {
           const idx = tcc.index ?? 0;
           if (!partials[idx]) partials[idx] = { id: "", name: "", args: "" };

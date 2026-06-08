@@ -1,5 +1,5 @@
 // Assembles the full agent tool set and binds it to the configured LLM.
-// Provider is selected via LLM_PROVIDER env var ("openai" default, "anthropic").
+// Provider is selected via LLM_PROVIDER env var ("openai" default, "anthropic", "deepseek").
 // Each tool receives the workspace directory and/or workspace ID to scope operations to the correct workspace.
 import { ChatOpenAI } from "@langchain/openai";
 import { ChatAnthropic } from "@langchain/anthropic";
@@ -40,6 +40,16 @@ export function buildTools(workspaceId: string, workspaceDir: string) {
           defaultHeaders: { "anthropic-beta": "prompt-caching-scope-2026-01-05" },
         },
       }),
+    });
+  } else if (provider === "deepseek") {
+    const modelName = process.env.DEEPSEEK_MODEL;
+    if (!modelName) throw new Error("DEEPSEEK_MODEL is not set in .env");
+    model = new ChatOpenAI({
+      model: modelName,
+      configuration: {
+        baseURL: "https://api.deepseek.com/v1",
+        apiKey: process.env.DEEPSEEK_API_KEY,
+      },
     });
   } else {
     const modelName = process.env.OPENAI_MODEL;

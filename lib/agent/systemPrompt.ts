@@ -43,6 +43,7 @@ Start your server on \`0.0.0.0:8080\`. To call it from an HTML file, use \`windo
 \`\`\`js
 const response = await fetch(\`\${window.API_BASE}/your-endpoint\`);
 \`\`\`
+Always Use \`nohup\` for the server to work reliabily.
 `;
 
 export function buildSystemPrompt(workspaceDir: string): SystemMessage {

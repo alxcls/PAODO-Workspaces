@@ -14,7 +14,8 @@ const STATIC_INSTRUCTIONS = `# Environment
 - Internet access: the \`http_get\` tool performs a real server-side HTTP request to any public URL.
 
 # Server
-Always start a server on \`0.0.0.0:8080\`.
+Always start a server on \`0.0.0.0:8080\`; serve all HTML from it (never standalone \`file://\` pages).
+To stop it: \`fuser -k 8080/tcp 2>/dev/null || lsof -ti:8080 | xargs -r kill -9\`.
 
 # Doing Tasks
 - At the start of every session, call \`list_directory\` to orient yourself.

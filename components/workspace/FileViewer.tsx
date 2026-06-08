@@ -103,7 +103,7 @@ const FileViewer = forwardRef<FileViewerHandle, Props>(function FileViewer(
       const currentPath = filePathRef.current ?? "";
       const directMatch = paths.includes(currentPath);
       const isHtmlFile = /\.(html?|htm)$/i.test(currentPath);
-      const siblingChanged = isHtmlFile && paths.some(p => p !== currentPath);
+      const siblingChanged = isHtmlFile && paths.some(p => p !== currentPath && /\.(js|mjs|css|html?|htm|svg|png|jpg|jpeg|gif|webp|woff2?)$/i.test(p));
       if (directMatch) {
         fetchContent(currentPath, true);
         if (isHtmlFile || /\.json$/i.test(currentPath)) setPreviewKey(k => k + 1);

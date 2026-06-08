@@ -10,7 +10,7 @@ Each workspace container gets a unique host port allocated at creation time (get
 
 Key choices:
 - Port allocated with getFreePort (OS ephemeral port) at docker run time; stored in an in-memory map (portMap); re-queried from `docker port` on restart and cached.
-- Binding to `127.0.0.1:port:8080` — never reachable from outside the host.
+- Binding to `0.0.0.0:port:8080` on the host — reachable only within the host network (VPS is behind Tailscale with UFW blocking all public incoming traffic).
 - In Docker Compose the app container reaches the host via `host.docker.internal` (added through extra_hosts: host-gateway); in local dev `localhost` is used directly. The distinction is driven by whether WORKSPACES_VOLUME_NAME is set.
 - FileViewer injects `window.API_BASE = /api/workspaces/:id/proxy` into the srcDoc HTML so agents need no hardcoded URLs.
 - Proxy forwards only `content-type` from the upstream request/response; all other headers are stripped. HTML and SVG responses receive `Content-Security-Policy: sandbox …` (no `allow-same-origin`) and `X-Content-Type-Options: nosniff` to prevent script execution in the app origin if a proxy URL is navigated to directly.

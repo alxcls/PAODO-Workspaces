@@ -65,7 +65,7 @@ export function buildSystemPrompt(workspaceDir: string): SystemMessage {
     log.debug(`AGENTS.md not found in ${workspaceDir} — skipping`);
   }
 
-  const dynamicContext = `${agentsSection ? agentsSection + "\n\n" : ""}You are logged in Workspace Directory: /${path.basename(workspaceDir)}
+  const dynamicContext = `${agentsSection ? agentsSection + "\n\n" : ""}Workspace name: ${path.basename(workspaceDir)} — your working directory inside the container is /workspace
 Today's date: ${date}`;
 
   return new SystemMessage({

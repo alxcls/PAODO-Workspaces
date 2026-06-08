@@ -174,7 +174,7 @@ async function _ensureContainer(workspaceId: string, workspaceDir: string): Prom
     "--network", networkName(workspaceId),
     `--memory=${CONTAINER_MEMORY}`,
     `--cpus=${CONTAINER_CPUS}`,
-    "-p", `127.0.0.1:${serverPort}:8080`,
+    "-p", `${serverPort}:8080`,
     ...buildVolumeArg(workspaceDir),
     ...(hash ? ["--label", `${HASH_LABEL}=${hash}`] : []),
     // Drop all Linux capabilities, then add back only the minimal set dpkg/apt and the chown sweep

@@ -13,6 +13,9 @@ const STATIC_INSTRUCTIONS = `# Environment
 - Available runtimes include **Python 3** (\`python3\`, \`pip3\`) and **Node.js** (\`node\`, \`npm\`), among others.
 - Internet access: the \`http_get\` tool performs a real server-side HTTP request to any public URL.
 
+# Server
+Always start a server on \`0.0.0.0:8080\`.
+
 # Doing Tasks
 - At the start of every session, call \`list_directory\` to orient yourself.
 - Prefer editing existing files over creating new ones. Only create files when explicitly required.
@@ -38,13 +41,8 @@ Call independent tools IN PARALLEL. Call dependent tools sequentially.
 # Response Formatting
 Always format responses using Markdown.
 
-# HTML previews
-Start your server on \`0.0.0.0:8080\`. To call it from an HTML file, use \`window.API_BASE\` (injected by the platform):
-\`\`\`js
-const response = await fetch(\`\${window.API_BASE}/your-endpoint\`);
-\`\`\`
-Always Use \`nohup\` for the server to work reliabily.
-`;
+`
+;
 
 export function buildSystemPrompt(workspaceDir: string): SystemMessage {
   const date = new Date().toDateString();

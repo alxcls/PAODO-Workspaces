@@ -18,6 +18,7 @@ const STATIC_INSTRUCTIONS = `# Environment
 - Prefer editing existing files over creating new ones. Only create files when explicitly required.
 - Use the minimum number of tool calls necessary.
 - Before reporting a task complete, verify it actually worked.
+- To run a background server, always use: \`nohup <cmd> &>/tmp/server.log &\` — each shell session is ephemeral, plain \`&\` may not survive.
 
 # Multi-Task Execution
 When asked to do multiple things (e.g. "do these 4 tasks"):
@@ -64,7 +65,7 @@ export function buildSystemPrompt(workspaceDir: string): SystemMessage {
     log.debug(`AGENTS.md not found in ${workspaceDir} — skipping`);
   }
 
-  const dynamicContext = `${agentsSection ? agentsSection + "\n\n" : ""}Workspace Directory: ${workspaceDir} (mapped to /workspace inside the container)
+  const dynamicContext = `${agentsSection ? agentsSection + "\n\n" : ""}You are logged in Workspace Directory: /${path.basename(workspaceDir)}
 Today's date: ${date}`;
 
   return new SystemMessage({

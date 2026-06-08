@@ -18,7 +18,7 @@ const STATIC_INSTRUCTIONS = `# Environment
 - Prefer editing existing files over creating new ones. Only create files when explicitly required.
 - Use the minimum number of tool calls necessary.
 - Before reporting a task complete, verify it actually worked.
-- To run a background server, always use: \`nohup <cmd> &>/tmp/server.log &\` — each shell session is ephemeral, plain \`&\` may not survive.
+- Servers: start with \`nohup <cmd> &\`, stop with \`pkill -x <name>\`. Never use \`pgrep -f\` — it matches the running shell and kills it. Only restart if the server file itself changed.
 
 # Multi-Task Execution
 When asked to do multiple things (e.g. "do these 4 tasks"):

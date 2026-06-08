@@ -164,7 +164,7 @@ const FileViewer = forwardRef<FileViewerHandle, Props>(function FileViewer(
     const encodedDir = dirSegments.map(encodeURIComponent).join("/");
     const base = `${window.location.origin}/api/workspaces/${workspaceId}/serve/${encodedDir}/`;
     const apiBase = `/api/workspaces/${workspaceId}/proxy`;
-    const baseTag = `<base href="${base}"><script>window.API_BASE=${JSON.stringify(apiBase)}</script>`;
+    const baseTag = `<base href="${base}"><script>window.API_BASE=${JSON.stringify(apiBase)};(function(){var _f=window.fetch;window.fetch=function(r,o){var u=typeof r==='string'?r:(r instanceof Request?r.url:String(r));if(u.startsWith('/')&&!u.startsWith('//')){var rw=window.API_BASE+u;return _f(typeof r==='string'?rw:new Request(rw,r),o);}return _f(r,o);};})();</script>`;
     const html = /<head(\s[^>]*)?>/.test(draft)
       ? draft.replace(/<head(\s[^>]*)?>/, `$&${baseTag}`)
       : baseTag + draft;

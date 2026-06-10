@@ -29,7 +29,7 @@ export default function ChatPanel({ workspaceId, onAgentTurnComplete }: { worksp
   });
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    bottomRef.current?.scrollIntoView({ behavior: streaming ? "instant" : "smooth" });
   }, [messages, streaming]);
 
   useEffect(() => {

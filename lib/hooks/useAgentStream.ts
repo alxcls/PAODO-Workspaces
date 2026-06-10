@@ -53,6 +53,10 @@ export function useAgentStream(workspaceId: string, { onTurnComplete }: Options 
   const [streaming, setStreaming] = useState(false);
   const [pendingTools, setPendingTools] = useState(0);
   const abortRef = useRef<AbortController | null>(null);
+  const pendingTokenRef = useRef<string | null>(null);
+  const pendingReasoningRef = useRef<string | null>(null);
+  const tokenRafRef = useRef<number | null>(null);
+  const reasoningRafRef = useRef<number | null>(null);
 
   // Captured in a ref so sendMessage never needs to be recreated when the callback changes.
   const onTurnCompleteRef = useRef(onTurnComplete);
@@ -103,28 +107,44 @@ export function useAgentStream(workspaceId: string, { onTurnComplete }: Options 
 
             if (event.type === "token") {
               assistantContent += event.content;
-              const content = assistantContent;
-              setMessages((prev) => {
-                const last = prev[prev.length - 1];
-                if (last?.role === "assistant" && !last.thinking) {
-                  const next = [...prev];
-                  next[next.length - 1] = { ...last, content };
-                  return next;
-                }
-                return [...prev, { role: "assistant", content }];
-              });
+              pendingTokenRef.current = assistantContent;
+              if (!tokenRafRef.current) {
+                tokenRafRef.current = requestAnimationFrame(() => {
+                  tokenRafRef.current = null;
+                  const content = pendingTokenRef.current;
+                  if (content === null) return;
+                  pendingTokenRef.current = null;
+                  setMessages((prev) => {
+                    const last = prev[prev.length - 1];
+                    if (last?.role === "assistant" && !last.thinking) {
+                      const next = [...prev];
+                      next[next.length - 1] = { ...last, content };
+                      return next;
+                    }
+                    return [...prev, { role: "assistant", content }];
+                  });
+                });
+              }
             } else if (event.type === "reasoning") {
               reasoningContent += event.content;
-              const content = reasoningContent;
-              setMessages((prev) => {
-                const last = prev[prev.length - 1];
-                if (last?.role === "reasoning") {
-                  const next = [...prev];
-                  next[next.length - 1] = { ...last, content };
-                  return next;
-                }
-                return [...prev, { role: "reasoning", content }];
-              });
+              pendingReasoningRef.current = reasoningContent;
+              if (!reasoningRafRef.current) {
+                reasoningRafRef.current = requestAnimationFrame(() => {
+                  reasoningRafRef.current = null;
+                  const content = pendingReasoningRef.current;
+                  if (content === null) return;
+                  pendingReasoningRef.current = null;
+                  setMessages((prev) => {
+                    const last = prev[prev.length - 1];
+                    if (last?.role === "reasoning") {
+                      const next = [...prev];
+                      next[next.length - 1] = { ...last, content };
+                      return next;
+                    }
+                    return [...prev, { role: "reasoning", content }];
+                  });
+                });
+              }
             } else if (event.type === "tool_start") {
               assistantContent = "";
               reasoningContent = "";
@@ -171,6 +191,34 @@ export function useAgentStream(workspaceId: string, { onTurnComplete }: Options 
         setMessages((prev) => [...prev, { role: "error", content: "Failed to reach server." }]);
       }
     } finally {
+      if (tokenRafRef.current) { cancelAnimationFrame(tokenRafRef.current); tokenRafRef.current = null; }
+      if (reasoningRafRef.current) { cancelAnimationFrame(reasoningRafRef.current); reasoningRafRef.current = null; }
+      if (pendingTokenRef.current !== null) {
+        const content = pendingTokenRef.current;
+        pendingTokenRef.current = null;
+        setMessages((prev) => {
+          const last = prev[prev.length - 1];
+          if (last?.role === "assistant" && !last.thinking) {
+            const next = [...prev];
+            next[next.length - 1] = { ...last, content };
+            return next;
+          }
+          return [...prev, { role: "assistant", content }];
+        });
+      }
+      if (pendingReasoningRef.current !== null) {
+        const content = pendingReasoningRef.current;
+        pendingReasoningRef.current = null;
+        setMessages((prev) => {
+          const last = prev[prev.length - 1];
+          if (last?.role === "reasoning") {
+            const next = [...prev];
+            next[next.length - 1] = { ...last, content };
+            return next;
+          }
+          return [...prev, { role: "reasoning", content }];
+        });
+      }
       abortRef.current = null;
       setStreaming(false);
       setPendingTools(0);

@@ -1,18 +1,10 @@
-// Left sidebar showing the workspace file tree with expandable directories and multi-select checkboxes.
-// Supports file and folder upload, ZIP download of selected files, and bulk delete.
-// Re-fetches the tree whenever the refreshKey prop changes (triggered by agent file mutations).
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
-import JSZip from "jszip";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
-
-interface TreeNode {
-  name: string;
-  type: "file" | "directory";
-  path: string;
-  children?: TreeNode[];
-}
+import { useFileTreeSelection } from "@/lib/hooks/useFileTreeSelection";
+import { useFileOperations, TreeNode } from "@/lib/hooks/useFileOperations";
+import JSZip from "jszip";
 
 type CheckState = "none" | "some" | "all";
 
@@ -51,7 +43,7 @@ function getAllNodes(nodes: TreeNode[]): TreeNode[] {
 function getNodeCheckState(node: TreeNode, selected: Set<string>): CheckState {
   if (selected.has(node.path)) return "all";
   if (node.type === "file") return "none";
-  const anyDescendant = getAllNodes(node.children ?? []).some(n => selected.has(n.path));
+  const anyDescendant = getAllNodes(node.children ?? []).some((n) => selected.has(n.path));
   return anyDescendant ? "some" : "none";
 }
 
@@ -86,8 +78,7 @@ interface TreeListProps {
 }
 
 const TreeNodeList = ({
-  nodes, depth, expanded, onToggle, activePath, selected,
-  onSelect, onPick,
+  nodes, depth, expanded, onToggle, activePath, selected, onSelect, onPick,
 }: TreeListProps) => {
   const sorted = [...nodes].sort((a, b) => {
     if (a.type !== b.type) return a.type === "directory" ? -1 : 1;
@@ -100,7 +91,6 @@ const TreeNodeList = ({
         if (node.type === "directory") {
           const isOpen = expanded[node.path] ?? false;
           const state = getNodeCheckState(node, selected);
-
           return (
             <div key={node.path}>
               <button
@@ -110,7 +100,7 @@ const TreeNodeList = ({
                 <Checkbox state={state} onClick={(e) => {
                   e.stopPropagation();
                   if (state !== "none") {
-                    const descendants = getAllNodes(node.children ?? []).map(n => n.path);
+                    const descendants = getAllNodes(node.children ?? []).map((n) => n.path);
                     onSelect([node.path, ...descendants], false);
                   } else {
                     onSelect([node.path], true);
@@ -205,13 +195,11 @@ const UploadMenu = ({ workspaceId, onUploaded }: { workspaceId: string; onUpload
         const entryPath = file.webkitRelativePath || file.name;
         zip.file(entryPath, file);
       }
-
       setStatus("Compressing 0%");
       const blob = await zip.generateAsync(
         { type: "blob", compression: "DEFLATE", compressionOptions: { level: 1 } },
         (meta) => setStatus(`Compressing ${Math.round(meta.percent)}%`)
       );
-
       setStatus("Uploading archive…");
       const res = await fetch(`/api/workspaces/${workspaceId}/files/upload`, {
         method: "POST",
@@ -259,7 +247,6 @@ const UploadMenu = ({ workspaceId, onUploaded }: { workspaceId: string; onUpload
             onChange={handleFiles}
           />
         </button>
-
         <button
           type="button"
           className={`btn btn-ghost btn-sm flex-1 justify-center relative ${busy ? "pointer-events-none opacity-50" : ""}`}
@@ -283,11 +270,13 @@ const UploadMenu = ({ workspaceId, onUploaded }: { workspaceId: string; onUpload
 
 // ---- Main component ----
 interface Props {
-  workspaceId: string; workspaceName: string;
+  workspaceId: string;
+  workspaceName: string;
   selectedPath: string | null;
   onFileSelect: (path: string) => void;
   onDeletedPaths?: (paths: string[]) => void;
-  style?: React.CSSProperties; refreshKey?: number;
+  style?: React.CSSProperties;
+  refreshKey?: number;
 }
 
 export default function FileTreePanel({
@@ -295,100 +284,15 @@ export default function FileTreePanel({
   onFileSelect, onDeletedPaths, style, refreshKey,
 }: Props) {
   const router = useRouter();
-  const [tree, setTree] = useState<TreeNode[]>([]);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
-  const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [deleteError, setDeleteError] = useState<string | null>(null);
-  const deleteTimerRef = useRef<number | null>(null);
 
-  useEffect(() => {
-    if (!deleteError) return;
-    // clear any existing timer
-    if (deleteTimerRef.current) {
-      clearTimeout(deleteTimerRef.current);
-      deleteTimerRef.current = null;
-    }
-    // hide the error after 2 seconds
-    deleteTimerRef.current = window.setTimeout(() => {
-      setDeleteError(null);
-      deleteTimerRef.current = null;
-    }, 2000);
-    return () => {
-      if (deleteTimerRef.current) {
-        clearTimeout(deleteTimerRef.current);
-        deleteTimerRef.current = null;
-      }
-    };
-  }, [deleteError]);
+  const { selected, handleSelect, clearSelection } = useFileTreeSelection();
+  const { tree, fetchTree, handleDownload, handleDelete, deleteError } = useFileOperations({
+    workspaceId, workspaceName, selected, clearSelection, onDeletedPaths, refreshKey,
+  });
 
-  const fetchTree = useCallback(async () => {
-    try {
-      const res = await fetch(`/api/workspaces/${workspaceId}/files`);
-      if (!res.ok) return;
-      const { tree: data } = (await res.json()) as { tree: TreeNode[] };
-      setTree(data);
-      setExpanded((prev) => Object.keys(prev).length > 0 ? prev : {});
-    } catch { /* silent */ }
-  }, [workspaceId]);
-
-  useEffect(() => { fetchTree(); }, [fetchTree, refreshKey]);
-
-  const toggleExpanded = (path: string) => setExpanded((e) => ({ ...e, [path]: !e[path] }));
-
-  const handleSelect = (paths: string[], on: boolean) => {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      for (const p of paths) on ? next.add(p) : next.delete(p);
-      return next;
-    });
-  };
-
-  async function handleDownload() {
-    const res = await fetch(`/api/workspaces/${workspaceId}/files/download`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ paths: Array.from(selected) }),
-    });
-    if (!res.ok) return;
-    const blob = await res.blob();
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url; a.download = `${workspaceName}.zip`; a.click();
-    URL.revokeObjectURL(url);
-  }
-
-  async function handleDelete() {
-    const paths = Array.from(selected);
-    const roots = paths.filter(
-      (p) => !paths.some((other) => other !== p && p.startsWith(other + "/"))
-    );
-    setDeleteError(null);
-    const failures: string[] = [];
-    try {
-      const resArr = await Promise.all(
-        roots.map((p) =>
-          fetch(`/api/workspaces/${workspaceId}/files/content?path=${encodeURIComponent(p)}`, { method: "DELETE" })
-        )
-      );
-      for (const r of resArr) {
-        if (!r.ok) {
-          const body = await r.json().catch(() => ({} as { error?: string; message?: string }));
-          failures.push((body.error || body.message) ?? `${r.status} ${r.statusText}`);
-        }
-      }
-      if (failures.length > 0) {
-        const uniq = Array.from(new Set(failures));
-        setDeleteError(uniq.length === 1 ? `Failed to delete: ${uniq[0]}` : `Failed to delete: ${uniq.join("; ")}`);
-      }
-    } catch (err) {
-      setDeleteError(err instanceof Error ? err.message : String(err));
-    }
-    if (failures.length === 0) {
-      setSelected(new Set());
-      onDeletedPaths?.(paths);
-    }
-    fetchTree();
-  }
+  const toggleExpanded = (path: string) =>
+    setExpanded((e) => ({ ...e, [path]: !e[path] }));
 
   return (
     <aside className="flex flex-col bg-bg-tint overflow-hidden" style={style}>

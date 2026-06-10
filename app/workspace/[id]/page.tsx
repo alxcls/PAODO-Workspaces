@@ -10,10 +10,11 @@ import FileViewer, { type FileViewerHandle } from "@/components/workspace/FileVi
 import ChatPanel from "@/components/workspace/ChatPanel";
 import ConsolePanel from "@/components/workspace/ConsolePanel";
 import { useWorkspaceSocket } from "@/lib/hooks/useWorkspaceSocket";
+import { useWorkspaceMeta } from "@/lib/hooks/useWorkspaceMeta";
 
 export default function WorkspacePage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
-  const [workspaceName, setWorkspaceName] = useState<string>("");
+  const { name: workspaceName } = useWorkspaceMeta(id);
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [viewerOpen, setViewerOpen] = useState(false);
 
@@ -29,24 +30,14 @@ export default function WorkspacePage({ params }: { params: Promise<{ id: string
   const rowDragging = useRef(false);
   const viewerRef = useRef<FileViewerHandle>(null);
 
-  useEffect(() => {
-    fetch(`/api/workspaces/${id}`)
-      .then((r) => r.json())
-      .then((data) => {
-        const ws = data as { name: string; dir: string };
-        setWorkspaceName(ws.name);
-      })
-      .catch(() => {});
-  }, [id]);
-
   const { sendMessage } = useWorkspaceSocket(id, {
-    onFilesChanged: (paths) => {
+    files_changed: (msg) => {
       setTreeRefreshKey((k) => k + 1);
-      viewerRef.current?.notifyFilesChanged(paths);
+      viewerRef.current?.notifyFilesChanged(msg.paths ?? []);
     },
-    onFilesDeleted: (paths) => {
+    files_deleted: (msg) => {
       setTreeRefreshKey((k) => k + 1);
-      viewerRef.current?.notifyFilesDeleted(paths);
+      viewerRef.current?.notifyFilesDeleted(msg.paths ?? []);
     },
   });
 

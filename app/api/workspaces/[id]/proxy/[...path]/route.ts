@@ -1,17 +1,16 @@
-import { getContainerServerPort } from "@/lib/infra/containerManager";
-import { getWorkspace } from "@/lib/infra/workspaceStore";
+import { getStore, getContainers } from "@/lib/infra/services";
 import { NextRequest, NextResponse } from "next/server";
 
 type Params = { id: string; path: string[] };
 
 async function handle(req: NextRequest, { params }: { params: Promise<Params> }): Promise<NextResponse> {
   const { id, path } = await params;
-  const workspace = getWorkspace(id);
+  const workspace = getStore().getWorkspace(id);
   if (!workspace) {
     return NextResponse.json({ error: "Workspace not found" }, { status: 404 });
   }
 
-  const port = await getContainerServerPort(id);
+  const port = await getContainers().getServerPort(id);
   if (!port) {
     return NextResponse.json(
       { error: "Container server port not available. Trigger any agent action to restart the container with port mapping, then retry." },

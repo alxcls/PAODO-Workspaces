@@ -3,7 +3,7 @@
 // resolve ../banner.png etc. against the actual file-system location.
 export const runtime = "nodejs";
 
-import { getWorkspace } from "@/lib/infra/workspaceStore";
+import { getStore } from "@/lib/infra/services";
 import fs from "fs/promises";
 import path from "path";
 import { createLogger } from "@/lib/infra/logger";
@@ -58,7 +58,7 @@ export async function GET(
   { params }: { params: Promise<{ id: string; filepath: string[] }> }
 ) {
   const { id, filepath } = await params;
-  const ws = getWorkspace(id);
+  const ws = getStore().getWorkspace(id);
   if (!ws) return new Response("not found", { status: 404 });
 
   // Reconstruct the absolute path from URL path segments (Next.js already decodes them)

@@ -4,8 +4,11 @@
 // Set DEBUG=1 in the environment to enable verbose tool call logging.
 import { HumanMessage, ToolMessage, AIMessage } from "@langchain/core/messages";
 import type { AIMessageChunk, BaseMessage } from "@langchain/core/messages";
-import { buildTools } from "./tools";
-import { ensureContainer } from "../infra/containerManager";
+import type { Logger } from "pino";
+import { buildTools, loadAgentConfig } from "./tools";
+import type { AgentConfig } from "./tools/interfaces";
+import { defaultContainerManager } from "../infra/containerManager";
+import type { IContainerManager, IWorkspaceStore } from "../infra/interfaces";
 import { getWsForWorkspace } from "../infra/wsHub";
 import { createLogger } from "../infra/logger";
 
@@ -20,8 +23,37 @@ export type AgentEvent =
   | { type: "limit_reached" }
   | { type: "done" };
 
+export type RunAgentOptions = {
+  signal?: AbortSignal;
+  maxIterations?: number;
+  /** Override WebSocket notification sender — defaults to getWsForWorkspace. Inject for testing. */
+  notify?: (msg: object) => void;
+  /** Override container warm-up — defaults to ensureContainer. Inject for testing. */
+  warmContainer?: () => void;
+  /** Override config loading — defaults to loadAgentConfig. Inject for testing. */
+  loadConfig?: () => AgentConfig;
+  /** Override tool/model construction — defaults to buildTools. Inject for testing. */
+  buildAgentTools?: typeof buildTools;
+  /** Container lifecycle manager — defaults to the production singleton. Inject for testing. */
+  containers?: IContainerManager;
+  /** Workspace store — defaults to the production singleton. Inject for testing. */
+  store?: IWorkspaceStore;
+};
+
+// The injectable infra pair, threaded from the route layer (via getStore()/getContainers())
+// down through agentStream and nested agent-to-agent calls so a single setServices() swap
+// flows end-to-end. Kept separate from RunAgentOptions so callers that only forward infra
+// don't have to know about the test-only override seams.
+export type AgentRuntimeDeps = Pick<RunAgentOptions, "store" | "containers">;
+
 type AnyTool = { invoke: (args: Record<string, unknown>) => Promise<unknown> };
 type ResolvedToolCall = { id: string; name: string; args: Record<string, unknown> };
+type PartialTC = { id: string; name: string; args: string };
+
+type TurnEvent =
+  | { type: "token"; content: string }
+  | { type: "reasoning"; content: string }
+  | { type: "turn_complete"; fullText: string; toolCalls: ResolvedToolCall[]; accumulatedChunk: AIMessageChunk | null };
 
 // Newer models return content as an array of typed blocks instead of a plain string.
 function contentToText(content: unknown): string {
@@ -48,20 +80,137 @@ async function invokeTool(tool: AnyTool, args: Record<string, unknown>): Promise
     : str;
 }
 
+// Splits a stream chunk into text tokens and reasoning/thinking blocks.
+// Centralises all provider-specific branch logic (OpenAI reasoning, Anthropic thinking,
+// additional_kwargs.reasoning_content) so adding a new provider only touches this function.
+type ContentBlock =
+  | { type: "text"; text?: string }
+  | { type: "reasoning"; reasoning?: string }
+  | { type: "thinking"; thinking?: string }
+  | { type: string };
+
+function extractContentFromChunk(chunk: AIMessageChunk): { tokens: string[]; reasoning: string[] } {
+  const tokens: string[] = [];
+  const reasoning: string[] = [];
+  const rawContent = chunk.content;
+  if (typeof rawContent === "string") {
+    if (rawContent) tokens.push(rawContent);
+  } else if (Array.isArray(rawContent)) {
+    for (const block of rawContent as (string | ContentBlock)[]) {
+      if (typeof block === "string") {
+        if (block) tokens.push(block);
+        continue;
+      }
+      switch (block.type) {
+        case "text":
+          if ("text" in block && block.text) tokens.push(block.text);
+          break;
+        case "reasoning":
+          if ("reasoning" in block && block.reasoning) reasoning.push(block.reasoning);
+          break;
+        case "thinking":
+          if ("thinking" in block && block.thinking) reasoning.push(block.thinking);
+          break;
+        default:
+          // Surface unrecognized block shapes (e.g. from a new provider) instead of
+          // dropping them silently. Kept at debug level to avoid noise.
+          log.debug({ blockType: block.type }, "unhandled content block type");
+      }
+    }
+  }
+  const reasoningContent = (chunk as unknown as { additional_kwargs?: { reasoning_content?: string } })
+    .additional_kwargs?.reasoning_content;
+  if (reasoningContent) reasoning.push(reasoningContent);
+  return { tokens, reasoning };
+}
+
+function assembleToolCalls(partials: PartialTC[]): ResolvedToolCall[] {
+  return partials
+    .filter((p) => p.name)
+    .map((p, i) => {
+      let args: Record<string, unknown> = {};
+      try { args = JSON.parse(p.args || "{}"); } catch { /* leave empty */ }
+      return { id: p.id || `tc_${i}_${Date.now()}`, name: p.name, args };
+    });
+}
+
+// Streams one model turn, yielding tokens and reasoning as they arrive, then a
+// turn_complete event with the assembled tool calls and accumulated chunk.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function* streamModelTurn(modelWithTools: any, messages: BaseMessage[], iteration: number, signal: AbortSignal | undefined, wlog: Logger): AsyncGenerator<TurnEvent> {
+  const partials: PartialTC[] = [];
+  let fullText = "";
+  let accumulatedChunk: AIMessageChunk | null = null;
+
+  const t0 = Date.now();
+  const stream = await modelWithTools.stream(messages, { signal });
+  let ttftMs: number | null = null;
+
+  for await (const chunk of stream as AsyncIterable<AIMessageChunk>) {
+    if (ttftMs === null) ttftMs = Date.now() - t0;
+    accumulatedChunk = accumulatedChunk ? accumulatedChunk.concat(chunk) : chunk;
+
+    const { tokens, reasoning } = extractContentFromChunk(chunk);
+    for (const text of tokens) { fullText += text; yield { type: "token", content: text }; }
+    for (const r of reasoning) { yield { type: "reasoning", content: r }; }
+
+    for (const tcc of chunk.tool_call_chunks ?? []) {
+      const idx = tcc.index ?? 0;
+      if (!partials[idx]) partials[idx] = { id: "", name: "", args: "" };
+      if (tcc.id)   partials[idx].id    = tcc.id;
+      if (tcc.name) partials[idx].name += tcc.name;
+      if (tcc.args) partials[idx].args += tcc.args;
+    }
+  }
+
+  wlog.debug({ iteration, ttftMs, streamMs: Date.now() - t0 }, "model stream timing");
+  yield { type: "turn_complete", fullText, toolCalls: assembleToolCalls(partials), accumulatedChunk };
+}
+
+// Streams a summary turn after the iteration limit is reached.
+// Mutates messages to append the summary so subsequent history is coherent.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function* synthesizeLimit(model: any, messages: BaseMessage[], signal: AbortSignal | undefined, wlog: Logger): AsyncGenerator<AgentEvent> {
+  wlog.info("limit synthesis started");
+  try {
+    const synthMessages = [
+      ...messages,
+      new HumanMessage(
+        "You have reached the maximum number of steps. Briefly summarize what you accomplished and what still needs to be done. Do not attempt any tool calls."
+      ),
+    ];
+    const synthStream = await model.stream(synthMessages, { signal });
+    let synthText = "";
+    for await (const chunk of synthStream as AsyncIterable<AIMessageChunk>) {
+      const text = contentToText(chunk.content);
+      if (text) { synthText += text; yield { type: "token", content: text }; }
+    }
+    if (synthText) messages.push(new AIMessage(synthText));
+    wlog.info({ chars: synthText.length }, "limit synthesis done");
+  } catch (err) {
+    wlog.error({ err }, "limit synthesis failed");
+  }
+}
+
 export async function* runAgent(
   messages: BaseMessage[],
   userInput: string,
   workspaceDir: string,
   workspaceId: string,
-  { signal, maxIterations = 30 }: { signal?: AbortSignal; maxIterations?: number } = {},
+  { signal, maxIterations = 30, notify, warmContainer, loadConfig, buildAgentTools, containers, store }: RunAgentOptions = {},
 ): AsyncGenerator<AgentEvent> {
   const wlog = log.child({ workspaceId });
-  const { modelWithTools, model, toolMap } = buildTools(workspaceId, workspaceDir);
+  const config = (loadConfig ?? loadAgentConfig)();
+  const resolvedContainers = containers ?? defaultContainerManager;
+  const { modelWithTools, model, toolMap } = (buildAgentTools ?? buildTools)(workspaceId, workspaceDir, config, { containers: resolvedContainers, store });
   const typedToolMap = toolMap as Record<string, AnyTool>;
+
+  const resolvedNotify = notify ?? ((msg: object) => getWsForWorkspace(workspaceId)?.send(JSON.stringify(msg)));
+  const resolvedWarmContainer = warmContainer ?? (() => resolvedContainers.ensure(workspaceId, workspaceDir).catch(() => {}));
   // Start spinning up the workspace container while the first LLM call is in flight.
   // ensureContainer is idempotent and coalesces concurrent calls, so execCommand calling
   // it again later is a no-op if the container is already running.
-  ensureContainer(workspaceId, workspaceDir).catch(() => {});
+  resolvedWarmContainer();
 
   messages.push(new HumanMessage(userInput));
   wlog.info({ maxIterations }, "agent run started");
@@ -72,92 +221,25 @@ export async function* runAgent(
       if (iterations >= maxIterations) {
         wlog.warn({ iterations }, "agent loop limit reached");
         yield { type: "limit_reached" };
-        wlog.info("limit synthesis started");
-        try {
-          const synthMessages = [
-            ...messages,
-            new HumanMessage(
-              "You have reached the maximum number of steps. Briefly summarize what you accomplished and what still needs to be done. Do not attempt any tool calls."
-            ),
-          ];
-          const synthStream = await model.stream(synthMessages, { signal });
-          let synthText = "";
-          for await (const chunk of synthStream as AsyncIterable<AIMessageChunk>) {
-            const text = contentToText(chunk.content);
-            if (text) {
-              synthText += text;
-              yield { type: "token", content: text };
-            }
-          }
-          if (synthText) messages.push(new AIMessage(synthText));
-          wlog.info({ chars: synthText.length }, "limit synthesis done");
-        } catch (err) {
-          wlog.error({ err }, "limit synthesis failed");
-        }
+        yield* synthesizeLimit(model, messages, signal, wlog);
         yield { type: "done" };
         break;
       }
       iterations++;
-      // Stream one model turn. Tool-call chunks are accumulated by their index field
-      // and reconstructed into complete calls after the stream ends.
-      // Tokens are buffered and only emitted after the stream ends, when we know there
-      // are no tool calls (i.e. the text is the final response, not an intermediate turn).
-      type PartialTC = { id: string; name: string; args: string };
-      const partials: PartialTC[] = [];
+
       let fullText = "";
-      // Accumulate the full message so thinking blocks (Anthropic) and reasoning items
-      // (OpenAI) are preserved verbatim for history — Anthropic requires thinking blocks
-      // echoed back in subsequent messages when extended thinking + tool use are combined.
+      let toolCalls: ResolvedToolCall[] = [];
       let accumulatedChunk: AIMessageChunk | null = null;
 
-      const t0 = Date.now();
-      const stream = await modelWithTools.stream(messages, { signal });
-      let ttftMs: number | null = null;
-      for await (const chunk of stream as AsyncIterable<AIMessageChunk>) {
-        if (ttftMs === null) ttftMs = Date.now() - t0;
-        accumulatedChunk = accumulatedChunk ? accumulatedChunk.concat(chunk) : chunk;
-        // Process content blocks — text blocks become tokens, reasoning blocks
-        // become reasoning events (OpenAI Responses API reasoning summaries).
-        const rawContent = chunk.content;
-        if (typeof rawContent === "string") {
-          if (rawContent) { fullText += rawContent; yield { type: "token", content: rawContent }; }
-        } else if (Array.isArray(rawContent)) {
-          for (const block of rawContent) {
-            if (typeof block === "string") {
-              if (block) { fullText += block; yield { type: "token", content: block }; }
-            } else if (block.type === "text" && (block as { text?: string }).text) {
-              const t = (block as { text: string }).text;
-              fullText += t;
-              yield { type: "token", content: t };
-            } else if (block.type === "reasoning" && (block as unknown as { reasoning?: string }).reasoning) {
-              yield { type: "reasoning", content: (block as unknown as { reasoning: string }).reasoning };
-            } else if (block.type === "thinking" && (block as unknown as { thinking?: string }).thinking) {
-              yield { type: "reasoning", content: (block as unknown as { thinking: string }).thinking };
-            }
-          }
-        }
-        const reasoningContent = (chunk as unknown as { additional_kwargs?: { reasoning_content?: string } })
-          .additional_kwargs?.reasoning_content;
-        if (reasoningContent) yield { type: "reasoning", content: reasoningContent };
-
-        for (const tcc of chunk.tool_call_chunks ?? []) {
-          const idx = tcc.index ?? 0;
-          if (!partials[idx]) partials[idx] = { id: "", name: "", args: "" };
-          if (tcc.id)   partials[idx].id    = tcc.id;
-          if (tcc.name) partials[idx].name += tcc.name;
-          if (tcc.args) partials[idx].args += tcc.args;
+      for await (const event of streamModelTurn(modelWithTools, messages, iterations, signal, wlog)) {
+        if (event.type === "turn_complete") {
+          fullText = event.fullText;
+          toolCalls = event.toolCalls;
+          accumulatedChunk = event.accumulatedChunk;
+        } else {
+          yield event;
         }
       }
-      const streamMs = Date.now() - t0;
-      wlog.debug({ iteration: iterations, ttftMs, streamMs }, "model stream timing");
-
-      const toolCalls: ResolvedToolCall[] = partials
-        .filter((p) => p.name)
-        .map((p, i) => {
-          let args: Record<string, unknown> = {};
-          try { args = JSON.parse(p.args || "{}"); } catch { /* leave empty */ }
-          return { id: p.id || `tc_${i}_${Date.now()}`, name: p.name, args };
-        });
 
       if (!toolCalls.length) {
         // Final text response — tokens already streamed as they arrived; just persist and exit.
@@ -178,10 +260,9 @@ export async function* runAgent(
         tool_calls: activeCalls.map((tc) => ({ id: tc.id, name: tc.name, args: tc.args })),
       }));
 
-      // Emit all starts, run all in parallel, then emit results.
       for (const tc of activeCalls) {
         yield { type: "tool_start", name: tc.name, args: tc.args };
-        getWsForWorkspace(workspaceId)?.send(JSON.stringify({ type: "tool_call", name: tc.name, args: tc.args }));
+        resolvedNotify({ type: "tool_call", name: tc.name, args: tc.args });
         wlog.debug({ name: tc.name, args: tc.args }, "tool call");
       }
 
@@ -200,7 +281,7 @@ export async function* runAgent(
       for (const { tc, resultStr } of settled) {
         yield { type: "tool_result", name: tc.name, result: resultStr };
         if (tc.name !== "execute_command") {
-          getWsForWorkspace(workspaceId)?.send(JSON.stringify({ type: "tool_result_log", name: tc.name, result: resultStr }));
+          resolvedNotify({ type: "tool_result_log", name: tc.name, result: resultStr });
         }
         wlog.debug({ name: tc.name, result: resultStr.slice(0, 200) }, "tool result");
         messages.push(new ToolMessage({ tool_call_id: tc.id, content: resultStr }));

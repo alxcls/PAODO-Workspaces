@@ -5,7 +5,7 @@ export const runtime = "nodejs";
 export const maxDuration = 120;
 
 import { type NextRequest, NextResponse } from "next/server";
-import { getWorkspace } from "@/lib/infra/workspaceStore";
+import { getStore } from "@/lib/infra/services";
 import { checkRateLimit } from "@/lib/infra/rateLimit";
 import { getClientIp } from "@/lib/infra/clientIp";
 import fs from "fs/promises";
@@ -43,7 +43,7 @@ export async function POST(
   }
 
   const { id } = await params;
-  const ws = getWorkspace(id);
+  const ws = getStore().getWorkspace(id);
   if (!ws) return NextResponse.json({ error: "not found" }, { status: 404 });
 
   const wsDir = await fs.realpath(ws.dir);

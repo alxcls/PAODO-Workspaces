@@ -1,9 +1,10 @@
 // Internal chat endpoint used by the browser UI.
 // Runs the agent loop and streams events (tokens, tool calls, errors) back as Server-Sent Events.
 import type { NextRequest } from "next/server";
-import { getWorkspace } from "@/lib/infra/workspaceStore";
+import { getStore, getContainers } from "@/lib/infra/services";
 import { runAgent, type AgentEvent } from "@/lib/agent/runner";
-import { buildSystemPrompt } from "@/lib/agent/systemPrompt";
+import { buildSystemPrompt, buildPromptConfig } from "@/lib/agent/systemPrompt";
+import { loadAgentConfig } from "@/lib/agent/tools";
 import { createLogger } from "@/lib/infra/logger";
 import { checkRateLimit } from "@/lib/infra/rateLimit";
 import { getClientIp } from "@/lib/infra/clientIp";
@@ -14,7 +15,7 @@ export async function POST(
 ) {
   const { id } = await params;
   const log = createLogger("api").child({ workspaceId: id, route: "chat" });
-  const ws = getWorkspace(id);
+  const ws = getStore().getWorkspace(id);
   if (!ws) return new Response("Workspace not found", { status: 404 });
 
   const ip = getClientIp(req);
@@ -31,7 +32,7 @@ export async function POST(
   if (!body.message?.trim()) return new Response("message is required", { status: 400 });
 
   // Refresh the system prompt on every request so AGENTS.md changes are always picked up.
-  ws.messages[0] = buildSystemPrompt(ws.dir);
+  ws.messages[0] = buildSystemPrompt(ws.dir, buildPromptConfig(loadAgentConfig()));
 
   log.info("chat stream started");
   const encoder = new TextEncoder();
@@ -43,7 +44,7 @@ export async function POST(
       };
 
       try {
-        for await (const event of runAgent(ws.messages, body.message!.trim(), ws.dir, ws.id, { signal: req.signal, maxIterations: ws.maxIterations })) {
+        for await (const event of runAgent(ws.messages, body.message!.trim(), ws.dir, ws.id, { signal: req.signal, maxIterations: ws.maxIterations, store: getStore(), containers: getContainers() })) {
           send(event);
           if (event.type === "done") break;
         }

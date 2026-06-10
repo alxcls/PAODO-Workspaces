@@ -1,15 +1,15 @@
-// Centre pane that loads and displays workspace files with syntax highlighting and inline editing.
-// File-change and file-delete notifications arrive via the imperative handle (notifyFilesChanged /
-// notifyFilesDeleted), called by the workspace page which owns the shared WebSocket connection.
-// Self-write suppression is signalled back to the page via the onSelfWrite prop after a save.
+// Centre pane that displays workspace files with syntax highlighting and inline editing.
+// File-change / file-delete notifications arrive via the imperative handle, called by the
+// workspace page which owns the shared WebSocket. Data operations are handled by useFileContent.
 "use client";
 
-import { useState, useEffect, useCallback, useRef, useMemo, forwardRef, useImperativeHandle } from "react";
+import { useState, useEffect, useRef, useMemo, forwardRef, useImperativeHandle } from "react";
 import dynamic from "next/dynamic";
 import hljs from "@/lib/highlighter";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import "jsoncrack-react/style.css";
+import { useFileContent } from "@/lib/hooks/useFileContent";
 
 const JSONCrack = dynamic(() => import("jsoncrack-react").then(m => m.JSONCrack), { ssr: false });
 
@@ -49,72 +49,27 @@ const FileViewer = forwardRef<FileViewerHandle, Props>(function FileViewer(
   { workspaceId, filePath, onClose, onSelfWrite },
   ref
 ) {
-  const [fileType, setFileType] = useState<"text" | "image" | "binary" | null>(null);
-  const [content, setContent] = useState<string | null>(null);
-  const [draft, setDraft] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
-  const [deleting, setDeleting] = useState(false);
-  const [showPreview, setShowPreview] = useState(false);
-  const [previewKey, setPreviewKey] = useState(0);
-  const preRef = useRef<HTMLPreElement>(null);
-  const taRef = useRef<HTMLTextAreaElement>(null);
-  const gutterRef = useRef<HTMLDivElement>(null);
-
-  const filePathRef = useRef<string | null>(filePath);
-  const isDirtyRef = useRef(false);
-  const onCloseRef = useRef(onClose);
-
-  // Assign during render so the refs are always current before any effect or imperative call runs.
-  filePathRef.current = filePath;
-  onCloseRef.current = onClose;
+  const {
+    fileType, content, draft, setDraft,
+    loading, error, saving, deleting,
+    isDirty, previewKey,
+    handleSave, deleteFile,
+    notifyFilesChanged, notifyFilesDeleted,
+  } = useFileContent(workspaceId, filePath, { onClose, onSelfWrite });
 
   const lang = filePath ? detectLang(filePath) : "txt";
   const isHtml = /\.(html?|htm)$/i.test(filePath ?? "");
 
-  const fetchContent = useCallback(async (path: string, silent = false) => {
-    if (!silent) { setLoading(true); setFileType(null); setContent(null); setDraft(""); }
-    setError(null);
-    try {
-      const res = await fetch(`/api/workspaces/${workspaceId}/files/content?path=${encodeURIComponent(path)}`);
-      if (res.status === 404) { onCloseRef.current(); return; }
-      if (!res.ok) { if (!silent) setError("Cannot load file"); return; }
-      const data = (await res.json()) as { type: "text" | "image" | "binary"; content?: string };
-      setFileType(data.type);
-      setContent(data.content ?? null);
-      setDraft(data.content ?? "");
-    } catch {
-      if (!silent) setError("Failed to fetch file");
-    } finally {
-      if (!silent) setLoading(false);
-    }
-  }, [workspaceId]);
-
+  const [showPreview, setShowPreview] = useState(false);
   useEffect(() => {
-    if (filePath) fetchContent(filePath);
-    else { setFileType(null); setContent(null); setDraft(""); }
     setShowPreview(lang === "markdown" || isHtml || lang === "json");
-  }, [filePath, fetchContent, lang]);
+  }, [lang, isHtml]);
 
-  useImperativeHandle(ref, () => ({
-    notifyFilesChanged(paths: string[]) {
-      if (isDirtyRef.current) return;
-      const currentPath = filePathRef.current ?? "";
-      const directMatch = paths.includes(currentPath);
-      const isHtmlFile = /\.(html?|htm)$/i.test(currentPath);
-      const siblingChanged = isHtmlFile && paths.some(p => p !== currentPath && /\.(js|mjs|css|html?|htm|svg|png|jpg|jpeg|gif|webp|woff2?)$/i.test(p));
-      if (directMatch) {
-        fetchContent(currentPath, true);
-        if (isHtmlFile || /\.json$/i.test(currentPath)) setPreviewKey(k => k + 1);
-      } else if (siblingChanged) {
-        setPreviewKey(k => k + 1);
-      }
-    },
-    notifyFilesDeleted(paths: string[]) {
-      if (paths.includes(filePathRef.current ?? "")) onCloseRef.current();
-    },
-  }), [fetchContent]);
+  const preRef = useRef<HTMLPreElement>(null);
+  const taRef = useRef<HTMLTextAreaElement>(null);
+  const gutterRef = useRef<HTMLDivElement>(null);
+
+  useImperativeHandle(ref, () => ({ notifyFilesChanged, notifyFilesDeleted }), [notifyFilesChanged, notifyFilesDeleted]);
 
   function syncScroll() {
     if (preRef.current && taRef.current) {
@@ -128,34 +83,7 @@ const FileViewer = forwardRef<FileViewerHandle, Props>(function FileViewer(
 
   async function handleDelete() {
     if (!filePath || !confirm(`Delete ${filePath.split("/").pop()}?`)) return;
-    setDeleting(true);
-    try {
-      const res = await fetch(`/api/workspaces/${workspaceId}/files/content?path=${encodeURIComponent(filePath)}`, { method: "DELETE" });
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({} as any));
-        const msg = (body && (body.error || body.message)) || `${res.status} ${res.statusText}`;
-        setError(`Delete failed: ${msg}`);
-      } else {
-        onClose();
-      }
-    } catch { setError("Delete failed"); }
-    finally { setDeleting(false); }
-  }
-
-  async function handleSave() {
-    if (!filePath) return;
-    setSaving(true); setError(null);
-    try {
-      const res = await fetch(`/api/workspaces/${workspaceId}/files/content`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ path: filePath, content: draft }),
-      });
-      if (!res.ok) { setError("Save failed"); return; }
-      setContent(draft);
-      onSelfWrite?.(filePath);
-    } catch { setError("Save failed"); }
-    finally { setSaving(false); }
+    deleteFile();
   }
 
   const htmlForPreview = useMemo(() => {
@@ -186,8 +114,6 @@ const FileViewer = forwardRef<FileViewerHandle, Props>(function FileViewer(
     try { return JSON.parse(draft) as object; } catch { return null; }
   }, [draft, lang]);
 
-  const isDirty = fileType === "text" && draft !== content;
-  isDirtyRef.current = isDirty;
   const displayPath = filePath ? filePath.split("/").slice(-3).join("/") : "";
   const rawUrl = filePath
     ? `/api/workspaces/${workspaceId}/files/content?path=${encodeURIComponent(filePath)}&raw=1`

@@ -1,7 +1,7 @@
 // Returns the workspace file tree as a nested JSON structure for the file tree panel.
 // Recursively walks the workspace directory up to 5 levels deep, skipping common build/dependency folders.
 import { NextResponse } from "next/server";
-import { getWorkspace } from "@/lib/infra/workspaceStore";
+import { getStore } from "@/lib/infra/services";
 import fs from "fs/promises";
 import path from "path";
 import { createLogger } from "@/lib/infra/logger";
@@ -52,7 +52,7 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const ws = getWorkspace(id);
+  const ws = getStore().getWorkspace(id);
   if (!ws) return NextResponse.json({ error: "not found" }, { status: 404 });
   const tree = await buildTree(ws.dir);
   return NextResponse.json({ tree });

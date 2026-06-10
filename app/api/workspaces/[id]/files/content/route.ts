@@ -4,8 +4,7 @@
 export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
-import { getWorkspace } from "@/lib/infra/workspaceStore";
-import { dockerExec } from "@/lib/infra/containerManager";
+import { getStore, getContainers } from "@/lib/infra/services";
 import fs from "fs/promises";
 import path from "path";
 import { createLogger } from "@/lib/infra/logger";
@@ -61,7 +60,7 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const ws = getWorkspace(id);
+  const ws = getStore().getWorkspace(id);
   if (!ws) return NextResponse.json({ error: "not found" }, { status: 404 });
 
   const { searchParams } = new URL(req.url);
@@ -101,7 +100,7 @@ export async function PUT(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const ws = getWorkspace(id);
+  const ws = getStore().getWorkspace(id);
   if (!ws) return NextResponse.json({ error: "not found" }, { status: 404 });
 
   const body = await req.json() as { path?: string; content?: string };
@@ -123,7 +122,7 @@ export async function PUT(
         // swept): write through the container. New agent writes are uid-1000-owned so the direct
         // fs.writeFile above succeeds and this path is not hit.
         const relPath = path.relative(ws.dir, resolved);
-        const r = await dockerExec(ws.id, ws.dir, ["tee", `/workspace/${relPath}`], { stdin: body.content });
+        const r = await getContainers().exec(ws.id, ws.dir, ["tee", `/workspace/${relPath}`], { stdin: body.content });
         if (r.code !== 0) throw new Error(r.stderr || "docker write failed");
       } else {
         throw writeErr;
@@ -142,7 +141,7 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const ws = getWorkspace(id);
+  const ws = getStore().getWorkspace(id);
   if (!ws) return NextResponse.json({ error: "not found" }, { status: 404 });
 
   const { searchParams } = new URL(req.url);

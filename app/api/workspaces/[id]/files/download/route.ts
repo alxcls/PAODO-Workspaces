@@ -1,7 +1,7 @@
 // Accepts a list of file paths and returns them as a single ZIP archive.
 // Paths are validated to stay within the workspace directory before being added to the archive.
 import { NextResponse } from "next/server";
-import { getWorkspace } from "@/lib/infra/workspaceStore";
+import { getStore } from "@/lib/infra/services";
 import fs from "fs/promises";
 import path from "path";
 import JSZip from "jszip";
@@ -27,7 +27,7 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const ws = getWorkspace(id);
+  const ws = getStore().getWorkspace(id);
   if (!ws) return NextResponse.json({ error: "not found" }, { status: 404 });
 
   const body = await req.json() as { paths?: string[] };

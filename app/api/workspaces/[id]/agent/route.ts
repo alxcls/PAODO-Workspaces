@@ -4,7 +4,7 @@
 export const runtime = "nodejs";
 
 import { type NextRequest } from "next/server";
-import { getWorkspace } from "@/lib/infra/workspaceStore";
+import { getStore, getContainers } from "@/lib/infra/services";
 import { validateKey } from "@/lib/infra/apiKeyStore";
 import { checkRateLimit } from "@/lib/infra/rateLimit";
 import { getClientIp } from "@/lib/infra/clientIp";
@@ -35,11 +35,11 @@ export async function POST(
     return new Response("Unauthorized", { status: 401 });
   }
 
-  const ws = getWorkspace(id);
+  const ws = getStore().getWorkspace(id);
   if (!ws) return new Response("Not Found", { status: 404 });
 
   const body = (await req.json()) as { message?: string };
   if (!body.message?.trim()) return new Response("message is required", { status: 400 });
 
-  return makeAgentStream(ws, body.message!.trim(), log);
+  return makeAgentStream(ws, body.message!.trim(), log, { store: getStore(), containers: getContainers() });
 }

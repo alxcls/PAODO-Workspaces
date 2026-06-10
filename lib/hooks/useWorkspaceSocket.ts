@@ -1,14 +1,12 @@
 "use client";
-// Reconnecting WebSocket hook for a workspace. Calls onFilesChanged / onFilesDeleted when the
-// server broadcasts filesystem events. Returns a stable sendMessage function for outbound messages
-// (e.g. self_write notifications after saves). Handlers are captured in a ref so they never
-// cause a reconnect when the parent re-renders.
+// Reconnecting WebSocket hook for a workspace. Dispatches incoming messages to the matching
+// handler in the provided map — add a new key to handle a new server message type without
+// editing this hook. Returns a stable sendMessage function for outbound messages.
+// Handlers are captured in a ref so they never cause a reconnect when the parent re-renders.
 import { useEffect, useRef, useCallback } from "react";
 
-interface Handlers {
-  onFilesChanged: (paths: string[]) => void;
-  onFilesDeleted: (paths: string[]) => void;
-}
+export type WsMessage = { type: string; paths?: string[]; [key: string]: unknown };
+export type HandlerMap = { [type: string]: (msg: WsMessage) => void };
 
 export interface WorkspaceSocketHandle {
   sendMessage: (msg: object) => void;
@@ -16,10 +14,10 @@ export interface WorkspaceSocketHandle {
 
 export function useWorkspaceSocket(
   workspaceId: string,
-  handlers: Handlers
+  handlers: HandlerMap
 ): WorkspaceSocketHandle {
   const wsRef = useRef<WebSocket | null>(null);
-  const handlersRef = useRef<Handlers>(handlers);
+  const handlersRef = useRef<HandlerMap>(handlers);
   const reconnectRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pingRef = useRef<ReturnType<typeof setInterval> | null>(null);
   // Set to true when the workspaceId lifecycle ends (unmount or workspaceId change) to stop reconnects.
@@ -44,12 +42,8 @@ export function useWorkspaceSocket(
 
       ws.onmessage = (event) => {
         try {
-          const msg = JSON.parse(event.data as string) as { type: string; paths?: string[] };
-          if (msg.type === "files_changed" && msg.paths) {
-            handlersRef.current.onFilesChanged(msg.paths);
-          } else if (msg.type === "files_deleted" && msg.paths) {
-            handlersRef.current.onFilesDeleted(msg.paths);
-          }
+          const msg = JSON.parse(event.data as string) as WsMessage;
+          handlersRef.current[msg.type]?.(msg);
         } catch { /* ignore malformed */ }
       };
 

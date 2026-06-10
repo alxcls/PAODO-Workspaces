@@ -9,7 +9,10 @@
     "lint": "next lint",
     "build-graph": "tsx dev_tools/viz/generate-graph.ts",
     "graph": "tsx dev_tools/viz/generate-graph.ts && open dev_tools/viz/graph.html",
-    "query-graph": "tsx dev_tools/query/query-graph.ts"
+    "query-graph": "tsx dev_tools/query/query-graph.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:integration": "vitest run --config vitest.integration.config.ts"
   },
   "dependencies": {
     "@langchain/anthropic": "^1.4.0",
@@ -43,6 +46,7 @@
     "tailwindcss": "^4",
     "ts-morph": "^25.0.1",
     "tsx": "^4.21.0",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^4.1.8"
   }
 }

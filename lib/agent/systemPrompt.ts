@@ -2,6 +2,20 @@ import { SystemMessage } from "@langchain/core/messages";
 import fs from "fs";
 import path from "path";
 import { createLogger } from "../infra/logger";
+import { getProviderMetadata } from "./tools/buildModel";
+import type { LLMProviderConfig } from "./tools/interfaces";
+
+export interface PromptConfig {
+  supportsPromptCaching: boolean;
+  anthropicCacheTtl1h: boolean;
+}
+
+export function buildPromptConfig(config: LLMProviderConfig): PromptConfig {
+  return {
+    supportsPromptCaching: getProviderMetadata(config.provider).supportsPromptCaching,
+    anthropicCacheTtl1h: config.anthropicCacheTtl1h,
+  };
+}
 
 const log = createLogger("systemPrompt");
 
@@ -44,15 +58,21 @@ Always format responses using Markdown.
 `
 ;
 
-export function buildSystemPrompt(workspaceDir: string): SystemMessage {
+// Accepts optional agentsContent to allow pure prompt construction without filesystem I/O.
+// When omitted, falls back to reading AGENTS.md from workspaceDir (production default).
+export function buildSystemPrompt(workspaceDir: string, promptConfig: PromptConfig, agentsContent?: string): SystemMessage {
   const date = new Date().toDateString();
 
   let agentsSection = "";
-  try {
-    const agentsMd = fs.readFileSync(path.join(workspaceDir, "AGENTS.md"), "utf-8");
-    agentsSection = agentsMd.trim();
-  } catch (err) {
-    log.debug(`AGENTS.md not found in ${workspaceDir} — skipping`);
+  if (agentsContent !== undefined) {
+    agentsSection = agentsContent.trim();
+  } else {
+    try {
+      const agentsMd = fs.readFileSync(path.join(workspaceDir, "AGENTS.md"), "utf-8");
+      agentsSection = agentsMd.trim();
+    } catch {
+      log.debug(`AGENTS.md not found in ${workspaceDir} — skipping`);
+    }
   }
 
   const dynamicContext = `${agentsSection ? agentsSection + "\n\n" : ""}Workspace name: ${path.basename(workspaceDir)} — your working directory inside the container is /workspace
@@ -63,13 +83,13 @@ Today's date: ${date}`;
       {
         type: "text",
         text: STATIC_INSTRUCTIONS,
-        // Only Anthropic accepts cache_control on content blocks; OpenAI rejects it.
+        // Only providers that support prompt caching accept cache_control on content blocks.
         // ANTHROPIC_CACHE_TTL_1H=true extends the TTL to 1h (requires prompt-caching-scope-2026-01-05 beta).
-        ...(process.env.LLM_PROVIDER === "anthropic"
+        ...(promptConfig.supportsPromptCaching
           ? {
               cache_control: {
                 type: "ephemeral",
-                ...(process.env.ANTHROPIC_CACHE_TTL_1H === "true" ? { ttl: "1h" } : {}),
+                ...(promptConfig.anthropicCacheTtl1h ? { ttl: "1h" } : {}),
               },
             }
           : {}),

@@ -1,8 +1,10 @@
 // Wraps the agent runner in a Server-Sent Events (SSE) Response.
 // Translates AgentEvents from runAgent into SSE data frames and closes the stream on completion or error.
 import type { Logger } from "pino";
-import { buildSystemPrompt } from "./systemPrompt";
+import { buildSystemPrompt, buildPromptConfig } from "./systemPrompt";
+import { loadAgentConfig } from "./tools";
 import { runAgent } from "./runner";
+import type { AgentEvent, AgentRuntimeDeps } from "./runner";
 import type { Workspace } from "../infra/workspaceStore";
 
 const SSE_HEADERS = {
@@ -12,26 +14,37 @@ const SSE_HEADERS = {
   "X-Accel-Buffering": "no",
 } as const;
 
-export function makeAgentStream(ws: Workspace, message: string, log: Logger): Response {
+type SseState = { response: string; limitReached: boolean };
+
+// Maps an AgentEvent to an SSE payload object, or null if the event only updates state.
+// Keeps wire-format decisions out of the stream lifecycle.
+function toSsePayload(event: AgentEvent, state: SseState): object | null {
+  switch (event.type) {
+    case "token":       state.response += event.content; return null;
+    case "tool_start":  return { type: "tool_start", name: event.name };
+    case "limit_reached": state.limitReached = true;     return null;
+    case "error":       return { type: "error", message: event.message };
+    default:            return null;
+  }
+}
+
+export function makeAgentStream(ws: Workspace, message: string, log: Logger, deps: AgentRuntimeDeps = {}): Response {
   const encoder = new TextEncoder();
   const stream = new ReadableStream({
     async start(controller) {
       const send = (event: object) =>
         controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
-      let response = "";
-      let limitReached = false;
+      const state: SseState = { response: "", limitReached: false };
       try {
-        const isolatedMessages = [buildSystemPrompt(ws.dir)];
-        for await (const event of runAgent(isolatedMessages, message, ws.dir, ws.id, { maxIterations: ws.maxIterations })) {
-          if (event.type === "token") response += event.content;
-          else if (event.type === "tool_start") send({ type: "tool_start", name: event.name });
-          else if (event.type === "limit_reached") limitReached = true;
-          else if (event.type === "error") send({ type: "error", message: event.message });
-          else if (event.type === "done") {
-            send({ type: "response", content: response, iterationLimitReached: limitReached });
+        const isolatedMessages = [buildSystemPrompt(ws.dir, buildPromptConfig(loadAgentConfig()))];
+        for await (const event of runAgent(isolatedMessages, message, ws.dir, ws.id, { maxIterations: ws.maxIterations, ...deps })) {
+          if (event.type === "done") {
+            send({ type: "response", content: state.response, iterationLimitReached: state.limitReached });
             send({ type: "done" });
             break;
           }
+          const payload = toSsePayload(event, state);
+          if (payload) send(payload);
         }
       } catch (err) {
         log.error({ err }, "agent stream error");

@@ -3,7 +3,8 @@
 // connected workspaces can invoke each other via the call_agent tool.
 import path from "path";
 import fs from "fs";
-import { WORKSPACES_ROOT } from "./workspaceStore";
+import { WORKSPACES_ROOT } from "./paths";
+import { atomicSaveJson } from "./jsonPersist";
 import { createLogger } from "./logger";
 
 const log = createLogger("workspaceGraph");
@@ -65,10 +66,7 @@ export function saveGraph(
     throw new Error("Graph contains a cycle — only DAGs are allowed.");
   }
   cache = { edges, positions };
-  fs.mkdirSync(WORKSPACES_ROOT, { recursive: true });
-  const tmp = GRAPH_FILE + ".tmp";
-  fs.writeFileSync(tmp, JSON.stringify(cache, null, 2));
-  fs.renameSync(tmp, GRAPH_FILE);
+  atomicSaveJson(GRAPH_FILE, cache);
 }
 
 export function canCall(fromId: string, toId: string): boolean {

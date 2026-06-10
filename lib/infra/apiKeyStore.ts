@@ -2,9 +2,10 @@
 // Keys are stored as SHA-256 hashes in a JSON file on disk so the plaintext is never persisted.
 // Supports generating, revoking, and enabling/disabling keys, as well as constant-time validation.
 import { createHash, randomBytes, timingSafeEqual } from "crypto";
-import { readFileSync, writeFileSync, mkdirSync, renameSync } from "fs";
+import { readFileSync } from "fs";
 import path from "path";
-import { WORKSPACES_ROOT } from "./workspaceStore";
+import { WORKSPACES_ROOT } from "./paths";
+import { atomicSaveJson } from "./jsonPersist";
 import { createLogger } from "./logger";
 
 const log = createLogger("apiKeys");
@@ -25,10 +26,7 @@ const store = g._apiKeys;
 
 function save() {
   try {
-    mkdirSync(path.dirname(FILE), { recursive: true });
-    const tmp = FILE + ".tmp";
-    writeFileSync(tmp, JSON.stringify(store, null, 2));
-    renameSync(tmp, FILE);
+    atomicSaveJson(FILE, store);
   } catch (err) {
     log.error({ err }, "failed to save api key store");
     throw err;

@@ -11,9 +11,8 @@ import { createLogger } from "./lib/infra/logger";
 const log = createLogger("server");
 
 import next from "next";
-import { assertDockerAvailable, ensureContainer } from "./lib/infra/containerManager";
 import { WebSocketServer } from "ws";
-import { getWorkspace, resetWorkspaceMessages } from "./lib/infra/workspaceStore";
+import { getStore, getContainers } from "./lib/infra/services";
 import { setTodos } from "./lib/infra/todoStore";
 import {
   addConnection,
@@ -219,7 +218,7 @@ wss.on("connection", (ws, req) => {
     return;
   }
 
-  const workspace = getWorkspace(workspaceId);
+  const workspace = getStore().getWorkspace(workspaceId);
   if (!workspace) {
     ws.close(1008, "workspace not found");
     return;
@@ -230,7 +229,7 @@ wss.on("connection", (ws, req) => {
   if (wasEmpty) {
     // First connection — treat as a new session: clear conversation history and todos
     // so prior agent state (including todo_write calls) never bleeds into the new session.
-    resetWorkspaceMessages(workspaceId).catch((err) =>
+    getStore().resetWorkspaceMessages(workspaceId).catch((err) =>
       log.error({ workspaceId, err }, "failed to reset messages")
     );
     setTodos(workspaceId, []);
@@ -242,7 +241,7 @@ wss.on("connection", (ws, req) => {
     setTimeout(() => {
       if (getConnectionCount(workspaceId) === 0) {
         stopWatcher(workspaceId);
-        resetWorkspaceMessages(workspaceId).catch((err) =>
+        getStore().resetWorkspaceMessages(workspaceId).catch((err) =>
           log.error({ workspaceId, err }, "failed to reset messages on disconnect")
         );
         setTodos(workspaceId, []);
@@ -273,7 +272,7 @@ if ((!UI_USER || !UI_PASS) && !dev) {
   process.exit(1);
 }
 
-assertDockerAvailable().then(() => app.prepare()).then(() => {
+getContainers().assertDockerAvailable().then(() => app.prepare()).then(() => {
   httpServer.listen(port, () => {
     log.info(`Ready on http://localhost:${port}`);
   });

@@ -1,29 +1,36 @@
-// In-memory registry of all workspaces, backed by a JSON file for persistence across restarts.
-// Each workspace has an isolated directory on disk and its own conversation message history.
-// Provides CRUD operations used by the API routes and agent runner.
+// Registry of all workspaces. Each workspace has an isolated directory on disk and its own
+// conversation message history. Exposed two ways:
+//   - the `WorkspaceStore` class (injectable map + persistence) for tests / isolated use
+//   - a default singleton + thin free-function exports (back-compat) used in production
 //
 // NOTE — conversation history is intentionally not persisted to disk. The `messages` array on
 // each Workspace lives only in the in-memory Map and resets on server restart or when the user
 // disconnects (server.ts calls resetWorkspaceMessages when the last WebSocket closes).
 // Workspace files (AGENTS.md, scripts, data) are the intended long-term memory layer for agents.
 import path from "path";
-import fs from "fs";
+import { readFileSync } from "fs";
 import fsAsync from "fs/promises";
 import { createLogger } from "./logger";
+import { atomicSaveJson } from "./jsonPersist";
+import { scaffoldWorkspaceDir } from "./workspaceScaffold";
+import { WORKSPACES_ROOT } from "./paths";
+import type { IWorkspaceStore } from "./interfaces";
+export { WORKSPACES_ROOT };
 
 const log = createLogger("store");
 import type { BaseMessage } from "@langchain/core/messages";
-import { buildSystemPrompt } from "../agent/systemPrompt";
 
-import { removeContainer, deleteWorkspaceDir } from "./containerManager";
 
-export interface Workspace {
+export interface WorkspaceMetadata {
   id: string;
   name: string;
   dir: string;
-  messages: BaseMessage[];
   createdAt: Date;
   maxIterations: number;
+}
+
+export interface Workspace extends WorkspaceMetadata {
+  messages: BaseMessage[];
 }
 
 interface WorkspaceRecord {
@@ -34,17 +41,7 @@ interface WorkspaceRecord {
   maxIterations?: number;
 }
 
-export const WORKSPACES_ROOT = process.env.WORKSPACES_ROOT ?? path.resolve(process.cwd(), "data");
-
 const REGISTRY_FILE = path.join(WORKSPACES_ROOT, ".workspaces.json");
-
-// Shared across the custom server and Next.js API route module instances (same pattern as wsHub.ts).
-// Without this, server.ts and the webpack-bundled API routes each get their own Map, so a workspace
-// created via the API is invisible to the WS handler until the server restarts.
-const g = global as typeof global & { _workspaces?: Map<string, Workspace> };
-const freshMap = !g._workspaces;
-if (!g._workspaces) g._workspaces = new Map();
-const workspaces = g._workspaces;
 
 function assertSafeWorkspaceName(name: string): void {
   const dir = path.join(WORKSPACES_ROOT, name);
@@ -53,9 +50,31 @@ function assertSafeWorkspaceName(name: string): void {
   }
 }
 
-function loadRegistry(): void {
-  try {
-    const records: WorkspaceRecord[] = JSON.parse(fs.readFileSync(REGISTRY_FILE, "utf-8"));
+type PersistFn = (records: WorkspaceRecord[]) => void;
+type LoadFn = () => WorkspaceRecord[] | null;
+
+export interface WorkspaceStoreOptions {
+  /** Backing map. Defaults to a fresh Map. The production singleton injects the global map. */
+  map?: Map<string, Workspace>;
+  /** Persist the registry. Defaults to a no-op (tests). The production singleton writes JSON. */
+  persist?: PersistFn;
+  /** Load initial records at construction. Defaults to none (tests). */
+  load?: LoadFn;
+}
+
+export class WorkspaceStore implements IWorkspaceStore {
+  private workspaces: Map<string, Workspace>;
+  private persistFn: PersistFn;
+
+  constructor(opts: WorkspaceStoreOptions = {}) {
+    this.workspaces = opts.map ?? new Map();
+    this.persistFn = opts.persist ?? (() => {});
+    const records = (opts.load ?? (() => null))();
+    if (records) this.hydrate(records);
+  }
+
+  // Populates the map from persisted records, skipping any with an unsafe (poisoned) name.
+  private hydrate(records: WorkspaceRecord[]): void {
     for (const r of records) {
       try {
         assertSafeWorkspaceName(r.name);
@@ -64,139 +83,147 @@ function loadRegistry(): void {
         continue;
       }
       const dir = path.join(WORKSPACES_ROOT, r.name);
-      workspaces.set(r.id, {
+      this.workspaces.set(r.id, {
         id: r.id,
         name: r.name,
         dir,
-        messages: [buildSystemPrompt(dir)],
+        messages: [],
         createdAt: new Date(r.createdAt),
         maxIterations: r.maxIterations ?? 30,
       });
     }
+  }
+
+  private save(): void {
+    const records: WorkspaceRecord[] = Array.from(this.workspaces.values()).map((w) => ({
+      id: w.id,
+      name: w.name,
+      createdAt: w.createdAt.toISOString(),
+      maxIterations: w.maxIterations,
+    }));
+    this.persistFn(records);
+  }
+
+  async createWorkspace(name: string): Promise<Workspace> {
+    assertSafeWorkspaceName(name);
+    const id = crypto.randomUUID();
+    log.info({ name }, "creating workspace");
+    const dir = path.join(WORKSPACES_ROOT, name);
+    await scaffoldWorkspaceDir(dir);
+
+    const workspace: Workspace = {
+      id,
+      name,
+      dir,
+      messages: [],
+      createdAt: new Date(),
+      maxIterations: 30,
+    };
+
+    this.workspaces.set(id, workspace);
+    try {
+      this.save();
+    } catch (err) {
+      log.error({ err, id, name }, "failed to save registry after createWorkspace");
+      throw err;
+    }
+    return workspace;
+  }
+
+  getWorkspace(id: string): Workspace | undefined {
+    return this.workspaces.get(id);
+  }
+
+  getWorkspaceByName(name: string): Workspace | undefined {
+    return [...this.workspaces.values()].find((w) => w.name === name);
+  }
+
+  listWorkspaces(): Workspace[] {
+    return Array.from(this.workspaces.values());
+  }
+
+  async renameWorkspace(id: string, name: string): Promise<boolean> {
+    const ws = this.workspaces.get(id);
+    if (!ws) return false;
+    const trimmed = name.trim();
+    assertSafeWorkspaceName(trimmed);
+    const newDir = path.join(WORKSPACES_ROOT, trimmed);
+    try {
+      if (ws.dir !== newDir) {
+        await fsAsync.rename(ws.dir, newDir);
+        ws.dir = newDir;
+        ws.messages = [];
+      }
+      ws.name = trimmed;
+      this.save();
+    } catch (err) {
+      log.error({ err, id, name: trimmed }, "failed to rename workspace");
+      throw err;
+    }
+    return true;
+  }
+
+  async deleteWorkspace(id: string): Promise<boolean> {
+    const ws = this.workspaces.get(id);
+    if (!ws) return false;
+    this.workspaces.delete(id);
+    try {
+      this.save();
+    } catch (err) {
+      log.error({ err, id }, "failed to save registry after deleteWorkspace");
+      throw err;
+    }
+    return true;
+  }
+
+  setWorkspaceMaxIterations(id: string, n: number): boolean {
+    const ws = this.workspaces.get(id);
+    if (!ws) return false;
+    ws.maxIterations = n;
+    this.save();
+    return true;
+  }
+
+  async resetWorkspaceMessages(id: string): Promise<void> {
+    const ws = this.workspaces.get(id);
+    if (!ws) return;
+    ws.messages = [];
+  }
+}
+
+// ---- Default production singleton ----
+// Shared across the custom server and Next.js API route module instances (same pattern as wsHub.ts).
+// Without this, server.ts and the webpack-bundled API routes each get their own Map, so a workspace
+// created via the API is invisible to the WS handler until the server restarts.
+const g = global as typeof global & { _workspaces?: Map<string, Workspace> };
+const freshMap = !g._workspaces;
+if (!g._workspaces) g._workspaces = new Map();
+
+function defaultLoad(): WorkspaceRecord[] | null {
+  // Only read the registry when this module instance owns a fresh map; otherwise an earlier
+  // instance already populated it and re-reading would duplicate/overwrite live `messages`.
+  if (!freshMap) return null;
+  try {
+    return JSON.parse(readFileSync(REGISTRY_FILE, "utf-8"));
   } catch {
     log.debug("workspace registry not found — starting fresh");
+    return null;
   }
 }
 
-function saveRegistry(): void {
-  fs.mkdirSync(WORKSPACES_ROOT, { recursive: true });
-  const records: WorkspaceRecord[] = Array.from(workspaces.values()).map((w) => ({
-    id: w.id,
-    name: w.name,
-    createdAt: w.createdAt.toISOString(),
-    maxIterations: w.maxIterations,
-  }));
-  const tmp = REGISTRY_FILE + ".tmp";
-  fs.writeFileSync(tmp, JSON.stringify(records, null, 2));
-  fs.renameSync(tmp, REGISTRY_FILE);
-}
+export const defaultWorkspaceStore = new WorkspaceStore({
+  map: g._workspaces,
+  persist: (records) => atomicSaveJson(REGISTRY_FILE, records),
+  load: defaultLoad,
+});
 
-if (freshMap) loadRegistry();
-
-export async function createWorkspace(name: string): Promise<Workspace> {
-  assertSafeWorkspaceName(name);
-  const id = crypto.randomUUID();
-  log.info({ name }, "creating workspace");
-  const dir = path.join(WORKSPACES_ROOT, name);
-  await fsAsync.mkdir(dir, { recursive: true });
-
-  await fsAsync.writeFile(
-    path.join(dir, "AGENTS.md"),
-    `# Workspace Instructions
-
-This is the master instructions file for the workspace agent.
-Add your project-specific rules, conventions, and context here.
-The agent will follow these instructions on every request.
-`,
-    "utf8"
-  );
-
-  const workspace: Workspace = {
-    id,
-    name,
-    dir,
-    messages: [buildSystemPrompt(dir)],
-    createdAt: new Date(),
-    maxIterations: 30,
-  };
-
-  workspaces.set(id, workspace);
-  try {
-    saveRegistry();
-  } catch (err) {
-    log.error({ err, id, name }, "failed to save registry after createWorkspace");
-    throw err;
-  }
-  return workspace;
-}
-
-export function getWorkspace(id: string): Workspace | undefined {
-  return workspaces.get(id);
-}
-
-export function getWorkspaceByName(name: string): Workspace | undefined {
-  return [...workspaces.values()].find(w => w.name === name);
-}
-
-export function listWorkspaces(): Workspace[] {
-  return Array.from(workspaces.values());
-}
-
-export async function renameWorkspace(id: string, name: string): Promise<boolean> {
-  const ws = workspaces.get(id);
-  if (!ws) return false;
-  const trimmed = name.trim();
-  assertSafeWorkspaceName(trimmed);
-  const newDir = path.join(WORKSPACES_ROOT, trimmed);
-  try {
-    if (ws.dir !== newDir) {
-      await fsAsync.rename(ws.dir, newDir);
-      ws.dir = newDir;
-      ws.messages = [buildSystemPrompt(newDir)];
-      // Container bind mount is baked in at creation time — must recreate it with the new path.
-      await removeContainer(id);
-    }
-    ws.name = trimmed;
-    saveRegistry();
-  } catch (err) {
-    log.error({ err, id, name: trimmed }, "failed to rename workspace");
-    throw err;
-  }
-  return true;
-}
-
-export async function deleteWorkspace(id: string): Promise<boolean> {
-  const ws = workspaces.get(id);
-  if (!ws) return false;
-  workspaces.delete(id);
-  try {
-    saveRegistry();
-  } catch (err) {
-    log.error({ err, id }, "failed to save registry after deleteWorkspace");
-    throw err;
-  }
-  try {
-    await Promise.all([
-      removeContainer(id),
-      deleteWorkspaceDir(ws.dir),
-    ]);
-  } catch (err) {
-    log.error({ err, id, dir: ws.dir }, "failed to remove workspace files or container");
-    throw err;
-  }
-  return true;
-}
-
-export function setWorkspaceMaxIterations(id: string, n: number): boolean {
-  const ws = workspaces.get(id);
-  if (!ws) return false;
-  ws.maxIterations = n;
-  saveRegistry();
-  return true;
-}
-
-export async function resetWorkspaceMessages(id: string): Promise<void> {
-  const ws = workspaces.get(id);
-  if (!ws) return;
-  ws.messages = [buildSystemPrompt(ws.dir)];
-}
+// Back-compat free-function exports — thin delegations to the default singleton so call sites
+// not yet migrated to getStore() keep working unchanged.
+export const createWorkspace = (name: string) => defaultWorkspaceStore.createWorkspace(name);
+export const getWorkspace = (id: string) => defaultWorkspaceStore.getWorkspace(id);
+export const getWorkspaceByName = (name: string) => defaultWorkspaceStore.getWorkspaceByName(name);
+export const listWorkspaces = () => defaultWorkspaceStore.listWorkspaces();
+export const renameWorkspace = (id: string, name: string) => defaultWorkspaceStore.renameWorkspace(id, name);
+export const deleteWorkspace = (id: string) => defaultWorkspaceStore.deleteWorkspace(id);
+export const setWorkspaceMaxIterations = (id: string, n: number) => defaultWorkspaceStore.setWorkspaceMaxIterations(id, n);
+export const resetWorkspaceMessages = (id: string) => defaultWorkspaceStore.resetWorkspaceMessages(id);

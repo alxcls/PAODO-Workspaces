@@ -343,6 +343,53 @@ export default function FileTreePanel({
     });
   };
 
+  async function handleDownload() {
+    const res = await fetch(`/api/workspaces/${workspaceId}/files/download`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ paths: Array.from(selected) }),
+    });
+    if (!res.ok) return;
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = `${workspaceName}.zip`; a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  async function handleDelete() {
+    const paths = Array.from(selected);
+    const roots = paths.filter(
+      (p) => !paths.some((other) => other !== p && p.startsWith(other + "/"))
+    );
+    setDeleteError(null);
+    const failures: string[] = [];
+    try {
+      const resArr = await Promise.all(
+        roots.map((p) =>
+          fetch(`/api/workspaces/${workspaceId}/files/content?path=${encodeURIComponent(p)}`, { method: "DELETE" })
+        )
+      );
+      for (const r of resArr) {
+        if (!r.ok) {
+          const body = await r.json().catch(() => ({} as { error?: string; message?: string }));
+          failures.push((body.error || body.message) ?? `${r.status} ${r.statusText}`);
+        }
+      }
+      if (failures.length > 0) {
+        const uniq = Array.from(new Set(failures));
+        setDeleteError(uniq.length === 1 ? `Failed to delete: ${uniq[0]}` : `Failed to delete: ${uniq.join("; ")}`);
+      }
+    } catch (err) {
+      setDeleteError(err instanceof Error ? err.message : String(err));
+    }
+    if (failures.length === 0) {
+      setSelected(new Set());
+      onDeletedPaths?.(paths);
+    }
+    fetchTree();
+  }
+
   return (
     <aside className="flex flex-col bg-bg-tint overflow-hidden" style={style}>
       <div className="flex items-center gap-2 p-[14px_14px_8px]">
@@ -369,71 +416,11 @@ export default function FileTreePanel({
       {(selected.size > 0 || deleteError) && (
         <div className="border-t border-border p-[10px_12px] bg-bg">
           <div className="flex gap-1">
-            <button
-              className="btn btn-ghost btn-sm flex-1 justify-center"
-              onClick={async () => {
-                const res = await fetch(`/api/workspaces/${workspaceId}/files/download`, {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ paths: Array.from(selected) }),
-                });
-                if (!res.ok) return;
-                const blob = await res.blob();
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement("a");
-                a.href = url; a.download = `${workspaceName}.zip`; a.click();
-                URL.revokeObjectURL(url);
-              }}
-            >
+            <button className="btn btn-ghost btn-sm flex-1 justify-center" onClick={handleDownload}>
               Download .zip
             </button>
-            <button
-              className="btn btn-ghost btn-sm flex-1 justify-center text-danger"
-                onClick={async () => {
-                  const paths = Array.from(selected);
-                  const roots = paths.filter(
-                    p => !paths.some(other => other !== p && p.startsWith(other + "/"))
-                  );
-                setDeleteError(null);
-                let failures: string[] = [];
-                try {
-                  const resArr = await Promise.all(
-                    roots.map((p) =>
-                      fetch(`/api/workspaces/${workspaceId}/files/content?path=${encodeURIComponent(p)}`, { method: "DELETE" })
-                    )
-                  );
-
-                  for (let i = 0; i < resArr.length; i++) {
-                    const r = resArr[i];
-                    if (!r.ok) {
-                      const body = await r.json().catch(() => ({} as any));
-                      const msg = (body && (body.error || body.message)) || `${r.status} ${r.statusText}`;
-                      // Do not include the path in the UI message — only show the reason
-                      failures.push(msg);
-                    }
-                  }
-
-                  if (failures.length > 0) {
-                    const uniq = Array.from(new Set(failures));
-                    // Single-line if one reason, otherwise join by "; "
-                    const message = uniq.length === 1 ? `Failed to delete: ${uniq[0]}` : `Failed to delete: ${uniq.join('; ')}`;
-                    setDeleteError(message);
-                  } else {
-                    setDeleteError(null);
-                  }
-                } catch (err) {
-                  setDeleteError(err instanceof Error ? err.message : String(err));
-                }
-
-                if (failures.length === 0) {
-                  setSelected(new Set());
-                  onDeletedPaths?.(paths);
-                }
-                // Always refresh the tree so the UI reflects successful deletions
-                fetchTree();
-              }}
-              >
-                Delete
+            <button className="btn btn-ghost btn-sm flex-1 justify-center text-danger" onClick={handleDelete}>
+              Delete
             </button>
           </div>
           {deleteError && (

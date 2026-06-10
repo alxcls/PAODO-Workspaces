@@ -6,17 +6,20 @@
 // Network naming:   wsnet_<workspaceId>  (isolated per-workspace bridge — no inter-container traffic)
 // Bind mount:       <workspaceDir> → /workspace  (host files, shared with file tools)
 // Resource limits:  CONTAINER_MEMORY / CONTAINER_CPUS env vars (defaults: 1g / 1.0)
+import { rm } from "fs/promises";
 import { spawn } from "child_process";
-import { createHash } from "crypto";
-import { readFile, rm } from "fs/promises";
-import { createServer } from "net";
+import { getFreePort, cachePort, getCachedPort, invalidatePort, queryDockerPort } from "./portAllocator";
 import path from "path";
 import { createLogger } from "./logger";
+import { DockerClient, IDockerClient } from "./dockerClient";
+import { ImageManager, HASH_LABEL } from "./imageManager";
+import type { IContainerManager } from "./interfaces";
+
+export type { DockerResult } from "./dockerClient";
 
 const log = createLogger("container");
 
 const CONTAINER_IMAGE = process.env.CONTAINER_IMAGE ?? "paodo-workspace";
-const HASH_LABEL = "paodo.workspace-hash";
 const CONTAINER_MEMORY = process.env.CONTAINER_MEMORY ?? "1g";
 const CONTAINER_CPUS = process.env.CONTAINER_CPUS ?? "1.0";
 const IDLE_TIMEOUT_MS = parseInt(process.env.CONTAINER_IDLE_MS ?? "", 10) || 10 * 60 * 1000;
@@ -25,357 +28,276 @@ const IDLE_TIMEOUT_MS = parseInt(process.env.CONTAINER_IDLE_MS ?? "", 10) || 10 
 // so local dev (app running directly on host) still works without Docker Compose.
 const WORKSPACES_VOLUME_NAME = process.env.WORKSPACES_VOLUME_NAME ?? "";
 
-const idleTimers = new Map<string, ReturnType<typeof setTimeout>>();
-// Prevents concurrent docker run/start calls for the same workspace.
-const startLocks = new Map<string, Promise<void>>();
-// In-memory cache of workspaceId → allocated host port for the container's port 8080.
-const portMap = new Map<string, number>();
-
-function getFreePort(): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const srv = createServer();
-    srv.listen(0, () => {
-      const { port } = srv.address() as { port: number };
-      srv.close(() => resolve(port));
-    });
-    srv.on("error", reject);
-  });
-}
-
-/** Returns the host port mapped to container port 8080, or null if no mapping exists. */
-export async function getContainerServerPort(workspaceId: string): Promise<number | null> {
-  const cached = portMap.get(workspaceId);
-  if (cached !== undefined) return cached;
-  const r = await dockerCmd("port", containerName(workspaceId), "8080");
-  if (r.code !== 0 || !r.stdout) return null;
-  // Output format: "0.0.0.0:PORT" or ":::PORT"
-  const match = r.stdout.match(/:(\d+)$/m);
-  if (!match) return null;
-  const port = parseInt(match[1], 10);
-  portMap.set(workspaceId, port);
-  return port;
-}
-
-function containerName(workspaceId: string): string {
-  return `ws_${workspaceId}`;
-}
-
-function networkName(workspaceId: string): string {
-  return `wsnet_${workspaceId}`;
-}
-
-async function ensureNetwork(workspaceId: string): Promise<void> {
-  const name = networkName(workspaceId);
-  const inspect = await dockerCmd("network", "inspect", name);
-  if (inspect.code === 0) return;
-  const r = await dockerCmd("network", "create", "--driver", "bridge", name);
-  if (r.code !== 0) throw new Error(`docker network create failed: ${r.stderr}`);
-}
-
-export type DockerResult = { stdout: string; stderr: string; code: number };
-
-function dockerCmd(...args: string[]): Promise<DockerResult> {
-  return new Promise((resolve) => {
-    let stdout = "";
-    let stderr = "";
-    let proc: ReturnType<typeof spawn>;
-    try {
-      proc = spawn("docker", args);
-    } catch (err) {
-      // spawn can throw synchronously (e.g. EBADF during Next.js compilation) before
-      // the child process is created, so proc.on("error") never fires in that case.
-      resolve({ stdout: "", stderr: (err as Error).message, code: 1 });
-      return;
-    }
-    proc.stdout!.on("data", (d: Buffer) => (stdout += d.toString()));
-    proc.stderr!.on("data", (d: Buffer) => (stderr += d.toString()));
-    proc.stdout!.on("error", () => {});
-    proc.stderr!.on("error", () => {});
-    proc.on("close", (code) => resolve({ stdout: stdout.trim(), stderr: stderr.trim(), code: code ?? 1 }));
-    proc.on("error", (err) => resolve({ stdout: "", stderr: err.message, code: 1 }));
-  });
-}
-
-async function getContainerStatus(workspaceId: string): Promise<"running" | "stopped" | "missing"> {
-  const r = await dockerCmd("inspect", "--format", "{{.State.Status}}", containerName(workspaceId));
-  if (r.code !== 0) return "missing";
-  if (r.stdout === "running") return "running";
-  return "stopped";
-}
-
-function resetIdleTimer(workspaceId: string): void {
-  const existing = idleTimers.get(workspaceId);
-  if (existing) clearTimeout(existing);
-  const t = setTimeout(() => stopContainer(workspaceId), IDLE_TIMEOUT_MS);
-  t.unref();
-  idleTimers.set(workspaceId, t);
-}
-
-// Builds the volume args for docker run.
-// When WORKSPACES_VOLUME_NAME is set (production / Docker Compose), uses Docker 25+ volume
-// subpath mounting — necessary because the Docker daemon sees host paths, not app-container
-// paths, so a plain -v /app/data/<name>:/workspace would point at a non-existent host path.
-// When unset (local dev, app runs directly on host), falls back to a plain bind mount using
-// the resolved host path so local workspaces work without Docker Compose.
-function buildVolumeArg(workspaceDir: string): string[] {
-  if (!WORKSPACES_VOLUME_NAME) {
-    return ["-v", `${workspaceDir}:/workspace`];
+export class ContainerManager implements IContainerManager {
+  private docker: IDockerClient;
+  private imageManager: ImageManager;
+  constructor(docker: IDockerClient = new DockerClient()) {
+    this.docker = docker;
+    this.imageManager = new ImageManager(docker);
   }
-  const workspaceName = path.basename(workspaceDir);
-  return [
-    "--mount",
-    `type=volume,source=${WORKSPACES_VOLUME_NAME},target=/workspace,volume-subpath=${workspaceName}`,
-  ];
-}
+  private idleTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  // Prevents concurrent docker run/start calls for the same workspace.
+  private startLocks = new Map<string, Promise<void>>();
 
-// The container is labelled with the Dockerfile.workspace hash it was created from. When the image
-// is rebuilt (new uid model, new tooling), this lets us detect stale containers and recreate them
-// so the new image actually takes effect — otherwise a running container would be reused forever.
-async function getContainerImageHash(workspaceId: string): Promise<string | null> {
-  const r = await dockerCmd("inspect", "--format", `{{index .Config.Labels "${HASH_LABEL}"}}`, containerName(workspaceId));
-  return r.code === 0 ? r.stdout : null;
-}
-
-async function _ensureContainer(workspaceId: string, workspaceDir: string): Promise<void> {
-  const status = await getContainerStatus(workspaceId);
-  const hash = await dockerfileHash();
-
-  if (status === "running" || status === "stopped") {
-    const containerHash = await getContainerImageHash(workspaceId);
-    const portMissing = (await getContainerServerPort(workspaceId)) === null;
-    if (!hash || containerHash === hash) {
-      if (!portMissing) {
-        if (status === "running") return;
-        // stopped, image unchanged, port mapped — just restart it
-        log.debug({ workspaceId }, "starting stopped container");
-        await ensureNetwork(workspaceId);
-        const connect = await dockerCmd("network", "connect", networkName(workspaceId), containerName(workspaceId));
-        if (connect.code !== 0) throw new Error(`docker network connect failed: ${connect.stderr}`);
-        const r = await dockerCmd("start", containerName(workspaceId));
-        if (r.code !== 0) throw new Error(`docker start failed: ${r.stderr}`);
-        return;
-      }
-      // Port mapping missing (container predates this feature) — recreate to add it.
-      log.debug({ workspaceId }, "container missing server port mapping — recreating");
-    } else {
-      // Image changed — remove so we recreate from the current image below.
-      log.debug({ workspaceId }, "workspace image changed — recreating container");
-    }
-    await removeContainer(workspaceId);
+  private containerName(workspaceId: string): string {
+    return `ws_${workspaceId}`;
   }
 
-  // missing (or just removed) — create and start
-  log.debug({ workspaceId }, "creating container");
-  await ensureNetwork(workspaceId);
-  const serverPort = await getFreePort();
-  const r = await dockerCmd(
-    "run", "-d",
-    "--name", containerName(workspaceId),
-    "--network", networkName(workspaceId),
-    `--memory=${CONTAINER_MEMORY}`,
-    `--cpus=${CONTAINER_CPUS}`,
-    "-p", `${serverPort}:8080`,
-    ...buildVolumeArg(workspaceDir),
-    ...(hash ? ["--label", `${HASH_LABEL}=${hash}`] : []),
-    // Drop all Linux capabilities, then add back only the minimal set dpkg/apt and the chown sweep
-    // need when run as root via `docker exec -u 0` (apt_install tool, ownership sweep). The agent's
-    // shell is non-root with no setuid path, so it cannot use these caps — they are reachable only
-    // by the app-initiated root execs. Combined with no-new-privileges this blocks setuid escalation.
-    "--cap-drop", "ALL",
-    "--cap-add", "CHOWN",
-    "--cap-add", "DAC_OVERRIDE",
-    "--cap-add", "FOWNER",
-    "--cap-add", "FSETID",
-    "--cap-add", "SETGID",
-    "--cap-add", "SETUID",
-    "--security-opt", "no-new-privileges:true",
-    CONTAINER_IMAGE,
-    "sleep", "infinity",
-  );
-  if (r.code !== 0) throw new Error(`docker run failed: ${r.stderr}`);
-  portMap.set(workspaceId, serverPort);
+  private networkName(workspaceId: string): string {
+    return `wsnet_${workspaceId}`;
+  }
 
-  // One-time ownership sweep: legacy workspaces created when the agent ran as root hold root-owned
-  // files the uid-1000 agent/app can no longer manage. Chown the tree to 1000:1000 so both can.
-  // Runs as root (-u 0) for this single bootstrap command only; uses dockerCmd to avoid re-entering
-  // ensureContainer. Idempotent and cheap on already-1000-owned trees.
-  const chown = await dockerCmd("exec", "-u", "0", containerName(workspaceId), "chown", "-R", "1000:1000", "/workspace");
-  if (chown.code !== 0) log.debug({ workspaceId, stderr: chown.stderr }, "workspace chown sweep failed (non-fatal)");
-}
+  private async ensureNetwork(workspaceId: string): Promise<void> {
+    const name = this.networkName(workspaceId);
+    const inspect = await this.docker.cmd("network", "inspect", name);
+    if (inspect.code === 0) return;
+    const r = await this.docker.cmd("network", "create", "--driver", "bridge", name);
+    if (r.code !== 0) throw new Error(`docker network create failed: ${r.stderr}`);
+  }
 
-export function ensureContainer(workspaceId: string, workspaceDir: string): Promise<void> {
-  // Coalesce concurrent calls: if a start is already in flight, piggyback on it.
-  const inflight = startLocks.get(workspaceId);
-  if (inflight) return inflight;
+  private resetIdleTimer(workspaceId: string): void {
+    const existing = this.idleTimers.get(workspaceId);
+    if (existing) clearTimeout(existing);
+    const t = setTimeout(() => this.stop(workspaceId), IDLE_TIMEOUT_MS);
+    t.unref();
+    this.idleTimers.set(workspaceId, t);
+  }
 
-  const p = _ensureContainer(workspaceId, workspaceDir).finally(() => {
-    startLocks.delete(workspaceId);
-    resetIdleTimer(workspaceId);
-  });
-  startLocks.set(workspaceId, p);
-  return p;
-}
+  private async getContainerStatus(workspaceId: string): Promise<"running" | "stopped" | "missing"> {
+    const r = await this.docker.cmd("inspect", "--format", "{{.State.Status}}", this.containerName(workspaceId));
+    if (r.code !== 0) return "missing";
+    if (r.stdout === "running") return "running";
+    return "stopped";
+  }
 
-/**
- * Run a non-streaming command inside the workspace container via docker exec.
- * Ensures the container is running first (idempotent, resets idle timer).
- * cmdArgs are passed directly to execvp — no shell interpolation, so injection is impossible.
- * stdout is NOT trimmed so callers receive exact file content (trailing newlines preserved).
- */
-export async function dockerExec(
-  workspaceId: string,
-  workspaceDir: string,
-  cmdArgs: string[],
-  opts: { stdin?: string } = {},
-): Promise<DockerResult> {
-  await ensureContainer(workspaceId, workspaceDir);
-  return new Promise((resolve) => {
-    let stdout = "";
-    let stderr = "";
-    let proc: ReturnType<typeof spawn>;
-    try {
-      proc = spawn("docker", ["exec", "-i", "-w", "/workspace", containerName(workspaceId), ...cmdArgs]);
-    } catch (err) {
-      resolve({ stdout: "", stderr: (err as Error).message, code: 1 });
-      return;
+  // Builds the volume args for docker run.
+  // When WORKSPACES_VOLUME_NAME is set (production / Docker Compose), uses Docker 25+ volume
+  // subpath mounting — necessary because the Docker daemon sees host paths, not app-container
+  // paths, so a plain -v /app/data/<name>:/workspace would point at a non-existent host path.
+  // When unset (local dev, app runs directly on host), falls back to a plain bind mount using
+  // the resolved host path so local workspaces work without Docker Compose.
+  private buildVolumeArg(workspaceDir: string): string[] {
+    if (!WORKSPACES_VOLUME_NAME) {
+      return ["-v", `${workspaceDir}:/workspace`];
     }
-    proc.stdout!.on("data", (d: Buffer) => (stdout += d.toString()));
-    proc.stderr!.on("data", (d: Buffer) => (stderr += d.toString()));
-    proc.stdout!.on("error", () => {});
-    proc.stderr!.on("error", () => {});
-    proc.on("close", (code) => resolve({ stdout, stderr: stderr.trim(), code: code ?? 1 }));
-    proc.on("error", (err) => resolve({ stdout: "", stderr: err.message, code: 1 }));
-    if (opts.stdin !== undefined) {
-      proc.stdin!.write(opts.stdin, () => proc.stdin!.end());
-    } else {
-      proc.stdin!.end();
-    }
-  });
-}
-
-// Runs a command inside the workspace container AS ROOT (-u 0). This is the single sanctioned root
-// exec path for agent-facing functionality — used only by the `apt_install` tool to install system
-// packages. cmdArgs are passed as argv (no shell), so callers must still validate untrusted input.
-// The regular agent shell (dockerExec / execute_command) never runs as root.
-export async function dockerExecAsRoot(
-  workspaceId: string,
-  workspaceDir: string,
-  cmdArgs: string[],
-): Promise<DockerResult> {
-  await ensureContainer(workspaceId, workspaceDir);
-  return new Promise((resolve) => {
-    let stdout = "";
-    let stderr = "";
-    let proc: ReturnType<typeof spawn>;
-    try {
-      proc = spawn("docker", ["exec", "-u", "0", "-w", "/workspace", containerName(workspaceId), ...cmdArgs]);
-    } catch (err) {
-      resolve({ stdout: "", stderr: (err as Error).message, code: 1 });
-      return;
-    }
-    proc.stdout!.on("data", (d: Buffer) => (stdout += d.toString()));
-    proc.stderr!.on("data", (d: Buffer) => (stderr += d.toString()));
-    proc.stdout!.on("error", () => {});
-    proc.stderr!.on("error", () => {});
-    proc.on("close", (code) => resolve({ stdout: stdout.trim(), stderr: stderr.trim(), code: code ?? 1 }));
-    proc.on("error", (err) => resolve({ stdout: "", stderr: err.message, code: 1 }));
-    proc.stdin!.end();
-  });
-}
-
-export async function stopContainer(workspaceId: string): Promise<void> {
-  const t = idleTimers.get(workspaceId);
-  if (t) { clearTimeout(t); idleTimers.delete(workspaceId); }
-  const r = await dockerCmd("stop", containerName(workspaceId));
-  if (r.code !== 0) log.warn({ workspaceId, stderr: r.stderr }, "docker stop failed");
-  await dockerCmd("network", "disconnect", networkName(workspaceId), containerName(workspaceId));
-  const net = await dockerCmd("network", "rm", networkName(workspaceId));
-  if (net.code !== 0) log.debug({ workspaceId, stderr: net.stderr }, "network rm on stop (may not exist)");
-}
-
-export async function removeContainer(workspaceId: string): Promise<void> {
-  const t = idleTimers.get(workspaceId);
-  if (t) { clearTimeout(t); idleTimers.delete(workspaceId); }
-  startLocks.delete(workspaceId);
-  portMap.delete(workspaceId);
-  // Non-zero exit codes are expected if the container/network was never created.
-  const stop = await dockerCmd("stop", containerName(workspaceId));
-  if (stop.code !== 0) log.debug({ workspaceId, stderr: stop.stderr }, "docker stop on remove (may not exist)");
-  const rm = await dockerCmd("rm", containerName(workspaceId));
-  if (rm.code !== 0) log.debug({ workspaceId, stderr: rm.stderr }, "docker rm on remove (may not exist)");
-  const net = await dockerCmd("network", "rm", networkName(workspaceId));
-  if (net.code !== 0) log.debug({ workspaceId, stderr: net.stderr }, "docker network rm on remove (may not exist)");
-}
-
-// Deletes a workspace directory from the volume. In production (WORKSPACES_VOLUME_NAME set) it
-// mounts the full volume and removes the subdir as root (-u 0) — the agent now runs as uid 1000 so
-// its files are normally removable directly, but a throwaway root rm also clears any legacy
-// root-owned files left by workspaces created before the non-root migration.
-// In local dev falls back to a plain fs.rm since the app runs as the host user.
-export async function deleteWorkspaceDir(workspaceDir: string): Promise<void> {
-  if (WORKSPACES_VOLUME_NAME) {
     const workspaceName = path.basename(workspaceDir);
-    const r = await dockerCmd("run", "--rm", "-u", "0",
-      "-v", `${WORKSPACES_VOLUME_NAME}:/data`,
-      CONTAINER_IMAGE, "rm", "-rf", `/data/${workspaceName}`,
+    return [
+      "--mount",
+      `type=volume,source=${WORKSPACES_VOLUME_NAME},target=/workspace,volume-subpath=${workspaceName}`,
+    ];
+  }
+
+  private async _ensureContainer(workspaceId: string, workspaceDir: string): Promise<void> {
+    const status = await this.getContainerStatus(workspaceId);
+    const hash = await this.imageManager.getCurrentHash("Dockerfile.workspace");
+
+    if (status === "running" || status === "stopped") {
+      const containerHash = await this.imageManager.getContainerImageHash(this.containerName(workspaceId));
+      const portMissing = (await this.getServerPort(workspaceId)) === null;
+      if (!hash || containerHash === hash) {
+        if (!portMissing) {
+          if (status === "running") return;
+          // stopped, image unchanged, port mapped — just restart it
+          log.debug({ workspaceId }, "starting stopped container");
+          await this.ensureNetwork(workspaceId);
+          const connect = await this.docker.cmd(
+            "network",
+            "connect",
+            this.networkName(workspaceId),
+            this.containerName(workspaceId),
+          );
+          if (connect.code !== 0) throw new Error(`docker network connect failed: ${connect.stderr}`);
+          const r = await this.docker.cmd("start", this.containerName(workspaceId));
+          if (r.code !== 0) throw new Error(`docker start failed: ${r.stderr}`);
+          return;
+        }
+        // Port mapping missing (container predates this feature) — recreate to add it.
+        log.debug({ workspaceId }, "container missing server port mapping — recreating");
+      } else {
+        // Image changed — remove so we recreate from the current image below.
+        log.debug({ workspaceId }, "workspace image changed — recreating container");
+      }
+      await this.remove(workspaceId);
+    }
+
+    // missing (or just removed) — create and start
+    log.debug({ workspaceId }, "creating container");
+    await this.ensureNetwork(workspaceId);
+    const serverPort = await getFreePort();
+    const r = await this.docker.cmd(
+      "run", "-d",
+      "--name", this.containerName(workspaceId),
+      "--network", this.networkName(workspaceId),
+      `--memory=${CONTAINER_MEMORY}`,
+      `--cpus=${CONTAINER_CPUS}`,
+      "-p", `${serverPort}:8080`,
+      ...this.buildVolumeArg(workspaceDir),
+      ...(hash ? ["--label", `${HASH_LABEL}=${hash}`] : []),
+      // Drop all Linux capabilities, then add back only the minimal set dpkg/apt and the chown sweep
+      // need when run as root via `docker exec -u 0` (apt_install tool, ownership sweep). The agent's
+      // shell is non-root with no setuid path, so it cannot use these caps — they are reachable only
+      // by the app-initiated root execs. Combined with no-new-privileges this blocks setuid escalation.
+      "--cap-drop", "ALL",
+      "--cap-add", "CHOWN",
+      "--cap-add", "DAC_OVERRIDE",
+      "--cap-add", "FOWNER",
+      "--cap-add", "FSETID",
+      "--cap-add", "SETGID",
+      "--cap-add", "SETUID",
+      "--security-opt", "no-new-privileges:true",
+      CONTAINER_IMAGE,
+      "sleep", "infinity",
     );
-    if (r.code !== 0) throw new Error(`failed to delete workspace dir: ${r.stderr}`);
-  } else {
-    await rm(workspaceDir, { recursive: true, force: true });
-  }
-}
+    if (r.code !== 0) throw new Error(`docker run failed: ${r.stderr}`);
+    cachePort(workspaceId, serverPort);
 
-export async function assertDockerAvailable(): Promise<void> {
-  const r = await dockerCmd("info");
-  if (r.code !== 0) {
-    log.error({ stderr: r.stderr }, "Docker is not available. Make sure Docker is running before starting the server.");
-    process.exit(1);
-  }
-  await ensureWorkspaceImage();
-}
-
-async function dockerfileHash(): Promise<string | null> {
-  try {
-    const content = await readFile("Dockerfile.workspace");
-    return createHash("sha256").update(content).digest("hex").slice(0, 16);
-  } catch {
-    return null;
-  }
-}
-
-async function ensureWorkspaceImage(): Promise<void> {
-  const hash = await dockerfileHash();
-  const check = await dockerCmd("image", "inspect", CONTAINER_IMAGE);
-
-  if (check.code === 0) {
-    if (!hash) return; // can't read Dockerfile.workspace — assume image is current
-    const label = await dockerCmd("image", "inspect", "--format", `{{index .Config.Labels "${HASH_LABEL}"}}`, CONTAINER_IMAGE);
-    if (label.stdout === hash) return;
-    log.info({ image: CONTAINER_IMAGE }, "Dockerfile.workspace changed — rebuilding workspace image (takes a few minutes)...");
-  } else {
-    log.info({ image: CONTAINER_IMAGE }, "workspace image not found — building now (takes a few minutes)...");
+    // One-time ownership sweep: legacy workspaces created when the agent ran as root hold root-owned
+    // files the uid-1000 agent/app can no longer manage. Chown the tree to 1000:1000 so both can.
+    // Runs as root (-u 0) for this single bootstrap command only. Idempotent and cheap on
+    // already-1000-owned trees.
+    const chown = await this.docker.exec(
+      this.containerName(workspaceId),
+      ["chown", "-R", "1000:1000", "/workspace"],
+      { asRoot: true, trimStdout: true },
+    );
+    if (chown.code !== 0)
+      log.debug({ workspaceId, stderr: chown.stderr }, "workspace chown sweep failed (non-fatal)");
   }
 
-  // Dockerfile.workspace has no COPY/ADD, so the build needs no context. Pipe the Dockerfile on
-  // stdin with an empty context ("-") instead of "." — sending "." would tar the whole cwd, which
-  // at runtime is /app and includes the mounted /app/data workspace volume. Those files are owned
-  // by the agent (uid 1000) and not always readable by the app, so tarring them fails the build
-  // ("no permission to read from /app/data/..."). An empty context sidesteps that entirely.
-  const dockerfile = await readFile("Dockerfile.workspace");
-  const buildArgs = ["build", "-t", CONTAINER_IMAGE];
-  if (hash) buildArgs.push("--label", `${HASH_LABEL}=${hash}`);
-  buildArgs.push("-");
+  async ensure(workspaceId: string, workspaceDir: string): Promise<void> {
+    // Coalesce concurrent calls: if a start is already in flight, piggyback on it.
+    const inflight = this.startLocks.get(workspaceId);
+    if (inflight) return inflight;
 
-  await new Promise<void>((resolve, reject) => {
-    const proc = spawn("docker", buildArgs, { stdio: ["pipe", "inherit", "inherit"] });
-    proc.on("close", (code: number | null) => {
-      if (code === 0) resolve();
-      else reject(new Error(`docker build exited with code ${code}`));
+    const p = this._ensureContainer(workspaceId, workspaceDir).finally(() => {
+      this.startLocks.delete(workspaceId);
+      this.resetIdleTimer(workspaceId);
     });
-    proc.on("error", reject);
-    proc.stdin!.write(dockerfile);
-    proc.stdin!.end();
-  });
+    this.startLocks.set(workspaceId, p);
+    return p;
+  }
 
-  log.info({ image: CONTAINER_IMAGE }, "workspace image ready");
+  /**
+   * Run a non-streaming command inside the workspace container via docker exec.
+   * Ensures the container is running first (idempotent, resets idle timer).
+   * cmdArgs are passed directly to execvp — no shell interpolation, so injection is impossible.
+   * stdout is NOT trimmed so callers receive exact file content (trailing newlines preserved).
+   */
+  async exec(
+    workspaceId: string,
+    workspaceDir: string,
+    cmdArgs: string[],
+    opts: { stdin?: string } = {},
+  ) {
+    await this.ensure(workspaceId, workspaceDir);
+    return this.docker.exec(this.containerName(workspaceId), cmdArgs, { stdin: opts.stdin });
+  }
+
+  async execStreaming(
+    workspaceId: string,
+    workspaceDir: string,
+    cmdArgs: string[],
+    opts: { onStdout: (chunk: string) => void; onStderr: (chunk: string) => void },
+  ): Promise<{ code: number | null }> {
+    await this.ensure(workspaceId, workspaceDir);
+    return new Promise((resolve) => {
+      const proc = spawn("docker", ["exec", "-i", "-w", "/workspace", this.containerName(workspaceId), ...cmdArgs]);
+      proc.stdin.end();
+      proc.stdout.on("data", (chunk: Buffer) => opts.onStdout(chunk.toString()));
+      proc.stderr.on("data", (chunk: Buffer) => opts.onStderr(chunk.toString()));
+      proc.on("close", (code) => resolve({ code }));
+      proc.on("error", () => resolve({ code: 1 }));
+    });
+  }
+
+  // Runs a command inside the workspace container AS ROOT (-u 0). This is the single sanctioned root
+  // exec path for agent-facing functionality — used only by the `apt_install` tool to install system
+  // packages. cmdArgs are passed as argv (no shell), so callers must still validate untrusted input.
+  // The regular agent shell (exec / execute_command) never runs as root.
+  async execAsRoot(workspaceId: string, workspaceDir: string, cmdArgs: string[]) {
+    await this.ensure(workspaceId, workspaceDir);
+    return this.docker.exec(this.containerName(workspaceId), cmdArgs, {
+      asRoot: true,
+      trimStdout: true,
+    });
+  }
+
+  async stop(workspaceId: string): Promise<void> {
+    const t = this.idleTimers.get(workspaceId);
+    if (t) { clearTimeout(t); this.idleTimers.delete(workspaceId); }
+    const r = await this.docker.cmd("stop", this.containerName(workspaceId));
+    if (r.code !== 0) log.warn({ workspaceId, stderr: r.stderr }, "docker stop failed");
+    await this.docker.cmd("network", "disconnect", this.networkName(workspaceId), this.containerName(workspaceId));
+    const net = await this.docker.cmd("network", "rm", this.networkName(workspaceId));
+    if (net.code !== 0) log.debug({ workspaceId, stderr: net.stderr }, "network rm on stop (may not exist)");
+  }
+
+  async remove(workspaceId: string): Promise<void> {
+    const t = this.idleTimers.get(workspaceId);
+    if (t) { clearTimeout(t); this.idleTimers.delete(workspaceId); }
+    this.startLocks.delete(workspaceId);
+    invalidatePort(workspaceId);
+    // Non-zero exit codes are expected if the container/network was never created.
+    const stop = await this.docker.cmd("stop", this.containerName(workspaceId));
+    if (stop.code !== 0) log.debug({ workspaceId, stderr: stop.stderr }, "docker stop on remove (may not exist)");
+    const rm = await this.docker.cmd("rm", this.containerName(workspaceId));
+    if (rm.code !== 0) log.debug({ workspaceId, stderr: rm.stderr }, "docker rm on remove (may not exist)");
+    const net = await this.docker.cmd("network", "rm", this.networkName(workspaceId));
+    if (net.code !== 0) log.debug({ workspaceId, stderr: net.stderr }, "docker network rm on remove (may not exist)");
+  }
+
+  /** Returns the host port mapped to container port 8080, or null if no mapping exists. */
+  async getServerPort(workspaceId: string): Promise<number | null> {
+    const cached = getCachedPort(workspaceId);
+    if (cached !== undefined) return cached;
+    const port = await queryDockerPort(this.containerName(workspaceId), this.docker);
+    if (port !== null) cachePort(workspaceId, port);
+    return port;
+  }
+
+  // Deletes a workspace directory from the volume. In production (WORKSPACES_VOLUME_NAME set) it
+  // mounts the full volume and removes the subdir as root (-u 0) — the agent now runs as uid 1000 so
+  // its files are normally removable directly, but a throwaway root rm also clears any legacy
+  // root-owned files left by workspaces created before the non-root migration.
+  // In local dev falls back to a plain fs.rm since the app runs as the host user.
+  async deleteWorkspaceDir(workspaceDir: string): Promise<void> {
+    if (WORKSPACES_VOLUME_NAME) {
+      const workspaceName = path.basename(workspaceDir);
+      const r = await this.docker.cmd(
+        "run", "--rm", "-u", "0",
+        "-v", `${WORKSPACES_VOLUME_NAME}:/data`,
+        CONTAINER_IMAGE, "rm", "-rf", `/data/${workspaceName}`,
+      );
+      if (r.code !== 0) throw new Error(`failed to delete workspace dir: ${r.stderr}`);
+    } else {
+      await rm(workspaceDir, { recursive: true, force: true });
+    }
+  }
+
+  async assertDockerAvailable(): Promise<void> {
+    const r = await this.docker.cmd("info");
+    if (r.code !== 0) {
+      log.error({ stderr: r.stderr }, "Docker is not available. Make sure Docker is running before starting the server.");
+      process.exit(1);
+    }
+    await this.imageManager.ensureImage(CONTAINER_IMAGE, "Dockerfile.workspace");
+  }
 }
+
+// Singleton — module-level state intentionally lives here (not on `global`) because Next.js
+// hot-reload doesn't re-import server-side-only infra modules through the app bundle.
+const _manager = new ContainerManager();
+
+// Exposed for lib/infra/services.ts (the default IContainerManager). Free-function exports below
+// remain the back-compat call path.
+export const defaultContainerManager = _manager;
+
+export const ensureContainer        = (id: string, dir: string)                                        => _manager.ensure(id, dir);
+export const dockerExec             = (id: string, dir: string, cmd: string[], opts?: { stdin?: string }) => _manager.exec(id, dir, cmd, opts);
+export const dockerExecAsRoot       = (id: string, dir: string, cmd: string[])                         => _manager.execAsRoot(id, dir, cmd);
+export const dockerExecStreaming    = (id: string, dir: string, cmd: string[], opts: { onStdout: (chunk: string) => void; onStderr: (chunk: string) => void }) => _manager.execStreaming(id, dir, cmd, opts);
+export const stopContainer          = (id: string)                                                      => _manager.stop(id);
+export const removeContainer        = (id: string)                                                      => _manager.remove(id);
+export const getContainerServerPort = (id: string)                                                      => _manager.getServerPort(id);
+export const deleteWorkspaceDir     = (dir: string)                                                     => _manager.deleteWorkspaceDir(dir);
+export const assertDockerAvailable  = ()                                                                => _manager.assertDockerAvailable();

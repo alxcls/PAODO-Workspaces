@@ -1,7 +1,7 @@
 export const runtime = "nodejs";
 
 import { type NextRequest } from "next/server";
-import { getWorkspaceByName } from "@/lib/infra/workspaceStore";
+import { getStore, getContainers } from "@/lib/infra/services";
 import { validateKey } from "@/lib/infra/apiKeyStore";
 import { checkRateLimit } from "@/lib/infra/rateLimit";
 import { getClientIp } from "@/lib/infra/clientIp";
@@ -23,7 +23,7 @@ export async function POST(req: NextRequest) {
   if (!body.workspace?.trim()) return new Response("workspace is required", { status: 400 });
   if (!body.message?.trim()) return new Response("message is required", { status: 400 });
 
-  const ws = getWorkspaceByName(body.workspace.trim());
+  const ws = getStore().getWorkspaceByName(body.workspace.trim());
   if (!ws) return new Response("Workspace not found", { status: 404 });
 
   if (!plain || !validateKey(ws.id, plain)) {
@@ -31,5 +31,5 @@ export async function POST(req: NextRequest) {
     return new Response("Unauthorized", { status: 401 });
   }
 
-  return makeAgentStream(ws, body.message!.trim(), log);
+  return makeAgentStream(ws, body.message!.trim(), log, { store: getStore(), containers: getContainers() });
 }

@@ -1,79 +1,78 @@
 // Assembles the full agent tool set and binds it to the configured LLM.
 // Provider is selected via LLM_PROVIDER env var ("openai" default, "anthropic", "deepseek").
-// Each tool receives the workspace directory and/or workspace ID to scope operations to the correct workspace.
-import { ChatOpenAI } from "@langchain/openai";
-import { ChatAnthropic } from "@langchain/anthropic";
-import { buildExecCommandTool } from "./execCommand";
-import { buildAptInstallTool } from "./aptInstall";
-import { buildFileReadTool } from "./fileRead";
-import { buildFileEditTool } from "./fileEdit";
-import { buildFileWriteTool } from "./fileWrite";
-import { buildTodoWriteTool } from "./todoWrite";
-import { buildWebFetchTool } from "./webFetch";
-import { buildGlobTool } from "./glob";
-import { buildListDirectoryTool } from "./listDirectory";
-import { buildAgentCallTool } from "./agentCall";
-import { buildListAgentsTool } from "./listAgents";
+// Concrete infra dependencies are wired here and injected into tool constructors — tools
+// themselves only depend on the ContainerRunner interface defined in interfaces.ts.
+import { buildModel } from "./buildModel";
+import { ExecCommandTool } from "./execCommand";
+import { AptInstallTool } from "./aptInstall";
+import { FileReadTool } from "./fileRead";
+import { FileEditTool } from "./fileEdit";
+import { FileWriteTool } from "./fileWrite";
+import { TodoWriteTool } from "./todoWrite";
+import { WebFetchTool } from "./webFetch";
+import { GlobTool } from "./glob";
+import { ListDirectoryTool } from "./listDirectory";
+import { AgentCallTool } from "./agentCall";
+import { ListAgentsTool } from "./listAgents";
+import { defaultContainerManager } from "../../infra/containerManager";
+import { defaultWorkspaceStore } from "../../infra/workspaceStore";
+import { broadcastToWorkspace } from "../../infra/wsHub";
+import type { IContainerManager, IWorkspaceStore } from "../../infra/interfaces";
+import type { AgentConfig, PrivilegedRunner, StreamingExecFn } from "./interfaces";
 
-type ReasoningEffort = "low" | "medium" | "high";
-const ANTHROPIC_THINKING_BUDGET: Record<ReasoningEffort, number> = {
-  low: 4_000,
-  medium: 10_000,
-  high: 20_000,
-};
+function makeContainerRunner(workspaceId: string, workspaceDir: string, containers: IContainerManager): PrivilegedRunner {
+  return {
+    exec:       (cmd, opts) => containers.exec(workspaceId, workspaceDir, cmd, opts),
+    execAsRoot: (cmd)       => containers.execAsRoot(workspaceId, workspaceDir, cmd),
+  };
+}
 
-export function buildTools(workspaceId: string, workspaceDir: string) {
-  const provider = process.env.LLM_PROVIDER ?? "openai";
-  const effort = (process.env.REASONING_EFFORT ?? "low") as ReasoningEffort;
+function makeStreamingExecFn(workspaceId: string, workspaceDir: string, containers: IContainerManager): StreamingExecFn {
+  return (cmd, opts) => containers.execStreaming(workspaceId, workspaceDir, cmd, opts);
+}
 
-  let model: ChatOpenAI | ChatAnthropic;
-  if (provider === "anthropic") {
-    const modelName = process.env.ANTHROPIC_MODEL;
-    if (!modelName) throw new Error("ANTHROPIC_MODEL is not set in .env");
-    const use1hTTL = process.env.ANTHROPIC_CACHE_TTL_1H === "true";
-    model = new ChatAnthropic({
-      model: modelName,
-      apiKey: process.env.ANTHROPIC_API_KEY,
-      thinking: { type: "enabled", budget_tokens: ANTHROPIC_THINKING_BUDGET[effort] },
-      ...(use1hTTL && {
-        clientOptions: {
-          defaultHeaders: { "anthropic-beta": "prompt-caching-scope-2026-01-05" },
-        },
-      }),
-    });
-  } else if (provider === "deepseek") {
-    const modelName = process.env.DEEPSEEK_MODEL;
-    if (!modelName) throw new Error("DEEPSEEK_MODEL is not set in .env");
-    model = new ChatOpenAI({
-      model: modelName,
-      configuration: {
-        baseURL: "https://api.deepseek.com/v1",
-        apiKey: process.env.DEEPSEEK_API_KEY,
-      },
-    });
-  } else {
-    const modelName = process.env.OPENAI_MODEL;
-    if (!modelName) throw new Error("OPENAI_MODEL is not set in .env");
-    model = new ChatOpenAI({
-      model: modelName,
-      openAIApiKey: process.env.OPENAI_API_KEY,
-      useResponsesApi: true,
-      reasoning: { effort, summary: "auto" },
-    });
-  }
+export function loadAgentConfig(): AgentConfig {
+  return {
+    provider:             process.env.LLM_PROVIDER ?? "openai",
+    reasoningEffort:      (process.env.REASONING_EFFORT ?? "low") as AgentConfig["reasoningEffort"],
+    graphEnabled:         process.env.GRAPH_ENABLED === "true",
+    anthropicModel:       process.env.ANTHROPIC_MODEL,
+    anthropicApiKey:      process.env.ANTHROPIC_API_KEY,
+    anthropicCacheTtl1h:  process.env.ANTHROPIC_CACHE_TTL_1H === "true",
+    openaiModel:          process.env.OPENAI_MODEL,
+    openaiApiKey:         process.env.OPENAI_API_KEY,
+    deepseekModel:        process.env.DEEPSEEK_MODEL,
+    deepseekApiKey:       process.env.DEEPSEEK_API_KEY,
+    execSilenceTimeoutMs: parseInt(process.env.EXEC_SILENCE_TIMEOUT_MS ?? "", 10) || 60_000,
+    execMaxTimeoutMs:     parseInt(process.env.EXEC_MAX_TIMEOUT_MS ?? "", 10) || 30 * 60_000,
+  };
+}
+
+export function buildTools(
+  workspaceId: string,
+  workspaceDir: string,
+  config: AgentConfig,
+  deps: { containers?: IContainerManager; store?: IWorkspaceStore } = {},
+) {
+  const containers = deps.containers ?? defaultContainerManager;
+  const store = deps.store ?? defaultWorkspaceStore;
+  const model = buildModel(config);
+  const runner = makeContainerRunner(workspaceId, workspaceDir, containers);
+  const streamExec = makeStreamingExecFn(workspaceId, workspaceDir, containers);
+  const broadcast = (msg: string) => broadcastToWorkspace(workspaceId, msg);
 
   const tools = [
-    buildExecCommandTool(workspaceId, workspaceDir),
-    buildAptInstallTool(workspaceId, workspaceDir),
-    buildFileReadTool(workspaceId, workspaceDir),
-    buildFileEditTool(workspaceId, workspaceDir),
-    buildFileWriteTool(workspaceId, workspaceDir),
-    buildTodoWriteTool(workspaceId),
-    buildWebFetchTool(),
-    buildGlobTool(workspaceId, workspaceDir),
-    buildListDirectoryTool(workspaceId, workspaceDir),
-    ...(process.env.GRAPH_ENABLED === "true"
-      ? [buildAgentCallTool(workspaceId), buildListAgentsTool(workspaceId)]
+    new ExecCommandTool(streamExec, broadcast, { silenceTimeoutMs: config.execSilenceTimeoutMs, maxTimeoutMs: config.execMaxTimeoutMs }),
+    new AptInstallTool(runner),
+    new FileReadTool(runner),
+    new FileEditTool(runner),
+    new FileWriteTool(runner),
+    new TodoWriteTool(workspaceId),
+    new WebFetchTool(),
+    new GlobTool(runner),
+    new ListDirectoryTool(runner),
+    ...(config.graphEnabled
+      ? [new AgentCallTool(workspaceId, store, containers), new ListAgentsTool(workspaceId, store)]
       : []),
   ];
 

@@ -120,18 +120,28 @@ export default function HomePage() {
           </div>
         }
         right={
-          graphEnabled ? (
-            <button className="btn btn-ghost text-[13px] gap-1.5 text-text-2 hover:text-primary" onClick={() => router.push("/graph")} title="Agent Network">
+          <div className="flex items-center gap-1">
+            <button className="btn btn-ghost text-[13px] gap-1.5 text-text-2 hover:text-primary" onClick={() => router.push("/dashboard")} title="Usage Dashboard">
               <svg width="15" height="15" viewBox="0 0 15 15" fill="none">
-                <circle cx="2.5" cy="7.5" r="2" stroke="currentColor" strokeWidth="1.3" />
-                <circle cx="12.5" cy="3" r="2" stroke="currentColor" strokeWidth="1.3" />
-                <circle cx="12.5" cy="12" r="2" stroke="currentColor" strokeWidth="1.3" />
-                <line x1="4.4" y1="6.5" x2="10.6" y2="3.6" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
-                <line x1="4.4" y1="8.5" x2="10.6" y2="11.4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+                <rect x="1" y="9" width="3" height="5" rx="0.5" fill="currentColor"/>
+                <rect x="6" y="5" width="3" height="9" rx="0.5" fill="currentColor"/>
+                <rect x="11" y="2" width="3" height="12" rx="0.5" fill="currentColor"/>
               </svg>
-              Network
+              Dashboard
             </button>
-          ) : null
+            {graphEnabled ? (
+              <button className="btn btn-ghost text-[13px] gap-1.5 text-text-2 hover:text-primary" onClick={() => router.push("/graph")} title="Agent Network">
+                <svg width="15" height="15" viewBox="0 0 15 15" fill="none">
+                  <circle cx="2.5" cy="7.5" r="2" stroke="currentColor" strokeWidth="1.3" />
+                  <circle cx="12.5" cy="3" r="2" stroke="currentColor" strokeWidth="1.3" />
+                  <circle cx="12.5" cy="12" r="2" stroke="currentColor" strokeWidth="1.3" />
+                  <line x1="4.4" y1="6.5" x2="10.6" y2="3.6" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+                  <line x1="4.4" y1="8.5" x2="10.6" y2="11.4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+                </svg>
+                Network
+              </button>
+            ) : null}
+          </div>
         }
       />
 

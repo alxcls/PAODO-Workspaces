@@ -6,6 +6,7 @@ import { loadAgentConfig } from "./tools";
 import { runAgent } from "./runner";
 import type { AgentEvent, AgentRuntimeDeps } from "./runner";
 import type { Workspace } from "../infra/workspaceStore";
+import { appendUsage } from "../infra/usageStore";
 
 const SSE_HEADERS = {
   "Content-Type": "text/event-stream",
@@ -16,6 +17,12 @@ const SSE_HEADERS = {
 
 type SseState = { response: string; limitReached: boolean };
 
+type AgentStreamDeps = AgentRuntimeDeps & {
+  sessionId?: string;
+  workspaceId?: string;
+  workspaceName?: string;
+};
+
 // Maps an AgentEvent to an SSE payload object, or null if the event only updates state.
 // Keeps wire-format decisions out of the stream lifecycle.
 function toSsePayload(event: AgentEvent, state: SseState): object | null {
@@ -24,11 +31,12 @@ function toSsePayload(event: AgentEvent, state: SseState): object | null {
     case "tool_start":  return { type: "tool_start", name: event.name };
     case "limit_reached": state.limitReached = true;     return null;
     case "error":       return { type: "error", message: event.message };
+    case "turn_usage":  return null;
     default:            return null;
   }
 }
 
-export function makeAgentStream(ws: Workspace, message: string, log: Logger, deps: AgentRuntimeDeps = {}): Response {
+export function makeAgentStream(ws: Workspace, message: string, log: Logger, deps: AgentStreamDeps = {}): Response {
   const encoder = new TextEncoder();
   const stream = new ReadableStream({
     async start(controller) {
@@ -38,6 +46,22 @@ export function makeAgentStream(ws: Workspace, message: string, log: Logger, dep
       try {
         const isolatedMessages = [buildSystemPrompt(ws.dir, buildPromptConfig(loadAgentConfig()))];
         for await (const event of runAgent(isolatedMessages, message, ws.dir, ws.id, { maxIterations: ws.maxIterations, ...deps })) {
+          if (event.type === "turn_usage") {
+            if (deps.sessionId && deps.workspaceId && deps.workspaceName) {
+              appendUsage({
+                sessionId: deps.sessionId,
+                workspaceId: deps.workspaceId,
+                workspaceName: deps.workspaceName,
+                inputTokens: event.inputTokens,
+                outputTokens: event.outputTokens,
+                reasoningTokens: event.reasoningTokens,
+                cachedInputTokens: event.cachedInputTokens,
+                cacheCreationTokens: event.cacheCreationTokens,
+                toolCalls: event.toolCalls,
+              });
+            }
+            continue;
+          }
           if (event.type === "done") {
             send({ type: "response", content: state.response, iterationLimitReached: state.limitReached });
             send({ type: "done" });

@@ -121,6 +121,14 @@ export default function ChatPanel({ workspaceId, onAgentTurnComplete }: { worksp
               </div>
             );
           }
+          if (m.role === "usage") {
+            return (
+              <div key={i} className="flex justify-start gap-2.5 px-0.5 text-[11px] select-none">
+                <span title="Input tokens" className="text-sky-800">↑ {m.inputTokens?.toLocaleString()}</span>
+                <span title="Output tokens" className="text-orange-800">↓ {m.outputTokens?.toLocaleString()}</span>
+              </div>
+            );
+          }
           if (m.role === "assistant") {
             const content = m.content ?? "";
             if (!content.trim()) return null;

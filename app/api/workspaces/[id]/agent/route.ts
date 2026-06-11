@@ -41,5 +41,12 @@ export async function POST(
   const body = (await req.json()) as { message?: string };
   if (!body.message?.trim()) return new Response("message is required", { status: 400 });
 
-  return makeAgentStream(ws, body.message!.trim(), log, { store: getStore(), containers: getContainers() });
+  const sessionId = crypto.randomUUID();
+  return makeAgentStream(ws, body.message!.trim(), log, {
+    store: getStore(),
+    containers: getContainers(),
+    sessionId,
+    workspaceId: ws.id,
+    workspaceName: ws.name,
+  });
 }

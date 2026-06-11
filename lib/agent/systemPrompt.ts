@@ -83,7 +83,13 @@ Today's date: ${date}`;
       {
         type: "text",
         text: STATIC_INSTRUCTIONS,
-        // Only providers that support prompt caching accept cache_control on content blocks.
+      },
+      {
+        type: "text",
+        text: dynamicContext,
+        // cache_control goes on the LAST block so the entire system message (both blocks combined)
+        // is the cached prefix. STATIC_INSTRUCTIONS alone is below Anthropic's 1024-token minimum;
+        // the full prompt (with AGENTS.md) comfortably exceeds it.
         // ANTHROPIC_CACHE_TTL_1H=true extends the TTL to 1h (requires prompt-caching-scope-2026-01-05 beta).
         ...(promptConfig.supportsPromptCaching
           ? {
@@ -93,10 +99,6 @@ Today's date: ${date}`;
               },
             }
           : {}),
-      },
-      {
-        type: "text",
-        text: dynamicContext,
       },
     ],
   });

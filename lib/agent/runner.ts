@@ -21,7 +21,8 @@ export type AgentEvent =
   | { type: "tool_result"; name: string; result: string }
   | { type: "error"; message: string }
   | { type: "limit_reached" }
-  | { type: "done" };
+  | { type: "done" }
+  | { type: "turn_usage"; inputTokens: number; outputTokens: number; reasoningTokens: number; cachedInputTokens: number; cacheCreationTokens: number; toolCalls: Array<{ name: string; args: Record<string, unknown> }> };
 
 export type RunAgentOptions = {
   signal?: AbortSignal;
@@ -240,6 +241,22 @@ export async function* runAgent(
           yield event;
         }
       }
+
+      yield {
+        type: "turn_usage",
+        inputTokens: accumulatedChunk?.usage_metadata?.input_tokens ?? 0,
+        outputTokens: accumulatedChunk?.usage_metadata?.output_tokens ?? 0,
+        reasoningTokens: accumulatedChunk?.usage_metadata?.output_token_details?.reasoning ?? 0,
+        // DeepSeek exposes cache hits in prompt_cache_hit_tokens (top-level usage), not
+        // prompt_tokens_details.cached_tokens, so LangChain's OpenAI adapter misses it.
+        cachedInputTokens:
+          accumulatedChunk?.usage_metadata?.input_token_details?.cache_read ??
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          (accumulatedChunk?.response_metadata as any)?.usage?.prompt_cache_hit_tokens ??
+          0,
+        cacheCreationTokens: accumulatedChunk?.usage_metadata?.input_token_details?.cache_creation ?? 0,
+        toolCalls: toolCalls.map((tc) => ({ name: tc.name, args: tc.args })),
+      };
 
       if (!toolCalls.length) {
         // Final text response — tokens already streamed as they arrived; just persist and exit.

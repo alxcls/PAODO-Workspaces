@@ -3,13 +3,15 @@ import { useState, useRef, useCallback } from "react";
 import type { AgentEvent } from "@/lib/agent/runner";
 
 export interface Message {
-  role: "user" | "assistant" | "tool_start" | "error" | "limit_notice" | "reasoning";
+  role: "user" | "assistant" | "tool_start" | "error" | "limit_notice" | "reasoning" | "usage";
   content?: string;
   toolName?: string;
   toolSummary?: string;
   toolDone?: boolean;
   toolResult?: string;
   thinking?: boolean;
+  inputTokens?: number;
+  outputTokens?: number;
 }
 
 // Extend this map to support new tools without modifying dispatch logic (OCP).
@@ -57,6 +59,8 @@ export function useAgentStream(workspaceId: string, { onTurnComplete }: Options 
   const pendingReasoningRef = useRef<string | null>(null);
   const tokenRafRef = useRef<number | null>(null);
   const reasoningRafRef = useRef<number | null>(null);
+  const totalInputRef = useRef(0);
+  const totalOutputRef = useRef(0);
 
   // Captured in a ref so sendMessage never needs to be recreated when the callback changes.
   const onTurnCompleteRef = useRef(onTurnComplete);
@@ -74,6 +78,8 @@ export function useAgentStream(workspaceId: string, { onTurnComplete }: Options 
     let reasoningContent = "";
     let hadToolCalls = false;
     let wasAborted = false;
+    totalInputRef.current = 0;
+    totalOutputRef.current = 0;
 
     try {
       abortRef.current = new AbortController();
@@ -176,6 +182,21 @@ export function useAgentStream(workspaceId: string, { onTurnComplete }: Options 
                 }
                 return next;
               });
+            } else if (event.type === "turn_usage") {
+              totalInputRef.current += event.inputTokens;
+              totalOutputRef.current += event.outputTokens;
+            } else if (event.type === "done") {
+              const input = totalInputRef.current;
+              const output = totalOutputRef.current;
+              if (input > 0 || output > 0) {
+                setMessages((prev) => {
+                  const lastIdx = [...prev].reverse().findIndex((m) => m.role === "assistant" && !m.thinking);
+                  if (lastIdx === -1) return prev;
+                  const idx = prev.length - 1 - lastIdx;
+                  const usageMsg: Message = { role: "usage", inputTokens: input, outputTokens: output };
+                  return [...prev.slice(0, idx), usageMsg, ...prev.slice(idx)];
+                });
+              }
             } else if (event.type === "limit_reached") {
               setMessages((prev) => [...prev, { role: "limit_notice" }]);
             } else if (event.type === "error") {

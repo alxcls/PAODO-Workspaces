@@ -11,6 +11,11 @@
 # testing
 /coverage
 
+# playwright (local dev only)
+/e2e/
+playwright.config.ts
+/test-results/
+
 # next.js
 /.next/
 /out/

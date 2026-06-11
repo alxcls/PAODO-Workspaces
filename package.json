@@ -12,7 +12,10 @@
     "query-graph": "tsx dev_tools/query/query-graph.ts",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:integration": "vitest run --config vitest.integration.config.ts"
+    "test:integration": "vitest run --config vitest.integration.config.ts",
+    "test:e2e": "playwright test --grep-invert @slow",
+    "test:e2e:slow": "playwright test --grep @slow",
+    "test:e2e:all": "playwright test"
   },
   "dependencies": {
     "@langchain/anthropic": "^1.4.0",
@@ -36,6 +39,7 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@playwright/test": "^1.60.0",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19",

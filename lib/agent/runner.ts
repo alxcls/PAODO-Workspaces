@@ -206,7 +206,7 @@ export async function* runAgent(
   const typedToolMap = toolMap as Record<string, AnyTool>;
 
   const resolvedNotify = notify ?? ((msg: object) => getWsForWorkspace(workspaceId)?.send(JSON.stringify(msg)));
-  const resolvedWarmContainer = warmContainer ?? (() => resolvedContainers.ensure(workspaceId, workspaceDir).catch(() => {}));
+  const resolvedWarmContainer = warmContainer ?? (() => resolvedContainers.ensure(workspaceId, workspaceDir).catch((err: unknown) => { wlog.warn({ err }, "container pre-warm failed"); }));
   // Start spinning up the workspace container while the first LLM call is in flight.
   // ensureContainer is idempotent and coalesces concurrent calls, so execCommand calling
   // it again later is a no-op if the container is already running.

@@ -40,4 +40,13 @@ export type SkillErrorCode =
   | "SKILL_NOT_FOUND"
   | "INPUT_VALIDATION_ERROR"
   | "OUTPUT_VALIDATION_ERROR"
+  | "NEEDS_INPUT"
   | "EXECUTION_ERROR";
+
+/**
+ * Reserved output key: a callee that cannot resolve schema-valid args (typo'd id,
+ * ambiguous value) replies `{ "_needs_input": "<question>" }` instead of the output
+ * schema. executeSkill intercepts it before output validation and surfaces it to the
+ * caller as a NEEDS_INPUT failure so the caller can re-call with corrected args.
+ */
+export const NEEDS_INPUT_KEY = "_needs_input";

@@ -4,7 +4,7 @@ import path from "path";
 import { createLogger } from "../infra/logger";
 import { getProviderMetadata } from "./tools/buildModel";
 import type { LLMProviderConfig } from "./tools/interfaces";
-import type { SkillDefinition } from "../infra/skillTypes";
+import { NEEDS_INPUT_KEY, type SkillDefinition } from "../infra/skillTypes";
 
 export interface PromptConfig {
   supportsPromptCaching: boolean;
@@ -68,7 +68,8 @@ export function buildStructuredResponderBlock(skill: SkillDefinition): string {
 You are answering a structured skill call ("${skill.id}"). Treat the args above as your task.
 Your FINAL message must be exactly one JSON object matching this output schema — no prose before or after, no markdown fences:
 ${JSON.stringify(skill.output, null, 2)}
-Every field declared in the schema must be present with the correct type. Extra fields are allowed.`;
+Every field declared in the schema must be present with the correct type. Extra fields are allowed.
+If the args are insufficient or unresolvable (e.g. an id that does not exist in your data), do NOT guess — reply instead with exactly {"${NEEDS_INPUT_KEY}": "<one specific question or correction the caller needs>"}. Investigate first: only ask after your own data could not resolve the args. If the schema itself can express the negative result (e.g. a not-found field), prefer answering with the schema.`;
 }
 
 // Accepts optional agentsContent to allow pure prompt construction without filesystem I/O.

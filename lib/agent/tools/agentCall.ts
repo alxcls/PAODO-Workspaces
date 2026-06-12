@@ -16,6 +16,10 @@ import { createLogger } from "../../infra/logger";
 // output, so 8k is enough and keeps nested agent-call chains from ballooning the context.
 const MAX_RESPONSE_CHARS = 8_000;
 const TIMEOUT_MS = 300_000;
+// How many times a callee may answer NEEDS_INPUT for the same (callee, skill) before the
+// caller is told to stop re-calling and report instead — keeps two agents from politely
+// ping-ponging questions forever.
+const NEEDS_INPUT_MAX_ROUNDS = 2;
 
 const schema = z.object({
   workspace: z.string().describe("Name of the target workspace to call"),
@@ -36,6 +40,9 @@ A workspace with no declared skills is not callable. If the workspace is not con
   // Consecutive input-validation failures per (callee, skill) within this session, so a
   // confused caller cannot hammer the same bad call indefinitely. Reset on any other outcome.
   private readonly inputFailures = new Map<string, number>();
+  // Consecutive NEEDS_INPUT answers per (callee, skill) — tracked separately from
+  // inputFailures because the caller's args were schema-valid; this is guidance, not blame.
+  private readonly needsInputRounds = new Map<string, number>();
 
   constructor(
     private readonly callerWorkspaceId: string,
@@ -76,6 +83,7 @@ A workspace with no declared skills is not callable. If the workspace is not con
       if (signal.aborted) {
         this.log.warn({ callerWorkspaceId: this.callerWorkspaceId, callee: workspace, action, timeoutMs: TIMEOUT_MS }, "call_agent timed out");
         this.inputFailures.delete(retryKey);
+        this.needsInputRounds.delete(retryKey);
         return `Error: call to "${workspace}" timed out after ${TIMEOUT_MS / 1000}s — the target agent is too slow or stuck.`;
       }
 
@@ -89,7 +97,19 @@ A workspace with no declared skills is not callable. If the workspace is not con
             : "";
           return `Error (${result.code}): ${result.message}${terminal}`;
         }
+        if (result.code === "NEEDS_INPUT") {
+          const rounds = (this.needsInputRounds.get(retryKey) ?? 0) + 1;
+          this.needsInputRounds.set(retryKey, rounds);
+          if (rounds >= NEEDS_INPUT_MAX_ROUNDS) {
+            return (
+              `Error (NEEDS_INPUT): the target agent still needs different input: "${result.message}" ` +
+              `That was round ${rounds} of ${NEEDS_INPUT_MAX_ROUNDS} — stop re-calling this skill and report what you learned instead.`
+            );
+          }
+          return `The target agent needs different input: "${result.message}" Re-call the same skill with corrected args.`;
+        }
         this.inputFailures.delete(retryKey);
+        this.needsInputRounds.delete(retryKey);
         if (result.code === "NOT_CONNECTED") {
           return (
             `Permission denied: this workspace is not connected to "${workspace}" in the Agent Network. ` +
@@ -100,6 +120,7 @@ A workspace with no declared skills is not callable. If the workspace is not con
       }
 
       this.inputFailures.delete(retryKey);
+      this.needsInputRounds.delete(retryKey);
       const output = JSON.stringify(result.output, null, 2);
       this.log.debug({ callerWorkspaceId: this.callerWorkspaceId, callee: workspace, action, responseChars: output.length }, "call_agent done");
       return output.length > MAX_RESPONSE_CHARS

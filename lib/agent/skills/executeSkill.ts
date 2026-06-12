@@ -17,7 +17,7 @@ import type { BaseMessage } from "@langchain/core/messages";
 import { canCall } from "../../infra/workspaceGraph";
 import { loadSkills } from "../../infra/skillStore";
 import { appendUsage } from "../../infra/usageStore";
-import type { SkillCallResult, SkillSchema } from "../../infra/skillTypes";
+import { NEEDS_INPUT_KEY, type SkillCallResult, type SkillSchema } from "../../infra/skillTypes";
 import type { IWorkspaceStore, IContainerManager } from "../../infra/interfaces";
 import { buildSystemPrompt, buildPromptConfig, buildStructuredResponderBlock } from "../systemPrompt";
 import { createLogger } from "../../infra/logger";
@@ -216,6 +216,14 @@ ${buildStructuredResponderBlock(skill)}`;
     }
 
     const parsed = parseOutput(turn.text);
+    // Reserved envelope, checked before output validation: the callee asked for different
+    // input instead of answering. Not a malformatted response, so no correction retries —
+    // the fix has to come from the caller, not from re-prompting the callee.
+    if (parsed.ok && typeof parsed.value[NEEDS_INPUT_KEY] === "string" && parsed.value[NEEDS_INPUT_KEY].trim()) {
+      const question = (parsed.value[NEEDS_INPUT_KEY] as string).trim();
+      elog.info({ attempt, question }, "skill call needs different input");
+      return { state: "failed", code: "NEEDS_INPUT", message: question };
+    }
     if (parsed.ok && validateOutput(parsed.value)) {
       elog.debug({ attempt }, "skill call completed");
       return { state: "completed", output: parsed.value };

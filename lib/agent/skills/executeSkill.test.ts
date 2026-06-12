@@ -189,6 +189,36 @@ describe("executeSkill — callee run and output contract", () => {
     expect(recorded[1].sessionId).toBe(recorded[0].sessionId);
   });
 
+  it("returns NEEDS_INPUT when the callee replies with the reserved envelope, without burning retries", async () => {
+    // The envelope is the callee saying "your schema-valid args don't resolve in my data" —
+    // re-prompting the callee can't fix that, so it must short-circuit the correction loop.
+    const runner = fakeRunner([
+      JSON.stringify({ _needs_input: "SKU 'CMP-MOTORS' not found — did you mean CMP-MOTOR?" }),
+      GOOD_OUTPUT, // must never be reached
+    ]);
+    const res = await executeSkill(CALLEE.id, CALLER.id, "check-stock", { sku: "CMP-MOTORS" }, opts(runner, { outputMaxRetries: 2 }));
+    expect(res).toMatchObject({ state: "failed", code: "NEEDS_INPUT" });
+    expect((res as { message: string }).message).toContain("did you mean CMP-MOTOR?");
+    expect(runner.inputs).toHaveLength(1);
+  });
+
+  it("tells the callee about the needs-input envelope in the structured-responder block", async () => {
+    const runner = fakeRunner([GOOD_OUTPUT]);
+    await executeSkill(CALLEE.id, CALLER.id, "check-stock", { sku: "A1" }, opts(runner));
+    expect(runner.inputs[0]).toContain('"_needs_input"');
+    expect(runner.inputs[0]).toContain("do NOT guess");
+  });
+
+  it("treats a non-string or empty _needs_input as an invalid output, not a question", async () => {
+    const runner = fakeRunner([
+      JSON.stringify({ _needs_input: 42 }), // not a question — fails validation, retried
+      GOOD_OUTPUT,
+    ]);
+    const res = await executeSkill(CALLEE.id, CALLER.id, "check-stock", { sku: "A1" }, opts(runner));
+    expect(res.state).toBe("completed");
+    expect(runner.inputs).toHaveLength(2);
+  });
+
   it("returns EXECUTION_ERROR when the callee runner reports an error", async () => {
     const run = async function* (): AsyncGenerator<AgentEvent> {
       yield { type: "error", message: "model exploded" };

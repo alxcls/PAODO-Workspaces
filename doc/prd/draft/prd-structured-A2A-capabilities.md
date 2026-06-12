@@ -93,9 +93,15 @@ is wired correctly.
   shown precisely what was wrong and asked to correct itself, up to a small
   number of attempts; after that the call fails with a clear error instead of
   delivering a bad answer.
+- **Asking for different input** — an answering agent that cannot resolve a
+  well-formed request (a code that doesn't exist in its data, an ambiguous
+  value) can answer with one specific question instead of guessing. The caller
+  is told to re-send the request with corrected inputs; after a small number
+  of question rounds for the same skill it is told to stop and report what it
+  learned instead.
 - **Clear failure reasons** — every failed call tells the caller why: not
-  connected, unknown skill, invalid request, invalid answer, or the target
-  agent failed while working.
+  connected, unknown skill, invalid request, invalid answer, the target agent
+  needed different input, or the target agent failed while working.
 - **Isolation** — every call runs in a fresh conversation for the answering
   agent. Human-to-agent chat is untouched and stays free-form.
 - **Usage visibility** — token usage and tool activity of a called agent are

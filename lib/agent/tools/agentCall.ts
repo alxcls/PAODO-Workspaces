@@ -1,38 +1,41 @@
-// Agent tool that delegates a task to another workspace's agent.
+// Agent tool that invokes a declared skill on another workspace's agent.
+// Structured calls only — the free-form `message` field is removed: the caller names a
+// skill (`action`) and supplies typed `args`; all contract enforcement (authz, input/output
+// validation, correction retries) lives in executeSkill, which runs the callee in-process
+// with a fresh, isolated conversation.
 // Only works when a directed edge exists from the caller workspace to the target workspace
 // in the Agent Network graph (data/.workspace-graph.json).
-// Runs the callee agent with a fresh, isolated conversation — no shared history.
 import { StructuredTool } from "@langchain/core/tools";
 import { z } from "zod";
-import { SystemMessage } from "@langchain/core/messages";
-import { canCall } from "../../infra/workspaceGraph";
 import type { IWorkspaceStore, IContainerManager } from "../../infra/interfaces";
-import { buildSystemPrompt, buildPromptConfig } from "../systemPrompt";
+import { executeSkill } from "../skills/executeSkill";
 import { loadAgentConfig } from ".";
 import { createLogger } from "../../infra/logger";
-// runner is imported dynamically inside _call to avoid the circular:
-// AgentCallTool → runner → buildTools → AgentCallTool
 
-// Shorter than the general tool result cap — agent responses are prose, not raw output,
-// so 8k is enough and keeps nested agent-call chains from ballooning the context.
+// Shorter than the general tool result cap — skill outputs are structured data, not raw
+// output, so 8k is enough and keeps nested agent-call chains from ballooning the context.
 const MAX_RESPONSE_CHARS = 8_000;
 const TIMEOUT_MS = 300_000;
 
 const schema = z.object({
   workspace: z.string().describe("Name of the target workspace to call"),
-  message: z.string().describe("Task or question to send to the target agent"),
+  action: z.string().describe("Skill id to invoke — see list_agents for each workspace's skills"),
+  args: z.record(z.string(), z.unknown()).describe("Key-value object matching the skill's input fields"),
 });
 
 export class AgentCallTool extends StructuredTool<typeof schema> {
   name = "call_agent";
-  description = `Contact a connected workspace to delegate a task, place an order, or request information.
+  description = `Invoke a declared skill on a connected workspace to delegate a task, place an order, or request information.
 ALWAYS use this when the user asks you to contact, call, notify, or order from another workspace.
-If you don't know which workspaces are available, call list_agents first.
+Call list_agents first to see each workspace's skills, their input fields, and what they return — then fill in "action" (the skill id) and "args" exactly.
 The target agent runs in a fresh isolated context — it has no memory of your conversation.
-If the workspace is not connected you will receive a permission error, but always attempt the call rather than refusing.`;
+A workspace with no declared skills is not callable. If the workspace is not connected you will receive a permission error, but always attempt the call rather than refusing.`;
   schema = schema;
 
   private readonly log = createLogger("agentCall");
+  // Consecutive input-validation failures per (callee, skill) within this session, so a
+  // confused caller cannot hammer the same bad call indefinitely. Reset on any other outcome.
+  private readonly inputFailures = new Map<string, number>();
 
   constructor(
     private readonly callerWorkspaceId: string,
@@ -42,58 +45,73 @@ If the workspace is not connected you will receive a permission error, but alway
     super();
   }
 
-  protected async _call({ workspace, message }: z.infer<typeof schema>): Promise<string> {
+  protected async _call({ workspace, action, args }: z.infer<typeof schema>): Promise<string> {
     const callee = this.store.getWorkspaceByName(workspace);
     if (!callee) {
       this.log.warn({ callerWorkspaceId: this.callerWorkspaceId, callee: workspace }, "call_agent target not found");
       return `Error: workspace "${workspace}" not found.`;
     }
 
-    if (!canCall(this.callerWorkspaceId, callee.id)) {
-      this.log.warn({ callerWorkspaceId: this.callerWorkspaceId, callee: workspace }, "call_agent permission denied — no edge in graph");
+    const retryKey = `${callee.id}:${action}`;
+    const maxInputRetries = loadAgentConfig().skillInputMaxRetries;
+    if ((this.inputFailures.get(retryKey) ?? 0) >= maxInputRetries) {
       return (
-        `Permission denied: this workspace is not connected to "${workspace}" in the Agent Network. ` +
-        `Add an edge in the /graph page first.`
+        `Error: ${maxInputRetries} consecutive invalid calls to skill "${action}" on "${workspace}". ` +
+        `Stop retrying this skill — re-read its input schema via list_agents and reconsider your approach.`
       );
     }
 
-    const freshMessages: SystemMessage[] = [buildSystemPrompt(callee.dir, buildPromptConfig(loadAgentConfig()))];
-    const caller = this.store.getWorkspace(this.callerWorkspaceId);
-    const taggedMessage = caller ? `[From: ${caller.name}] ${message}` : message;
+    this.log.debug({ callerWorkspaceId: this.callerWorkspaceId, callee: workspace, action }, "call_agent start");
 
-    this.log.debug({ callerWorkspaceId: this.callerWorkspaceId, callee: workspace }, "call_agent start");
-
+    const signal = AbortSignal.timeout(TIMEOUT_MS);
     try {
-      const { runAgent } = await import("../runner");
-      const signal = AbortSignal.timeout(TIMEOUT_MS);
-      let response = "";
-      let limitReached = false;
+      const result = await executeSkill(callee.id, this.callerWorkspaceId, action, args, {
+        signal,
+        store: this.store,
+        containers: this.containers,
+      });
 
-      for await (const event of runAgent(freshMessages, taggedMessage, callee.dir, callee.id, { signal, maxIterations: callee.maxIterations, store: this.store, containers: this.containers })) {
-        if (event.type === "token") response += event.content;
-        if (event.type === "limit_reached") limitReached = true;
-        if (event.type === "error") {
-          this.log.error({ callerWorkspaceId: this.callerWorkspaceId, callee: workspace, agentError: event.message }, "call_agent remote error");
-          return `Error from "${workspace}": ${event.message}`;
-        }
-      }
-
-      this.log.debug({ callerWorkspaceId: this.callerWorkspaceId, callee: workspace, responseChars: response.length, limitReached }, "call_agent done");
-      if (!response) return `(${workspace} produced no response)`;
-      const note = limitReached
-        ? `\n\n[Note: "${workspace}" reached its iteration limit — the above is a partial result.]`
-        : "";
-      const full = response + note;
-      return full.length > MAX_RESPONSE_CHARS
-        ? full.slice(0, MAX_RESPONSE_CHARS) +
-            `\n\n[response truncated — ${full.length} chars total, showing first ${MAX_RESPONSE_CHARS}]`
-        : full;
-    } catch (err) {
-      if (err instanceof Error && err.name === "AbortError") {
-        this.log.warn({ callerWorkspaceId: this.callerWorkspaceId, callee: workspace, timeoutMs: TIMEOUT_MS }, "call_agent timed out");
+      // The runner converts aborts into error events rather than throwing, so a timeout
+      // comes back as a failed result — detect it via the signal, not the error name.
+      if (signal.aborted) {
+        this.log.warn({ callerWorkspaceId: this.callerWorkspaceId, callee: workspace, action, timeoutMs: TIMEOUT_MS }, "call_agent timed out");
+        this.inputFailures.delete(retryKey);
         return `Error: call to "${workspace}" timed out after ${TIMEOUT_MS / 1000}s — the target agent is too slow or stuck.`;
       }
-      this.log.error({ err, callerWorkspaceId: this.callerWorkspaceId, callee: workspace }, "call_agent failed");
+
+      if (result.state === "failed") {
+        this.log.warn({ callerWorkspaceId: this.callerWorkspaceId, callee: workspace, action, code: result.code, agentError: result.message }, "call_agent failed");
+        if (result.code === "INPUT_VALIDATION_ERROR") {
+          const failures = (this.inputFailures.get(retryKey) ?? 0) + 1;
+          this.inputFailures.set(retryKey, failures);
+          const terminal = failures >= maxInputRetries
+            ? " Do NOT retry with the same args — re-read the skill's input schema via list_agents."
+            : "";
+          return `Error (${result.code}): ${result.message}${terminal}`;
+        }
+        this.inputFailures.delete(retryKey);
+        if (result.code === "NOT_CONNECTED") {
+          return (
+            `Permission denied: this workspace is not connected to "${workspace}" in the Agent Network. ` +
+            `Add an edge in the /graph page first.`
+          );
+        }
+        return `Error (${result.code}): ${result.message}`;
+      }
+
+      this.inputFailures.delete(retryKey);
+      const output = JSON.stringify(result.output, null, 2);
+      this.log.debug({ callerWorkspaceId: this.callerWorkspaceId, callee: workspace, action, responseChars: output.length }, "call_agent done");
+      return output.length > MAX_RESPONSE_CHARS
+        ? output.slice(0, MAX_RESPONSE_CHARS) +
+            `\n\n[response truncated — ${output.length} chars total, showing first ${MAX_RESPONSE_CHARS}]`
+        : output;
+    } catch (err) {
+      if (signal.aborted) {
+        this.log.warn({ callerWorkspaceId: this.callerWorkspaceId, callee: workspace, action, timeoutMs: TIMEOUT_MS }, "call_agent timed out");
+        return `Error: call to "${workspace}" timed out after ${TIMEOUT_MS / 1000}s — the target agent is too slow or stuck.`;
+      }
+      this.log.error({ err, callerWorkspaceId: this.callerWorkspaceId, callee: workspace, action }, "call_agent failed");
       return `Error: ${err instanceof Error ? err.message : String(err)}`;
     }
   }

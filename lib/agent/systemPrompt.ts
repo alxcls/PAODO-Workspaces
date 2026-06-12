@@ -4,6 +4,7 @@ import path from "path";
 import { createLogger } from "../infra/logger";
 import { getProviderMetadata } from "./tools/buildModel";
 import type { LLMProviderConfig } from "./tools/interfaces";
+import type { SkillDefinition } from "../infra/skillTypes";
 
 export interface PromptConfig {
   supportsPromptCaching: boolean;
@@ -57,6 +58,18 @@ Always format responses using Markdown.
 
 `
 ;
+
+// Structured-responder block injected per skill call by executeSkill — carries the target
+// skill's output schema so the callee knows the exact response contract. Appended to the
+// runner's userInput (not the system prompt) because it is call-specific, and direct user
+// chats must stay free-form.
+export function buildStructuredResponderBlock(skill: SkillDefinition): string {
+  return `# Structured response required
+You are answering a structured skill call ("${skill.id}"). Treat the args above as your task.
+Your FINAL message must be exactly one JSON object matching this output schema — no prose before or after, no markdown fences:
+${JSON.stringify(skill.output, null, 2)}
+Every field declared in the schema must be present with the correct type. Extra fields are allowed.`;
+}
 
 // Accepts optional agentsContent to allow pure prompt construction without filesystem I/O.
 // When omitted, falls back to reading AGENTS.md from workspaceDir (production default).

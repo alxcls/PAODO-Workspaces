@@ -35,7 +35,7 @@ const TOOL_ARG_SUMMARY: Record<string, ArgExtractor> = {
   glob:            (a) => String(a.pattern ?? ""),
   list_directory:  (a) => String(a.dir_path ?? "") || ".",
   http_get:        (a) => String(a.url ?? ""),
-  call_agent:      (a) => `→ ${String(a.workspace ?? "")}`,
+  call_agent:      (a) => `→ ${String(a.workspace ?? "")}${a.action ? ` · ${String(a.action)}` : ""}`,
 };
 
 export function toolLabel(name: string): string {

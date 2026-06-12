@@ -92,7 +92,7 @@ Workspaces are isolated from one another: file edits and shell commands are conf
 
 ## Agent network *(experimental, opt-in)*
 
-The network page lets you draw directed edges between workspaces. An edge from workspace A to workspace B means A's agent can call B's agent using the `call_agent` tool. Calls are isolated: the callee runs with a fresh conversation history. Cycles are prevented.
+The network page lets you draw directed edges between workspaces. An edge from workspace A to workspace B means A's agent can call B's agent using the `call_agent` tool. Calls are structured: each workspace declares **skills** — named actions with JSON-Schema-typed inputs and outputs, stored as `skills/*.json` in the workspace directory (an `example-skill.json.template` is seeded at creation; the agent can write its own skill files with `file_write`) — and the platform enforces both sides of the contract: args validated before the callee runs, output validated with bounded correction retries before the caller sees it. A workspace with no declared skills is not callable. Calls are isolated: the callee runs with a fresh conversation history. Cycles are prevented.
 
 > **Note:** This feature is experimental and disabled by default. Agent-to-agent coordination adds complexity and may not suit every deployment. Enable it by setting `GRAPH_ENABLED=true` in your `.env`.
 

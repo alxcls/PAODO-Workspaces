@@ -22,6 +22,7 @@
     "@langchain/core": "^1.1.45",
     "@langchain/openai": "^1.4.5",
     "@xyflow/react": "^12.10.2",
+    "ajv": "^8.20.0",
     "chokidar": "3.5.3",
     "dotenv": "^17.4.2",
     "file-type": "^22.0.1",

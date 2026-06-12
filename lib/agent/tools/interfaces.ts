@@ -45,4 +45,6 @@ export interface AgentConfig extends LLMProviderConfig {
   graphEnabled: boolean;
   execSilenceTimeoutMs: number;
   execMaxTimeoutMs: number;
+  skillInputMaxRetries: number;
+  skillOutputMaxRetries: number;
 }

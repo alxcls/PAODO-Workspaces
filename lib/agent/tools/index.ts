@@ -45,6 +45,8 @@ export function loadAgentConfig(): AgentConfig {
     deepseekApiKey:       process.env.DEEPSEEK_API_KEY,
     execSilenceTimeoutMs: parseInt(process.env.EXEC_SILENCE_TIMEOUT_MS ?? "", 10) || 60_000,
     execMaxTimeoutMs:     parseInt(process.env.EXEC_MAX_TIMEOUT_MS ?? "", 10) || 30 * 60_000,
+    skillInputMaxRetries:  parseInt(process.env.SKILL_INPUT_MAX_RETRIES ?? "", 10) || 2,
+    skillOutputMaxRetries: parseInt(process.env.SKILL_OUTPUT_MAX_RETRIES ?? "", 10) || 2,
   };
 }
 

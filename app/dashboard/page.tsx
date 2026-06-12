@@ -59,7 +59,17 @@ function groupBySessions(records: TurnRecord[]): Session[] {
       });
     }
   }
-  return Array.from(map.values());
+  // Order sessions by when they STARTED (newest first), not by their latest turn —
+  // otherwise a caller session floats above the callee it triggered, because the
+  // caller's final relay turn is always the last record of an agent-to-agent exchange.
+  // Within a session, tool calls read chronologically (sort is stable, so calls from
+  // the same turn keep their original order).
+  return Array.from(map.values())
+    .map((s) => ({
+      ...s,
+      toolCalls: [...s.toolCalls].sort((a, b) => a.turnTimestamp.localeCompare(b.turnTimestamp)),
+    }))
+    .sort((a, b) => b.timestamp.localeCompare(a.timestamp));
 }
 
 export default function DashboardPage() {

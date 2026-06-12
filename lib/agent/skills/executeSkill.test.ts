@@ -1,0 +1,212 @@
+import { describe, it, expect, vi } from "vitest";
+
+// Redirect WORKSPACES_ROOT before any infra module reads it at import time
+// (executeSkill dynamically imports ../tools, which pulls in the store singletons).
+// The dir never needs to exist — every read fails soft to an empty cache and the
+// injected fakes below keep executeSkill from touching disk.
+vi.hoisted(() => {
+  process.env.WORKSPACES_ROOT = "/tmp/executeskill-test-data";
+});
+
+import { executeSkill, type ExecuteSkillOptions } from "./executeSkill";
+import type { SkillDefinition } from "../../infra/skillTypes";
+import type { IWorkspaceStore } from "../../infra/interfaces";
+import type { runAgent, AgentEvent } from "../runner";
+
+// executeSkill is the single enforcement point of the skill contract — every guarantee
+// the PRD makes (authz, both-sides validation, bounded correction retries) lives here.
+// The dangerous bugs are enforcement bypasses: an unauthorized caller getting through,
+// bad args reaching the callee, or unvalidated output reaching the caller.
+
+const SKILL: SkillDefinition = {
+  id: "check-stock",
+  name: "Check Stock",
+  description: "Returns inventory level",
+  parameters: {
+    type: "object",
+    properties: { sku: { type: "string" }, format: { type: "string" } },
+    required: ["sku"],
+  },
+  // No `required` — the declared shape IS the contract, so both fields must come back.
+  output: { type: "object", properties: { in_stock: { type: "boolean" }, quantity: { type: "number" } } },
+};
+
+const CALLEE = { id: "callee-1", name: "stock-agent", dir: "/tmp/nowhere", maxIterations: 5 };
+const CALLER = { id: "caller-1", name: "shop-agent", dir: "/tmp/nowhere2", maxIterations: 5 };
+
+const store = {
+  getWorkspace: (id: string) => (id === CALLEE.id ? CALLEE : id === CALLER.id ? CALLER : undefined),
+} as unknown as IWorkspaceStore;
+
+// Fake runner: each call consumes the next scripted response and records the userInput
+// it was driven with, so tests can assert what the callee actually saw.
+function fakeRunner(responses: string[]) {
+  const inputs: string[] = [];
+  const run = async function* (
+    _messages: unknown,
+    userInput: string,
+  ): AsyncGenerator<AgentEvent> {
+    inputs.push(userInput);
+    const text = responses[inputs.length - 1] ?? "";
+    yield { type: "token", content: text };
+    yield { type: "done" };
+  } as unknown as typeof runAgent;
+  return { run, inputs };
+}
+
+function opts(runner: { run: typeof runAgent }, extra: Partial<ExecuteSkillOptions> = {}): ExecuteSkillOptions {
+  return {
+    store,
+    canCallFn: () => true,
+    loadSkillsFn: async () => [SKILL],
+    runAgentFn: runner.run,
+    outputMaxRetries: 2,
+    ...extra,
+  };
+}
+
+const GOOD_OUTPUT = JSON.stringify({ in_stock: true, quantity: 3 });
+
+describe("executeSkill — pre-run rejections (callee must never run)", () => {
+  it("rejects an unauthorized caller with NOT_CONNECTED", async () => {
+    const runner = fakeRunner([GOOD_OUTPUT]);
+    const res = await executeSkill(CALLEE.id, CALLER.id, "check-stock", { sku: "A1" }, opts(runner, { canCallFn: () => false }));
+    expect(res).toMatchObject({ state: "failed", code: "NOT_CONNECTED" });
+    expect(runner.inputs).toHaveLength(0);
+  });
+
+  it("rejects an unknown action with SKILL_NOT_FOUND, listing available skills", async () => {
+    const runner = fakeRunner([GOOD_OUTPUT]);
+    const res = await executeSkill(CALLEE.id, CALLER.id, "nope", {}, opts(runner));
+    expect(res).toMatchObject({ state: "failed", code: "SKILL_NOT_FOUND" });
+    expect((res as { message: string }).message).toContain("check-stock");
+    expect(runner.inputs).toHaveLength(0);
+  });
+
+  it("rejects a workspace with no skills at all with SKILL_NOT_FOUND", async () => {
+    const runner = fakeRunner([GOOD_OUTPUT]);
+    const res = await executeSkill(CALLEE.id, CALLER.id, "check-stock", { sku: "A1" }, opts(runner, { loadSkillsFn: async () => [] }));
+    expect(res).toMatchObject({ state: "failed", code: "SKILL_NOT_FOUND" });
+    expect((res as { message: string }).message).toContain("no skills");
+  });
+
+  it("rejects missing required args with a precise INPUT_VALIDATION_ERROR", async () => {
+    const runner = fakeRunner([GOOD_OUTPUT]);
+    const res = await executeSkill(CALLEE.id, CALLER.id, "check-stock", {}, opts(runner));
+    expect(res).toMatchObject({ state: "failed", code: "INPUT_VALIDATION_ERROR" });
+    expect((res as { message: string }).message).toContain("'sku' is required");
+    expect(runner.inputs).toHaveLength(0);
+  });
+
+  it("rejects wrongly-typed args but allows extra fields (non-strict)", async () => {
+    const bad = await executeSkill(CALLEE.id, CALLER.id, "check-stock", { sku: 42 }, opts(fakeRunner([GOOD_OUTPUT])));
+    expect(bad).toMatchObject({ state: "failed", code: "INPUT_VALIDATION_ERROR" });
+
+    const runner = fakeRunner([GOOD_OUTPUT]);
+    const extra = await executeSkill(CALLEE.id, CALLER.id, "check-stock", { sku: "A1", surprise: true }, opts(runner));
+    expect(extra.state).toBe("completed");
+  });
+
+  it("reports an uncompilable parameters schema as EXECUTION_ERROR, not the caller's fault", async () => {
+    // INPUT_VALIDATION_ERROR would make AgentCallTool count a strike against the caller and
+    // tell it to re-read the schema — useless when the skill FILE is what's broken.
+    const broken: SkillDefinition = { ...SKILL, parameters: { type: "object", properties: { sku: { type: "not-a-type" } } } };
+    const runner = fakeRunner([GOOD_OUTPUT]);
+    const res = await executeSkill(CALLEE.id, CALLER.id, "check-stock", { sku: "A1" }, opts(runner, { loadSkillsFn: async () => [broken] }));
+    expect(res).toMatchObject({ state: "failed", code: "EXECUTION_ERROR" });
+    expect((res as { message: string }).message).toContain("broken parameters schema");
+    expect(runner.inputs).toHaveLength(0);
+  });
+});
+
+describe("executeSkill — callee run and output contract", () => {
+  it("completes with the parsed output object and injects the structured-responder block", async () => {
+    const runner = fakeRunner([GOOD_OUTPUT]);
+    const res = await executeSkill(CALLEE.id, CALLER.id, "check-stock", { sku: "A1" }, opts(runner));
+    expect(res).toEqual({ state: "completed", output: { in_stock: true, quantity: 3 } });
+    expect(runner.inputs).toHaveLength(1);
+    expect(runner.inputs[0]).toContain("[From: shop-agent]");
+    expect(runner.inputs[0]).toContain("Skill call: check-stock");
+    expect(runner.inputs[0]).toContain('"sku": "A1"');
+    expect(runner.inputs[0]).toContain("Structured response required");
+    expect(runner.inputs[0]).toContain('"in_stock"'); // output schema is in the instruction
+  });
+
+  it("strips an accidental ```json fence before parsing", async () => {
+    const runner = fakeRunner(["```json\n" + GOOD_OUTPUT + "\n```"]);
+    const res = await executeSkill(CALLEE.id, CALLER.id, "check-stock", { sku: "A1" }, opts(runner));
+    expect(res.state).toBe("completed");
+  });
+
+  it("allows extra output fields but fails on a missing declared field (derived required)", async () => {
+    const extra = await executeSkill(CALLEE.id, CALLER.id, "check-stock", { sku: "A1" },
+      opts(fakeRunner([JSON.stringify({ in_stock: true, quantity: 3, warehouse: "B" })])));
+    expect(extra.state).toBe("completed");
+
+    const missing = await executeSkill(CALLEE.id, CALLER.id, "check-stock", { sku: "A1" },
+      opts(fakeRunner([JSON.stringify({ in_stock: true })]), { outputMaxRetries: 0 }));
+    expect(missing).toMatchObject({ state: "failed", code: "OUTPUT_VALIDATION_ERROR" });
+    expect((missing as { message: string }).message).toContain("'quantity' is required");
+  });
+
+  it("feeds the validation error back into the same conversation and succeeds on retry", async () => {
+    const runner = fakeRunner([
+      "Sure! The item is in stock.", // prose — parse failure
+      JSON.stringify({ in_stock: true, quantity: "lots" }), // wrong type — validation failure
+      GOOD_OUTPUT,
+    ]);
+    const res = await executeSkill(CALLEE.id, CALLER.id, "check-stock", { sku: "A1" }, opts(runner));
+    expect(res.state).toBe("completed");
+    expect(runner.inputs).toHaveLength(3);
+    expect(runner.inputs[1]).toContain("not valid JSON");
+    expect(runner.inputs[2]).toContain("'quantity' must be number");
+  });
+
+  it("resolves as OUTPUT_VALIDATION_ERROR after exhausting correction retries", async () => {
+    const runner = fakeRunner(["nope", "still nope", "nope again", "never reached"]);
+    const res = await executeSkill(CALLEE.id, CALLER.id, "check-stock", { sku: "A1" }, opts(runner, { outputMaxRetries: 2 }));
+    expect(res).toMatchObject({ state: "failed", code: "OUTPUT_VALIDATION_ERROR" });
+    expect(runner.inputs).toHaveLength(3); // initial run + 2 retries, then stop
+  });
+
+  it("records the callee's token usage under the CALLEE workspace, one session across retries", async () => {
+    // Without this, nested runs are invisible in the usage dashboard — only the
+    // caller's own runner is recorded by the chat route / agent stream.
+    const recorded: Array<{ sessionId: string; workspaceId: string; workspaceName: string; inputTokens: number }> = [];
+    const responses = ["not json", GOOD_OUTPUT];
+    let call = 0;
+    const run = async function* (): AsyncGenerator<AgentEvent> {
+      yield { type: "turn_usage", inputTokens: 100 + call, outputTokens: 5, reasoningTokens: 0, cachedInputTokens: 0, cacheCreationTokens: 0, toolCalls: [] };
+      yield { type: "token", content: responses[call++] };
+      yield { type: "done" };
+    } as unknown as typeof runAgent;
+
+    const res = await executeSkill(CALLEE.id, CALLER.id, "check-stock", { sku: "A1" },
+      opts({ run }, { appendUsageFn: (r) => { recorded.push(r as typeof recorded[number]); } }));
+    expect(res.state).toBe("completed");
+    expect(recorded).toHaveLength(2); // initial run + one correction retry
+    expect(recorded[0]).toMatchObject({ workspaceId: CALLEE.id, workspaceName: "stock-agent", inputTokens: 100 });
+    expect(recorded[1].sessionId).toBe(recorded[0].sessionId);
+  });
+
+  it("returns EXECUTION_ERROR when the callee runner reports an error", async () => {
+    const run = async function* (): AsyncGenerator<AgentEvent> {
+      yield { type: "error", message: "model exploded" };
+    } as unknown as typeof runAgent;
+    const res = await executeSkill(CALLEE.id, CALLER.id, "check-stock", { sku: "A1" }, opts({ run }));
+    expect(res).toEqual({ state: "failed", code: "EXECUTION_ERROR", message: "model exploded" });
+  });
+
+  it("names an abort (timeout/cancel) instead of leaking the runner's raw error", async () => {
+    // The runner never throws on abort — it yields an error event — so executeSkill must
+    // recognize the aborted signal itself for the caller to see a meaningful message.
+    const run = async function* (): AsyncGenerator<AgentEvent> {
+      yield { type: "error", message: "AbortError: This operation was aborted" };
+    } as unknown as typeof runAgent;
+    const res = await executeSkill(CALLEE.id, CALLER.id, "check-stock", { sku: "A1" },
+      opts({ run }, { signal: AbortSignal.abort() }));
+    expect(res).toMatchObject({ state: "failed", code: "EXECUTION_ERROR" });
+    expect((res as { message: string }).message).toContain("aborted");
+    expect((res as { message: string }).message).toContain("timeout or cancellation");
+  });
+});

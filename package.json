@@ -18,7 +18,7 @@
     "test:e2e:all": "playwright test"
   },
   "dependencies": {
-    "@langchain/anthropic": "^1.4.0",
+    "@langchain/anthropic": "^1.4.1",
     "@langchain/core": "^1.1.45",
     "@langchain/openai": "^1.4.5",
     "@xyflow/react": "^12.10.2",

@@ -2,8 +2,8 @@
 // GET returns its metadata; DELETE removes it from the registry and deletes its directory from disk.
 import { type NextRequest, NextResponse } from "next/server";
 import { getStore, getContainers } from "@/lib/infra/services";
-import { checkRateLimit } from "@/lib/infra/rateLimit";
-import { getClientIp } from "@/lib/infra/clientIp";
+import { checkRateLimit } from "@/lib/infra/security/rateLimit";
+import { getClientIp } from "@/lib/infra/realtime/clientIp";
 import { createLogger } from "@/lib/infra/logger";
 
 export async function GET(

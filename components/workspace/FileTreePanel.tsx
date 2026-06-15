@@ -2,8 +2,8 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { useFileTreeSelection } from "@/lib/hooks/useFileTreeSelection";
-import { useFileOperations, TreeNode } from "@/lib/hooks/useFileOperations";
+import { useFileTreeSelection } from "@/lib/client/hooks/useFileTreeSelection";
+import { useFileOperations, TreeNode } from "@/lib/client/hooks/useFileOperations";
 import JSZip from "jszip";
 
 type CheckState = "none" | "some" | "all";

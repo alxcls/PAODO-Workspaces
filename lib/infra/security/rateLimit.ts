@@ -1,6 +1,6 @@
 // Simple in-memory rate limiter keyed by IP address (and optional bucket name).
 // Callers can pass a custom bucket key and max to isolate limits per operation type.
-import { createLogger } from "./logger";
+import { createLogger } from "../logger";
 
 const log = createLogger("rateLimit");
 const LOOPBACK = new Set(["::1", "127.0.0.1", "::ffff:127.0.0.1"]);

@@ -4,9 +4,9 @@
 import { createHash, randomBytes, timingSafeEqual } from "crypto";
 import { readFileSync } from "fs";
 import path from "path";
-import { WORKSPACES_ROOT } from "./paths";
-import { atomicSaveJson } from "./jsonPersist";
-import { createLogger } from "./logger";
+import { WORKSPACES_ROOT } from "../paths";
+import { atomicSaveJson } from "../jsonPersist";
+import { createLogger } from "../logger";
 
 const log = createLogger("apiKeys");
 

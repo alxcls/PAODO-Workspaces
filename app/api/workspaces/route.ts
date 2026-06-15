@@ -3,8 +3,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getStore } from "@/lib/infra/services";
 import { createLogger } from "@/lib/infra/logger";
-import { checkRateLimit } from "@/lib/infra/rateLimit";
-import { getClientIp } from "@/lib/infra/clientIp";
+import { checkRateLimit } from "@/lib/infra/security/rateLimit";
+import { getClientIp } from "@/lib/infra/realtime/clientIp";
 
 export async function GET() {
   const list = getStore().listWorkspaces().map(({ id, name, createdAt }) => ({ id, name, createdAt }));

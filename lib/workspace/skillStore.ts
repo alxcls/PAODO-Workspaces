@@ -4,7 +4,7 @@
 // bind-mounted /workspace/skills/) are picked up with no extra plumbing.
 import fsAsync from "fs/promises";
 import path from "path";
-import { createLogger } from "./logger";
+import { createLogger } from "../infra/logger";
 import type { SkillDefinition } from "./skillTypes";
 
 const log = createLogger("skillStore");
@@ -62,8 +62,3 @@ export async function loadSkills(workspaceDir: string): Promise<SkillDefinition[
   return skills;
 }
 
-/** Finds a single skill by id. */
-export async function getSkill(workspaceDir: string, id: string): Promise<SkillDefinition | undefined> {
-  const skills = await loadSkills(workspaceDir);
-  return skills.find((s) => s.id === id);
-}

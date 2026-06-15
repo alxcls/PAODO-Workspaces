@@ -2,12 +2,13 @@
 // workspace's declared skills (read live from its skills/ directory) so the calling agent
 // can fill in call_agent's action + args without guessing. A reachable workspace with no
 // skills is shown explicitly so the caller knows it exists but is not callable.
+
 import { StructuredTool } from "@langchain/core/tools";
 import { z } from "zod";
-import { getCallees } from "../../infra/workspaceGraph";
-import { loadSkills } from "../../infra/skillStore";
+import { getCallees } from "../../workspace/workspaceGraph";
+import { loadSkills } from "../../workspace/skillStore";
 import type { IWorkspaceStore } from "../../infra/interfaces";
-import type { SkillDefinition, SkillSchema } from "../../infra/skillTypes";
+import type { SkillDefinition, SkillSchema } from "../../workspace/skillTypes";
 
 const schema = z.object({});
 

@@ -14,10 +14,10 @@
 // no HTTP, no serialization.
 import Ajv, { type ErrorObject, type ValidateFunction } from "ajv";
 import type { BaseMessage } from "@langchain/core/messages";
-import { canCall } from "../../infra/workspaceGraph";
-import { loadSkills } from "../../infra/skillStore";
-import { appendUsage } from "../../infra/usageStore";
-import { NEEDS_INPUT_KEY, type SkillCallResult, type SkillSchema } from "../../infra/skillTypes";
+import { canCall } from "../../workspace/workspaceGraph";
+import { loadSkills } from "../../workspace/skillStore";
+import { appendUsage } from "../../workspace/usageStore";
+import { NEEDS_INPUT_KEY, type SkillCallResult, type SkillSchema } from "../../workspace/skillTypes";
 import type { IWorkspaceStore, IContainerManager } from "../../infra/interfaces";
 import { buildSystemPrompt, buildPromptConfig, buildStructuredResponderBlock } from "../systemPrompt";
 import { createLogger } from "../../infra/logger";
@@ -180,7 +180,7 @@ export async function executeSkill(
 
   // 4. Run the callee — fresh isolated conversation, same construction the free-form
   // call_agent used, plus the structured-responder block carrying this skill's output schema.
-  const { loadAgentConfig } = await import("../tools");
+  const { loadAgentConfig } = await import("../buildTools");
   const config = loadAgentConfig();
   const run = opts.runAgentFn ?? (await import("../runner")).runAgent;
   const messages: BaseMessage[] = [buildSystemPrompt(callee.dir, buildPromptConfig(config))];

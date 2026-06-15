@@ -1,7 +1,12 @@
+// Agent tool that reads a workspace file, returning its content with 1-based line numbers
+// (cat -n format). Reads the whole file via `cat`, or a line range via `sed -n` when offset/
+// limit are given (offset is 0-based, so it maps to sed line offset+1). Paths are confined to
+// the workspace root. The agent must read a file with this tool before editing it via file_edit.
+
 import { StructuredTool } from "@langchain/core/tools";
 import { z } from "zod";
-import { normalizeRelpath } from "./pathUtils";
-import type { ExecRunner } from "./interfaces";
+import { normalizeRelpath } from "../pathUtils";
+import type { ExecRunner } from "../interfaces";
 
 const schema = z.object({
   file_path: z.string().describe("File path relative to workspace root"),

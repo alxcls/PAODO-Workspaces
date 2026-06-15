@@ -3,7 +3,7 @@
 // Separated from ContainerManager so container lifecycle and image build concerns don't mix.
 import { readFile } from "fs/promises";
 import { hashDockerfile } from "./dockerfileHasher";
-import { createLogger } from "./logger";
+import { createLogger } from "../logger";
 import type { IDockerClient } from "./dockerClient";
 
 const log = createLogger("imageManager");

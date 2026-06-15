@@ -5,21 +5,18 @@
 // with a fresh, isolated conversation.
 // Only works when a directed edge exists from the caller workspace to the target workspace
 // in the Agent Network graph (data/.workspace-graph.json).
+
 import { StructuredTool } from "@langchain/core/tools";
 import { z } from "zod";
 import type { IWorkspaceStore, IContainerManager } from "../../infra/interfaces";
 import { executeSkill } from "../skills/executeSkill";
-import { loadAgentConfig } from ".";
+import { loadAgentConfig } from "../buildTools";
 import { createLogger } from "../../infra/logger";
 
 // Shorter than the general tool result cap — skill outputs are structured data, not raw
 // output, so 8k is enough and keeps nested agent-call chains from ballooning the context.
 const MAX_RESPONSE_CHARS = 8_000;
 const TIMEOUT_MS = 300_000;
-// How many times a callee may answer NEEDS_INPUT for the same (callee, skill) before the
-// caller is told to stop re-calling and report instead — keeps two agents from politely
-// ping-ponging questions forever.
-const NEEDS_INPUT_MAX_ROUNDS = 2;
 
 const schema = z.object({
   workspace: z.string().describe("Name of the target workspace to call"),
@@ -98,12 +95,14 @@ A workspace with no declared skills is not callable. If the workspace is not con
           return `Error (${result.code}): ${result.message}${terminal}`;
         }
         if (result.code === "NEEDS_INPUT") {
+          this.inputFailures.delete(retryKey);
+          const maxRounds = loadAgentConfig().skillNeedsInputMaxRounds;
           const rounds = (this.needsInputRounds.get(retryKey) ?? 0) + 1;
           this.needsInputRounds.set(retryKey, rounds);
-          if (rounds >= NEEDS_INPUT_MAX_ROUNDS) {
+          if (rounds >= maxRounds) {
             return (
               `Error (NEEDS_INPUT): the target agent still needs different input: "${result.message}" ` +
-              `That was round ${rounds} of ${NEEDS_INPUT_MAX_ROUNDS} — stop re-calling this skill and report what you learned instead.`
+              `That was round ${rounds} of ${maxRounds} — stop re-calling this skill and report what you learned instead.`
             );
           }
           return `The target agent needs different input: "${result.message}" Re-call the same skill with corrected args.`;

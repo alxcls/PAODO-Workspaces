@@ -2,22 +2,23 @@
 // Provider is selected via LLM_PROVIDER env var ("openai" default, "anthropic", "deepseek").
 // Concrete infra dependencies are wired here and injected into tool constructors — tools
 // themselves only depend on the ContainerRunner interface defined in interfaces.ts.
+
 import { buildModel } from "./buildModel";
-import { ExecCommandTool } from "./execCommand";
-import { AptInstallTool } from "./aptInstall";
-import { FileReadTool } from "./fileRead";
-import { FileEditTool } from "./fileEdit";
-import { FileWriteTool } from "./fileWrite";
-import { TodoWriteTool } from "./todoWrite";
-import { WebFetchTool } from "./webFetch";
-import { GlobTool } from "./glob";
-import { ListDirectoryTool } from "./listDirectory";
-import { AgentCallTool } from "./agentCall";
-import { ListAgentsTool } from "./listAgents";
-import { defaultContainerManager } from "../../infra/containerManager";
-import { defaultWorkspaceStore } from "../../infra/workspaceStore";
-import { broadcastToWorkspace } from "../../infra/wsHub";
-import type { IContainerManager, IWorkspaceStore } from "../../infra/interfaces";
+import { ExecCommandTool } from "./tools/execCommand";
+import { AptInstallTool } from "./tools/aptInstall";
+import { FileReadTool } from "./tools/fileRead";
+import { FileEditTool } from "./tools/fileEdit";
+import { FileWriteTool } from "./tools/fileWrite";
+import { TodoWriteTool } from "./tools/todoWrite";
+import { WebFetchTool } from "./tools/webFetch";
+import { GlobTool } from "./tools/glob";
+import { ListDirectoryTool } from "./tools/listDirectory";
+import { AgentCallTool } from "./tools/agentCall";
+import { ListAgentsTool } from "./tools/listAgents";
+import { defaultContainerManager } from "../infra/docker/containerManager";
+import { defaultWorkspaceStore } from "../workspace/workspaceStore";
+import { broadcastToWorkspace } from "../infra/realtime/wsHub";
+import type { IContainerManager, IWorkspaceStore } from "../infra/interfaces";
 import type { AgentConfig, PrivilegedRunner, StreamingExecFn } from "./interfaces";
 
 function makeContainerRunner(workspaceId: string, workspaceDir: string, containers: IContainerManager): PrivilegedRunner {
@@ -45,8 +46,9 @@ export function loadAgentConfig(): AgentConfig {
     deepseekApiKey:       process.env.DEEPSEEK_API_KEY,
     execSilenceTimeoutMs: parseInt(process.env.EXEC_SILENCE_TIMEOUT_MS ?? "", 10) || 60_000,
     execMaxTimeoutMs:     parseInt(process.env.EXEC_MAX_TIMEOUT_MS ?? "", 10) || 30 * 60_000,
-    skillInputMaxRetries:  parseInt(process.env.SKILL_INPUT_MAX_RETRIES ?? "", 10) || 2,
-    skillOutputMaxRetries: parseInt(process.env.SKILL_OUTPUT_MAX_RETRIES ?? "", 10) || 2,
+    skillInputMaxRetries:       parseInt(process.env.SKILL_INPUT_MAX_RETRIES ?? "", 10) || 2,
+    skillOutputMaxRetries:      parseInt(process.env.SKILL_OUTPUT_MAX_RETRIES ?? "", 10) || 2,
+    skillNeedsInputMaxRounds:   parseInt(process.env.SKILL_NEEDS_INPUT_MAX_ROUNDS ?? "", 10) || 2,
   };
 }
 

@@ -1,3 +1,4 @@
+// Tests for the SSRF network guard (ssrfGuard.ts).
 import { describe, it, expect } from "vitest";
 import { isPrivateIP, assertPublicUrl, type HostnameResolver } from "./ssrfGuard";
 

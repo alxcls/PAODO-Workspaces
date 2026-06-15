@@ -3,8 +3,8 @@
 // to prevent the file viewer from reloading content the agent is still editing.
 import chokidar from "chokidar";
 import fs from "fs";
-import { broadcastToWorkspace } from "./wsHub";
-import { createLogger } from "./logger";
+import { broadcastToWorkspace } from "../infra/realtime/wsHub";
+import { createLogger } from "../infra/logger";
 
 const log = createLogger("watcher");
 

@@ -2,7 +2,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { useConsoleSocket, type ConsoleLine } from "@/lib/hooks/useConsoleSocket";
+import { useConsoleSocket, type ConsoleLine } from "@/lib/client/hooks/useConsoleSocket";
 
 function lineClass(type: ConsoleLine["type"]): string {
   const base = "whitespace-pre-wrap break-words";

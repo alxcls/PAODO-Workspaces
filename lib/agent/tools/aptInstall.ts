@@ -6,9 +6,10 @@
 // root shell, package names are strictly validated and passed as separate argv (no shell), so no
 // shell metacharacters, paths, or local .deb installs are possible — only named packages (optionally
 // pinned `name=version`) from the image's configured apt repositories.
+
 import { StructuredTool } from "@langchain/core/tools";
 import { z } from "zod";
-import type { PrivilegedRunner } from "./interfaces";
+import type { PrivilegedRunner } from "../interfaces";
 
 // name, or name=version. Lowercase apt package-name charset only; rejects `/`, spaces, and any
 // shell metacharacter, which also blocks local-file (`./foo.deb`) installs.

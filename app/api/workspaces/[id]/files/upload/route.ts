@@ -6,8 +6,8 @@ export const maxDuration = 120;
 
 import { type NextRequest, NextResponse } from "next/server";
 import { getStore } from "@/lib/infra/services";
-import { checkRateLimit } from "@/lib/infra/rateLimit";
-import { getClientIp } from "@/lib/infra/clientIp";
+import { checkRateLimit } from "@/lib/infra/security/rateLimit";
+import { getClientIp } from "@/lib/infra/realtime/clientIp";
 import fs from "fs/promises";
 import path from "path";
 import JSZip from "jszip";

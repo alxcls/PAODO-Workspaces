@@ -1,12 +1,13 @@
 // Wraps the agent runner in a Server-Sent Events (SSE) Response.
 // Translates AgentEvents from runAgent into SSE data frames and closes the stream on completion or error.
+
 import type { Logger } from "pino";
 import { buildSystemPrompt, buildPromptConfig } from "./systemPrompt";
-import { loadAgentConfig } from "./tools";
+import { loadAgentConfig } from "./buildTools";
 import { runAgent } from "./runner";
 import type { AgentEvent, AgentRuntimeDeps } from "./runner";
-import type { Workspace } from "../infra/workspaceStore";
-import { appendUsage } from "../infra/usageStore";
+import type { Workspace } from "../workspace/workspaceStore";
+import { appendUsage } from "../workspace/usageStore";
 
 const SSE_HEADERS = {
   "Content-Type": "text/event-stream",

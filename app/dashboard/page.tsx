@@ -3,7 +3,7 @@
 import { useEffect, useState, useMemo, Fragment } from "react";
 import { useRouter } from "next/navigation";
 import TopBar from "@/components/layout/TopBar";
-import type { TurnRecord } from "@/lib/infra/usageStore";
+import type { TurnRecord } from "@/lib/workspace/usageStore";
 
 function formatTokens(n: number): string {
   if (n === 0) return "—";

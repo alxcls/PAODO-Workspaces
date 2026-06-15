@@ -1,4 +1,11 @@
+// Loads and manages the content of the single file open in the viewer. Fetches type + content
+// from the files/content route, tracks an editable draft with a dirty flag, and exposes save and
+// delete actions. notifyFilesChanged/notifyFilesDeleted let the parent (driven by the workspace
+// socket) react to agent-side file changes: silently reloading the open file unless the user has
+// unsaved edits, bumping previewKey to refresh HTML/JSON previews (including sibling assets), and
+// closing the viewer when the open file is deleted.
 "use client";
+
 import { useState, useEffect, useCallback, useRef } from "react";
 
 export type FileType = "text" | "image" | "binary" | null;
@@ -29,13 +36,18 @@ export function useFileContent(
   const onSelfWriteRef = useRef(onSelfWrite);
   const draftRef = useRef(draft);
 
-  filePathRef.current = filePath;
-  onCloseRef.current = onClose;
-  onSelfWriteRef.current = onSelfWrite;
-  draftRef.current = draft;
-
   const isDirty = fileType === "text" && draft !== content;
-  isDirtyRef.current = isDirty;
+
+  // Mirror the latest props/derived values into refs in an effect (not during render) so they
+  // only ever track committed renders. All of these are read solely inside the async callbacks
+  // below, so effect-timing updates are always current by the time a read happens.
+  useEffect(() => {
+    filePathRef.current = filePath;
+    onCloseRef.current = onClose;
+    onSelfWriteRef.current = onSelfWrite;
+    draftRef.current = draft;
+    isDirtyRef.current = isDirty;
+  });
 
   const fetchContent = useCallback(async (path: string, silent = false) => {
     if (!silent) { setLoading(true); setFileType(null); setContent(null); setDraft(""); }

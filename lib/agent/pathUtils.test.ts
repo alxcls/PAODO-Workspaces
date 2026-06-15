@@ -1,3 +1,5 @@
+// Tests for the workspace path containment guard (pathUtils.ts).
+
 import { describe, it, expect } from "vitest";
 import { normalizeRelpath, normalizeDirPath } from "./pathUtils";
 

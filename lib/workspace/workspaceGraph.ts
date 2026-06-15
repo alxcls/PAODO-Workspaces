@@ -3,9 +3,9 @@
 // connected workspaces can invoke each other via the call_agent tool.
 import path from "path";
 import fs from "fs";
-import { WORKSPACES_ROOT } from "./paths";
-import { atomicSaveJson } from "./jsonPersist";
-import { createLogger } from "./logger";
+import { WORKSPACES_ROOT } from "../infra/paths";
+import { atomicSaveJson } from "../infra/jsonPersist";
+import { createLogger } from "../infra/logger";
 
 const log = createLogger("workspaceGraph");
 

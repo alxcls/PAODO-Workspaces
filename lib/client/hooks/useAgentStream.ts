@@ -1,5 +1,12 @@
+// Drives one chat turn against the agent: POSTs the user message to the workspace chat route
+// and consumes the SSE (`data: `-prefixed) stream, translating each AgentEvent into the chat
+// transcript. Token and reasoning deltas are coalesced via requestAnimationFrame so streaming
+// stays smooth; tool_start/tool_result pairs render live tool status; turn_usage accumulates
+// token counts surfaced on `done`. Exposes the message list plus sendMessage/reset/abort and
+// streaming/pendingTools flags. toolLabel/toolArgSummary maps are open for extension (OCP).
 "use client";
-import { useState, useRef, useCallback } from "react";
+
+import { useState, useRef, useCallback, useEffect } from "react";
 import type { AgentEvent } from "@/lib/agent/runner";
 
 export interface Message {
@@ -63,8 +70,9 @@ export function useAgentStream(workspaceId: string, { onTurnComplete }: Options 
   const totalOutputRef = useRef(0);
 
   // Captured in a ref so sendMessage never needs to be recreated when the callback changes.
+  // Updated in an effect (not during render) so the ref only ever tracks a committed render.
   const onTurnCompleteRef = useRef(onTurnComplete);
-  onTurnCompleteRef.current = onTurnComplete;
+  useEffect(() => { onTurnCompleteRef.current = onTurnComplete; });
 
   const reset = useCallback(() => setMessages([]), []);
 

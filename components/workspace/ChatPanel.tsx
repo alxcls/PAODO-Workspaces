@@ -4,7 +4,7 @@
 import { useState, useRef, useEffect } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { useAgentStream, toolLabel } from "@/lib/hooks/useAgentStream";
+import { useAgentStream, toolLabel } from "@/lib/client/hooks/useAgentStream";
 
 const mdComponents: Components = {
   table: ({ node: _n, ...props }) => (

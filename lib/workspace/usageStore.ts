@@ -1,8 +1,13 @@
+// Records per-turn LLM token usage across all workspaces, persisted to data/.usage.json.
+// One TurnRecord per model turn (input/output/reasoning/cache token counts + the tool calls
+// made), newest first, capped at MAX_RECORDS to bound the file. Appended by the agent loop and
+// read by the usage dashboard. Backed by a global array so the in-memory log survives Next.js
+// hot-reloads; writes are flushed atomically.
 import { readFileSync } from "fs";
 import path from "path";
-import { WORKSPACES_ROOT } from "./paths";
-import { atomicSaveJson } from "./jsonPersist";
-import { createLogger } from "./logger";
+import { WORKSPACES_ROOT } from "../infra/paths";
+import { atomicSaveJson } from "../infra/jsonPersist";
+import { createLogger } from "../infra/logger";
 
 const log = createLogger("usage");
 

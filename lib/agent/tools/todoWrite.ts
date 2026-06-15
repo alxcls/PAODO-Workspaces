@@ -1,10 +1,11 @@
 // Agent tool that replaces the current workspace task checklist with a new list.
 // Used during multi-step tasks to track progress — each call overwrites the full list,
 // so the agent must always pass all items including completed ones.
+
 import { StructuredTool } from "@langchain/core/tools";
 import { z } from "zod";
-import { setTodos } from "../../infra/todoStore";
-import type { Todo } from "../../infra/todoStore";
+import { setTodos } from "../../workspace/todoStore";
+import type { Todo } from "../../workspace/todoStore";
 
 const schema = z.object({
   todos: z.array(z.object({

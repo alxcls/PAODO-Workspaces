@@ -11,5 +11,6 @@ Current ADRs:
 - agent-to-agent-server-mediated-calls.md — Agent-to-agent via server (Accepted)
 - metadata-storage-json-vs-db.md — Metadata storage: JSON vs DB (Accepted)
 - single-llm-provider-global-model.md — Single LLM provider & global model (Accepted)
+- single-instance-in-process-state.md — Single-instance, in-process coordination state (Accepted)
 
 To add a new ADR: create `doc/adr/000X-descriptive-title.md` and follow the format: Status / Context / Decision / Consequences / Alternatives.

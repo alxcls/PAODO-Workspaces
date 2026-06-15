@@ -10,10 +10,10 @@ import { rm } from "fs/promises";
 import { spawn } from "child_process";
 import { getFreePort, cachePort, getCachedPort, invalidatePort, queryDockerPort } from "./portAllocator";
 import path from "path";
-import { createLogger } from "./logger";
+import { createLogger } from "../logger";
 import { DockerClient, IDockerClient } from "./dockerClient";
 import { ImageManager, HASH_LABEL } from "./imageManager";
-import type { IContainerManager } from "./interfaces";
+import type { IContainerManager } from "../interfaces";
 
 export type { DockerResult } from "./dockerClient";
 

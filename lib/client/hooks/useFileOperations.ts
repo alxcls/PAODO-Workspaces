@@ -1,3 +1,10 @@
+// Manages the workspace file tree and bulk operations on the current selection. Fetches the tree
+// from the files route (re-fetching when refreshKey changes), and provides download (zips the
+// selected paths) and delete actions. Delete collapses the selection to root paths (skipping
+// descendants of an already-selected folder), issues the DELETEs in parallel, aggregates any
+// failures into a transient deleteError (auto-cleared after 2s), and notifies the parent of
+// deleted paths so dependent views can update.
+
 import { useState, useEffect, useCallback, useRef } from "react";
 
 export interface TreeNode {

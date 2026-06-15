@@ -1,4 +1,10 @@
+// Streams a workspace's live console output over a reconnecting WebSocket. Each server message
+// is mapped to a ConsoleLine by the MSG_HANDLERS map (stdout/stderr/exec_done/tool_call/
+// tool_result_log) — add a key to support a new message type without touching dispatch (OCP).
+// Auto-reconnects 2s after a drop, sends a 30s keep-alive ping, and caps the buffer at MAX_LINES.
+// Returns the line buffer, connection state, and a clearLines action.
 "use client";
+
 import { useState, useEffect, useCallback } from "react";
 
 export interface ConsoleLine {

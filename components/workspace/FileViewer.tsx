@@ -5,11 +5,11 @@
 
 import { useState, useEffect, useRef, useMemo, forwardRef, useImperativeHandle } from "react";
 import dynamic from "next/dynamic";
-import hljs from "@/lib/highlighter";
+import hljs from "@/lib/client/highlighter";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import "jsoncrack-react/style.css";
-import { useFileContent } from "@/lib/hooks/useFileContent";
+import { useFileContent } from "@/lib/client/hooks/useFileContent";
 
 const JSONCrack = dynamic(() => import("jsoncrack-react").then(m => m.JSONCrack), { ssr: false });
 

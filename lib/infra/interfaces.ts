@@ -5,8 +5,8 @@
 //
 // Type-only imports below: erased at compile time, so the apparent cycle with
 // workspaceStore.ts (which implements IWorkspaceStore) carries no runtime edge.
-import type { Workspace } from "./workspaceStore";
-import type { DockerResult } from "./dockerClient";
+import type { Workspace } from "../workspace/workspaceStore";
+import type { DockerResult } from "./docker/dockerClient";
 
 export interface IWorkspaceStore {
   getWorkspace(id: string): Workspace | undefined;

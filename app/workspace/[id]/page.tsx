@@ -9,8 +9,8 @@ import FileTreePanel from "@/components/workspace/FileTreePanel";
 import FileViewer, { type FileViewerHandle } from "@/components/workspace/FileViewer";
 import ChatPanel from "@/components/workspace/ChatPanel";
 import ConsolePanel from "@/components/workspace/ConsolePanel";
-import { useWorkspaceSocket } from "@/lib/hooks/useWorkspaceSocket";
-import { useWorkspaceMeta } from "@/lib/hooks/useWorkspaceMeta";
+import { useWorkspaceSocket } from "@/lib/client/hooks/useWorkspaceSocket";
+import { useWorkspaceMeta } from "@/lib/client/hooks/useWorkspaceMeta";
 
 export default function WorkspacePage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);

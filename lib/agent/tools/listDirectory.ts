@@ -1,7 +1,13 @@
+// Agent tool that lists the immediate contents of one workspace directory (non-recursive).
+// Runs `find -maxdepth 1` inside the container, then sorts entries directories-first and
+// alphabetically. Each line shows a type marker (d=directory, -=file), the name (dirs get a
+// trailing /), and a human-readable size for files. Paths are confined to the workspace root.
+// For recursive or pattern-based search use the glob tool instead.
+
 import { StructuredTool } from "@langchain/core/tools";
 import { z } from "zod";
-import { normalizeDirPath } from "./pathUtils";
-import type { ExecRunner } from "./interfaces";
+import { normalizeDirPath } from "../pathUtils";
+import type { ExecRunner } from "../interfaces";
 
 const schema = z.object({
   dir_path: z.string().optional().describe("Directory path relative to workspace root. Omit or use '.' for the workspace root."),

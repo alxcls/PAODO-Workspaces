@@ -1,9 +1,10 @@
 // Agent tool that fetches a URL and returns its content as plain text.
 // Strips scripts, styles, and HTML tags from HTML responses. Enforces HTTPS and caps output at 20 000 characters.
 // Higher than the general tool-result cap (10k) because web pages are dense and need more room to be useful.
+
 import { StructuredTool } from "@langchain/core/tools";
 import { z } from "zod";
-import { assertPublicUrl } from "./ssrfGuard";
+import { assertPublicUrl } from "../ssrfGuard";
 
 const schema = z.object({
   url: z.string().describe("Fully-formed URL to fetch"),

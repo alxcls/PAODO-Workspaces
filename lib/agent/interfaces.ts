@@ -1,3 +1,6 @@
+// Shared type definitions for the agent layer: exec runners, streaming exec, LLM provider
+// config, and the combined AgentConfig consumed by buildTools and the runner.
+
 export interface ExecResult {
   code: number;
   stdout: string;
@@ -47,4 +50,5 @@ export interface AgentConfig extends LLMProviderConfig {
   execMaxTimeoutMs: number;
   skillInputMaxRetries: number;
   skillOutputMaxRetries: number;
+  skillNeedsInputMaxRounds: number;
 }

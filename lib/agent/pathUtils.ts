@@ -1,3 +1,6 @@
+// Path containment guard for agent file tools. Both functions enforce that a
+// requested path resolves inside the workspace root — no traversal, no absolute paths.
+
 import path from "path";
 
 export function normalizeRelpath(filePath: string): string | null {

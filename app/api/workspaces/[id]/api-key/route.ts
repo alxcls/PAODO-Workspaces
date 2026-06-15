@@ -2,7 +2,7 @@
 // GET returns current key state; POST generates a new key (returning the plaintext once); DELETE revokes it; PATCH toggles it on/off.
 export const runtime = "nodejs";
 
-import { generateKey, setKey, revokeKey, setEnabled, getState } from "@/lib/infra/apiKeyStore";
+import { generateKey, setKey, revokeKey, setEnabled, getState } from "@/lib/infra/security/apiKeyStore";
 
 export async function GET(
   _req: Request,

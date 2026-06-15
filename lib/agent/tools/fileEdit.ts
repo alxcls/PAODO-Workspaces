@@ -1,8 +1,15 @@
+// Agent tool that edits a workspace file via exact string replacement (in-process, not sed/awk).
+// Reads the file with `cat`, replaces old_string with new_string (first occurrence, or all when
+// replace_all is set), then writes it back via `tee`. Fails if old_string is absent, or if it
+// matches more than once without replace_all. An empty old_string is the create-file branch:
+// it makes parent dirs (mkdir -p) and writes new_string as the full content. Confined to the
+// workspace root. The agent is expected to file_read first so old_string matches exactly.
+
 import { StructuredTool } from "@langchain/core/tools";
 import { z } from "zod";
 import path from "path";
-import { normalizeRelpath } from "./pathUtils";
-import type { ExecRunner } from "./interfaces";
+import { normalizeRelpath } from "../pathUtils";
+import type { ExecRunner } from "../interfaces";
 
 const schema = z.object({
   file_path: z.string().describe("File path relative to workspace root"),

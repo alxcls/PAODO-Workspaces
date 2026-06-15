@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterAll } from "vitest";
 import fs from "fs";
 import os from "os";
 import path from "path";
-import { loadSkills, getSkill } from "./skillStore";
+import { loadSkills } from "./skillStore";
 
 // The skill list is read live from skills/*.json on every list_agents / executeSkill
 // call — there is no cached artifact to fall back on. The failure that matters is a
@@ -60,13 +60,5 @@ describe("loadSkills", () => {
     const [skill] = await loadSkills(WS_DIR);
     expect(skill.name).toBe("bare");
     expect(skill.description).toBe("");
-  });
-});
-
-describe("getSkill", () => {
-  it("finds a skill by id and returns undefined for unknown ids", async () => {
-    fs.writeFileSync(path.join(SKILLS, "check-stock.json"), JSON.stringify(VALID_SKILL));
-    expect((await getSkill(WS_DIR, "check-stock"))?.name).toBe("Check Stock");
-    expect(await getSkill(WS_DIR, "nope")).toBeUndefined();
   });
 });

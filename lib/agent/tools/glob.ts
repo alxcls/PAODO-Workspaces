@@ -1,9 +1,10 @@
 // Agent tool that finds files in the workspace matching a glob pattern.
 // Supports *, ?, and ** segments. Dot-files and dot-directories are excluded automatically.
 // Returns paths relative to the workspace root, sorted alphabetically.
+
 import { StructuredTool } from "@langchain/core/tools";
 import { z } from "zod";
-import type { ExecRunner } from "./interfaces";
+import type { ExecRunner } from "../interfaces";
 
 const schema = z.object({
   pattern: z.string().describe("Glob pattern relative to workspace root. Supports * ? and **."),

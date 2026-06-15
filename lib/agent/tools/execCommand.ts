@@ -1,10 +1,11 @@
 // Agent tool that spawns a bash command in the workspace directory.
 // Streams stdout and stderr live to connected WebSocket clients so they appear in the console panel,
 // and returns the combined output to the agent as the tool result.
+
 import { StructuredTool } from "@langchain/core/tools";
 import { z } from "zod";
 import { createLogger } from "../../infra/logger";
-import type { StreamingExecFn, ExecConfig } from "./interfaces";
+import type { StreamingExecFn, ExecConfig } from "../interfaces";
 
 const schema = z.object({
   command: z.string().describe("The bash command to execute"),

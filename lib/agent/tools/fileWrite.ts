@@ -1,8 +1,13 @@
+// Agent tool that writes full file content, creating or overwriting the file in the workspace.
+// Auto-creates any missing parent directories (mkdir -p), then pipes the content to the file
+// via `tee` inside the container. Paths are confined to the workspace root. Use this for new
+// files or complete rewrites; for targeted edits to an existing file prefer the file_edit tool.
+
 import { StructuredTool } from "@langchain/core/tools";
 import { z } from "zod";
 import path from "path";
-import { normalizeRelpath } from "./pathUtils";
-import type { ExecRunner } from "./interfaces";
+import { normalizeRelpath } from "../pathUtils";
+import type { ExecRunner } from "../interfaces";
 
 const schema = z.object({
   file_path: z.string().describe("File path relative to workspace root"),

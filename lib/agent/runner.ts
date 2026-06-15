@@ -2,14 +2,15 @@
 // and tool-call chunks simultaneously, then dispatches tools and loops until a turn
 // arrives with neither native nor inline tool calls.
 // Set DEBUG=1 in the environment to enable verbose tool call logging.
+
 import { HumanMessage, ToolMessage, AIMessage } from "@langchain/core/messages";
 import type { AIMessageChunk, BaseMessage } from "@langchain/core/messages";
 import type { Logger } from "pino";
-import { buildTools, loadAgentConfig } from "./tools";
-import type { AgentConfig } from "./tools/interfaces";
-import { defaultContainerManager } from "../infra/containerManager";
+import { buildTools, loadAgentConfig } from "./buildTools";
+import type { AgentConfig } from "./interfaces";
+import { defaultContainerManager } from "../infra/docker/containerManager";
 import type { IContainerManager, IWorkspaceStore } from "../infra/interfaces";
-import { getWsForWorkspace } from "../infra/wsHub";
+import { getWsForWorkspace } from "../infra/realtime/wsHub";
 import { createLogger } from "../infra/logger";
 
 const log = createLogger("agent");

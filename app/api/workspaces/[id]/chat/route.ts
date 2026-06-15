@@ -4,11 +4,11 @@ import type { NextRequest } from "next/server";
 import { getStore, getContainers } from "@/lib/infra/services";
 import { runAgent, type AgentEvent } from "@/lib/agent/runner";
 import { buildSystemPrompt, buildPromptConfig } from "@/lib/agent/systemPrompt";
-import { loadAgentConfig } from "@/lib/agent/tools";
+import { loadAgentConfig } from "@/lib/agent/buildTools";
 import { createLogger } from "@/lib/infra/logger";
-import { checkRateLimit } from "@/lib/infra/rateLimit";
-import { getClientIp } from "@/lib/infra/clientIp";
-import { appendUsage } from "@/lib/infra/usageStore";
+import { checkRateLimit } from "@/lib/infra/security/rateLimit";
+import { getClientIp } from "@/lib/infra/realtime/clientIp";
+import { appendUsage } from "@/lib/workspace/usageStore";
 
 export async function POST(
   req: NextRequest,

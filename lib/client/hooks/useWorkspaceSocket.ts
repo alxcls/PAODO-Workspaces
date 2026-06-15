@@ -1,8 +1,9 @@
-"use client";
 // Reconnecting WebSocket hook for a workspace. Dispatches incoming messages to the matching
 // handler in the provided map — add a new key to handle a new server message type without
 // editing this hook. Returns a stable sendMessage function for outbound messages.
 // Handlers are captured in a ref so they never cause a reconnect when the parent re-renders.
+"use client";
+
 import { useEffect, useRef, useCallback } from "react";
 
 export type WsMessage = { type: string; paths?: string[]; [key: string]: unknown };
@@ -23,9 +24,14 @@ export function useWorkspaceSocket(
   // Set to true when the workspaceId lifecycle ends (unmount or workspaceId change) to stop reconnects.
   const cancelledRef = useRef(false);
 
-  // Assign during render (not in an effect) so the ref is always current before any effect or
-  // WS message handler runs — eliminates the post-commit stale-handler window.
-  handlersRef.current = handlers;
+  // Keep the ref pointed at the latest handlers, updated in an effect so it only ever reflects a
+  // committed render. (A render-time write could record handlers from a render that concurrent
+  // React later discards, leaving onmessage calling a handler that never committed.) handlersRef
+  // is read only inside the async onmessage callback, which fires after the socket opens — long
+  // after this effect has run — so it is always current at read time.
+  useEffect(() => {
+    handlersRef.current = handlers;
+  });
 
   useEffect(() => {
     cancelledRef.current = false;

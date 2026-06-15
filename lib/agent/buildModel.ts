@@ -1,3 +1,6 @@
+// Factory that instantiates the LangChain chat model from provider config.
+// Supports OpenAI (responses API + reasoning), Anthropic (extended thinking), and DeepSeek.
+
 import { ChatOpenAI } from "@langchain/openai";
 import { ChatAnthropic } from "@langchain/anthropic";
 import type { LLMProviderConfig, ReasoningEffort } from "./interfaces";

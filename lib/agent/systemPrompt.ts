@@ -1,10 +1,13 @@
+// Builds the LangChain SystemMessage injected at the start of every agent conversation.
+// Also exports buildStructuredResponderBlock, appended per skill call by executeSkill.
+
 import { SystemMessage } from "@langchain/core/messages";
 import fs from "fs";
 import path from "path";
 import { createLogger } from "../infra/logger";
-import { getProviderMetadata } from "./tools/buildModel";
-import type { LLMProviderConfig } from "./tools/interfaces";
-import { NEEDS_INPUT_KEY, type SkillDefinition } from "../infra/skillTypes";
+import { getProviderMetadata } from "./buildModel";
+import type { LLMProviderConfig } from "./interfaces";
+import { NEEDS_INPUT_KEY, type SkillDefinition } from "../workspace/skillTypes";
 
 export interface PromptConfig {
   supportsPromptCaching: boolean;

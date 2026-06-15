@@ -5,9 +5,9 @@ export const runtime = "nodejs";
 
 import { type NextRequest } from "next/server";
 import { getStore, getContainers } from "@/lib/infra/services";
-import { validateKey } from "@/lib/infra/apiKeyStore";
-import { checkRateLimit } from "@/lib/infra/rateLimit";
-import { getClientIp } from "@/lib/infra/clientIp";
+import { validateKey } from "@/lib/infra/security/apiKeyStore";
+import { checkRateLimit } from "@/lib/infra/security/rateLimit";
+import { getClientIp } from "@/lib/infra/realtime/clientIp";
 import { createLogger } from "@/lib/infra/logger";
 import { makeAgentStream } from "@/lib/agent/agentStream";
 

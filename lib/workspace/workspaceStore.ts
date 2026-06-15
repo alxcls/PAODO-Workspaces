@@ -10,11 +10,11 @@
 import path from "path";
 import { readFileSync } from "fs";
 import fsAsync from "fs/promises";
-import { createLogger } from "./logger";
-import { atomicSaveJson } from "./jsonPersist";
+import { createLogger } from "../infra/logger";
+import { atomicSaveJson } from "../infra/jsonPersist";
 import { scaffoldWorkspaceDir } from "./workspaceScaffold";
-import { WORKSPACES_ROOT } from "./paths";
-import type { IWorkspaceStore } from "./interfaces";
+import { WORKSPACES_ROOT } from "../infra/paths";
+import type { IWorkspaceStore } from "../infra/interfaces";
 export { WORKSPACES_ROOT };
 
 const log = createLogger("store");

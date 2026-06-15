@@ -13,13 +13,13 @@ const log = createLogger("server");
 import next from "next";
 import { WebSocketServer } from "ws";
 import { getStore, getContainers } from "./lib/infra/services";
-import { setTodos } from "./lib/infra/todoStore";
+import { setTodos } from "./lib/workspace/todoStore";
 import {
   addConnection,
   removeConnection,
   getConnectionCount,
-} from "./lib/infra/wsHub";
-import { ensureWatcher, stopWatcher, markSelfWrite, stopAllWatchers } from "./lib/infra/workspaceWatcher";
+} from "./lib/infra/realtime/wsHub";
+import { ensureWatcher, stopWatcher, markSelfWrite, stopAllWatchers } from "./lib/workspace/workspaceWatcher";
 
 const dev = process.env.NODE_ENV !== "production";
 const port = parseInt(process.env.PORT ?? "3000", 10);

@@ -4,6 +4,7 @@
 // 169.254.169.254, CGNAT, etc.) whether the address is given literally or hides
 // behind a hostname that resolves to a private IP. Every http_get call routes
 // through assertPublicUrl, so this is the chokepoint — keep it pure and tested.
+
 import { lookup } from "node:dns/promises";
 import { isIPv4, isIPv6 } from "node:net";
 

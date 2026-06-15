@@ -1,4 +1,8 @@
+// Fetches a workspace's display metadata (currently just its name) from the workspace route
+// when the id changes. Returns { name }, defaulting to an empty string until the fetch resolves;
+// errors are swallowed so the UI simply shows no name rather than breaking.
 "use client";
+
 import { useState, useEffect } from "react";
 
 export function useWorkspaceMeta(workspaceId: string) {

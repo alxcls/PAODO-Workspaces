@@ -12,6 +12,7 @@ import { defaultContainerManager } from "../infra/docker/containerManager";
 import type { IContainerManager, IWorkspaceStore } from "../infra/interfaces";
 import { getWsForWorkspace } from "../infra/realtime/wsHub";
 import { createLogger } from "../infra/logger";
+import type { ToolStatus } from "../workspace/usageStore";
 
 const log = createLogger("agent");
 
@@ -23,7 +24,7 @@ export type AgentEvent =
   | { type: "error"; message: string }
   | { type: "limit_reached" }
   | { type: "done" }
-  | { type: "turn_usage"; inputTokens: number; outputTokens: number; reasoningTokens: number; cachedInputTokens: number; cacheCreationTokens: number; toolCalls: Array<{ name: string; args: Record<string, unknown> }> };
+  | { type: "turn_usage"; inputTokens: number; outputTokens: number; reasoningTokens: number; cachedInputTokens: number; cacheCreationTokens: number; userInput?: string; reasoningText?: string; outputText?: string; toolCalls: Array<{ name: string; args: Record<string, unknown>; output: string; status: ToolStatus }> };
 
 export type RunAgentOptions = {
   signal?: AbortSignal;
@@ -82,6 +83,17 @@ async function invokeTool(tool: AnyTool, args: Record<string, unknown>): Promise
     : str;
 }
 
+// Classifies a tool's final result string into a structured outcome. Thrown errors and
+// unknown tools are already turned into "Error: …" strings at the call site, so reading the
+// final string covers every case uniformly. Every tool honors the "Error:"/"Permission
+// denied:" failure convention (execute_command surfaces its exit code as such); the A2A
+// non-terminal retry state is tagged "Needs input:". See usageStore.ToolStatus.
+export function classifyToolStatus(resultStr: string): ToolStatus {
+  if (/^Needs input:/.test(resultStr)) return "needs_input";
+  if (/^(Error\b|Error \(|Permission denied)/.test(resultStr)) return "error";
+  return "ok";
+}
+
 // Splits a stream chunk into text tokens and reasoning/thinking blocks.
 // Centralises all provider-specific branch logic (OpenAI reasoning, Anthropic thinking,
 // additional_kwargs.reasoning_content) so adding a new provider only touches this function.
@@ -124,6 +136,23 @@ function extractContentFromChunk(chunk: AIMessageChunk): { tokens: string[]; rea
     .additional_kwargs?.reasoning_content;
   if (reasoningContent) reasoning.push(reasoningContent);
   return { tokens, reasoning };
+}
+
+// Extracts the per-turn token counts from the accumulated stream chunk's usage metadata.
+function usageTokens(chunk: AIMessageChunk | null) {
+  return {
+    inputTokens: chunk?.usage_metadata?.input_tokens ?? 0,
+    outputTokens: chunk?.usage_metadata?.output_tokens ?? 0,
+    reasoningTokens: chunk?.usage_metadata?.output_token_details?.reasoning ?? 0,
+    // DeepSeek exposes cache hits in prompt_cache_hit_tokens (top-level usage), not
+    // prompt_tokens_details.cached_tokens, so LangChain's OpenAI adapter misses it.
+    cachedInputTokens:
+      chunk?.usage_metadata?.input_token_details?.cache_read ??
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (chunk?.response_metadata as any)?.usage?.prompt_cache_hit_tokens ??
+      0,
+    cacheCreationTokens: chunk?.usage_metadata?.input_token_details?.cache_creation ?? 0,
+  };
 }
 
 function assembleToolCalls(partials: PartialTC[]): ResolvedToolCall[] {
@@ -230,6 +259,7 @@ export async function* runAgent(
       iterations++;
 
       let fullText = "";
+      let reasoningText = "";
       let toolCalls: ResolvedToolCall[] = [];
       let accumulatedChunk: AIMessageChunk | null = null;
 
@@ -239,28 +269,27 @@ export async function* runAgent(
           toolCalls = event.toolCalls;
           accumulatedChunk = event.accumulatedChunk;
         } else {
+          if (event.type === "reasoning") reasoningText += event.content;
           yield event;
         }
       }
 
-      yield {
-        type: "turn_usage",
-        inputTokens: accumulatedChunk?.usage_metadata?.input_tokens ?? 0,
-        outputTokens: accumulatedChunk?.usage_metadata?.output_tokens ?? 0,
-        reasoningTokens: accumulatedChunk?.usage_metadata?.output_token_details?.reasoning ?? 0,
-        // DeepSeek exposes cache hits in prompt_cache_hit_tokens (top-level usage), not
-        // prompt_tokens_details.cached_tokens, so LangChain's OpenAI adapter misses it.
-        cachedInputTokens:
-          accumulatedChunk?.usage_metadata?.input_token_details?.cache_read ??
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          (accumulatedChunk?.response_metadata as any)?.usage?.prompt_cache_hit_tokens ??
-          0,
-        cacheCreationTokens: accumulatedChunk?.usage_metadata?.input_token_details?.cache_creation ?? 0,
-        toolCalls: toolCalls.map((tc) => ({ name: tc.name, args: tc.args })),
+      // Per-turn usage shared by both exit paths. userInput is attached only on the first turn
+      // (it's the message that started the session); reasoningText/outputText/tool outputs make
+      // the turn observable in the usage dashboard. outputText is the model's prose for this turn
+      // — preamble alongside tool calls on intermediate turns, and the final answer on the
+      // terminal (no-tool) turn. Emitted AFTER tools settle (below) so tool outputs are included;
+      // the no-tool final turn emits it here with no tool calls.
+      const usageBase = {
+        ...usageTokens(accumulatedChunk),
+        ...(iterations === 1 ? { userInput } : {}),
+        ...(reasoningText ? { reasoningText } : {}),
+        ...(fullText ? { outputText: fullText } : {}),
       };
 
       if (!toolCalls.length) {
         // Final text response — tokens already streamed as they arrived; just persist and exit.
+        yield { type: "turn_usage", ...usageBase, toolCalls: [] };
         messages.push(new AIMessage(fullText));
         wlog.info("agent run done");
         yield { type: "done" };
@@ -313,6 +342,13 @@ export async function* runAgent(
         }
         wlog.debug({ name: tc.name, result: resultStr.slice(0, 200) }, "tool result");
       }
+
+      // Emit usage now that outputs are known, attaching each tool call's result.
+      yield {
+        type: "turn_usage",
+        ...usageBase,
+        toolCalls: settled.map(({ tc, resultStr }) => ({ name: tc.name, args: tc.args, output: resultStr, status: classifyToolStatus(resultStr) })),
+      };
     }
   } catch (err) {
     // A thrown error (e.g. the model stream aborting mid-turn) lands here before any

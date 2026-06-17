@@ -263,6 +263,28 @@
 }
 
 /* ============================================================
+   Usage dashboard drawer — agent response prose (pairs with .md-prose).
+   The Section already provides the bordered tint box, so this only adds
+   block spacing sized for the 13px drawer context.
+   ============================================================ */
+
+.md-drawer {
+  font-size: 13px; line-height: 1.6; color: var(--color-text);
+  & p { margin: 0 0 8px; }
+  & p:last-child { margin-bottom: 0; }
+  & ul, & ol { margin: 4px 0 8px; padding-left: 20px; }
+  & ul { list-style-type: disc; }
+  & ol { list-style-type: decimal; }
+  & li { margin: 2px 0; }
+  & h1, & h2, & h3 { font-weight: 600; margin: 10px 0 4px; }
+  & h1 { font-size: 15px; }
+  & h2 { font-size: 14px; }
+  & h3 { font-size: 13px; }
+  & pre { background: var(--color-bg-deep); border-radius: 6px; padding: 10px 12px; overflow-x: auto; margin: 6px 0; font: 12px var(--font-mono); white-space: pre-wrap; }
+  & blockquote { border-left: 3px solid var(--color-border); margin: 6px 0; padding: 4px 10px; color: var(--color-text-2); }
+}
+
+/* ============================================================
    Tool result content (child selectors)
    ============================================================ */
 

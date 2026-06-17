@@ -89,6 +89,8 @@ describe("AgentCallTool — NEEDS_INPUT rounds", () => {
     const tool = makeTool();
 
     const first = await call(tool); // round 1 → re-call guidance
+    // Must start with "Needs input:" so runner.classifyToolStatus tags it as needs_input (amber).
+    expect(first).toMatch(/^Needs input:/);
     expect(first).toContain("Re-call the same skill");
 
     const second = await call(tool); // round 2 → terminal

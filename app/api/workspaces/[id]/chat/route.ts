@@ -8,7 +8,7 @@ import { loadAgentConfig } from "@/lib/agent/buildTools";
 import { createLogger } from "@/lib/infra/logger";
 import { checkRateLimit } from "@/lib/infra/security/rateLimit";
 import { getClientIp } from "@/lib/infra/realtime/clientIp";
-import { appendUsage } from "@/lib/workspace/usageStore";
+import { recordTurnUsage } from "@/lib/workspace/usageStore";
 
 export async function POST(
   req: NextRequest,
@@ -48,17 +48,7 @@ export async function POST(
       try {
         for await (const event of runAgent(ws.messages, body.message!.trim(), ws.dir, ws.id, { signal: req.signal, maxIterations: ws.maxIterations, store: getStore(), containers: getContainers() })) {
           if (event.type === "turn_usage") {
-            appendUsage({
-              sessionId,
-              workspaceId: ws.id,
-              workspaceName: ws.name,
-              inputTokens: event.inputTokens,
-              outputTokens: event.outputTokens,
-              reasoningTokens: event.reasoningTokens,
-              cachedInputTokens: event.cachedInputTokens,
-              cacheCreationTokens: event.cacheCreationTokens,
-              toolCalls: event.toolCalls,
-            });
+            recordTurnUsage({ sessionId, workspaceId: ws.id, workspaceName: ws.name }, event);
             send(event);
             continue;
           }

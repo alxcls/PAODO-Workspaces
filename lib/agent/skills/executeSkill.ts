@@ -16,7 +16,7 @@ import Ajv, { type ErrorObject, type ValidateFunction } from "ajv";
 import type { BaseMessage } from "@langchain/core/messages";
 import { canCall } from "../../workspace/workspaceGraph";
 import { loadSkills } from "../../workspace/skillStore";
-import { appendUsage } from "../../workspace/usageStore";
+import { appendUsage, recordTurnUsage } from "../../workspace/usageStore";
 import { NEEDS_INPUT_KEY, type SkillCallResult, type SkillSchema } from "../../workspace/skillTypes";
 import type { IWorkspaceStore, IContainerManager } from "../../infra/interfaces";
 import { buildSystemPrompt, buildPromptConfig, buildStructuredResponderBlock } from "../systemPrompt";
@@ -115,17 +115,7 @@ async function runCalleeTurn(
     if (event.type === "token") text += event.content;
     if (event.type === "error") return { error: event.message };
     if (event.type === "turn_usage") {
-      recordUsage({
-        sessionId,
-        workspaceId: callee.id,
-        workspaceName: callee.name,
-        inputTokens: event.inputTokens,
-        outputTokens: event.outputTokens,
-        reasoningTokens: event.reasoningTokens,
-        cachedInputTokens: event.cachedInputTokens,
-        cacheCreationTokens: event.cacheCreationTokens,
-        toolCalls: event.toolCalls,
-      });
+      recordTurnUsage({ sessionId, workspaceId: callee.id, workspaceName: callee.name }, event, recordUsage);
     }
   }
   return { text };

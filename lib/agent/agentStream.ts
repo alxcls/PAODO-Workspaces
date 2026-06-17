@@ -7,7 +7,7 @@ import { loadAgentConfig } from "./buildTools";
 import { runAgent } from "./runner";
 import type { AgentEvent, AgentRuntimeDeps } from "./runner";
 import type { Workspace } from "../workspace/workspaceStore";
-import { appendUsage } from "../workspace/usageStore";
+import { recordTurnUsage } from "../workspace/usageStore";
 
 const SSE_HEADERS = {
   "Content-Type": "text/event-stream",
@@ -49,17 +49,10 @@ export function makeAgentStream(ws: Workspace, message: string, log: Logger, dep
         for await (const event of runAgent(isolatedMessages, message, ws.dir, ws.id, { maxIterations: ws.maxIterations, ...deps })) {
           if (event.type === "turn_usage") {
             if (deps.sessionId && deps.workspaceId && deps.workspaceName) {
-              appendUsage({
-                sessionId: deps.sessionId,
-                workspaceId: deps.workspaceId,
-                workspaceName: deps.workspaceName,
-                inputTokens: event.inputTokens,
-                outputTokens: event.outputTokens,
-                reasoningTokens: event.reasoningTokens,
-                cachedInputTokens: event.cachedInputTokens,
-                cacheCreationTokens: event.cacheCreationTokens,
-                toolCalls: event.toolCalls,
-              });
+              recordTurnUsage(
+                { sessionId: deps.sessionId, workspaceId: deps.workspaceId, workspaceName: deps.workspaceName },
+                event,
+              );
             }
             continue;
           }

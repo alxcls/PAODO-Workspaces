@@ -3,7 +3,7 @@
 
 import { describe, it, expect } from "vitest";
 import { AIMessage, AIMessageChunk, ToolMessage, type BaseMessage } from "@langchain/core/messages";
-import { runAgent, type AgentEvent } from "./runner";
+import { runAgent, classifyToolStatus, type AgentEvent } from "./runner";
 
 // runAgent mutates the conversation history (ws.messages) in place. When a request is aborted
 // (the user hits escape) the SSE consumer stops pulling and the generator is abandoned via
@@ -106,5 +106,17 @@ describe("runAgent — history stays consistent across aborts", () => {
     expect(hasUnansweredToolCalls(messages)).toBe(false);
     expect(messages.some((m) => m instanceof ToolMessage && m.tool_call_id === "call_1")).toBe(true);
     expect(events.at(-1)).toEqual({ type: "done" });
+  });
+});
+
+describe("classifyToolStatus", () => {
+  it("classifies success, the Error/Permission-denied convention, and the A2A needs-input tag", () => {
+    expect(classifyToolStatus("line1\nline2")).toBe("ok");
+    expect(classifyToolStatus("Command executed successfully with no output.")).toBe("ok");
+    expect(classifyToolStatus("Error: command exited with code 1\nbuild failed")).toBe("error");
+    expect(classifyToolStatus('Error (INPUT_VALIDATION_ERROR): missing field')).toBe("error");
+    expect(classifyToolStatus("Error: unknown tool \"foo\"")).toBe("error");
+    expect(classifyToolStatus("Permission denied: not connected")).toBe("error");
+    expect(classifyToolStatus('Needs input: the target agent needs different input: "which warehouse?"')).toBe("needs_input");
   });
 });

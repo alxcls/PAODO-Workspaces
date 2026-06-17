@@ -119,12 +119,22 @@ You run as a NON-ROOT user, confined to the workspace. apt-get/sudo are NOT avai
         clearInterval(heartbeat);
         this.broadcast(JSON.stringify({ type: "exec_done", exitCode: code }));
         const stderrOut = diagnoseStderr(stderr);
-        const parts = [stdout.trim(), stderrOut].filter(Boolean);
+        // Lead a non-zero exit with an explicit Error line so both the agent and the usage
+        // dashboard can tell the command failed — the combined output alone hides exit status.
+        // (code 0 and null/unknown exits are left as plain output, as before.)
+        const failed = typeof code === "number" && code !== 0;
+        const parts = [
+          failed ? `Error: command exited with code ${code}` : "",
+          stdout.trim(),
+          stderrOut,
+        ].filter(Boolean);
         resolve(parts.join("\n") || "Command executed successfully with no output.");
       }).catch((err) => {
         if (killed) return;
         clearInterval(heartbeat);
-        resolve(`Command execution failed:\n${String(err)}`);
+        // Lead with "Error:" so runner.classifyToolStatus tags this as a failure (red dot) —
+        // same convention as the non-zero exit path above.
+        resolve(`Error: command execution failed\n${String(err)}`);
       });
     });
   }

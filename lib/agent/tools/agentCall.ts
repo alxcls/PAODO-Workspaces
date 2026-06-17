@@ -105,7 +105,7 @@ A workspace with no declared skills is not callable. If the workspace is not con
               `That was round ${rounds} of ${maxRounds} — stop re-calling this skill and report what you learned instead.`
             );
           }
-          return `The target agent needs different input: "${result.message}" Re-call the same skill with corrected args.`;
+          return `Needs input: the target agent needs different input: "${result.message}" Re-call the same skill with corrected args.`;
         }
         this.inputFailures.delete(retryKey);
         this.needsInputRounds.delete(retryKey);

@@ -93,12 +93,10 @@ const TreeNodeList = ({
               >
                 <Checkbox state={state} onClick={(e) => {
                   e.stopPropagation();
-                  if (state !== "none") {
-                    const descendants = getAllNodes(node.children ?? []).map((n) => n.path);
-                    onSelect([node.path, ...descendants], false);
-                  } else {
-                    onSelect([node.path], true);
-                  }
+                  // Selecting/deselecting a folder cascades to every descendant so child
+                  // folders and files reflect (and are included in) the selection.
+                  const descendants = getAllNodes(node.children ?? []).map((n) => n.path);
+                  onSelect([node.path, ...descendants], state === "none");
                 }} />
                 <div className="flex items-center gap-1.5 flex-1 min-w-0 overflow-hidden" style={{ marginLeft: 6 + depth * 14 }}>
                   <span className={`inline-flex items-center justify-center w-3 h-3 flex-shrink-0 transition-transform duration-[150ms] text-text-3 ${isOpen ? "rotate-90" : ""}`}>
@@ -310,7 +308,7 @@ export default function FileTreePanel({
       {(selected.size > 0 || deleteError) && (
         <div className="border-t border-border p-[10px_12px] bg-bg">
           <div className="flex gap-1">
-            <button className="btn btn-ghost btn-sm flex-1 justify-center" onClick={handleDownload}>
+            <button className="btn btn-ghost btn-sm flex-1 justify-center whitespace-nowrap" onClick={handleDownload}>
               Download .zip
             </button>
             <button className="btn btn-ghost btn-sm flex-1 justify-center text-danger" onClick={handleDelete}>

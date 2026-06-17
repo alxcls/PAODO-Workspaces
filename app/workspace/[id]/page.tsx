@@ -50,7 +50,7 @@ export default function WorkspacePage({ params }: { params: Promise<{ id: string
       if (!colDragging.current || !containerRef.current) return;
       const rect = containerRef.current.getBoundingClientRect();
       if (colDragging.current === "left") {
-        setLeftWidth(Math.max(150, Math.min(500, e.clientX - rect.left)));
+        setLeftWidth(Math.max(220, Math.min(500, e.clientX - rect.left)));
       } else {
         setRightWidth(Math.max(300, Math.min(700, rect.right - e.clientX)));
       }
@@ -121,7 +121,7 @@ export default function WorkspacePage({ params }: { params: Promise<{ id: string
         onDeletedPaths={(paths) => {
           if (selectedFile && paths.includes(selectedFile)) { setSelectedFile(null); setViewerOpen(false); }
         }}
-        style={{ width: leftWidth, minWidth: 150, flex: "none" }}
+        style={{ width: leftWidth, minWidth: 220, flex: "none" }}
         refreshKey={treeRefreshKey}
       />
 

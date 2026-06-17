@@ -1,57 +1,24 @@
 // Drives one chat turn against the agent: POSTs the user message to the workspace chat route
-// and consumes the SSE (`data: `-prefixed) stream, translating each AgentEvent into the chat
-// transcript. Token and reasoning deltas are coalesced via requestAnimationFrame so streaming
-// stays smooth; tool_start/tool_result pairs render live tool status; turn_usage accumulates
-// token counts surfaced on `done`. Exposes the message list plus sendMessage/reset/abort and
-// streaming/pendingTools flags. toolLabel/toolArgSummary maps are open for extension (OCP).
+// and consumes the SSE stream, folding each AgentEvent into the chat transcript. Token and
+// reasoning deltas are coalesced via requestAnimationFrame so streaming stays smooth; all
+// other shaping is delegated to the pure reducers in ./agentTranscript. Exposes the message
+// list plus sendMessage/reset/abort and the streaming/pendingTools flags.
 "use client";
 
 import { useState, useRef, useCallback, useEffect } from "react";
 import type { AgentEvent } from "@/lib/agent/runner";
+import { parseSseStream } from "@/lib/client/sse";
+import {
+  type Message,
+  type TranscriptState,
+  emptyTranscript,
+  applyDiscreteEvent,
+  upsertAssistantText,
+  upsertReasoningText,
+} from "../agentTranscript";
 
-export interface Message {
-  role: "user" | "assistant" | "tool_start" | "error" | "limit_notice" | "reasoning" | "usage";
-  content?: string;
-  toolName?: string;
-  toolSummary?: string;
-  toolDone?: boolean;
-  toolResult?: string;
-  thinking?: boolean;
-  inputTokens?: number;
-  outputTokens?: number;
-}
-
-// Extend this map to support new tools without modifying dispatch logic (OCP).
-const TOOL_LABELS: Record<string, string> = {
-  file_read:       "Reading file",
-  file_write:      "Writing file",
-  file_edit:       "Editing file",
-  execute_command: "Running command",
-  http_get:        "Fetching page",
-  todo_write:      "Updating tasks",
-  glob:            "Searching files",
-  list_directory:  "Listing directory",
-};
-
-type ArgExtractor = (args: Record<string, unknown>) => string;
-const TOOL_ARG_SUMMARY: Record<string, ArgExtractor> = {
-  execute_command: (a) => String(a.command ?? ""),
-  file_read:       (a) => String(a.file_path ?? ""),
-  file_write:      (a) => String(a.file_path ?? ""),
-  file_edit:       (a) => String(a.file_path ?? ""),
-  glob:            (a) => String(a.pattern ?? ""),
-  list_directory:  (a) => String(a.dir_path ?? "") || ".",
-  http_get:        (a) => String(a.url ?? ""),
-  call_agent:      (a) => `→ ${String(a.workspace ?? "")}${a.action ? ` · ${String(a.action)}` : ""}`,
-};
-
-export function toolLabel(name: string): string {
-  return TOOL_LABELS[name] ?? name.replace(/_/g, " ");
-}
-
-function toolArgSummary(name: string, args: Record<string, unknown>): string {
-  return TOOL_ARG_SUMMARY[name]?.(args) ?? "";
-}
+export type { Message };
+export { toolLabel } from "../agentTranscript";
 
 interface Options {
   onTurnComplete?: () => void;
@@ -66,28 +33,50 @@ export function useAgentStream(workspaceId: string, { onTurnComplete }: Options 
   const pendingReasoningRef = useRef<string | null>(null);
   const tokenRafRef = useRef<number | null>(null);
   const reasoningRafRef = useRef<number | null>(null);
-  const totalInputRef = useRef(0);
-  const totalOutputRef = useRef(0);
+
+  // Single source of truth for the rendered transcript + per-turn token totals; setMessages
+  // only mirrors it for rendering. Keeping both the token RAF flush and the discrete-event
+  // reducer writing through here avoids the two paths drifting apart.
+  const transcriptRef = useRef<TranscriptState>(emptyTranscript());
+  const commit = useCallback((next: TranscriptState) => {
+    transcriptRef.current = next;
+    setMessages(next.messages);
+  }, []);
 
   // Captured in a ref so sendMessage never needs to be recreated when the callback changes.
   // Updated in an effect (not during render) so the ref only ever tracks a committed render.
   const onTurnCompleteRef = useRef(onTurnComplete);
   useEffect(() => { onTurnCompleteRef.current = onTurnComplete; });
 
-  const reset = useCallback(() => setMessages([]), []);
+  const reset = useCallback(() => {
+    transcriptRef.current = emptyTranscript();
+    setMessages([]);
+  }, []);
 
   const abort = useCallback(() => abortRef.current?.abort(), []);
 
+  const flushToken = useCallback(() => {
+    const content = pendingTokenRef.current;
+    if (content === null) return;
+    pendingTokenRef.current = null;
+    commit({ ...transcriptRef.current, messages: upsertAssistantText(transcriptRef.current.messages, content) });
+  }, [commit]);
+
+  const flushReasoning = useCallback(() => {
+    const content = pendingReasoningRef.current;
+    if (content === null) return;
+    pendingReasoningRef.current = null;
+    commit({ ...transcriptRef.current, messages: upsertReasoningText(transcriptRef.current.messages, content) });
+  }, [commit]);
+
   const sendMessage = useCallback(async (userMessage: string) => {
-    setMessages((prev) => [...prev, { role: "user", content: userMessage }]);
+    commit({ ...transcriptRef.current, messages: [...transcriptRef.current.messages, { role: "user", content: userMessage }], totalInput: 0, totalOutput: 0 });
     setStreaming(true);
 
     let assistantContent = "";
     let reasoningContent = "";
     let hadToolCalls = false;
     let wasAborted = false;
-    totalInputRef.current = 0;
-    totalOutputRef.current = 0;
 
     try {
       abortRef.current = new AbortController();
@@ -99,164 +88,57 @@ export function useAgentStream(workspaceId: string, { onTurnComplete }: Options 
       });
 
       if (!res.ok || !res.body) {
-        setMessages((prev) => [...prev, { role: "error", content: "Failed to reach server." }]);
+        commit({ ...transcriptRef.current, messages: [...transcriptRef.current.messages, { role: "error", content: "Failed to reach server." }] });
         return;
       }
 
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop() ?? "";
-
-        for (const line of lines) {
-          if (!line.startsWith("data: ")) continue;
-          try {
-            const event = JSON.parse(line.slice(6)) as AgentEvent;
-
-            if (event.type === "token") {
-              assistantContent += event.content;
-              pendingTokenRef.current = assistantContent;
-              if (!tokenRafRef.current) {
-                tokenRafRef.current = requestAnimationFrame(() => {
-                  tokenRafRef.current = null;
-                  const content = pendingTokenRef.current;
-                  if (content === null) return;
-                  pendingTokenRef.current = null;
-                  setMessages((prev) => {
-                    const last = prev[prev.length - 1];
-                    if (last?.role === "assistant" && !last.thinking) {
-                      const next = [...prev];
-                      next[next.length - 1] = { ...last, content };
-                      return next;
-                    }
-                    return [...prev, { role: "assistant", content }];
-                  });
-                });
-              }
-            } else if (event.type === "reasoning") {
-              reasoningContent += event.content;
-              pendingReasoningRef.current = reasoningContent;
-              if (!reasoningRafRef.current) {
-                reasoningRafRef.current = requestAnimationFrame(() => {
-                  reasoningRafRef.current = null;
-                  const content = pendingReasoningRef.current;
-                  if (content === null) return;
-                  pendingReasoningRef.current = null;
-                  setMessages((prev) => {
-                    const last = prev[prev.length - 1];
-                    if (last?.role === "reasoning") {
-                      const next = [...prev];
-                      next[next.length - 1] = { ...last, content };
-                      return next;
-                    }
-                    return [...prev, { role: "reasoning", content }];
-                  });
-                });
-              }
-            } else if (event.type === "tool_start") {
-              assistantContent = "";
-              reasoningContent = "";
-              hadToolCalls = true;
-              setPendingTools((n) => n + 1);
-              setMessages((prev) => {
-                const last = prev[prev.length - 1];
-                const toolMsg: Message = {
-                  role: "tool_start",
-                  toolName: event.name,
-                  toolSummary: toolArgSummary(event.name, event.args),
-                  toolDone: false,
-                };
-                if (last?.role === "assistant" && !last.thinking) {
-                  return [...prev.slice(0, -1), { ...last, thinking: true }, toolMsg];
-                }
-                return [...prev, toolMsg];
-              });
-            } else if (event.type === "tool_result") {
-              setPendingTools((n) => Math.max(0, n - 1));
-              const resultText = event.name === "call_agent" ? event.result : undefined;
-              setMessages((prev) => {
-                const next = [...prev];
-                for (let j = next.length - 1; j >= 0; j--) {
-                  if (next[j].role === "tool_start" && next[j].toolName === event.name && !next[j].toolDone) {
-                    next[j] = { ...next[j], toolDone: true, ...(resultText ? { toolResult: resultText } : {}) };
-                    break;
-                  }
-                }
-                return next;
-              });
-            } else if (event.type === "turn_usage") {
-              totalInputRef.current += event.inputTokens;
-              totalOutputRef.current += event.outputTokens;
-            } else if (event.type === "done") {
-              const input = totalInputRef.current;
-              const output = totalOutputRef.current;
-              if (input > 0 || output > 0) {
-                setMessages((prev) => {
-                  const lastIdx = [...prev].reverse().findIndex((m) => m.role === "assistant" && !m.thinking);
-                  if (lastIdx === -1) return prev;
-                  const idx = prev.length - 1 - lastIdx;
-                  const usageMsg: Message = { role: "usage", inputTokens: input, outputTokens: output };
-                  return [...prev.slice(0, idx), usageMsg, ...prev.slice(idx)];
-                });
-              }
-            } else if (event.type === "limit_reached") {
-              setMessages((prev) => [...prev, { role: "limit_notice" }]);
-            } else if (event.type === "error") {
-              setMessages((prev) => [...prev, { role: "error", content: event.message }]);
-            }
-          } catch { /* skip malformed lines */ }
+      for await (const event of parseSseStream<AgentEvent>(res.body)) {
+        if (event.type === "token") {
+          assistantContent += event.content;
+          pendingTokenRef.current = assistantContent;
+          if (!tokenRafRef.current) {
+            tokenRafRef.current = requestAnimationFrame(() => { tokenRafRef.current = null; flushToken(); });
+          }
+        } else if (event.type === "reasoning") {
+          reasoningContent += event.content;
+          pendingReasoningRef.current = reasoningContent;
+          if (!reasoningRafRef.current) {
+            reasoningRafRef.current = requestAnimationFrame(() => { reasoningRafRef.current = null; flushReasoning(); });
+          }
+        } else if (event.type === "tool_start") {
+          assistantContent = "";
+          reasoningContent = "";
+          hadToolCalls = true;
+          setPendingTools((n) => n + 1);
+          commit(applyDiscreteEvent(transcriptRef.current, event));
+        } else if (event.type === "tool_result") {
+          setPendingTools((n) => Math.max(0, n - 1));
+          commit(applyDiscreteEvent(transcriptRef.current, event));
+        } else {
+          // turn_usage, done, limit_reached, error — pure folds with no hook-side bookkeeping.
+          commit(applyDiscreteEvent(transcriptRef.current, event));
         }
       }
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") {
         wasAborted = true;
       } else {
-        setMessages((prev) => [...prev, { role: "error", content: "Failed to reach server." }]);
+        commit({ ...transcriptRef.current, messages: [...transcriptRef.current.messages, { role: "error", content: "Failed to reach server." }] });
       }
     } finally {
       if (tokenRafRef.current) { cancelAnimationFrame(tokenRafRef.current); tokenRafRef.current = null; }
       if (reasoningRafRef.current) { cancelAnimationFrame(reasoningRafRef.current); reasoningRafRef.current = null; }
-      if (pendingTokenRef.current !== null) {
-        const content = pendingTokenRef.current;
-        pendingTokenRef.current = null;
-        setMessages((prev) => {
-          const last = prev[prev.length - 1];
-          if (last?.role === "assistant" && !last.thinking) {
-            const next = [...prev];
-            next[next.length - 1] = { ...last, content };
-            return next;
-          }
-          return [...prev, { role: "assistant", content }];
-        });
-      }
-      if (pendingReasoningRef.current !== null) {
-        const content = pendingReasoningRef.current;
-        pendingReasoningRef.current = null;
-        setMessages((prev) => {
-          const last = prev[prev.length - 1];
-          if (last?.role === "reasoning") {
-            const next = [...prev];
-            next[next.length - 1] = { ...last, content };
-            return next;
-          }
-          return [...prev, { role: "reasoning", content }];
-        });
-      }
+      flushToken();
+      flushReasoning();
       abortRef.current = null;
       setStreaming(false);
       setPendingTools(0);
       if (!wasAborted && hadToolCalls && !assistantContent) {
-        setMessages((prev) => [...prev, { role: "error", content: "Agent stopped without generating a response." }]);
+        commit({ ...transcriptRef.current, messages: [...transcriptRef.current.messages, { role: "error", content: "Agent stopped without generating a response." }] });
       }
       onTurnCompleteRef.current?.();
     }
-  }, [workspaceId]);
+  }, [workspaceId, commit, flushToken, flushReasoning]);
 
   return { messages, streaming, pendingTools, sendMessage, reset, abort };
 }

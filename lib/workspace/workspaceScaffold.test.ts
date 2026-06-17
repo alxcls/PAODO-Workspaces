@@ -1,3 +1,6 @@
+// scaffoldWorkspaceDir seeds AGENTS.md and a skills/ dir holding an example
+// .template — which the loader ignores, so a fresh workspace has no callable skills.
+
 import { describe, it, expect, afterAll } from "vitest";
 import fs from "fs";
 import os from "os";

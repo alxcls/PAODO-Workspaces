@@ -1,3 +1,6 @@
+// formatSkill renders the list_agents listing — a calling agent's only view of
+// another workspace's contract, so optionality and return shape must render right.
+
 import { describe, it, expect } from "vitest";
 import { formatSkill } from "./listAgents";
 import type { SkillDefinition } from "../../workspace/skillTypes";

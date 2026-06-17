@@ -7,6 +7,7 @@ import { getStore } from "@/lib/infra/services";
 import fs from "fs/promises";
 import path from "path";
 import { createLogger } from "@/lib/infra/logger";
+import { assertInsideWorkspace } from "@/lib/infra/workspaceContainment";
 
 // Omitting allow-same-origin is intentional: it forces the page to a null origin so
 // fetch() calls to the app's own API routes are cross-origin and blocked by CORS.
@@ -36,21 +37,6 @@ async function getMime(filePath: string, buf: Buffer): Promise<string> {
   const { fileTypeFromBuffer } = await import("file-type");
   const result = await fileTypeFromBuffer(buf);
   return result?.mime ?? "application/octet-stream";
-}
-
-async function assertInsideWorkspace(wsDir: string, filePath: string): Promise<string> {
-  const wsReal = await fs.realpath(wsDir);
-  let resolved: string;
-  try {
-    resolved = await fs.realpath(filePath);
-  } catch {
-    const parentReal = await fs.realpath(path.dirname(filePath));
-    resolved = path.join(parentReal, path.basename(filePath));
-  }
-  if (!resolved.startsWith(wsReal + path.sep) && resolved !== wsReal) {
-    throw new Error("Path is outside workspace");
-  }
-  return resolved;
 }
 
 export async function GET(

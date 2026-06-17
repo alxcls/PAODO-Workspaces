@@ -1,3 +1,6 @@
+// executeSkill enforces the agent-to-agent skill invocation contract; exercised
+// with injected fakes so it never touches disk or real workspaces.
+
 import { describe, it, expect, vi } from "vitest";
 
 // Redirect WORKSPACES_ROOT before any infra module reads it at import time

@@ -1,3 +1,5 @@
+// Low-level Docker CLI wrapper: spawns docker subprocesses and captures stdout/stderr/exit code.
+// Defines IDockerClient so ContainerManager can swap in a fake for tests without spawning real Docker.
 import { spawn } from "child_process";
 
 export type DockerResult = { stdout: string; stderr: string; code: number };

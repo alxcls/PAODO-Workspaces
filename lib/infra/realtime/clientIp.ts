@@ -1,3 +1,4 @@
+// Extracts the real client IP from request headers, preferring x-real-ip then the last x-forwarded-for entry (set by Tailscale Serve).
 import { type NextRequest } from "next/server";
 
 export function getClientIp(req: NextRequest): string {

@@ -1,3 +1,6 @@
+// validateKey is the auth chokepoint for programmatic agent calls; these pin that
+// it fails closed (no key / disabled / revoked / wrong) and accepts only the legit case.
+
 import { describe, it, expect, vi, afterAll } from "vitest";
 import fs from "fs";
 

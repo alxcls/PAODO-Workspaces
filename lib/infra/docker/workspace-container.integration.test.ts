@@ -1,3 +1,6 @@
+// Integration tests for the workspace container (needs Docker) — verifies the
+// container's confinement: non-root, no write access outside /workspace.
+
 import { describe, it, expect } from "vitest";
 import { execFileSync } from "child_process";
 

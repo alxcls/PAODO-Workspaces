@@ -1,3 +1,4 @@
+// Finds a free host port (by binding to :0 and releasing) and checks whether a workspace container already has a port mapped.
 import { createServer } from "net";
 import type { IDockerClient } from "./dockerClient";
 

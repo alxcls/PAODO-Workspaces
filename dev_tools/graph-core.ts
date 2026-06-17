@@ -26,6 +26,9 @@ export const LAYER_COLORS: Record<string, { bg: string; border: string; fg: stri
   api:        { bg: "#16a34a", border: "#15803d", fg: "#86efac" },
   pages:      { bg: "#2563eb", border: "#1d4ed8", fg: "#93c5fd" },
   components: { bg: "#0891b2", border: "#0e7490", fg: "#67e8f9" },
+  workspace:  { bg: "#0d9488", border: "#0f766e", fg: "#5eead4" },
+  client:     { bg: "#db2777", border: "#be185d", fg: "#fbcfe8" },
+  devtools:   { bg: "#65a30d", border: "#4d7c0f", fg: "#d9f99d" },
   types:      { bg: "#64748b", border: "#475569", fg: "#cbd5e1" },
   other:      { bg: "#6b7280", border: "#4b5563", fg: "#d1d5db" },
 };
@@ -38,6 +41,9 @@ export const LAYER_LABELS: Record<string, string> = {
   api:        "API Routes",
   pages:      "Pages",
   components: "Components",
+  workspace:  "Workspace",
+  client:     "Client",
+  devtools:   "Dev Tools",
   types:      "Types",
   other:      "Other",
 };
@@ -47,9 +53,12 @@ export function getLayer(relPath: string): string {
   if (relPath.startsWith("lib/infra/")) return "infra";
   if (relPath.startsWith("lib/agent/tools/")) return "tools";
   if (relPath.startsWith("lib/agent/")) return "agent";
+  if (relPath.startsWith("lib/workspace/")) return "workspace";
+  if (relPath.startsWith("lib/client/")) return "client";
   if (relPath.startsWith("app/api/")) return "api";
   if (relPath.startsWith("components/")) return "components";
   if (relPath.startsWith("app/")) return "pages";
+  if (relPath.startsWith("dev_tools/")) return "devtools";
   if (relPath.startsWith("types/")) return "types";
   return "other";
 }

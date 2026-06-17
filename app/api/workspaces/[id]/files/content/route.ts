@@ -8,25 +8,7 @@ import { getStore, getContainers } from "@/lib/infra/services";
 import fs from "fs/promises";
 import path from "path";
 import { createLogger } from "@/lib/infra/logger";
-
-// Resolves symlinks before checking the boundary so a symlink inside the workspace
-// cannot silently point to a path outside it.
-async function assertInsideWorkspace(wsDir: string, filePath: string): Promise<string> {
-  const wsReal = await fs.realpath(wsDir);
-  let resolved: string;
-  try {
-    resolved = await fs.realpath(filePath);
-  } catch {
-    // File doesn't exist yet (e.g. a write to a new path) — resolve the parent
-    // directory, which must already exist, then reconstruct the full path.
-    const parentReal = await fs.realpath(path.dirname(filePath));
-    resolved = path.join(parentReal, path.basename(filePath));
-  }
-  if (!resolved.startsWith(wsReal + path.sep) && resolved !== wsReal) {
-    throw new Error("Path is outside workspace");
-  }
-  return resolved;
-}
+import { assertInsideWorkspace } from "@/lib/infra/workspaceContainment";
 
 type FileClass =
   | { type: "image"; mimeType: string }

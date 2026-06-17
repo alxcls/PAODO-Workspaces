@@ -1,3 +1,6 @@
+// AgentCallTool's per-(callee, skill) retry bookkeeping — two independent counters
+// with different reset rules (contract enforcement lives in executeSkill).
+
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 // AgentCallTool's contract enforcement lives in executeSkill (tested separately). What is

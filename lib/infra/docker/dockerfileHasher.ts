@@ -1,3 +1,4 @@
+// Hashes the Dockerfile content so ContainerManager can detect when the image is stale and needs a rebuild.
 import { readFile } from "fs/promises";
 import { createHash } from "crypto";
 

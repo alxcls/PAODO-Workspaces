@@ -267,16 +267,16 @@ export async function* runAgent(
         break;
       }
 
-      // Deduplicate: keep only the last of any calls with identical name+args.
-      // Done before pushing the AIMessage so every tool_call_id gets a ToolMessage.
+      // Deduplicate: keep only the last of any calls with identical name+args, so every
+      // tool_call on the assistant message gets exactly one matching ToolMessage.
       const seen = new Map<string, number>();
       toolCalls.forEach((tc, i) => seen.set(`${tc.name}:${JSON.stringify(tc.args)}`, i));
       const activeCalls = toolCalls.filter((tc, i) => seen.get(`${tc.name}:${JSON.stringify(tc.args)}`) === i);
 
-      messages.push(new AIMessage({
+      const assistantTurn = new AIMessage({
         content: accumulatedChunk?.content ?? fullText,
         tool_calls: activeCalls.map((tc) => ({ id: tc.id, name: tc.name, args: tc.args })),
-      }));
+      });
 
       for (const tc of activeCalls) {
         yield { type: "tool_start", name: tc.name, args: tc.args };
@@ -296,20 +296,28 @@ export async function* runAgent(
         })
       );
 
+      // Commit the assistant turn and all its tool results in one synchronous block, with no
+      // yield or await in between. If the request is aborted (the user hits escape) the runner
+      // generator is abandoned at a yield — so it can only ever observe history with either
+      // none of this turn or all of it, never an AIMessage whose tool_calls lack their
+      // ToolMessages (which OpenAI rejects on the next request).
+      messages.push(assistantTurn);
+      for (const { tc, resultStr } of settled) {
+        messages.push(new ToolMessage({ tool_call_id: tc.id, content: resultStr }));
+      }
+
       for (const { tc, resultStr } of settled) {
         yield { type: "tool_result", name: tc.name, result: resultStr };
         if (tc.name !== "execute_command") {
           resolvedNotify({ type: "tool_result_log", name: tc.name, result: resultStr });
         }
         wlog.debug({ name: tc.name, result: resultStr.slice(0, 200) }, "tool result");
-        messages.push(new ToolMessage({ tool_call_id: tc.id, content: resultStr }));
       }
     }
   } catch (err) {
-    // Remove any dangling assistant turn with unanswered tool_calls so future
-    // requests don't fail with the "tool_call_id must be followed by tool messages" error.
-    const last = messages[messages.length - 1];
-    if (last instanceof AIMessage && last.tool_calls?.length) messages.pop();
+    // A thrown error (e.g. the model stream aborting mid-turn) lands here before any
+    // assistant tool-call turn is committed, so history is left consistent — see the
+    // atomic commit above. Just surface the error and close the stream.
     wlog.error({ err }, "agent run failed");
     yield { type: "error", message: String(err) };
     yield { type: "done" };

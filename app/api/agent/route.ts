@@ -1,3 +1,4 @@
+// SSE endpoint that streams agent events to the browser; validates the workspace API key, starts the runner, and keeps the connection alive.
 export const runtime = "nodejs";
 
 import { type NextRequest } from "next/server";

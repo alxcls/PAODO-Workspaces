@@ -1,3 +1,6 @@
+// loadSkills reads skills/*.json live per call; a single malformed file must be
+// skipped, not throw and break skill discovery for the whole workspace.
+
 import { describe, it, expect, beforeEach, afterAll } from "vitest";
 import fs from "fs";
 import os from "os";

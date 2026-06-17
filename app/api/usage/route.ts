@@ -1,3 +1,4 @@
+// Returns token usage records for a workspace, powering the usage dashboard.
 export const runtime = "nodejs";
 
 import { type NextRequest, NextResponse } from "next/server";

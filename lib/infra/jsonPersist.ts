@@ -1,3 +1,4 @@
+// Atomic JSON persistence: write to a .tmp file then rename to avoid partial writes on crash.
 import { mkdirSync, writeFileSync, renameSync } from "fs";
 import path from "path";
 

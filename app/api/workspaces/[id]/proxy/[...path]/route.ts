@@ -1,3 +1,4 @@
+// Reverse-proxies HTTP requests from the browser to the workspace container's dev server, forwarding all methods and bodies.
 import { getStore, getContainers } from "@/lib/infra/services";
 import { NextRequest, NextResponse } from "next/server";
 

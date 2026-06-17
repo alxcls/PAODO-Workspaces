@@ -1,3 +1,6 @@
+// The workspace file-content API route must serve files inside a workspace but
+// reject path-traversal attempts to read host files outside it.
+
 import { describe, it, expect, vi, afterAll } from "vitest";
 import fs from "fs";
 import path from "path";

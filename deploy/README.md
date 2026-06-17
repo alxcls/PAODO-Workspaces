@@ -1,6 +1,8 @@
 # Self-Hosting on a VPS example
 
-Goal : A personal PAODO Workspace instance running on a VPS, accessible only over Tailscale VPN. The app is never exposed to the public internet. this example uses Debian 13 on a VPS with tailscale VPN.
+Goal: a personal PAODO Workspace instance running on a VPS, accessible only over Tailscale VPN. The app is never exposed to the public internet. This example uses Debian 13 on a VPS with Tailscale VPN.
+
+The only hard requirements are Docker + Docker Compose, an `.env`, and a network path you trust to reach the app — it ships no public-internet hardening of its own. This guide uses Tailscale for that path, but a reverse proxy with auth, another VPN, an SSH tunnel, or a LAN-only setup works the same way. Everything Debian- and Tailscale-specific below is one reference path; adapt it freely to your host.
 
 ---
 
@@ -8,7 +10,7 @@ Goal : A personal PAODO Workspace instance running on a VPS, accessible only ove
 
 - VPS running Debian 13 (Trixie)
 - [Tailscale account](https://tailscale.com) (free)
-- LLM API key (OpenAI or Anthropic)
+- LLM API key (OpenAI, Anthropic, or DeepSeek)
 
 ---
 
@@ -79,16 +81,22 @@ nano .env
 
 | Variable | Required | Description |
 |---|---|---|
-| `LLM_PROVIDER` | Yes | `openai` or `anthropic` |
+| `LLM_PROVIDER` | Yes | `openai`, `anthropic`, or `deepseek` (default: `openai`) |
 | `OPENAI_API_KEY` | If using OpenAI | Your OpenAI API key |
-| `OPENAI_MODEL` | If using OpenAI | Model name, e.g. `gpt-4o-mini` |
+| `OPENAI_MODEL` | If using OpenAI | Model name, e.g. `gpt-5-mini` |
 | `ANTHROPIC_API_KEY` | If using Anthropic | Your Anthropic API key |
-| `ANTHROPIC_MODEL` | If using Anthropic | Model name, e.g. `claude-sonnet-4-6` |
+| `ANTHROPIC_MODEL` | If using Anthropic | Model name, e.g. `claude-haiku-4-5` |
+| `DEEPSEEK_API_KEY` | If using DeepSeek | Your DeepSeek API key |
+| `DEEPSEEK_MODEL` | If using DeepSeek | Model name, e.g. `deepseek-v4-pro` |
+| `REASONING_EFFORT` | No | `low` / `medium` / `high`; maps to OpenAI effort or Anthropic thinking budget (default: `low`) |
 | `USERNAME` | Yes | Login username |
 | `PASSWORD` | Yes | Login password |
 | `PORT` | No | Port the server listens on (default: `3000`) |
 | `LOG_LEVEL` | No | `trace` / `debug` / `info` / `warn` / `error` / `fatal` (default: `info`) |
-| `GRAPH_ENABLED` | No | `true` to enable the multi-agent graph and `/graph` UI (default: `false`) |
+| `GRAPH_ENABLED` | No | Multi-agent graph and `/graph` UI; on by default — set `false` to disable agent-to-agent calls (default: `true`) |
+| `SKILL_INPUT_MAX_RETRIES` | No | Consecutive input-schema failures for one (callee, skill) before `call_agent` returns a terminal error (default: `2`) |
+| `SKILL_OUTPUT_MAX_RETRIES` | No | Output-schema correction passes before a call fails with `OUTPUT_VALIDATION_ERROR` (default: `2`) |
+| `SKILL_NEEDS_INPUT_MAX_ROUNDS` | No | How many `NEEDS_INPUT` rounds a callee may ask for one (callee, skill) before the caller is told to stop (default: `2`) |
 | `CONTAINER_MEMORY` | No | Memory cap per workspace container (default: `1g`) |
 | `CONTAINER_CPUS` | No | CPU cap per workspace container (default: `1.0`) |
 | `CONTAINER_IDLE_MS` | No | Idle timeout before a workspace container stops (default: `600000` = 10 min) |
@@ -100,6 +108,8 @@ nano .env
 ## Step 4 — Start the app
 
 ```bash
+# Pre-create the security-log dir owned by the app's UID (1000) so the bind-mounted
+# /logs is writable — the hardened container can't chown it itself. Change the path freely.
 mkdir -p /var/log/paodo && chown 1000:1000 /var/log/paodo
 docker compose up -d
 ```
@@ -133,6 +143,7 @@ git pull && docker compose up --build -d
 
 # Apply a config change (.env edit) without rebuilding
 docker compose up -d
+```
 
 ---
 

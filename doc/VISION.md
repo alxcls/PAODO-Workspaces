@@ -34,14 +34,29 @@ Benefit : Agent has every tool required to manipulate data inside it's isolated 
 
 Benefit : protect critical data and configuration from accidental changes so you can let the agent work autonomously with confidence
 
-- **Agent network** (optional and experimental) — connect workspaces in a directed graph so agents can delegate tasks to each other
+- **Agent network** — connect workspaces in a directed graph so agents can delegate tasks to each other. Calls are contract-first: each workspace publishes **skills** — typed actions with enforced input and output schemas — so an orchestrator agent can route work to specialist agents below it and rely on what comes back.
 
-Benefit : build complex workflows by wiring together workspaces, each with a single responsibility, while staying in control of which agent can talk to which
+Benefit : build complex workflows by wiring together workspaces, each with a single responsibility, while staying in control of which agent can talk to which — and trusting the result because the contract is enforced, not assumed
 
 - **API access** — every workspace exposes an HTTP endpoint so external systems can trigger the agent programmatically
 
 Benefit : plug your service into any existing tool, chatbot, or workflow without rebuilding enabling separation of concerns
 
 - **File visualization** — Some format such as Markdown, JSON, and HTML files open as clean readable documents so every output your service generates is immediately understandable by non-technical population
+
+## The future of work
+
+Today a business process lives in a spreadsheet a person babysits and a deck that explains it. We think it becomes a small living service: grounded in its own data and scripts, run by an agent, callable on demand, and able to collaborate with other services the same way teams of people do.
+
+The metaphor is an organization, not a program:
+
+- A **workspace** is an employee — it has its own desk (files), its own tools (terminal), its own expertise (data + `AGENTS.md`), and it does one job well.
+- **Skills** are its job description — typed contracts that say exactly what it can be asked for and what it returns, so colleagues can rely on it without reading its mind.
+- The **agent network** is the org chart — who may ask whom, with an orchestrator routing work to the specialists below it.
+- **Shared drives** (on the roadmap) are the shared workspace — the SharePoint where agents drop artifacts for each other to pick up, so collaboration outlives any single request.
+
+The citizen developer's job shifts from *doing the work* to *designing the organization*: defining intents, contracts, and who-talks-to-whom — then letting a fleet of grounded agents run it. You handle the intent and the structure. The agents handle the terminal, the data, and the handoffs.
+
+And because every agent is a real isolated environment you self-host — not a shared sandbox — this organization runs on infrastructure you control, with your data, your models, your rules.
 
 

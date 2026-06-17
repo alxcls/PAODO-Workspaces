@@ -36,7 +36,7 @@ export function loadAgentConfig(): AgentConfig {
   return {
     provider:             process.env.LLM_PROVIDER ?? "openai",
     reasoningEffort:      (process.env.REASONING_EFFORT ?? "low") as AgentConfig["reasoningEffort"],
-    graphEnabled:         process.env.GRAPH_ENABLED === "true",
+    graphEnabled:         process.env.GRAPH_ENABLED !== "false",
     anthropicModel:       process.env.ANTHROPIC_MODEL,
     anthropicApiKey:      process.env.ANTHROPIC_API_KEY,
     anthropicCacheTtl1h:  process.env.ANTHROPIC_CACHE_TTL_1H === "true",

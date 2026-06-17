@@ -4,7 +4,7 @@ import { getGraph, saveGraph } from "@/lib/workspace/workspaceGraph";
 import type { GraphEdge } from "@/lib/workspace/workspaceGraph";
 
 function graphEnabled() {
-  return process.env.GRAPH_ENABLED === "true";
+  return process.env.GRAPH_ENABLED !== "false";
 }
 
 export function GET() {

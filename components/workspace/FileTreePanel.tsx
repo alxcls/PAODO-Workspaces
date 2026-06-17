@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
 import { useFileTreeSelection } from "@/lib/client/hooks/useFileTreeSelection";
 import { useFileOperations, TreeNode } from "@/lib/client/hooks/useFileOperations";
 import JSZip from "jszip";
@@ -9,11 +8,6 @@ import JSZip from "jszip";
 type CheckState = "none" | "some" | "all";
 
 // ---- Icons ----
-const BackIcon = () => (
-  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-    <path d="M19 12H5" /><path d="M12 19l-7-7 7-7" />
-  </svg>
-);
 const UploadIcon = () => (
   <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
     <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="17 8 12 3 7 8" /><line x1="12" y1="3" x2="12" y2="15" />
@@ -262,8 +256,8 @@ const UploadMenu = ({ workspaceId, onUploaded }: { workspaceId: string; onUpload
           />
         </button>
       </div>
-      {status && <div className="text-[11px] text-text-3 px-1">{status}</div>}
-      {error && <div className="text-[11px] text-danger px-1">{error}</div>}
+      {status && <div className="text-2xs text-text-3 px-1">{status}</div>}
+      {error && <div className="text-2xs text-danger px-1">{error}</div>}
     </div>
   );
 };
@@ -283,7 +277,6 @@ export default function FileTreePanel({
   workspaceId, workspaceName, selectedPath,
   onFileSelect, onDeletedPaths, style, refreshKey,
 }: Props) {
-  const router = useRouter();
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
 
   const { selected, handleSelect, clearSelection } = useFileTreeSelection();
@@ -297,9 +290,6 @@ export default function FileTreePanel({
   return (
     <aside className="flex flex-col bg-bg-tint overflow-hidden" style={style}>
       <div className="flex items-center gap-2 p-[14px_14px_8px]">
-        <button className="iconbtn" onClick={() => router.push("/")} title="Back to workspaces">
-          <BackIcon />
-        </button>
         <span className="font-semibold text-[15px] tracking-[-0.01em] whitespace-nowrap overflow-hidden text-ellipsis flex-1" title={workspaceName}>
           {workspaceName}
         </span>
@@ -328,7 +318,7 @@ export default function FileTreePanel({
             </button>
           </div>
           {deleteError && (
-            <div className="text-[12px] text-danger whitespace-pre-wrap mt-2 px-1">{deleteError}</div>
+            <div className="text-xs text-danger whitespace-pre-wrap mt-2 px-1">{deleteError}</div>
           )}
         </div>
       )}

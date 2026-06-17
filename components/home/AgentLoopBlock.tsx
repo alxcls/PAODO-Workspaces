@@ -41,9 +41,9 @@ export default function AgentLoopBlock({ wsId }: { wsId: string }) {
   const dirty = Math.max(1, Math.floor(Number(draft))) !== value;
 
   return (
-    <div className="flex flex-col gap-3 mt-4 border border-border rounded-[--radius-card] p-[14px_16px] bg-bg-tint">
+    <div className="flex flex-col gap-3 mt-4 border border-border rounded-card p-[14px_16px] bg-bg-tint">
       <div>
-        <span className="text-[13px] font-semibold text-text">Agent Loop</span>
+        <span className="text-ms font-semibold text-text">Agent Loop</span>
         <span className="text-xs text-text-3 ml-2">Max tool calls per run</span>
       </div>
       <div className="flex items-center gap-2">

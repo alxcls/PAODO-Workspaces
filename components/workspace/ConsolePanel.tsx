@@ -24,7 +24,7 @@ export default function ConsolePanel({ workspaceId }: { workspaceId: string }) {
 
   return (
     <div className="flex flex-col bg-console-bg min-h-0 overflow-hidden flex-1">
-      <div className="flex items-center justify-between px-4 min-h-[44px] box-border bg-[#181818] text-[#d0d0d0] text-[13px] border-t border-[#2a2a2a] flex-shrink-0">
+      <div className="flex items-center justify-between px-4 min-h-[44px] box-border bg-[#181818] text-[#d0d0d0] text-ms border-t border-[#2a2a2a] flex-shrink-0">
         <span className="font-medium tracking-[.02em]">Console</span>
         <div className="flex items-center gap-2.5">
           <span

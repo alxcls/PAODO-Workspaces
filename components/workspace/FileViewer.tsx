@@ -129,7 +129,7 @@ const FileViewer = forwardRef<FileViewerHandle, Props>(function FileViewer(
     return (
       <div className="flex flex-col min-h-0 flex-1">
         <div className="flex items-center gap-2.5 px-4 min-h-[44px] border-b border-border bg-bg flex-shrink-0">
-          <span className="font-mono text-[13px] text-text-3 flex-1 min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">No file open</span>
+          <span className="font-mono text-ms text-text-3 flex-1 min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">No file open</span>
           {closeBtn}
         </div>
         <div className="flex-1 grid place-items-center text-text-3 text-sm bg-bg-tint p-6 text-center">
@@ -142,7 +142,7 @@ const FileViewer = forwardRef<FileViewerHandle, Props>(function FileViewer(
   return (
     <div className="flex flex-col min-h-0 flex-1">
       <div className="flex items-center gap-2.5 px-4 min-h-[44px] border-b border-border bg-bg flex-shrink-0">
-        <span className="font-mono text-[13px] text-text-2 flex-1 min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">
+        <span className="font-mono text-ms text-text-2 flex-1 min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">
           {displayPath}
         </span>
         {!loading && !error && fileType !== null && (

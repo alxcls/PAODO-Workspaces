@@ -5,15 +5,19 @@
 "use client";
 
 import { use, useState, useEffect, useRef, useCallback } from "react";
+import Image from "next/image";
+import { useRouter } from "next/navigation";
 import FileTreePanel from "@/components/workspace/FileTreePanel";
 import FileViewer, { type FileViewerHandle } from "@/components/workspace/FileViewer";
 import ChatPanel from "@/components/workspace/ChatPanel";
 import ConsolePanel from "@/components/workspace/ConsolePanel";
+import TopBar from "@/components/layout/TopBar";
 import { useWorkspaceSocket } from "@/lib/client/hooks/useWorkspaceSocket";
 import { useWorkspaceMeta } from "@/lib/client/hooks/useWorkspaceMeta";
 
 export default function WorkspacePage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
+  const router = useRouter();
   const { name: workspaceName } = useWorkspaceMeta(id);
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [viewerOpen, setViewerOpen] = useState(false);
@@ -88,10 +92,29 @@ export default function WorkspacePage({ params }: { params: Promise<{ id: string
   }, []);
 
   return (
-    <div className="flex h-screen bg-bg overflow-hidden" ref={containerRef}>
-      {isDragging && <div style={{ position: "fixed", inset: 0, zIndex: 9999 }} />}
+    <div className="flex flex-col h-screen bg-bg overflow-hidden">
+      <TopBar
+        left={
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => router.push("/")}
+              title="Back to workspaces"
+              className="w-[34px] h-[34px] rounded-[10px] overflow-hidden flex-shrink-0 inline-flex items-center justify-center bg-gradient-to-br from-primary to-primary-2 border-0 p-0 cursor-pointer"
+            >
+              <Image src="/paodo-logo.svg" alt="Paodo logo" width={34} height={34} className="block w-full h-full object-cover" unoptimized />
+            </button>
+            <span className="font-semibold tracking-[-0.01em] text-lg leading-none inline-flex items-center">
+              PAODO WS agents
+            </span>
+          </div>
+        }
+      />
 
-      <FileTreePanel
+      <div className="flex flex-1 min-h-0" ref={containerRef}>
+        {isDragging && <div style={{ position: "fixed", inset: 0, zIndex: 9999 }} />}
+
+        <FileTreePanel
         workspaceId={id} workspaceName={workspaceName}
         selectedPath={selectedFile}
         onFileSelect={(path) => { setSelectedFile(path); setViewerOpen(true); }}
@@ -134,6 +157,7 @@ export default function WorkspacePage({ params }: { params: Promise<{ id: string
           <ConsolePanel workspaceId={id} />
         </div>
       </aside>
+      </div>
     </div>
   );
 }

@@ -56,15 +56,9 @@ export default function ChatPanel({ workspaceId, onAgentTurnComplete }: { worksp
 
   return (
     <div className="flex flex-col h-full">
-      <div className="flex items-center gap-2 px-4 min-h-[44px] border-b border-border flex-shrink-0">
-        <span className="font-semibold text-sm">Agent</span>
-        <span className={"status-dot" + (streaming ? " is-running" : "")} />
-        <span className="text-text-2 text-xs -ml-0.5">{streaming ? "Running" : "Idle"}</span>
-      </div>
-
       <div className="flex-1 overflow-auto p-[14px_16px] flex flex-col gap-2">
         {messages.length === 0 && !streaming && (
-          <div className="text-text-3 text-[13px] text-center mt-6">
+          <div className="text-text-3 text-ms text-center mt-6">
             Ask the agent anything about this workspace.
           </div>
         )}
@@ -123,7 +117,7 @@ export default function ChatPanel({ workspaceId, onAgentTurnComplete }: { worksp
           }
           if (m.role === "usage") {
             return (
-              <div key={i} className="flex justify-start gap-2.5 px-0.5 text-[11px] select-none">
+              <div key={i} className="flex justify-start gap-2.5 px-0.5 text-2xs select-none">
                 <span title="Input tokens" className="text-sky-800">↑ {m.inputTokens?.toLocaleString()}</span>
                 <span title="Output tokens" className="text-orange-800">↓ {m.outputTokens?.toLocaleString()}</span>
               </div>

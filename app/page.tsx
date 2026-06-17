@@ -62,7 +62,7 @@ export default function HomePage() {
     setFileCount(null);
     fetch(`/api/workspaces/${selectedId}/files`)
       .then((r) => r.json())
-      .then((data) => setFileCount(countFiles(data as TreeNode[])))
+      .then((data) => setFileCount(countFiles((data as { tree: TreeNode[] }).tree ?? [])))
       .catch(() => setFileCount(0));
   }, [selectedId]);
 
@@ -114,14 +114,14 @@ export default function HomePage() {
             <div className="w-[34px] h-[34px] rounded-[10px] overflow-hidden flex-shrink-0 inline-flex items-center justify-center bg-gradient-to-br from-primary to-primary-2">
               <Image src="/paodo-logo.svg" alt="Paodo logo" width={34} height={34} className="block w-full h-full object-cover" unoptimized />
             </div>
-            <span className="font-semibold tracking-[-0.01em] text-[18px] leading-none inline-flex items-center">
+            <span className="font-semibold tracking-[-0.01em] text-lg leading-none inline-flex items-center">
               PAODO WS agents
             </span>
           </div>
         }
         right={
           <div className="flex items-center gap-1">
-            <button className="btn btn-ghost text-[13px] gap-1.5 text-text-2 hover:text-primary" onClick={() => router.push("/dashboard")} title="Usage Dashboard">
+            <button className="btn btn-ghost text-ms gap-1.5 text-text-2 hover:text-primary" onClick={() => router.push("/dashboard")} title="Usage Dashboard">
               <svg width="15" height="15" viewBox="0 0 15 15" fill="none">
                 <rect x="1" y="9" width="3" height="5" rx="0.5" fill="currentColor"/>
                 <rect x="6" y="5" width="3" height="9" rx="0.5" fill="currentColor"/>
@@ -130,7 +130,7 @@ export default function HomePage() {
               Dashboard
             </button>
             {graphEnabled ? (
-              <button className="btn btn-ghost text-[13px] gap-1.5 text-text-2 hover:text-primary" onClick={() => router.push("/graph")} title="Agent Network">
+              <button className="btn btn-ghost text-ms gap-1.5 text-text-2 hover:text-primary" onClick={() => router.push("/graph")} title="Agent Network">
                 <svg width="15" height="15" viewBox="0 0 15 15" fill="none">
                   <circle cx="2.5" cy="7.5" r="2" stroke="currentColor" strokeWidth="1.3" />
                   <circle cx="12.5" cy="3" r="2" stroke="currentColor" strokeWidth="1.3" />
@@ -156,7 +156,7 @@ export default function HomePage() {
           </button>
 
           {showCreateForm && (
-            <div className="bg-white border border-border rounded-[--radius-card] p-2.5 flex flex-col gap-2 shadow-sm" onClick={(e) => e.stopPropagation()}>
+            <div className="bg-white border border-border rounded-card p-2.5 flex flex-col gap-2 shadow-sm" onClick={(e) => e.stopPropagation()}>
               <input
                 autoFocus className="input" placeholder="Workspace name"
                 value={newName} onChange={(e) => setNewName(e.target.value)}
@@ -174,10 +174,10 @@ export default function HomePage() {
             </div>
           )}
 
-          <div className="mt-2 text-[11px] font-semibold text-text-3 tracking-[.08em] px-1.5 uppercase">Workspaces</div>
+          <div className="mt-2 text-2xs font-semibold text-text-3 tracking-[.08em] px-1.5 uppercase">Workspaces</div>
           <div className="flex flex-col gap-0.5">
             {workspaces.length === 0 && (
-              <div className="text-text-3 text-[13px] p-[8px_6px]">No workspaces yet</div>
+              <div className="text-text-3 text-ms p-[8px_6px]">No workspaces yet</div>
             )}
             {workspaces.map((w) => (
               <button
@@ -199,7 +199,7 @@ export default function HomePage() {
         <main className="flex-1 p-[48px_56px_64px] max-w-[760px] overflow-auto">
           {selected ? (
             <div className="flex flex-col">
-              <div className="uppercase text-[11px] tracking-[.12em] text-text-3 font-semibold">Workspace</div>
+              <div className="uppercase text-2xs tracking-[.12em] text-text-3 font-semibold">Workspace</div>
 
               {renaming ? (
                 <div style={{ display: "flex", gap: 8, alignItems: "center", margin: "6px 0 6px" }}>
@@ -236,7 +236,7 @@ export default function HomePage() {
               </div>
 
               {confirmDeleteId === selected.id && (
-                <div className="mt-2 p-[10px_14px] border border-danger bg-danger-soft rounded-[--radius-card] text-text flex items-center justify-between gap-3">
+                <div className="mt-2 p-[10px_14px] border border-danger bg-danger-soft rounded-card text-text flex items-center justify-between gap-3">
                   <span>Delete <b>{selected.name}</b>? This can&apos;t be undone.</span>
                   <div className="flex gap-2 items-center">
                     <button className="btn btn-danger btn-sm" onClick={() => handleDelete(selected.id)}>Yes, delete</button>
@@ -253,7 +253,7 @@ export default function HomePage() {
           ) : (
             <div className="mt-20 text-center text-text-2">
               <div className="empty-illo" />
-              <h2 className="m-0 mb-1.5 text-[18px] text-text font-semibold">No workspace selected</h2>
+              <h2 className="m-0 mb-1.5 text-lg text-text font-semibold">No workspace selected</h2>
               <p className="m-0">Pick a workspace on the left, or create a new one to get started.</p>
             </div>
           )}

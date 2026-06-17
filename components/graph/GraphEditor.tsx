@@ -8,6 +8,7 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { useRouter } from "next/navigation";
+import Image from "next/image";
 import TopBar from "@/components/layout/TopBar";
 
 function loadDesc(id: string): string {
@@ -18,11 +19,11 @@ function WorkspaceNode({ data, selected }: NodeProps) {
   const label = data.label as string;
   const description = data.description as string;
   return (
-    <div className={`bg-white border rounded-[--radius-card] p-[10px_14px] min-w-[160px] max-w-[220px] shadow-sm cursor-default transition-[border-color,box-shadow] duration-[140ms] hover:border-primary-2 ${selected ? "border-primary shadow-[0_0_0_2px_var(--color-primary-soft),var(--shadow-sm)]" : "border-border"}`}>
+    <div className={`bg-white border rounded-card p-[12px_14px_16px] min-w-[160px] max-w-[220px] shadow-sm cursor-default transition-[border-color,box-shadow] duration-[140ms] hover:border-primary-2 ${selected ? "border-primary shadow-[0_0_0_2px_var(--color-primary-soft),var(--shadow-sm)]" : "border-border"}`}>
       <Handle type="target" position={Position.Top} className="graph-handle" />
-      <div className="font-semibold text-[13px] text-text whitespace-nowrap overflow-hidden text-ellipsis">{label}</div>
+      <div className="font-semibold text-ms text-text whitespace-nowrap overflow-hidden text-ellipsis">{label}</div>
       {description && (
-        <div className="text-xs text-text-2 mt-1 leading-[1.4] line-clamp-2">{description}</div>
+        <div className="text-xs text-text-2 mt-1 leading-[1.4] whitespace-pre-wrap">{description}</div>
       )}
       <Handle type="source" position={Position.Bottom} className="graph-handle" />
     </div>
@@ -168,23 +169,27 @@ export default function GraphEditor() {
       <TopBar
         error={error}
         left={
-          <>
-            <button className="iconbtn" onClick={handleBack} title="Back to workspaces">
-              <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-                <path d="M10 3L5 8l5 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handleBack}
+              title="Back to workspaces"
+              className="w-[34px] h-[34px] rounded-[10px] overflow-hidden flex-shrink-0 inline-flex items-center justify-center bg-gradient-to-br from-primary to-primary-2 border-0 p-0 cursor-pointer"
+            >
+              <Image src="/paodo-logo.svg" alt="Paodo logo" width={34} height={34} className="block w-full h-full object-cover" unoptimized />
             </button>
-            <span className="font-semibold text-sm text-text">Agent Network</span>
-            {isDirty && <span className="text-xs text-text-3 italic">Unsaved changes</span>}
-            <span className="text-xs text-text-3">
-              Drag bottom → top handle to connect · Backspace to remove selected edge
+            <span className="font-semibold tracking-[-0.01em] text-lg leading-none inline-flex items-center">
+              PAODO WS agents
             </span>
-          </>
+          </div>
         }
         right={
-          <button className="btn btn-primary btn-sm" onClick={handleSave} disabled={!isDirty}>
-            {saved ? "Saved ✓" : "Save"}
-          </button>
+          <div className="flex items-center gap-2.5">
+            {isDirty && <span className="text-xs text-text-3 italic">Unsaved changes</span>}
+            <button className="btn btn-primary btn-sm" onClick={handleSave} disabled={!isDirty}>
+              {saved ? "Saved ✓" : "Save"}
+            </button>
+          </div>
         }
       />
 

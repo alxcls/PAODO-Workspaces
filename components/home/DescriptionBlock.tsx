@@ -50,7 +50,7 @@ export default function DescriptionBlock({
 
   return (
     <div
-      className="relative border border-border rounded-[--radius-card] bg-bg-tint p-[16px_18px] min-h-[110px] cursor-text transition-[border-color,background] duration-[140ms] hover:border-primary-2 hover:bg-bg group"
+      className="relative border border-border rounded-card bg-bg-tint p-[16px_18px] min-h-[110px] cursor-text transition-[border-color,background] duration-[140ms] hover:border-primary-2 hover:bg-bg group"
       onClick={() => setEditing(true)}
     >
       {value ? (
@@ -58,7 +58,7 @@ export default function DescriptionBlock({
       ) : (
         <p className="m-0 text-text-3">Add a description for this workspace…</p>
       )}
-      <span className="absolute right-3 bottom-2 text-[11px] text-text-3 opacity-0 group-hover:opacity-100 transition-opacity duration-[140ms]">
+      <span className="absolute right-3 bottom-2 text-2xs text-text-3 opacity-0 group-hover:opacity-100 transition-opacity duration-[140ms]">
         Click to edit
       </span>
     </div>

@@ -29,16 +29,16 @@ The platform's value is that non-technical users can supervise and monitor a ser
 ## User stories
 
 **Story 1 — Non-technical user reads an agent report**  
-As a business user who asked the agent to summarize a dataset, when I click on `report.md` in the file tree, I immediately see a formatted document with headings, bold text, and bullet points — not raw markdown symbols.
+As a citizen developer who asked the agent to summarize a dataset, when I click on `report.md` in the file tree, I immediately see a formatted document with headings, bold text, and bullet points — not raw markdown symbols.
 
 **Story 2 — Non-technical user inspects agent data output**  
-As a user reviewing an agent's JSON export, when I click on `results.json`, I see an interactive graph visualization of the data structure rather than a wall of raw JSON text.
+As a citizen developer reviewing an agent's JSON export, when I click on `results.json`, I see an interactive graph visualization of the data structure rather than a wall of raw JSON text.
 
 **Story 3 — Non-technical user views an agent-generated web page**  
-As a user who asked the agent to build an HTML dashboard, when I click on `index.html`, I see the rendered page inside the viewer rather than HTML source code.
+As a citizen developer who asked the agent to build an HTML dashboard, when I click on `index.html`, I see the rendered page inside the viewer rather than HTML source code.
 
 **Story 4 — Technical user inspects raw source**  
-As a developer reviewing what the agent wrote, I can switch any previewed file back to the code editor in one click, edit it, and save — the preview mode does not block editing.
+As a citizen developer reviewing what the agent wrote, I can switch any previewed file back to the code editor in one click, edit it, and save — the preview mode does not block editing.
 
 ---
 

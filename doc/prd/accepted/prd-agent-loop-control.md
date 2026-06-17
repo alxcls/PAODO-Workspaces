@@ -23,11 +23,11 @@ Give citizen developer a simple, per-workspace control over how much work an age
 
 ## User stories
 
-- As a user, I want to cap how many steps an agent can take so a confused agent cannot burn unbounded credits.
-- As a user, I want each workspace to have its own cap so I can give more room to complex workspaces and keep simple ones tight.
-- As a user interacting via chat, I want to see what the agent accomplished when it hits the limit, not just a bare error message.
-- As an API caller, I want to receive a populated response even when the agent hits the limit, so I can use whatever work was done.
-- As an agent calling another agent, I want to receive a partial result when the target hits its iteration limit so I can decide whether to retry or proceed with incomplete data.
+- As a citizen developer, I want to cap how many steps an agent can take so a confused agent cannot burn unbounded credits.
+- As a citizen developer, I want each workspace to have its own cap so I can give more room to complex workspaces and keep simple ones tight.
+- As a citizen developer interacting via chat, I want to see what the agent accomplished when it hits the limit, not just a bare error message.
+- As an citizen developer, when I call the external API I want to receive a populated response even when the agent hits the limit, so I can use whatever work was done.
+- As an citizen developer calling another agent, I want to receive a partial result when the target hits its iteration limit so I can decide whether to retry or proceed with incomplete data.
 
 ## Requirements
 

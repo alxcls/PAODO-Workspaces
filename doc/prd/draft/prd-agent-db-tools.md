@@ -23,9 +23,9 @@ Agents have no way to inspect or query external databases. Users who want the ag
 
 ## User stories
 
-> As a developer, I want the agent to query my project's database directly so it can answer questions about live data without me exporting CSV files.
+> As a citizen developer, I want the agent to query my project's database directly so it can answer questions about live data without me exporting CSV files.
 
-> As a platform admin, I want to wire a database connection to a workspace from the network view the same way I connect two workspaces.
+> As a citizen developer, I want to wire a database connection to a workspace from the network view the same way I connect two workspaces.
 
 ## Requirements
 

@@ -31,19 +31,19 @@ When the agent writes, edits, or deletes files, the browser UI has no way to kno
 ## User stories
 
 **Story 1 — User monitors agent file output in real time**  
-As a user watching the agent generate files, I see new entries appear in the file tree as the agent creates them — I do not need to refresh the page.
+As a citizen developer watching the agent generate files, I see new entries appear in the file tree as the agent creates them — I do not need to refresh the page.
 
 **Story 2 — User reads a file the agent is actively updating**  
-As a user with `report.md` open, when the agent appends a new section, the viewer silently reloads and shows the updated content within seconds.
+As a citizen developer with `report.md` open, when the agent appends a new section, the viewer silently reloads and shows the updated content within seconds.
 
 **Story 3 — User edits while the agent writes**  
-As a user with unsaved local edits, incoming agent file changes do not overwrite my work — the reload is suppressed until I save or discard.
+As a citizen developer with unsaved local edits, incoming agent file changes do not overwrite my work — the reload is suppressed until I save or discard.
 
 **Story 4 — User views an HTML dashboard the agent refreshed**  
-As a user watching an agent-generated HTML page in preview mode, when the agent updates a linked asset, the preview refreshes without any user action.
+As a citizen developer watching an agent-generated HTML page in preview mode, when the agent updates a linked asset, the preview refreshes without any user action.
 
 **Story 5 — Agent deletes the open file**  
-As a user with a file open in the viewer, if the agent deletes it, the viewer closes automatically rather than showing a stale or errored state.
+As a citizen developer with a file open in the viewer, if the agent deletes it, the viewer closes automatically rather than showing a stale or errored state.
 
 ---
 

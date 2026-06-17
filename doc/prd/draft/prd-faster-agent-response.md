@@ -20,7 +20,7 @@ Make the agent's final response start appearing immediately after the last tool 
 
 ## User stories
 
-- As a user, when the agent finishes a task I want to see its response start appearing right away, not after a blank pause.
+- As a citizen developer, when the agent finishes a task I want to see its response start appearing right away, not after a blank pause.
 
 ## Requirements
 

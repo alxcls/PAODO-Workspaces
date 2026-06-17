@@ -23,11 +23,11 @@ Platform metadata — workspace registry, API keys, and the agent network graph 
 
 ## User stories
 
-> As a platform operator, I want two admins to be able to create workspaces at the same time without one overwriting the other's changes.
+> As a citizen developer, I want two admins to be able to create workspaces at the same time without one overwriting the other's changes.
 
-> As a self-hoster running multiple server instances behind a load balancer, I want all instances to share a consistent view of workspaces and API keys.
+> As a citizen developer running multiple server instances behind a load balancer, I want all instances to share a consistent view of workspaces and API keys.
 
-> As a self-hoster, I want to back up all platform state with a single file copy.
+> As a citizen developer, I want to back up all platform state with a single file copy.
 
 ## Requirements
 

@@ -23,8 +23,8 @@ Every time the agent takes a step, it resends its full set of instructions to th
 
 ## User stories
 
-- As a user, I want the agent to feel snappier on the second and subsequent steps of a task.
-- As an operator, I want to pay less per agent run without touching any business logic.
+- As a citizen developer, I want the agent to feel snappier on the second and subsequent steps of a task.
+- As an citizen developer, I want to pay less per agent run without touching any business logic.
 
 ## Requirements
 

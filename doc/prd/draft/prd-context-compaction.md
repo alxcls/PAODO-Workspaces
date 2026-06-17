@@ -24,10 +24,10 @@ Long-running or active sessions accumulate conversation turns until the model's 
 
 ## User stories
 
-- As a developer using a workspace, I want long debugging or refactor sessions to keep working after hundreds of turns, so the agent doesn't lose context.
-- As a user, I want the system to automatically reduce the size of older history when the token budget is exceeded so the agent continues functioning without manual intervention.
-- As a user, I want to inspect a compacted summary for transparency so I can verify nothing important was lost.
-- As an operator, I want compaction to persist lightweight summaries so restarts don't lose the distilled memory needed for future sessions.
+- As a citizen developer using a workspace, I want long debugging or refactor sessions to keep working after hundreds of turns, so the agent doesn't lose context.
+- As a citizen developer, I want the system to automatically reduce the size of older history when the token budget is exceeded so the agent continues functioning without manual intervention.
+- As a citizen developer, I want to inspect a compacted summary for transparency so I can verify nothing important was lost.
+- As an citizen developer, I want compaction to persist lightweight summaries so restarts don't lose the distilled memory needed for future sessions.
 
 ## Requirements
 

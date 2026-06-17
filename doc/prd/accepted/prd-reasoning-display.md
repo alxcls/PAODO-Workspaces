@@ -26,8 +26,8 @@ Both providers (OpenAI and Anthropic) expose native reasoning APIs but through d
 
 ## User stories
 
-- As a user, I want to see what the agent was thinking before each tool call so I can understand and trust its decisions.
-- As an operator, I want to control reasoning cost without changing application logic.
+- As a citizen developer, I want to see what the agent was thinking before each tool call so I can understand and trust its decisions.
+- As an citizen developer, I want to control reasoning cost without changing application logic.
 
 ## Requirements
 

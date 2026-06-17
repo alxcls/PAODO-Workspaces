@@ -26,7 +26,7 @@ This made it impossible to build interactive HTML tools that read or write data 
 
 ## User stories
 
-- As an agent, I can start an HTTP server on port 8080 in my workspace and write an HTML file that calls it — the HTML preview will be able to fetch data from that server without any extra setup.
+- As a WS agent, I can start an HTTP server on port 8080 in my workspace and write an HTML file that calls it — the HTML preview will be able to fetch data from that server without any extra setup.
 - As a user, I can preview a dashboard or form built by the agent and see it interact with live data from inside the workspace container.
 
 ## Requirements

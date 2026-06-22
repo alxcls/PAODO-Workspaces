@@ -1,6 +1,6 @@
 # PRD — Monitoring Dashboard
 
-**Status:** Accepted  
+**Status:** Shipped  
 **Author:** @alxcls  
 **Related:** [VISION.md](../VISION.md), [token-counter.md](../draft/token-counter.md), [prd-api-access.md](prd-api-access.md), [prd-agent-network.md](prd-agent-network.md)
 

@@ -1,6 +1,6 @@
 # PRD — Context Compaction
 
-**Status:** Implemented  
+**Status:** Shipped  
 **Author:** @alxcls  
 **Related:** [prd-agent-toolset.md](prd-agent-toolset.md), VISION.md
 

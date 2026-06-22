@@ -1,6 +1,6 @@
 # PRD — Prompt Caching
 
-**Status:** Accepted (shipped)
+**Status:** Shipped  
 **Author:** alxcls
 **Related:** [VISION.md](../VISION.md)
 

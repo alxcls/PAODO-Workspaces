@@ -1,6 +1,6 @@
 # PRD — Live Workspace File & Folder Updates
 
-**Status:** Accepted  
+**Status:** Shipped  
 **Author:** @alxcls  
 **Related:** [VISION.md](../VISION.md), [prd-file-visualization.md](prd-file-visualization.md)
 

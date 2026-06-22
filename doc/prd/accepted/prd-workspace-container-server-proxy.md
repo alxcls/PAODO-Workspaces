@@ -1,6 +1,6 @@
 # PRD — Workspace Container Server Proxy
 
-**Status:** Accepted (implemented)
+**Status:** Shipped  
 **Author:** alxcls
 
 ---

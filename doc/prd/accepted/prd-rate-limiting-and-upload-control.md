@@ -1,8 +1,8 @@
-# PRD: Rate limiting and upload control
+# PRD — Rate limiting and upload control
 
-Status: Draft
-Date: 2026-05-25
-Author: automated note
+**Status:** Shipped  
+**Author:** @alxcls  
+**Related:** [prd-api-access.md](prd-api-access.md), [prd-workspace-isolation.md](prd-workspace-isolation.md)
 
 ## Overview
 

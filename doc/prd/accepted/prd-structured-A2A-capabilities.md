@@ -1,8 +1,8 @@
 # PRD — Structured A2A Capabilities
 
-**Status:** Draft  
+**Status:** Shipped  
 **Author:** @alxcls  
-**Related:** [prd-agent-network.md](../accepted/prd-agent-network.md), [prd-shared-drives.md](prd-shared-drives.md)
+**Related:** [prd-agent-network.md](prd-agent-network.md), [prd-shared-drives.md](../draft/prd-shared-drives.md)
 
 ---
 

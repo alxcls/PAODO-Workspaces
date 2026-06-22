@@ -13,7 +13,7 @@ const schema = z.object({
   level: z
     .enum(["light", "medium", "hard"])
     .describe(
-      "light = drop bulky re-derivable tool output (file reads, searches, command output), keep everything else (cheapest, use between units of work). medium = summarize older history, keep recent turns verbatim (when light isn't enough). hard = replace the whole conversation with a brief summary, a clean slate (use at a clean boundary between independent units)."
+      "Levels in increasing aggressiveness. light = strip bulky re-derivable tool output (file reads, searches, command output) in place; keeps all reasoning and decisions — lossless and cheapest, the default between units of work. medium = summarize the older part of the conversation but keep the last few turns verbatim — use when the discussion itself (not just tool output) has grown large but you still need recent context. hard = replace the entire conversation with one short summary — a clean slate, for a clear boundary between independent units where nothing earlier is needed."
     ),
   next_step: z
     .string()
@@ -24,12 +24,7 @@ const schema = z.object({
 
 export class CompactContextTool extends StructuredTool<typeof schema> {
   name = "compact_context";
-  description = `Compact your own conversation to free context during a long multi-step job, then keep working. Use it between independent units of work so earlier bulky tool output does not pile up.
-Pick a level:
-- light: drop bulky re-derivable tool output (file reads, searches, command output), keep everything else — cheapest.
-- medium: summarize older history, keep recent turns verbatim — when light isn't enough.
-- hard: replace the whole conversation with a brief summary, a clean slate — at a clean boundary between independent units.
-Always pass next_step: the next concrete task, guaranteed to survive even a hard compaction.`;
+  description = `Compact your own conversation to free context during a long multi-step job, then keep working — so earlier bulky output and stale discussion don't pile up. Choose light / medium / hard via the \`level\` argument (see its description for when to use each). Always pass next_step.`;
   schema = schema;
 
   protected async _call({ level, next_step }: z.infer<typeof schema>): Promise<string> {

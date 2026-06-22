@@ -10,6 +10,7 @@ import { FileReadTool } from "./tools/fileRead";
 import { FileEditTool } from "./tools/fileEdit";
 import { FileWriteTool } from "./tools/fileWrite";
 import { TodoWriteTool } from "./tools/todoWrite";
+import { CompactContextTool } from "./tools/compactContext";
 import { WebFetchTool } from "./tools/webFetch";
 import { GlobTool } from "./tools/glob";
 import { ListDirectoryTool } from "./tools/listDirectory";
@@ -72,6 +73,7 @@ export function buildTools(
     new FileEditTool(runner),
     new FileWriteTool(runner),
     new TodoWriteTool(workspaceId),
+    new CompactContextTool(),
     new WebFetchTool(),
     new GlobTool(runner),
     new ListDirectoryTool(runner),

@@ -7,6 +7,7 @@ import { HumanMessage, ToolMessage, AIMessage } from "@langchain/core/messages";
 import type { AIMessageChunk, BaseMessage } from "@langchain/core/messages";
 import type { Logger } from "pino";
 import { buildTools, loadAgentConfig } from "./buildTools";
+import { applyCompaction, type CompactLevel } from "./compact";
 import type { AgentConfig } from "./interfaces";
 import { defaultContainerManager } from "../infra/docker/containerManager";
 import type { IContainerManager, IWorkspaceStore } from "../infra/interfaces";
@@ -349,6 +350,18 @@ export async function* runAgent(
         ...usageBase,
         toolCalls: settled.map(({ tc, resultStr }) => ({ name: tc.name, args: tc.args, output: resultStr, status: classifyToolStatus(resultStr) })),
       };
+
+      // Agent-chosen context compaction. The compact_context tool is a signal only — it can't
+      // reach `messages`, so the surgery happens here, AFTER this turn's assistant+tool_result
+      // pair is committed above (so it's never orphaned: light/medium keep it, hard wipes both
+      // together). model is tool-less, so the summarize call can't emit tool calls.
+      const compactCall = settled.find(({ tc }) => tc.name === "compact_context");
+      if (compactCall) {
+        const { level, next_step } = compactCall.tc.args as { level?: CompactLevel; next_step?: string };
+        if (level && next_step) {
+          await applyCompaction(model, messages, level, next_step);
+        }
+      }
     }
   } catch (err) {
     // A thrown error (e.g. the model stream aborting mid-turn) lands here before any

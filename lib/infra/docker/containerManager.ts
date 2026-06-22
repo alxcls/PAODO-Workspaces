@@ -8,6 +8,7 @@
 // Resource limits:  CONTAINER_MEMORY / CONTAINER_CPUS env vars (defaults: 1g / 1.0)
 import { rm } from "fs/promises";
 import { spawn } from "child_process";
+import { randomUUID } from "crypto";
 import { getFreePort, cachePort, getCachedPort, invalidatePort, queryDockerPort } from "./portAllocator";
 import path from "path";
 import { createLogger } from "../logger";
@@ -126,6 +127,10 @@ export class ContainerManager implements IContainerManager {
     const serverPort = await getFreePort();
     const r = await this.docker.cmd(
       "run", "-d",
+      // --init runs tini as PID 1 so it reaps orphaned/killed processes. Without it, the keep-alive
+      // `sleep infinity` is PID 1 and never wait()s on reparented children, so every command we
+      // group-kill (execStreaming) would linger as a zombie and slowly exhaust the PID table.
+      "--init",
       "--name", this.containerName(workspaceId),
       "--network", this.networkName(workspaceId),
       `--memory=${CONTAINER_MEMORY}`,
@@ -197,16 +202,53 @@ export class ContainerManager implements IContainerManager {
     workspaceId: string,
     workspaceDir: string,
     cmdArgs: string[],
-    opts: { onStdout: (chunk: string) => void; onStderr: (chunk: string) => void },
+    opts: { onStdout: (chunk: string) => void; onStderr: (chunk: string) => void; signal?: AbortSignal },
   ): Promise<{ code: number | null }> {
     await this.ensure(workspaceId, workspaceDir);
+    const containerName = this.containerName(workspaceId);
     return new Promise((resolve) => {
-      const proc = spawn("docker", ["exec", "-i", "-w", "/workspace", this.containerName(workspaceId), ...cmdArgs]);
+      // Run the command in its OWN session via setsid (so it becomes a process-group leader) and
+      // record that leader PID. Killing the negative PID later (`kill -KILL -<pid>`) takes down the
+      // command AND every child it spawned — the only reliable way to stop a runaway from outside
+      // the container, since killing the host-side `docker exec` client just orphans it onto PID 1.
+      // cmdArgs is a runnable argv (e.g. ["/bin/bash","-c",command]); `exec "$0" "$@"` re-execs it
+      // in place, so the recorded PID is exactly the process that runs the work.
+      const pidFile = `/tmp/paodo-exec-${randomUUID()}.pid`;
+      const launcher = `echo $$ > ${pidFile}; exec "$0" "$@"`;
+      // setsid --wait: create the new session (so the work is a killable process-group leader) but
+      // BLOCK until it finishes and propagate its exit code. Without --wait, setsid forks and the
+      // parent exits immediately, so the docker exec client closes at once — the command looks
+      // instantly "done" and its output never streams.
+      const proc = spawn("docker", [
+        "exec", "-i", "-w", "/workspace", containerName,
+        "setsid", "--wait", "/bin/bash", "-c", launcher, ...cmdArgs,
+      ]);
       proc.stdin.end();
       proc.stdout.on("data", (chunk: Buffer) => opts.onStdout(chunk.toString()));
       proc.stderr.on("data", (chunk: Buffer) => opts.onStderr(chunk.toString()));
-      proc.on("close", (code) => resolve({ code }));
-      proc.on("error", () => resolve({ code: 1 }));
+
+      let killed = false;
+      const kill = () => {
+        if (killed) return;
+        killed = true;
+        // Fire-and-forget: kill the in-container process group, then drop the host-side client.
+        this.docker
+          .exec(containerName, ["/bin/bash", "-c", `kill -KILL -"$(cat ${pidFile} 2>/dev/null)" 2>/dev/null; rm -f ${pidFile}`])
+          .catch(() => {});
+        proc.kill("SIGKILL");
+      };
+
+      if (opts.signal) {
+        if (opts.signal.aborted) kill();
+        else opts.signal.addEventListener("abort", kill, { once: true });
+      }
+
+      const done = (code: number | null) => {
+        opts.signal?.removeEventListener("abort", kill);
+        resolve({ code });
+      };
+      proc.on("close", (code) => done(code));
+      proc.on("error", () => done(1));
     });
   }
 

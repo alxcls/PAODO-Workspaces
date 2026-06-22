@@ -104,6 +104,15 @@ function markToolDone(messages: Message[], name: string, result?: string): Messa
   return next;
 }
 
+// Flips every still-open tool bubble to done. Used when a turn ends without a tool_result for
+// each one — e.g. the user hit escape mid-command, so the client aborts the stream and never
+// receives the matching tool_result — so no tool spinner is left running forever. Idempotent:
+// returns the same array when nothing is open.
+export function markAllToolsDone(messages: Message[]): Message[] {
+  if (!messages.some((m) => m.role === "tool_start" && !m.toolDone)) return messages;
+  return messages.map((m) => (m.role === "tool_start" && !m.toolDone ? { ...m, toolDone: true } : m));
+}
+
 // Inserts the usage line just before the last completed assistant message (no-op if there
 // isn't one). Caller only invokes this when there are tokens to report.
 function insertUsage(messages: Message[], inputTokens: number, outputTokens: number): Message[] {

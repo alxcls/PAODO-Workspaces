@@ -7,6 +7,7 @@ import { HumanMessage, ToolMessage, AIMessage } from "@langchain/core/messages";
 import type { AIMessageChunk, BaseMessage } from "@langchain/core/messages";
 import type { Logger } from "pino";
 import { buildTools, loadAgentConfig } from "./buildTools";
+import { applyCompaction, type CompactLevel } from "./compact";
 import type { AgentConfig } from "./interfaces";
 import { defaultContainerManager } from "../infra/docker/containerManager";
 import type { IContainerManager, IWorkspaceStore } from "../infra/interfaces";
@@ -49,7 +50,7 @@ export type RunAgentOptions = {
 // don't have to know about the test-only override seams.
 export type AgentRuntimeDeps = Pick<RunAgentOptions, "store" | "containers">;
 
-type AnyTool = { invoke: (args: Record<string, unknown>) => Promise<unknown> };
+type AnyTool = { invoke: (args: Record<string, unknown>, config?: { signal?: AbortSignal }) => Promise<unknown> };
 type ResolvedToolCall = { id: string; name: string; args: Record<string, unknown> };
 type PartialTC = { id: string; name: string; args: string };
 
@@ -75,8 +76,10 @@ function contentToText(content: unknown): string {
 
 const MAX_RESULT_CHARS = 10_000;
 
-async function invokeTool(tool: AnyTool, args: Record<string, unknown>): Promise<string> {
-  const result = await tool.invoke(args);
+async function invokeTool(tool: AnyTool, args: Record<string, unknown>, signal?: AbortSignal): Promise<string> {
+  // Thread the abort signal into the tool so a user escape reaches long-running work (e.g.
+  // execute_command's in-container process). Tools that ignore the config are unaffected.
+  const result = await tool.invoke(args, { signal });
   const str = String(result);
   return str.length > MAX_RESULT_CHARS
     ? str.slice(0, MAX_RESULT_CHARS) + `\n\n[output truncated — ${str.length} chars total, showing first ${MAX_RESULT_CHARS}]`
@@ -318,7 +321,7 @@ export async function* runAgent(
           const tool = typedToolMap[tc.name];
           const toolStart = Date.now();
           const resultStr = tool
-            ? await invokeTool(tool, tc.args).catch((err) => `Error: ${String(err)}`)
+            ? await invokeTool(tool, tc.args, signal).catch((err) => `Error: ${String(err)}`)
             : `Error: unknown tool "${tc.name}"`;
           wlog.debug({ name: tc.name, toolMs: Date.now() - toolStart }, "tool timing");
           return { tc, resultStr };
@@ -349,6 +352,27 @@ export async function* runAgent(
         ...usageBase,
         toolCalls: settled.map(({ tc, resultStr }) => ({ name: tc.name, args: tc.args, output: resultStr, status: classifyToolStatus(resultStr) })),
       };
+
+      // User pressed escape: the tools above have already been killed and their results committed
+      // (atomic block, so history stays valid for a later resume). Stop here instead of looping
+      // back into another — immediately aborted — model stream. Skip compaction on the way out.
+      if (signal?.aborted) {
+        wlog.info("agent run aborted by user");
+        yield { type: "done" };
+        break;
+      }
+
+      // Agent-chosen context compaction. The compact_context tool is a signal only — it can't
+      // reach `messages`, so the surgery happens here, AFTER this turn's assistant+tool_result
+      // pair is committed above (so it's never orphaned: light/medium keep it, hard wipes both
+      // together). model is tool-less, so the summarize call can't emit tool calls.
+      const compactCall = settled.find(({ tc }) => tc.name === "compact_context");
+      if (compactCall) {
+        const { level, next_step } = compactCall.tc.args as { level?: CompactLevel; next_step?: string };
+        if (level && next_step) {
+          await applyCompaction(model, messages, level, next_step);
+        }
+      }
     }
   } catch (err) {
     // A thrown error (e.g. the model stream aborting mid-turn) lands here before any

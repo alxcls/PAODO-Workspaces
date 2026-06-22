@@ -31,7 +31,7 @@ export interface IContainerManager {
     workspaceId: string,
     workspaceDir: string,
     cmdArgs: string[],
-    opts: { onStdout: (chunk: string) => void; onStderr: (chunk: string) => void },
+    opts: { onStdout: (chunk: string) => void; onStderr: (chunk: string) => void; signal?: AbortSignal },
   ): Promise<{ code: number | null }>;
   execAsRoot(workspaceId: string, workspaceDir: string, cmdArgs: string[]): Promise<DockerResult>;
   stop(workspaceId: string): Promise<void>;

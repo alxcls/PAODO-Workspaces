@@ -7,8 +7,8 @@ A self-hosted platform for running small, grounded AI services on infrastructure
 ## What it does
 
 - **Workspaces**: isolated Docker containers, each with its own agent and `AGENTS.md` instruction file, all files and shell operations run inside the container
-- **ReAct agent loop**: streams tool calls in real time over SSE; final response delivered as a single event once the loop completes
-- **Full tool set**: file read/edit/write, shell execution, glob search, directory listing, web fetch, todo list
+- **ReAct agent loop**: streams tool calls in real time over SSE; final response delivered as a single event once the loop completes; interruptible — pressing escape kills the running command and stops the loop cleanly
+- **Full tool set**: file read/edit/write, shell execution, glob search, directory listing, web fetch, todo list, context compaction
 - **File browser**: view, edit, upload, and download files from the UI with syntax highlighting and preview for .html, .md and .json
 - **API access**: every workspace exposes an HTTP endpoint with a per-workspace API key to trigger the workspace agent exernally
 - **Live console**: shell output and file-change notifications stream over WebSocket in real time
@@ -80,12 +80,13 @@ Browser / API client
   └──────────────────────────────────┘
 
   Tools that run outside the container
-  ├── todo_write   (in-memory todo list)
-  ├── http_get     (fetch a URL)
+  ├── todo_write       (in-memory todo list)
+  ├── http_get         (fetch a URL)
+  ├── compact_context  (summarize + trim history)
   └── call_agent / list_agents (agent network, graph-gated)
 ```
 
-**Agent loop**: each turn the model receives a system prompt (built from the standard system prompt and workspace's `AGENTS.md`), the conversation history, and tool results, then emits either a tool call or a final answer. Tool calls are executed, their output appended to history, and the loop continues until the model stops calling tools. Events (`tool_start`, `tool_result`, `token`, `done`) are streamed over SSE so the UI updates word by word.
+**Agent loop**: each turn the model receives a system prompt (built from the standard system prompt and workspace's `AGENTS.md`), the conversation history, and tool results, then emits either a tool call or a final answer. Tool calls are executed, their output appended to history, and the loop continues until the model stops calling tools. Events (`tool_start`, `tool_result`, `token`, `done`) are streamed over SSE so the UI updates word by word. A run is interruptible: pressing escape (or aborting the SSE request) kills the in-flight command via an in-container process-group kill and stops the loop at the next safe point, leaving conversation history consistent. On long, multi-unit jobs the agent can also call `compact_context` to summarize and trim old turns, reclaiming context before it hits the model's limit.
 
 **Sandboxing**: all sandboxed tool calls — file reads, writes, edits, directory listings, glob searches, package installs, and shell commands — are executed inside a per-workspace Docker container (`ws_<id>`). The container is started when a session begins, stopped after an idle timeout, and restarted automatically on the next tool call. Only that workspace's directory is mounted into the container (`/workspace`), enforcing isolation at the container level. Shell commands run as a restricted non-root user (`agent`, UID 999) with dropped capabilities, limiting what the agent can do even within the container.
 
@@ -158,7 +159,7 @@ doc/                         Architecture docs, PRDs, ADRs
 
 ## Known limitations
 
-- **No context compaction**: conversation history grows unbounded per session; there is no manual compact or auto-compact to summarize and trim old messages, so long sessions will eventually hit the model's context limit.
+- **No automatic context compaction**: the agent can compact its own context on demand with the `compact_context` tool, but compaction is never triggered automatically by context size — a session in which the agent never compacts will still grow until it hits the model's context limit.
 
 - **Conversation history not persisted**: resets on server restart. Task lists (`todo_write`) are also in-memory only. Workspace files (scripts, data, `AGENTS.md`) are the intended long-term memory.
 
@@ -175,7 +176,7 @@ doc/                         Architecture docs, PRDs, ADRs
 ## Roadmap
 
 - Shared file drive mountable across workspaces
-- Context compaction
+- Automatic (size-triggered) context compaction
 - Budget monitoring
 - Scheduled agent triggers
 - Workspace git versioning

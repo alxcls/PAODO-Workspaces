@@ -19,9 +19,9 @@
     "test:e2e:all": "playwright test"
   },
   "dependencies": {
-    "@langchain/anthropic": "^1.4.1",
-    "@langchain/core": "^1.1.45",
-    "@langchain/openai": "^1.4.5",
+    "@langchain/anthropic": "^1.5.0",
+    "@langchain/core": "^1.2.0",
+    "@langchain/openai": "^1.5.1",
     "@xyflow/react": "^12.11.0",
     "ajv": "^8.20.0",
     "chokidar": "3.5.3",
@@ -41,7 +41,7 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@playwright/test": "^1.60.0",
+    "@playwright/test": "^1.61.0",
     "@tailwindcss/postcss": "^4.3.1",
     "@types/node": "^20",
     "@types/react": "^19.2.17",

@@ -5,3 +5,13 @@ updates:
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 10
+    # Bundle related bumps into a few PRs instead of one-per-package, so review
+    # stays manageable. Major version bumps are deliberately left ungrouped
+    # (each gets its own PR) because they can contain breaking changes.
+    groups:
+      production:
+        dependency-type: "production"
+        update-types: ["minor", "patch"]
+      development:
+        dependency-type: "development"
+        update-types: ["minor", "patch"]

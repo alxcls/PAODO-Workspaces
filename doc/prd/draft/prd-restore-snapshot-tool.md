@@ -1,10 +1,8 @@
 # PRD — Restore Snapshot Tool
 
-**Status:** Deferred — not needed for v1  
+**Status:** Draft  
 **Author:** alxcls  
 **Related:** [prd-workspace-git-versioning.md](prd-workspace-git-versioning.md), [prd-goal-anchored-loop.md](prd-goal-anchored-loop.md), [agent-loop.md](../../agent-loop.md)
-
-> **Deferred.** The agent fixes forward (it can rewrite/delete its own changes) and the human has UI rollback, so an agent-facing restore tool isn't needed for v1. Revisit only if transcripts show the agent stuck in a bad state it can't cleanly edit out of. Versioning + human rollback live in [prd-workspace-git-versioning.md](prd-workspace-git-versioning.md).
 
 ---
 

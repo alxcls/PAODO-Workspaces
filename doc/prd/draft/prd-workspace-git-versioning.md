@@ -32,8 +32,7 @@ Agent file edits are irreversible. There is no way to see what changed during a 
 ### Must have
 
 - `createWorkspace` runs `git init` + initial commit
-- At the start of each `runAgent` call: create a snapshot commit (`pre-run: <user prompt truncated>`)
-- After each iteration's `Promise.all` settles: one `git add <touched files> && git commit` with the tool names + files as the message — no per-tool-call commits (avoids index lock contention)
+- **One milestone per run, not per turn.** At the start of each `runAgent` call: a baseline snapshot commit (`pre-run: <user prompt truncated>`). At the end of the run: a single result commit (`run <n>: <summary>`) capturing everything the run changed. No per-iteration or per-tool-call commits — the agent no longer restores mid-run (see [prd-restore-snapshot-tool.md](prd-restore-snapshot-tool.md), deferred), so run-level granularity is enough and keeps history clean. The baseline→result diff is exactly what the critic consumes.
 - `GET /api/workspaces/:id/history` — returns `git log` as JSON (sha, message, timestamp)
 - `GET /api/workspaces/:id/diff?from=<sha>&to=<sha>` — returns unified diff
 - `POST /api/workspaces/:id/restore` body `{ sha }` — hard resets workspace to that commit

@@ -2,8 +2,10 @@ version: 2
 updates:
   - package-ecosystem: "npm"
     directory: "/"
+    # Monthly (not weekly) to keep notification volume low — security updates
+    # arrive via a separate, unthrottled channel and are not delayed by this.
     schedule:
-      interval: "weekly"
+      interval: "monthly"
     open-pull-requests-limit: 10
     # Bundle related bumps into a few PRs instead of one-per-package, so review
     # stays manageable. Major version bumps are deliberately left ungrouped

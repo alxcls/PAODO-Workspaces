@@ -19,6 +19,7 @@ Without these capabilities the agent either reasons from stale or incomplete inf
 - The agent can explore the workspace to orient itself in an unfamiliar project
 - The agent can look up documentation and APIs on the web
 - The agent can maintain a visible task checklist so multi-step plans are transparent to the user in real time
+- The agent can compact its own conversation context mid-task so long, multi-step jobs don't exhaust the model's context window
 - File locking is respected — the agent cannot modify files the user has locked
 
 ## Non-goals
@@ -42,6 +43,8 @@ Without these capabilities the agent either reasons from stale or incomplete inf
 > As a citizen developer, I want the agent to fetch a library's documentation page so it can use the right API without hallucinating method signatures.
 
 > As a citizen developer, I want a visible task list that updates as the agent works through a multi-step plan so I can follow along and spot if it goes off track.
+
+> As a citizen developer, I want the agent to trim its own context on a long, repetitive job so it can finish all the work instead of stalling out when the conversation gets too big for the model.
 
 ## Requirements
 
@@ -75,6 +78,11 @@ Without these capabilities the agent either reasons from stale or incomplete inf
 **Task tracking**
 - The agent can maintain a checklist of pending, in-progress, and completed tasks
 - The checklist is visible to the user in the UI alongside the console
+
+**Context management**
+- The agent can compact its own conversation history mid-run, choosing how aggressively (light / medium / hard)
+- Every compaction carries forward a next-step note so the agent does not lose the thread after trimming
+- Compaction never orphans history: the turn that requested it is committed first, so a later resume always sees a valid conversation
 
 ### Nice to have
 

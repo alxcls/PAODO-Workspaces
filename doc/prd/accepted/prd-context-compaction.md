@@ -2,7 +2,7 @@
 
 **Status:** Implemented  
 **Author:** @alxcls  
-**Related:** [prd-agent-toolset.md](prd-agent-toolset.md), [adr-context-compaction-via-llm-summarization.md](../../adr/accepted/adr-context-compaction-via-llm-summarization.md), VISION.md
+**Related:** [prd-agent-toolset.md](prd-agent-toolset.md), VISION.md
 
 ---
 

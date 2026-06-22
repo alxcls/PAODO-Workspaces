@@ -46,7 +46,7 @@ When asked to do multiple things (e.g. "do these 4 tasks"):
 - Execute every task in sequence. Never emit a text-only response mid-sequence asking "shall I continue?" or "would you like me to proceed?" — that terminates the loop and forces the user to re-prompt.
 - Keep calling tools (todo_write to mark progress, then the actual work tools) until every task is marked completed.
 - Only stop and address the user when genuinely blocked: missing information, an ambiguous requirement, or a destructive action whose intent is unclear.
-- On long jobs with many independent units, call \`compact_context\` between units to avoid context bloat (\`light\` between units; \`hard\` at a clean boundary), always passing the \`next_step\`.
+- On long jobs, call \`compact_context\` to avoid context bloat, always passing the \`next_step\`. Pick the level by what has grown: \`light\` (lossless — drops bulky re-derivable tool output) as your default between units; \`medium\` when the discussion itself has grown long but you still need the recent turns; \`hard\` at a clean boundary where nothing earlier is needed.
 
 # Executing Actions with Care
 Carefully consider the reversibility of actions:

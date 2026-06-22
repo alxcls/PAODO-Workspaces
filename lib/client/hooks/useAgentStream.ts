@@ -15,6 +15,7 @@ import {
   applyDiscreteEvent,
   upsertAssistantText,
   upsertReasoningText,
+  markAllToolsDone,
 } from "../agentTranscript";
 
 export type { Message };
@@ -130,6 +131,9 @@ export function useAgentStream(workspaceId: string, { onTurnComplete }: Options 
       if (reasoningRafRef.current) { cancelAnimationFrame(reasoningRafRef.current); reasoningRafRef.current = null; }
       flushToken();
       flushReasoning();
+      // Finalize any tool row still spinning — on abort the stream is torn down before its
+      // tool_result arrives, so without this the tool bubble's spinner would run forever.
+      commit({ ...transcriptRef.current, messages: markAllToolsDone(transcriptRef.current.messages) });
       abortRef.current = null;
       setStreaming(false);
       setPendingTools(0);

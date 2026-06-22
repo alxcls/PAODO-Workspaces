@@ -10,21 +10,42 @@ import {
   applyDiscreteEvent,
   upsertAssistantText,
   upsertReasoningText,
+  markAllToolsDone,
   toolLabel,
 } from "./agentTranscript";
 
 const state = (messages: Message[], totalInput = 0, totalOutput = 0): TranscriptState => ({ messages, totalInput, totalOutput });
 
+describe("markAllToolsDone", () => {
+  // On abort, every still-spinning tool row is switched to done (no spinner left running).
+  it("flips every open tool bubble to done (abort with no tool_result)", () => {
+    const out = markAllToolsDone([
+      { role: "tool_start", toolName: "execute_command", toolDone: false },
+      { role: "tool_start", toolName: "file_read", toolDone: true },
+    ]);
+    expect(out.every((m) => m.role !== "tool_start" || m.toolDone)).toBe(true);
+  });
+
+  // Nothing open → returns the same array so React skips a needless re-render.
+  it("returns the same array reference when nothing is open (idempotent)", () => {
+    const messages: Message[] = [{ role: "tool_start", toolName: "glob", toolDone: true }];
+    expect(markAllToolsDone(messages)).toBe(messages);
+  });
+});
+
 describe("upsertAssistantText", () => {
+  // First token with no open bubble creates a fresh assistant bubble.
   it("appends a new assistant bubble when none is open", () => {
     expect(upsertAssistantText([], "hi")).toEqual([{ role: "assistant", content: "hi" }]);
   });
 
+  // Later tokens update the open bubble in place rather than stacking new ones.
   it("replaces the trailing open assistant bubble", () => {
     const out = upsertAssistantText([{ role: "assistant", content: "he" }], "hello");
     expect(out).toEqual([{ role: "assistant", content: "hello" }]);
   });
 
+  // A new bubble starts after a thinking turn instead of overwriting the closed one.
   it("starts a fresh bubble when the last assistant turn is already thinking", () => {
     const out = upsertAssistantText([{ role: "assistant", content: "old", thinking: true }], "new");
     expect(out).toEqual([
@@ -35,6 +56,7 @@ describe("upsertAssistantText", () => {
 });
 
 describe("upsertReasoningText", () => {
+  // Reasoning tokens behave like assistant ones: create then update in place.
   it("appends then replaces the trailing reasoning bubble", () => {
     const first = upsertReasoningText([], "th");
     expect(first).toEqual([{ role: "reasoning", content: "th" }]);
@@ -43,6 +65,7 @@ describe("upsertReasoningText", () => {
 });
 
 describe("applyDiscreteEvent", () => {
+  // Starting a tool closes the preceding assistant turn and adds a spinning tool row.
   it("tool_start collapses the prior assistant turn and appends a tool bubble", () => {
     const start = state([{ role: "assistant", content: "done reasoning" }]);
     const event: AgentEvent = { type: "tool_start", name: "file_read", args: { file_path: "a.ts" } };
@@ -52,6 +75,7 @@ describe("applyDiscreteEvent", () => {
     ]);
   });
 
+  // With no assistant turn before it, the tool row is simply appended.
   it("tool_start without a prior assistant turn just appends", () => {
     const event: AgentEvent = { type: "tool_start", name: "glob", args: { pattern: "*.ts" } };
     expect(applyDiscreteEvent(emptyTranscript(), event).messages).toEqual([
@@ -59,6 +83,7 @@ describe("applyDiscreteEvent", () => {
     ]);
   });
 
+  // A tool's result flips its matching row from spinning to done.
   it("tool_result flips the matching open tool bubble to done", () => {
     const start = state([{ role: "tool_start", toolName: "file_read", toolDone: false }]);
     const event: AgentEvent = { type: "tool_result", name: "file_read", result: "contents" };
@@ -67,6 +92,7 @@ describe("applyDiscreteEvent", () => {
     ]);
   });
 
+  // Only call_agent keeps its result text in the bubble; other tools just mark done.
   it("tool_result attaches the result only for call_agent", () => {
     const start = state([{ role: "tool_start", toolName: "call_agent", toolDone: false }]);
     const event: AgentEvent = { type: "tool_result", name: "call_agent", result: "sub-answer" };
@@ -75,6 +101,7 @@ describe("applyDiscreteEvent", () => {
     ]);
   });
 
+  // Token usage from each turn adds onto the running input/output totals.
   it("turn_usage accumulates token totals", () => {
     const event: AgentEvent = {
       type: "turn_usage", inputTokens: 10, outputTokens: 4,
@@ -86,6 +113,7 @@ describe("applyDiscreteEvent", () => {
     expect([twice.totalInput, twice.totalOutput]).toEqual([20, 8]);
   });
 
+  // Finishing a turn drops a usage summary line above the last assistant answer.
   it("done inserts a usage line before the last completed assistant turn", () => {
     const start = state([{ role: "assistant", content: "answer" }], 12, 5);
     expect(applyDiscreteEvent(start, { type: "done" }).messages).toEqual([
@@ -94,11 +122,13 @@ describe("applyDiscreteEvent", () => {
     ]);
   });
 
+  // No tokens reported → no usage line is added.
   it("done is a no-op when no tokens were reported", () => {
     const start = state([{ role: "assistant", content: "answer" }]);
     expect(applyDiscreteEvent(start, { type: "done" }).messages).toEqual([{ role: "assistant", content: "answer" }]);
   });
 
+  // Limit-reached and error events each append their own notice bubble.
   it("limit_reached and error append notices", () => {
     expect(applyDiscreteEvent(emptyTranscript(), { type: "limit_reached" }).messages).toEqual([{ role: "limit_notice" }]);
     expect(applyDiscreteEvent(emptyTranscript(), { type: "error", message: "boom" }).messages).toEqual([
@@ -108,6 +138,7 @@ describe("applyDiscreteEvent", () => {
 });
 
 describe("toolLabel", () => {
+  // Known tools get friendly labels; unknown ones fall back to a humanized name.
   it("maps known tools and humanizes unknown ones", () => {
     expect(toolLabel("file_read")).toBe("Reading file");
     expect(toolLabel("some_new_tool")).toBe("some new tool");

@@ -20,9 +20,10 @@ export type ContainerRunner = PrivilegedRunner;
 
 // Per-chunk streaming executor for tools that need live output (e.g. ExecCommandTool).
 // Kept separate from ContainerRunner so non-streaming tools are not forced to implement it.
+// signal aborts the in-container process group (real kill), not just the host-side exec client.
 export type StreamingExecFn = (
   cmd: string[],
-  opts: { onStdout: (chunk: string) => void; onStderr: (chunk: string) => void },
+  opts: { onStdout: (chunk: string) => void; onStderr: (chunk: string) => void; signal?: AbortSignal },
 ) => Promise<{ code: number | null }>;
 
 export type ReasoningEffort = "low" | "medium" | "high";

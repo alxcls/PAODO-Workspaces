@@ -98,7 +98,7 @@ doc/                     Architecture docs, PRDs, ADRs
 
 ## Roadmap
 
-Shared file drive · automatic (size-triggered) compaction · budget monitoring · scheduled triggers · workspace git versioning · database storage and tools.
+Shared file drive · automatic (size-triggered) compaction · budget monitoring · scheduled triggers · database storage and tools.
 
 ## Contributing
 

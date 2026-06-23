@@ -6,6 +6,10 @@ Each *workspace* is an isolated Docker container running its own ReAct loop codi
 
 ![Workspace overview](doc/images/DEMO_OVERVIEW.png)
 
+Architectural representation of the main functionality:
+
+![Architectural representation of the main functionality](doc/images/agent_loop.png)
+
 ## Features
 
 - **Isolated workspaces** — one Docker container per workspace, with its own agent and `AGENTS.md` instructions, running as a restricted non-root user

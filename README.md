@@ -55,15 +55,7 @@ curl -X POST http://localhost:<port>/api/workspaces/<id>/agent \
   -d '{"message": "list all files and summarize what this workspace does"}'
 ```
 
-The response is a Server-Sent Events stream ending in a single `response` event:
-
-```
-data: {"type":"tool_start","name":"list_directory"}
-
-data: {"type":"response","content":"This workspace contains...","iterationLimitReached":false}
-
-data: {"type":"done"}
-```
+The response is a Server-Sent Events stream of progress events (`tool_start`, `tool_end`, …), ending in a single `response` event that carries the final answer, then `done`.
 
 ## How it works
 

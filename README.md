@@ -6,10 +6,6 @@ Each *workspace* is an isolated Docker container running its own ReAct loop codi
 
 ![Workspace overview](doc/images/DEMO_OVERVIEW.png)
 
-Architectural representation of the main functionality:
-
-![Architectural representation of the main functionality](doc/images/agent_loop.png)
-
 ## Features
 
 - **Isolated workspaces** — one Docker container per workspace, with its own agent and `AGENTS.md` instructions, running as a restricted non-root user
@@ -59,6 +55,8 @@ The response is a Server-Sent Events stream of progress events (`tool_start`, `t
 
 ## How it works
 
+![Architectural representation of the main functionality](doc/images/agent_loop.png)
+
 `server.ts` boots a Node.js HTTP server that mounts Next.js plus a WebSocket server on one port, so shell output and file events stream over `/ws` without a separate process. Requests hit Next.js API routes, which run the ReAct loop in [`lib/agent/runner.ts`](lib/agent/runner.ts) and stream events back over SSE.
 
 Every sandboxed tool call — file ops, glob, shell, package installs — runs inside a per-workspace Docker container (`ws_<id>`) as a restricted non-root user, with only that workspace's directory mounted. Containers start on demand and stop after an idle timeout.
@@ -94,7 +92,7 @@ Shared file drive · automatic (size-triggered) compaction · budget monitoring 
 
 ## Contributing
 
-I'm not a professional developer — this is a personal project to learn and to have a power tool for building small CLI agent services. Questions, security issues, and advice on security, architecture, or practices are genuinely welcome.
+This is a personal project to build a power tool for small CLI agent services. Questions, security issues, and advice on security, architecture, or practices are genuinely welcome.
 
 Discord: **alex_24589**
 

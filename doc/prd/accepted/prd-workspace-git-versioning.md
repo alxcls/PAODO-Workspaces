@@ -1,19 +1,19 @@
 # PRD — Workspace Git Versioning
 
-**Status:** Draft  
-**Author:** alxcls  
+**Status:** Accepted
+**Author:** alxcls
 
 ---
 
 ## Problem
 
-Agent file edits are irreversible. There is no way to see what changed during a run, roll back a bad result, or audit history across runs.
+Agent file edits are irreversible. There is no way to roll back a bad result or browse what happened across runs.
 
 ## Goals
 
-- Auto-snapshot each workspace via an embedded git repo
-- Surface per-run diffs in the UI
-- Enable one-click rollback to any previous run
+- Auto-snapshot each workspace
+- Let the user browse run history
+- Let the user roll back to any previous snapshot
 
 ## Non-goals
 
@@ -23,23 +23,25 @@ Agent file edits are irreversible. There is no way to see what changed during a 
 
 ## User stories
 
-- As a user, after an agent run I can see a diff of every file it touched
-- As a user, I can roll back the workspace to the state before any previous run
-- As a user, I can browse the run history as a commit log
+- As a user, I can browse the run history as a list of snapshots
+- As a user, I can roll back the workspace to any previous snapshot in one click
 
 ## Requirements
 
 ### Must have
 
-- `createWorkspace` runs `git init` + initial commit
-- **One milestone per run, not per turn.** At the start of each `runAgent` call: a baseline snapshot commit (`pre-run: <user prompt truncated>`). At the end of the run: a single result commit (`run <n>: <summary>`) capturing everything the run changed. No per-iteration or per-tool-call commits — the agent no longer restores mid-run (see [prd-restore-snapshot-tool.md](prd-restore-snapshot-tool.md), deferred), so run-level granularity is enough and keeps history clean. The baseline→result diff is exactly what the critic consumes.
-- `GET /api/workspaces/:id/history` — returns `git log` as JSON (sha, message, timestamp)
-- `GET /api/workspaces/:id/diff?from=<sha>&to=<sha>` — returns unified diff
-- `POST /api/workspaces/:id/restore` body `{ sha }` — hard resets workspace to that commit
-- Diff viewer panel in the workspace UI, shown after each run completes
+- A new workspace gets an initial snapshot when it is created.
+- Each agent run produces exactly two snapshots: one before the run starts (labelled with the prompt) and one after it ends (labelled `run <n>`). A run that changes nothing produces no end snapshot.
+- The end snapshot is captured on every outcome — normal completion, hitting the iteration limit, user abort, or error.
+- User-driven file changes outside a run — saving, deleting, or uploading files — each produce a snapshot too.
+- Snapshots capture every file in the workspace, including files the user or agent would normally ignore.
+- A snapshot failure never blocks the action that triggered it: the run, save, upload, or workspace creation still succeeds.
+- The workspace UI has a **History** panel listing every snapshot, newest first, marking the one the workspace is currently at.
+- Clicking a snapshot rolls the whole workspace back to that state. Snapshots made after the one restored stay in the list, so the user can jump forward again.
+- Deleting a workspace permanently removes its version history.
 
 ### Nice to have
 
-- Run-level tags in git (e.g. `run/3`) for easy range diffs
-- `.gitignore` pre-seeded in new workspaces (node_modules, __pycache__, etc.)
-- Diff accessible inline in the file tree (per-file history)
+- Show what changed between two snapshots as a diff in the UI.
+- Show each snapshot's label in the History panel, not just its time.
+- Per-file history accessible from the file tree.

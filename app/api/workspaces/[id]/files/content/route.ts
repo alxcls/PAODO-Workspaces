@@ -4,11 +4,12 @@
 export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
-import { getStore, getContainers } from "@/lib/infra/services";
+import { getStore, getContainers, getVersioning } from "@/lib/infra/services";
 import fs from "fs/promises";
 import path from "path";
 import { createLogger } from "@/lib/infra/logger";
 import { assertInsideWorkspace } from "@/lib/infra/workspaceContainment";
+import { snapshotWorkspace } from "@/lib/infra/git/snapshotWorkspace";
 
 type FileClass =
   | { type: "image"; mimeType: string }
@@ -110,6 +111,7 @@ export async function PUT(
         throw writeErr;
       }
     }
+    await snapshotWorkspace(getVersioning(), ws, `saved ${path.basename(resolved)}`);
     return NextResponse.json({ ok: true });
   } catch (err) {
     log.warn({ err, path: body.path }, "PUT file failed");
@@ -142,6 +144,7 @@ export async function DELETE(
     } else {
       await fs.unlink(resolved);
     }
+    await snapshotWorkspace(getVersioning(), ws, `deleted ${path.basename(resolved)}`);
     return NextResponse.json({ ok: true });
   } catch (err) {
     log.warn({ err, filePath }, "DELETE file failed");

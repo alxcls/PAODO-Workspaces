@@ -19,6 +19,28 @@ export interface IWorkspaceStore {
   resetWorkspaceMessages(id: string): Promise<void>;
 }
 
+export interface HistoryEntry {
+  sha: string;
+  message: string;
+  /** ISO-8601 commit timestamp. */
+  timestamp: string;
+  /** True for the snapshot the workspace is currently at (HEAD) — the state shown on disk. */
+  current?: boolean;
+}
+
+// Per-workspace git versioning. Methods take (workspaceId, workspaceDir): the id keys the
+// external git-dir (stable across renames), the dir is the work-tree. See workspaceVersioning.ts.
+export interface IWorkspaceVersioning {
+  initRepo(workspaceId: string, workspaceDir: string): Promise<void>;
+  commitBaseline(workspaceId: string, workspaceDir: string, prompt: string): Promise<{ sha: string }>;
+  commitResult(workspaceId: string, workspaceDir: string, summary: string): Promise<{ sha: string; changed: boolean }>;
+  history(workspaceId: string, workspaceDir: string): Promise<HistoryEntry[]>;
+  diff(workspaceId: string, workspaceDir: string, from: string, to: string): Promise<string>;
+  restore(workspaceId: string, workspaceDir: string, sha: string): Promise<boolean>;
+  /** Permanently remove a workspace's versioning repo. Called when the workspace is deleted. */
+  deleteRepo(workspaceId: string): Promise<void>;
+}
+
 export interface IContainerManager {
   ensure(workspaceId: string, workspaceDir: string): Promise<void>;
   exec(

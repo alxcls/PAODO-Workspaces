@@ -10,7 +10,7 @@ import { buildTools, loadAgentConfig } from "./buildTools";
 import { applyCompaction, type CompactLevel } from "./compact";
 import type { AgentConfig } from "./interfaces";
 import { defaultContainerManager } from "../infra/docker/containerManager";
-import type { IContainerManager, IWorkspaceStore } from "../infra/interfaces";
+import type { IContainerManager, IWorkspaceStore, IWorkspaceVersioning } from "../infra/interfaces";
 import { getWsForWorkspace } from "../infra/realtime/wsHub";
 import { createLogger } from "../infra/logger";
 import type { ToolStatus } from "../workspace/usageStore";
@@ -42,13 +42,19 @@ export type RunAgentOptions = {
   containers?: IContainerManager;
   /** Workspace store — defaults to the production singleton. Inject for testing. */
   store?: IWorkspaceStore;
+  /**
+   * Workspace git versioning. When provided, the run is bracketed by a baseline snapshot (start)
+   * and a single result commit (end). Omitted in tests that don't care about versioning — every
+   * git call is guarded, so an absent service simply skips all snapshotting.
+   */
+  versioning?: IWorkspaceVersioning;
 };
 
 // The injectable infra pair, threaded from the route layer (via getStore()/getContainers())
 // down through agentStream and nested agent-to-agent calls so a single setServices() swap
 // flows end-to-end. Kept separate from RunAgentOptions so callers that only forward infra
 // don't have to know about the test-only override seams.
-export type AgentRuntimeDeps = Pick<RunAgentOptions, "store" | "containers">;
+export type AgentRuntimeDeps = Pick<RunAgentOptions, "store" | "containers" | "versioning">;
 
 type AnyTool = { invoke: (args: Record<string, unknown>, config?: { signal?: AbortSignal }) => Promise<unknown> };
 type ResolvedToolCall = { id: string; name: string; args: Record<string, unknown> };
@@ -231,7 +237,7 @@ export async function* runAgent(
   userInput: string,
   workspaceDir: string,
   workspaceId: string,
-  { signal, maxIterations = 30, notify, warmContainer, loadConfig, buildAgentTools, containers, store }: RunAgentOptions = {},
+  { signal, maxIterations = 30, notify, warmContainer, loadConfig, buildAgentTools, containers, store, versioning }: RunAgentOptions = {},
 ): AsyncGenerator<AgentEvent> {
   const wlog = log.child({ workspaceId });
   const config = (loadConfig ?? loadAgentConfig)();
@@ -248,6 +254,14 @@ export async function* runAgent(
 
   messages.push(new HumanMessage(userInput));
   wlog.info({ maxIterations }, "agent run started");
+
+  // Baseline snapshot of the workspace before the run touches anything. Best-effort: a git
+  // failure must never block the agent, so it's guarded and logged. The result commit fires in
+  // the `finally` below — even on abort/error — capturing whatever the run changed.
+  if (versioning) {
+    try { await versioning.commitBaseline(workspaceId, workspaceDir, userInput); }
+    catch (err) { wlog.warn({ err }, "versioning baseline commit failed"); }
+  }
 
   let iterations = 0;
   try {
@@ -381,5 +395,19 @@ export async function* runAgent(
     wlog.error({ err }, "agent run failed");
     yield { type: "error", message: String(err) };
     yield { type: "done" };
+  } finally {
+    // Single result commit for the run, on EVERY exit path — normal completion, iteration limit,
+    // user abort (the SSE consumer abandons this generator via `.return()`, which still runs
+    // `finally`), and thrown errors. commitResult skips itself if the run changed nothing, so a
+    // no-op run leaves no commit. The snapshot is labelled with the user's prompt (commitResult
+    // collapses whitespace and truncates the subject); the actual "what changed" is read from the
+    // diff later. Guarded + try/caught so versioning never breaks the run.
+    if (versioning) {
+      try {
+        await versioning.commitResult(workspaceId, workspaceDir, userInput);
+      } catch (err) {
+        wlog.warn({ err }, "versioning result commit failed");
+      }
+    }
   }
 }

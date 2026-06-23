@@ -22,6 +22,7 @@ const { ROOT, WS_DIR } = vi.hoisted(() => {
 
 vi.mock("@/lib/infra/services", () => ({
   getStore: () => ({ getWorkspace: (id: string) => (id === "ws" ? { id: "ws", name: "ws", dir: WS_DIR } : undefined) }),
+  getVersioning: () => ({ commitResult: async () => ({ sha: "test", changed: false }) }),
 }));
 vi.mock("@/lib/infra/realtime/clientIp", () => ({ getClientIp: () => "1.2.3.4" }));
 vi.mock("@/lib/infra/security/rateLimit", () => ({ checkRateLimit: () => ({ ok: true, retryAfter: 0 }) }));

@@ -5,13 +5,14 @@ export const runtime = "nodejs";
 export const maxDuration = 120;
 
 import { type NextRequest, NextResponse } from "next/server";
-import { getStore } from "@/lib/infra/services";
+import { getStore, getVersioning } from "@/lib/infra/services";
 import { checkRateLimit } from "@/lib/infra/security/rateLimit";
 import { getClientIp } from "@/lib/infra/realtime/clientIp";
 import fs from "fs/promises";
 import path from "path";
 import JSZip from "jszip";
 import { createLogger } from "@/lib/infra/logger";
+import { snapshotWorkspace } from "@/lib/infra/git/snapshotWorkspace";
 
 const MAX_BYTES = 100 * 1024 * 1024;       // 100 MB — single file
 const MAX_ARCHIVE_BYTES = 500 * 1024 * 1024; // 500 MB — ZIP archive
@@ -86,6 +87,7 @@ export async function POST(
       }
     }
 
+    await snapshotWorkspace(getVersioning(), ws, `uploaded ${count} file(s)`);
     if (failures.length > 0) {
       return NextResponse.json({ ok: false, count, failures }, { status: 207 });
     }
@@ -109,5 +111,6 @@ export async function POST(
     return NextResponse.json({ error: "failed to write file" }, { status: 500 });
   }
 
+  await snapshotWorkspace(getVersioning(), ws, `uploaded ${path.basename(resolved)}`);
   return NextResponse.json({ ok: true });
 }

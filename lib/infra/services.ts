@@ -7,16 +7,19 @@
 // receives store/containers via constructor/argument injection to stay cycle-free and pure.
 import { defaultWorkspaceStore } from "../workspace/workspaceStore";
 import { defaultContainerManager } from "./docker/containerManager";
-import type { IWorkspaceStore, IContainerManager } from "./interfaces";
+import { defaultWorkspaceVersioning } from "./git";
+import type { IWorkspaceStore, IContainerManager, IWorkspaceVersioning } from "./interfaces";
 
 interface Services {
   store: IWorkspaceStore;
   containers: IContainerManager;
+  versioning: IWorkspaceVersioning;
 }
 
 const defaults: Services = {
   store: defaultWorkspaceStore,
   containers: defaultContainerManager,
+  versioning: defaultWorkspaceVersioning,
 };
 
 let current: Services = { ...defaults };
@@ -27,6 +30,10 @@ export function getStore(): IWorkspaceStore {
 
 export function getContainers(): IContainerManager {
   return current.containers;
+}
+
+export function getVersioning(): IWorkspaceVersioning {
+  return current.versioning;
 }
 
 /** Test-only: override one or both services with fakes. */

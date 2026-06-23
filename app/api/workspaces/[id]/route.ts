@@ -1,7 +1,7 @@
 // REST endpoint for a single workspace.
 // GET returns its metadata; DELETE removes it from the registry and deletes its directory from disk.
 import { type NextRequest, NextResponse } from "next/server";
-import { getStore, getContainers } from "@/lib/infra/services";
+import { getStore, getContainers, getVersioning } from "@/lib/infra/services";
 import { checkRateLimit } from "@/lib/infra/security/rateLimit";
 import { getClientIp } from "@/lib/infra/realtime/clientIp";
 import { createLogger } from "@/lib/infra/logger";
@@ -63,6 +63,11 @@ export async function DELETE(
   const ws = getStore().getWorkspace(id);
   if (!ws) return NextResponse.json({ deleted: false });
   await getStore().deleteWorkspace(id);
-  await Promise.all([getContainers().remove(id), getContainers().deleteWorkspaceDir(ws.dir)]);
+  await Promise.all([
+    getContainers().remove(id),
+    getContainers().deleteWorkspaceDir(ws.dir),
+    // Version history must not outlive the workspace.
+    getVersioning().deleteRepo(id),
+  ]);
   return NextResponse.json({ deleted: true });
 }

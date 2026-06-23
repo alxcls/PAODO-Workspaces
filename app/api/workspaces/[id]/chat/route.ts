@@ -1,7 +1,7 @@
 // Internal chat endpoint used by the browser UI.
 // Runs the agent loop and streams events (tokens, tool calls, errors) back as Server-Sent Events.
 import type { NextRequest } from "next/server";
-import { getStore, getContainers } from "@/lib/infra/services";
+import { getStore, getContainers, getVersioning } from "@/lib/infra/services";
 import { runAgent, type AgentEvent } from "@/lib/agent/runner";
 import { buildSystemPrompt, buildPromptConfig } from "@/lib/agent/systemPrompt";
 import { loadAgentConfig } from "@/lib/agent/buildTools";
@@ -46,7 +46,7 @@ export async function POST(
       };
 
       try {
-        for await (const event of runAgent(ws.messages, body.message!.trim(), ws.dir, ws.id, { signal: req.signal, maxIterations: ws.maxIterations, store: getStore(), containers: getContainers() })) {
+        for await (const event of runAgent(ws.messages, body.message!.trim(), ws.dir, ws.id, { signal: req.signal, maxIterations: ws.maxIterations, store: getStore(), containers: getContainers(), versioning: getVersioning() })) {
           if (event.type === "turn_usage") {
             recordTurnUsage({ sessionId, workspaceId: ws.id, workspaceName: ws.name }, event);
             send(event);

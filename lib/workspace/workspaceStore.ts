@@ -13,6 +13,7 @@ import fsAsync from "fs/promises";
 import { createLogger } from "../infra/logger";
 import { atomicSaveJson } from "../infra/jsonPersist";
 import { scaffoldWorkspaceDir } from "./workspaceScaffold";
+import { defaultWorkspaceVersioning } from "../infra/git";
 import { WORKSPACES_ROOT } from "../infra/paths";
 import type { IWorkspaceStore } from "../infra/interfaces";
 export { WORKSPACES_ROOT };
@@ -60,15 +61,23 @@ export interface WorkspaceStoreOptions {
   persist?: PersistFn;
   /** Load initial records at construction. Defaults to none (tests). */
   load?: LoadFn;
+  /**
+   * Start the workspace's versioning repo on creation. Defaults to a no-op (tests). The production
+   * singleton wires this to the versioning service. Injected (rather than imported) to keep this
+   * leaf module free of the services-layer import cycle.
+   */
+  initRepo?: (workspaceId: string, workspaceDir: string) => Promise<void>;
 }
 
 export class WorkspaceStore implements IWorkspaceStore {
   private workspaces: Map<string, Workspace>;
   private persistFn: PersistFn;
+  private initRepoFn: (workspaceId: string, workspaceDir: string) => Promise<void>;
 
   constructor(opts: WorkspaceStoreOptions = {}) {
     this.workspaces = opts.map ?? new Map();
     this.persistFn = opts.persist ?? (() => {});
+    this.initRepoFn = opts.initRepo ?? (async () => {});
     const records = (opts.load ?? (() => null))();
     if (records) this.hydrate(records);
   }
@@ -110,6 +119,14 @@ export class WorkspaceStore implements IWorkspaceStore {
     log.info({ name }, "creating workspace");
     const dir = path.join(WORKSPACES_ROOT, name);
     await scaffoldWorkspaceDir(dir);
+
+    // Start the versioning repo over the scaffolded files. Best-effort: a missing git binary (or
+    // any git failure) must not block workspace creation — versioning is strictly additive.
+    try {
+      await this.initRepoFn(id, dir);
+    } catch (err) {
+      log.warn({ err, id, name }, "versioning initRepo failed; workspace created without it");
+    }
 
     const workspace: Workspace = {
       id,
@@ -215,6 +232,7 @@ export const defaultWorkspaceStore = new WorkspaceStore({
   map: g._workspaces,
   persist: (records) => atomicSaveJson(REGISTRY_FILE, records),
   load: defaultLoad,
+  initRepo: (id, dir) => defaultWorkspaceVersioning.initRepo(id, dir),
 });
 
 // Back-compat free-function exports — thin delegations to the default singleton so call sites

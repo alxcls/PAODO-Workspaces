@@ -109,6 +109,80 @@ describe("runAgent — history stays consistent across aborts", () => {
   });
 });
 
+// Records every versioning call so tests can assert the run is bracketed by exactly one baseline
+// and one result commit, with the expected summary, on each exit path.
+function makeVersioning() {
+  const calls: { method: string; args: unknown[] }[] = [];
+  const rec = (method: string) => (...args: unknown[]) => { calls.push({ method, args }); };
+  return {
+    calls,
+    versioning: {
+      initRepo: rec("initRepo") as never,
+      commitBaseline: (async (...a: unknown[]) => { calls.push({ method: "commitBaseline", args: a }); return { sha: "base" }; }) as never,
+      commitResult: (async (...a: unknown[]) => { calls.push({ method: "commitResult", args: a }); return { sha: "res", changed: true }; }) as never,
+      history: rec("history") as never,
+      diff: rec("diff") as never,
+      restore: rec("restore") as never,
+      deleteRepo: rec("deleteRepo") as never,
+    },
+  };
+}
+
+describe("runAgent — git versioning brackets every run", () => {
+  it("snapshots a baseline before any turn, then one result commit labelled with the prompt", async () => {
+    const { calls, versioning } = makeVersioning();
+    const buildAgentTools = makeBuildTools([
+      [toolCallsChunk({ id: "call_1", args: '{"cmd":"ls"}' })],
+      [new AIMessageChunk({ content: "all done" })],
+    ]);
+
+    for await (const _ of runAgent([], "list files", "/tmp/ws", "ws-1", { ...noopDeps, versioning, buildAgentTools })) { /* drain */ }
+
+    const baseline = calls.filter((c) => c.method === "commitBaseline");
+    const result = calls.filter((c) => c.method === "commitResult");
+    expect(baseline).toHaveLength(1);
+    expect(result).toHaveLength(1);
+    // baseline runs before the result commit; both carry the user prompt as the label.
+    expect(calls[0].method).toBe("commitBaseline");
+    expect(baseline[0].args).toEqual(["ws-1", "/tmp/ws", "list files"]);
+    expect(result[0].args).toEqual(["ws-1", "/tmp/ws", "list files"]);
+  });
+
+  it("still commits a result on abort, falling back to the prompt as the summary", async () => {
+    const { calls, versioning } = makeVersioning();
+    const buildAgentTools = makeBuildTools([[toolCallsChunk({ id: "call_1", args: '{"cmd":"x"}' })]]);
+
+    // Abort mid-run: break at tool_start abandons the generator, whose `finally` must still fire.
+    for await (const event of runAgent([], "do the thing", "/tmp/ws", "ws-1", { ...noopDeps, versioning, buildAgentTools })) {
+      if (event.type === "tool_start") break;
+    }
+
+    const result = calls.filter((c) => c.method === "commitResult");
+    expect(result).toHaveLength(1);
+    expect(result[0].args).toEqual(["ws-1", "/tmp/ws", "do the thing"]);
+  });
+
+  it("commits a result when the iteration limit is reached", async () => {
+    const { calls, versioning } = makeVersioning();
+    // maxIterations:1 → first turn calls a tool, then the limit trips on the next loop.
+    const buildAgentTools = makeBuildTools([[toolCallsChunk({ id: "call_1", args: '{"cmd":"y"}' })]]);
+
+    for await (const _ of runAgent([], "keep going", "/tmp/ws", "ws-1", { ...noopDeps, versioning, buildAgentTools, maxIterations: 1 })) { /* drain */ }
+
+    expect(calls.filter((c) => c.method === "commitBaseline")).toHaveLength(1);
+    expect(calls.filter((c) => c.method === "commitResult")).toHaveLength(1);
+  });
+
+  it("runs unchanged when no versioning service is injected", async () => {
+    const buildAgentTools = makeBuildTools([[new AIMessageChunk({ content: "hi" })]]);
+    const events: AgentEvent[] = [];
+    for await (const event of runAgent([], "hello", "/tmp/ws", "ws-1", { ...noopDeps, buildAgentTools })) {
+      events.push(event);
+    }
+    expect(events.at(-1)).toEqual({ type: "done" });
+  });
+});
+
 describe("classifyToolStatus", () => {
   it("classifies success, the Error/Permission-denied convention, and the A2A needs-input tag", () => {
     expect(classifyToolStatus("line1\nline2")).toBe("ok");

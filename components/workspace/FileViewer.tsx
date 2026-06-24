@@ -70,12 +70,18 @@ const FileViewer = forwardRef<FileViewerHandle, Props>(function FileViewer(
   // the user's session. Fetched once per workspace from the Basic-Auth-protected app API. Stored
   // with its workspace id so a stale token from a previous workspace is never injected.
   const [tokenEntry, setTokenEntry] = useState<{ ws: string; token: string } | null>(null);
+  // `ready` flips once the fetch settles (success OR failure). We gate the iframe on it so the
+  // preview never renders with an empty token and then has to reload — that first tokenless load
+  // is what fired the cross-origin/401 errors users saw until they toggled Code→Preview.
+  const [tokenReady, setTokenReady] = useState(false);
   useEffect(() => {
     let cancelled = false;
+    setTokenReady(false);
     fetch(`/api/workspaces/${workspaceId}/preview-token`)
       .then(r => r.ok ? r.json() : null)
       .then(d => { if (!cancelled && d?.token) setTokenEntry({ ws: workspaceId, token: d.token as string }); })
-      .catch(() => {});
+      .catch(() => {})
+      .finally(() => { if (!cancelled) setTokenReady(true); });
     return () => { cancelled = true; };
   }, [workspaceId]);
   const previewToken = tokenEntry?.ws === workspaceId ? tokenEntry.token : null;
@@ -214,8 +220,12 @@ const FileViewer = forwardRef<FileViewerHandle, Props>(function FileViewer(
                 ? <JSONCrack key={previewKey} json={jsonParsed} theme="light" showGrid={false} className="json-preview" />
                 : <div className="flex-1 grid place-items-center text-text-2 text-sm bg-bg-tint p-6 text-center">File too big for preview</div>
             ) : isHtml ? (
-              <iframe key={previewKey} className="html-preview" srcDoc={htmlForPreview}
-                sandbox="allow-scripts allow-forms" title="HTML preview" />
+              tokenReady ? (
+                <iframe key={previewKey} className="html-preview" srcDoc={htmlForPreview}
+                  sandbox="allow-scripts allow-forms" title="HTML preview" />
+              ) : (
+                <div className="flex-1 grid place-items-center text-text-3 text-sm bg-bg-tint p-6 text-center">Loading preview…</div>
+              )
             ) : (
               <div className="md-preview md-prose">
                 <ReactMarkdown remarkPlugins={[remarkGfm]}>{draft ?? ""}</ReactMarkdown>

@@ -17,7 +17,7 @@ import { mkdir, rm } from "fs/promises";
 import { createLogger } from "../logger";
 import { WORKSPACES_ROOT } from "../paths";
 import { GitClient, type IGitClient } from "./gitClient";
-import type { HistoryEntry, IWorkspaceVersioning } from "../interfaces";
+import type { HistoryEntry, IWorkspaceVersioning, VersionStat, VersionFileStat } from "../interfaces";
 
 const log = createLogger("versioning");
 
@@ -176,6 +176,69 @@ export class WorkspaceVersioning implements IWorkspaceVersioning {
       [...this.base(workspaceId, workspaceDir), "diff", from, to],
       { trimStdout: false },
     );
+    return r.stdout;
+  }
+
+  // Last `n` snapshots (across all refs, like history()) with each commit's per-file numstat vs
+  // its parent. Read-only, so no serialize() lock. The %x1e record separator prefixes every
+  // commit's pretty line; --numstat rows follow on subsequent lines. Binary files show "-" for
+  // add/del in numstat — we surface them as -1 so the formatter can mark them rather than lie.
+  async versionStats(workspaceId: string, workspaceDir: string, n: number): Promise<VersionStat[]> {
+    const count = Math.max(1, Math.min(20, Math.floor(n) || 1));
+    const head = await this.headSha(workspaceId, workspaceDir);
+    if (!head) return [];
+    const r = await this.git.run(
+      [
+        ...this.base(workspaceId, workspaceDir),
+        "log", "--all", `-n${count}`, "--no-renames", "--numstat",
+        "--pretty=format:%x1e%h%x1f%cr%x1f%s",
+      ],
+      { trimStdout: false },
+    );
+    if (r.code !== 0) return [];
+    return r.stdout
+      .split("\x1e")
+      .filter((rec) => rec.trim() !== "")
+      .map((rec) => {
+        const lines = rec.replace(/^\n/, "").split("\n");
+        const [sha, age, subject] = lines[0].split("\x1f");
+        const files: VersionFileStat[] = [];
+        let totalAdd = 0;
+        let totalDel = 0;
+        for (const line of lines.slice(1)) {
+          const m = line.match(/^(\d+|-)\t(\d+|-)\t(.+)$/);
+          if (!m) continue;
+          const add = m[1] === "-" ? -1 : Number(m[1]);
+          const del = m[2] === "-" ? -1 : Number(m[2]);
+          files.push({ path: m[3], add, del });
+          if (add > 0) totalAdd += add;
+          if (del > 0) totalDel += del;
+        }
+        // head is the full %H; the log emits abbreviated %h, so prefix-match to flag the snapshot
+        // the work-tree is currently on (this is what a UI restore's reset --hard moves).
+        const current = head.startsWith(sha);
+        return { sha, age: age ?? "", subject: subject ?? "", files, totalAdd, totalDel, current };
+      });
+  }
+
+  // Raw diff for a single snapshot (`git show sha`), or the cumulative diff across snapshots
+  // (`git diff from sha`) when opts.from is given — so the agent can see what changed between two
+  // arbitrary versions, not just one step. The tool layer strips boilerplate and pages length;
+  // here we just emit git's native output (optionally word-diff / path-scoped). Read-only.
+  async versionDiff(
+    workspaceId: string,
+    workspaceDir: string,
+    sha: string,
+    opts: { path?: string; wordDiff?: boolean; from?: string } = {},
+  ): Promise<string> {
+    const args = [...this.base(workspaceId, workspaceDir)];
+    // from → range diff (from..sha); otherwise the snapshot's own diff vs its parent.
+    args.push(opts.from ? "diff" : "show", "--no-renames");
+    if (opts.wordDiff) args.push("--word-diff=plain");
+    if (opts.from) args.push(opts.from, sha);
+    else args.push(sha);
+    if (opts.path) args.push("--", opts.path);
+    const r = await this.git.run(args, { trimStdout: false });
     return r.stdout;
   }
 

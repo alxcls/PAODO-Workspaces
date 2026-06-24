@@ -258,8 +258,11 @@ export async function* runAgent(
   // Baseline snapshot of the workspace before the run touches anything. Best-effort: a git
   // failure must never block the agent, so it's guarded and logged. The result commit fires in
   // the `finally` below — even on abort/error — capturing whatever the run changed.
+  // We keep the baseline sha as the default target for an agent-initiated workspace_restore with
+  // no sha ("undo everything I did this run").
+  let baselineSha: string | null = null;
   if (versioning) {
-    try { await versioning.commitBaseline(workspaceId, workspaceDir, userInput); }
+    try { baselineSha = (await versioning.commitBaseline(workspaceId, workspaceDir, userInput)).sha; }
     catch (err) { wlog.warn({ err }, "versioning baseline commit failed"); }
   }
 
@@ -374,6 +377,25 @@ export async function* runAgent(
         wlog.info("agent run aborted by user");
         yield { type: "done" };
         break;
+      }
+
+      // Agent-initiated rollback. workspace_restore is a signal only — it can't reach the platform
+      // versioning history (deliberately outside the agent's reach), so the runner performs the
+      // reset here, AFTER this turn's tools have settled, so it can't race a concurrent file write
+      // in the same batch. No sha → the run's pre-run baseline ("undo everything I did this run").
+      // Best-effort: a failed/unknown target is logged, never throws into the loop.
+      const restoreCall = settled.find(({ tc }) => tc.name === "workspace_restore");
+      if (restoreCall && versioning) {
+        const target = (restoreCall.tc.args as { sha?: string }).sha ?? baselineSha;
+        if (target) {
+          try {
+            const ok = await versioning.restore(workspaceId, workspaceDir, target);
+            if (ok) resolvedNotify({ type: "snapshot_restored", sha: target });
+            else wlog.warn({ target }, "agent restore: target snapshot not found");
+          } catch (err) {
+            wlog.warn({ err, target }, "agent restore failed");
+          }
+        }
       }
 
       // Agent-chosen context compaction. The compact_context tool is a signal only — it can't

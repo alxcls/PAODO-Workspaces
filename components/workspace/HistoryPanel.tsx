@@ -109,7 +109,7 @@ export default function HistoryPanel({ workspaceId, refreshKey, onRestored }: Pr
       </button>
 
       {open && (
-        <div className="absolute right-0 top-[calc(100%+6px)] z-50 w-[200px] max-h-[70vh] flex flex-col rounded-[10px] border border-border bg-bg shadow-lg overflow-hidden">
+        <div className="absolute right-0 top-[calc(100%+6px)] z-50 w-[200px] max-h-[280px] flex flex-col rounded-[10px] border border-border bg-bg shadow-lg overflow-hidden">
           {error && <div className="text-xs text-danger px-3 py-2 border-b border-border">{error}</div>}
 
           <div className="flex-1 overflow-auto">

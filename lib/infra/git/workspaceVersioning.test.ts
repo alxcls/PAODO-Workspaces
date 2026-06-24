@@ -170,6 +170,81 @@ describe("WorkspaceVersioning", () => {
     ]);
   });
 
+  it("versionStats parses numstat into per-version churn, empty when no commits", async () => {
+    const empty = new WorkspaceVersioning(
+      new FakeGit([{ match: (j) => j.includes("rev-parse --verify HEAD"), result: { code: 1 } }]),
+      opts(),
+    );
+    expect(await empty.versionStats(ID, DIR, 5)).toEqual([]);
+
+    // Two commits: first text-only (one file), second mixes a text file and a binary (git emits "-").
+    const log =
+      "\x1edeadbee\x1f2 hours ago\x1frun 2: edits\n" +
+      "10\t4\tsrc/a.ts\n" +
+      "\x1eabad1de\x1f3 hours ago\x1frun 1: init\n" +
+      "5\t0\tREADME.md\n" +
+      "-\t-\tlogo.png\n";
+    const ver = new WorkspaceVersioning(
+      new FakeGit([
+        // Full %H HEAD; the log emits abbreviated %h, so current is a prefix match (not equality).
+        { match: (j) => j.includes("rev-parse --verify HEAD"), result: { stdout: "deadbeefcafe" } },
+        { match: (j) => j.includes(" log "), result: { stdout: log } },
+      ]),
+      opts(),
+    );
+    const stats = await ver.versionStats(ID, DIR, 5);
+    expect(stats).toEqual([
+      { sha: "deadbee", age: "2 hours ago", subject: "run 2: edits", files: [{ path: "src/a.ts", add: 10, del: 4 }], totalAdd: 10, totalDel: 4, current: true },
+      {
+        sha: "abad1de", age: "3 hours ago", subject: "run 1: init",
+        files: [{ path: "README.md", add: 5, del: 0 }, { path: "logo.png", add: -1, del: -1 }],
+        totalAdd: 5, totalDel: 0, current: false,
+      },
+    ]);
+  });
+
+  it("versionStats clamps n into 1..20 and requests --all --numstat", async () => {
+    const git = new FakeGit([{ match: (j) => j.includes("rev-parse --verify HEAD"), result: { stdout: "h" } }]);
+    const ver = new WorkspaceVersioning(git, opts());
+    await ver.versionStats(ID, DIR, 999);
+    const log = joinedCalls(git).find((j) => j.includes(" log "))!;
+    expect(log).toContain("-n20");
+    expect(log).toContain("--numstat");
+    expect(log).toContain("--all");
+  });
+
+  it("versionDiff issues git show, honoring path scope and word-diff", async () => {
+    const git = new FakeGit([{ match: (j) => j.includes(" show "), result: { stdout: "RAWDIFF" } }]);
+    const ver = new WorkspaceVersioning(git, opts());
+    const out = await ver.versionDiff(ID, DIR, "abc123", { path: "src/a.ts", wordDiff: true });
+    expect(out).toBe("RAWDIFF");
+    const show = joinedCalls(git).find((j) => j.includes(" show "))!;
+    expect(show).toContain("--word-diff=plain");
+    expect(show).toContain("abc123");
+    expect(show).toContain("-- src/a.ts");
+  });
+
+  it("versionDiff omits word-diff and path when not requested", async () => {
+    const git = new FakeGit([{ match: (j) => j.includes(" show "), result: { stdout: "D" } }]);
+    const ver = new WorkspaceVersioning(git, opts());
+    await ver.versionDiff(ID, DIR, "abc123");
+    const show = joinedCalls(git).find((j) => j.includes(" show "))!;
+    expect(show).not.toContain("--word-diff");
+    expect(show).not.toContain(" -- "); // no path-scope separator
+  });
+
+  it("versionDiff with `from` issues a range git diff (from→sha) instead of git show", async () => {
+    const git = new FakeGit([{ match: (j) => j.includes(" diff "), result: { stdout: "RANGE" } }]);
+    const ver = new WorkspaceVersioning(git, opts());
+    const out = await ver.versionDiff(ID, DIR, "newsha", { from: "oldsha", path: "src/a.ts" });
+    expect(out).toBe("RANGE");
+    const diff = joinedCalls(git).find((j) => j.includes(" diff "))!;
+    expect(diff).toContain("--no-renames");
+    expect(diff).toContain("oldsha newsha"); // from before sha, range order
+    expect(diff).toContain("-- src/a.ts");
+    expect(diff).not.toContain(" show "); // range mode, not single-snapshot show
+  });
+
   it("serializes concurrent commits on one workspace (no interleaving)", async () => {
     // A git fake that records call order with a microtask delay, so interleaving would show up.
     const order: string[] = [];

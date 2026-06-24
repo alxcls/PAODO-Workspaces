@@ -31,6 +31,20 @@ Open [http://localhost:3000](http://localhost:3000). The workspace Docker image 
 
 For VPS deployment, see the [deploy guide](deploy/README.md).
 
+## How it works
+
+The diagram shows the full picture: each workspace runs an isolated agent loop in its own Docker sandbox, reachable from the chat UI or an external app, with workspaces calling each other through typed contracts.
+
+![Architectural representation of the main functionality](doc/images/loop.png)
+
+`server.ts` boots a Node.js HTTP server that mounts Next.js plus a WebSocket server on one port, so shell output and file events stream over `/ws` without a separate process. Requests hit Next.js API routes, which run the ReAct loop in [`lib/agent/runner.ts`](lib/agent/runner.ts) and stream events back over SSE.
+
+Every sandboxed tool call — file ops, glob, shell, package installs — runs inside a per-workspace Docker container (`ws_<id>`) as a restricted non-root user, with only that workspace's directory mounted. Containers start on demand and stop after an idle timeout.
+
+Persistence is lightweight: workspace metadata and the network graph live as JSON under `data/`; conversation history is in-memory and resets on restart.
+
+For the full architecture, see [`doc/`](doc/).
+
 ## Agent network
 
 Workspaces can call each other. The network page connects them into a directed graph; an edge **A → B** lets A's agent invoke B's. Agents find their neighbors with `list_agents` and call them with `call_agent`.
@@ -52,18 +66,6 @@ curl -X POST http://localhost:<port>/api/workspaces/<id>/agent \
 ```
 
 The response is a Server-Sent Events stream of progress events (`tool_start`, `tool_end`, …), ending in a single `response` event that carries the final answer, then `done`.
-
-## How it works
-
-![Architectural representation of the main functionality](doc/images/agent_loop.png)
-
-`server.ts` boots a Node.js HTTP server that mounts Next.js plus a WebSocket server on one port, so shell output and file events stream over `/ws` without a separate process. Requests hit Next.js API routes, which run the ReAct loop in [`lib/agent/runner.ts`](lib/agent/runner.ts) and stream events back over SSE.
-
-Every sandboxed tool call — file ops, glob, shell, package installs — runs inside a per-workspace Docker container (`ws_<id>`) as a restricted non-root user, with only that workspace's directory mounted. Containers start on demand and stop after an idle timeout.
-
-Persistence is lightweight: workspace metadata and the network graph live as JSON under `data/`; conversation history is in-memory and resets on restart.
-
-For the full architecture, see [`doc/`](doc/).
 
 ## Project structure
 
@@ -92,7 +94,7 @@ Shared file drive · automatic (size-triggered) compaction · budget monitoring 
 
 ## Contributing
 
-This is a personal project to build a power tool for small CLI agent services. Questions, security issues, and advice on security, architecture, or practices are genuinely welcome.
+This is a personal project to build a power tool for small CLI agent services. Help or opinion about the project is genuinely welcome.
 
 Discord: **alex_24589**
 

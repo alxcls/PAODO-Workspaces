@@ -16,6 +16,7 @@ This is a single-user, self-hosted app accessed exclusively over a private Tails
 - App reachable only by authenticated Tailscale devices; `tailscale serve` proxies to `127.0.0.1:<PORT>` — nothing else reaches that port
 - SSH via Tailscale SSH (`tailscale up --ssh`); port 22 closed — no public SSH surface, no fail2ban needed
 - Each workspace container gets its own bridge network — no inter-container traffic
+- Workspace dev-server ports are published on a specific interface, never `0.0.0.0` — `127.0.0.1` in local dev, the Docker bridge gateway in production — so only the app can reach a workspace's server, not the wider tailnet/host (`containerManager.ts` `resolveBindHost`)
 
 **Host**
 - Unattended OS security upgrades — security packages install automatically; kernel patches require a manual reboot to take effect

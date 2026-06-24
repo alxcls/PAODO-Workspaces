@@ -65,6 +65,21 @@ const FileViewer = forwardRef<FileViewerHandle, Props>(function FileViewer(
     setShowPreview(lang === "markdown" || isHtml || lang === "json");
   }, [lang, isHtml]);
 
+  // Per-workspace preview token: the preview iframe runs at an opaque origin (no allow-same-origin),
+  // so it authenticates to its own workspace backend through the proxy with this token instead of
+  // the user's session. Fetched once per workspace from the Basic-Auth-protected app API. Stored
+  // with its workspace id so a stale token from a previous workspace is never injected.
+  const [tokenEntry, setTokenEntry] = useState<{ ws: string; token: string } | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`/api/workspaces/${workspaceId}/preview-token`)
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (!cancelled && d?.token) setTokenEntry({ ws: workspaceId, token: d.token as string }); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [workspaceId]);
+  const previewToken = tokenEntry?.ws === workspaceId ? tokenEntry.token : null;
+
   const preRef = useRef<HTMLPreElement>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
   const gutterRef = useRef<HTMLDivElement>(null);
@@ -92,12 +107,14 @@ const FileViewer = forwardRef<FileViewerHandle, Props>(function FileViewer(
     const encodedDir = dirSegments.map(encodeURIComponent).join("/");
     const base = `${window.location.origin}/api/workspaces/${workspaceId}/serve/${encodedDir}/`;
     const apiBase = `/api/workspaces/${workspaceId}/proxy`;
-    const baseTag = `<base href="${base}"><script>window.API_BASE=${JSON.stringify(apiBase)};(function(){var _f=window.fetch;window.fetch=function(r,o){var u=typeof r==='string'?r:(r instanceof Request?r.url:String(r));if(u.startsWith('/')&&!u.startsWith('//')){var rw=window.API_BASE+u;return _f(typeof r==='string'?rw:new Request(rw,r),o);}return _f(r,o);};})();</script>`;
+    // Shim rewrites root-relative fetches to the workspace proxy and attaches the preview token so
+    // they authenticate as this workspace (the opaque origin carries no session of its own).
+    const baseTag = `<base href="${base}"><script>window.API_BASE=${JSON.stringify(apiBase)};window.PREVIEW_TOKEN=${JSON.stringify(previewToken ?? "")};(function(){var _f=window.fetch;window.fetch=function(r,o){var u=typeof r==='string'?r:(r instanceof Request?r.url:String(r));if(u.startsWith('/')&&!u.startsWith('//')){var rw=window.API_BASE+u;var h=new Headers((o&&o.headers)||(r instanceof Request?r.headers:undefined));if(window.PREVIEW_TOKEN)h.set('Authorization','Bearer '+window.PREVIEW_TOKEN);var init=Object.assign({},o,{headers:h});return _f(typeof r==='string'?rw:new Request(rw,r),init);}return _f(r,o);};})();</script>`;
     const html = /<head(\s[^>]*)?>/.test(draft)
       ? draft.replace(/<head(\s[^>]*)?>/, `$&${baseTag}`)
       : baseTag + draft;
     return `<!--v:${previewKey}-->${html}`;
-  }, [draft, filePath, isHtml, workspaceId, previewKey]);
+  }, [draft, filePath, isHtml, workspaceId, previewKey, previewToken]);
 
   const highlightedHtml = useMemo(() => {
     if (!draft || fileType !== "text") return draft ?? "";
@@ -198,7 +215,7 @@ const FileViewer = forwardRef<FileViewerHandle, Props>(function FileViewer(
                 : <div className="flex-1 grid place-items-center text-text-2 text-sm bg-bg-tint p-6 text-center">File too big for preview</div>
             ) : isHtml ? (
               <iframe key={previewKey} className="html-preview" srcDoc={htmlForPreview}
-                sandbox="allow-scripts allow-forms allow-same-origin" title="HTML preview" />
+                sandbox="allow-scripts allow-forms" title="HTML preview" />
             ) : (
               <div className="md-preview md-prose">
                 <ReactMarkdown remarkPlugins={[remarkGfm]}>{draft ?? ""}</ReactMarkdown>

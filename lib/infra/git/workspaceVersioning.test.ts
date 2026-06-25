@@ -77,7 +77,7 @@ describe("WorkspaceVersioning", () => {
     const commit = joinedCalls(git).find((j) => j.includes(" commit "));
     expect(commit).toContain("user.name=PAODO Agent");
     expect(commit).toContain("user.email=agent@paodo.local");
-    expect(commit).toContain("pre-run: a prompt");
+    expect(commit).toContain("pre-run (user prompt): a prompt");
   });
 
   it("commitResult skips the commit and tag when nothing changed", async () => {
@@ -100,7 +100,7 @@ describe("WorkspaceVersioning", () => {
     const res = await ver.commitResult(ID, DIR, "third run");
     expect(res).toEqual({ sha: "newsha", changed: true });
     const calls = joinedCalls(git);
-    expect(calls.some((j) => j.includes("run 3: third run"))).toBe(true);
+    expect(calls.some((j) => j.includes("run 3 (user prompt): third run"))).toBe(true);
     expect(calls.some((j) => j.includes("tag run/3 newsha"))).toBe(true);
   });
 
@@ -111,7 +111,7 @@ describe("WorkspaceVersioning", () => {
     ]);
     const ver = new WorkspaceVersioning(git, opts());
     await ver.commitResult(ID, DIR, "first");
-    expect(joinedCalls(git).some((j) => j.includes("run 1: first"))).toBe(true);
+    expect(joinedCalls(git).some((j) => j.includes("run 1 (user prompt): first"))).toBe(true);
   });
 
   it("initRepo skips the initial commit when HEAD already exists (idempotent)", async () => {
@@ -154,7 +154,7 @@ describe("WorkspaceVersioning", () => {
     );
     expect(await empty.history(ID, DIR)).toEqual([]);
 
-    const log = "deadbeef\x1f1700000000\x1frun 1: hello\x1e\nabad1dea\x1f1699999999\x1fpre-run: hi\x1e";
+    const log = "deadbeef\x1f1700000000\x1frun 1 (user prompt): hello\x1e\nabad1dea\x1f1699999999\x1fpre-run (user prompt): hi\x1e";
     const ver = new WorkspaceVersioning(
       new FakeGit([
         { match: (j) => j.includes("rev-parse --verify HEAD"), result: { stdout: "deadbeef" } },
@@ -165,8 +165,8 @@ describe("WorkspaceVersioning", () => {
     const entries = await ver.history(ID, DIR);
     expect(entries).toEqual([
       // HEAD is "deadbeef", so only that entry is flagged current.
-      { sha: "deadbeef", message: "run 1: hello", timestamp: new Date(1700000000 * 1000).toISOString(), current: true },
-      { sha: "abad1dea", message: "pre-run: hi", timestamp: new Date(1699999999 * 1000).toISOString(), current: false },
+      { sha: "deadbeef", message: "run 1 (user prompt): hello", timestamp: new Date(1700000000 * 1000).toISOString(), current: true },
+      { sha: "abad1dea", message: "pre-run (user prompt): hi", timestamp: new Date(1699999999 * 1000).toISOString(), current: false },
     ]);
   });
 
@@ -179,9 +179,9 @@ describe("WorkspaceVersioning", () => {
 
     // Two commits: first text-only (one file), second mixes a text file and a binary (git emits "-").
     const log =
-      "\x1edeadbee\x1f2 hours ago\x1frun 2: edits\n" +
+      "\x1edeadbee\x1f2 hours ago\x1frun 2 (user prompt): edits\n" +
       "10\t4\tsrc/a.ts\n" +
-      "\x1eabad1de\x1f3 hours ago\x1frun 1: init\n" +
+      "\x1eabad1de\x1f3 hours ago\x1frun 1 (user prompt): init\n" +
       "5\t0\tREADME.md\n" +
       "-\t-\tlogo.png\n";
     const ver = new WorkspaceVersioning(
@@ -194,55 +194,50 @@ describe("WorkspaceVersioning", () => {
     );
     const stats = await ver.versionStats(ID, DIR, 5);
     expect(stats).toEqual([
-      { sha: "deadbee", age: "2 hours ago", subject: "run 2: edits", files: [{ path: "src/a.ts", add: 10, del: 4 }], totalAdd: 10, totalDel: 4, current: true },
+      { sha: "deadbee", age: "2 hours ago", subject: "run 2 (user prompt): edits", files: [{ path: "src/a.ts", add: 10, del: 4 }], totalAdd: 10, totalDel: 4, current: true },
       {
-        sha: "abad1de", age: "3 hours ago", subject: "run 1: init",
+        sha: "abad1de", age: "3 hours ago", subject: "run 1 (user prompt): init",
         files: [{ path: "README.md", add: 5, del: 0 }, { path: "logo.png", add: -1, del: -1 }],
         totalAdd: 5, totalDel: 0, current: false,
       },
     ]);
   });
 
-  it("versionStats clamps n into 1..20 and requests --all --numstat", async () => {
+  it("versionStats omits -n when no count is requested", async () => {
     const git = new FakeGit([{ match: (j) => j.includes("rev-parse --verify HEAD"), result: { stdout: "h" } }]);
     const ver = new WorkspaceVersioning(git, opts());
-    await ver.versionStats(ID, DIR, 999);
+    await ver.versionStats(ID, DIR);
     const log = joinedCalls(git).find((j) => j.includes(" log "))!;
-    expect(log).toContain("-n20");
+    expect(log).not.toMatch(/ -n\d+\b/);
     expect(log).toContain("--numstat");
     expect(log).toContain("--all");
   });
 
-  it("versionDiff issues git show, honoring path scope and word-diff", async () => {
+  it("versionStats uses the requested newest-N cap when provided", async () => {
+    const git = new FakeGit([{ match: (j) => j.includes("rev-parse --verify HEAD"), result: { stdout: "h" } }]);
+    const ver = new WorkspaceVersioning(git, opts());
+    await ver.versionStats(ID, DIR, 10);
+    const log = joinedCalls(git).find((j) => j.includes(" log "))!;
+    expect(log).toContain("-n10");
+  });
+
+  it("versionDiff issues git show, honoring path scope", async () => {
     const git = new FakeGit([{ match: (j) => j.includes(" show "), result: { stdout: "RAWDIFF" } }]);
     const ver = new WorkspaceVersioning(git, opts());
-    const out = await ver.versionDiff(ID, DIR, "abc123", { path: "src/a.ts", wordDiff: true });
+    const out = await ver.versionDiff(ID, DIR, "abc123", { path: "src/a.ts" });
     expect(out).toBe("RAWDIFF");
     const show = joinedCalls(git).find((j) => j.includes(" show "))!;
-    expect(show).toContain("--word-diff=plain");
+    expect(show).toContain("--no-renames");
     expect(show).toContain("abc123");
     expect(show).toContain("-- src/a.ts");
   });
 
-  it("versionDiff omits word-diff and path when not requested", async () => {
+  it("versionDiff omits path when not requested", async () => {
     const git = new FakeGit([{ match: (j) => j.includes(" show "), result: { stdout: "D" } }]);
     const ver = new WorkspaceVersioning(git, opts());
     await ver.versionDiff(ID, DIR, "abc123");
     const show = joinedCalls(git).find((j) => j.includes(" show "))!;
-    expect(show).not.toContain("--word-diff");
     expect(show).not.toContain(" -- "); // no path-scope separator
-  });
-
-  it("versionDiff with `from` issues a range git diff (from→sha) instead of git show", async () => {
-    const git = new FakeGit([{ match: (j) => j.includes(" diff "), result: { stdout: "RANGE" } }]);
-    const ver = new WorkspaceVersioning(git, opts());
-    const out = await ver.versionDiff(ID, DIR, "newsha", { from: "oldsha", path: "src/a.ts" });
-    expect(out).toBe("RANGE");
-    const diff = joinedCalls(git).find((j) => j.includes(" diff "))!;
-    expect(diff).toContain("--no-renames");
-    expect(diff).toContain("oldsha newsha"); // from before sha, range order
-    expect(diff).toContain("-- src/a.ts");
-    expect(diff).not.toContain(" show "); // range mode, not single-snapshot show
   });
 
   it("serializes concurrent commits on one workspace (no interleaving)", async () => {

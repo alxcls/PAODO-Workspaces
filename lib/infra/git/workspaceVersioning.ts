@@ -121,7 +121,7 @@ export class WorkspaceVersioning implements IWorkspaceVersioning {
         const sha = await this.headSha(workspaceId, workspaceDir);
         return { sha: sha! };
       }
-      const sha = await this.commit(workspaceId, workspaceDir, `pre-run: ${truncateSubject(prompt)}`);
+      const sha = await this.commit(workspaceId, workspaceDir, `pre-run (user prompt): ${truncateSubject(prompt)}`);
       return { sha };
     });
   }
@@ -138,7 +138,7 @@ export class WorkspaceVersioning implements IWorkspaceVersioning {
       // stays correct under the per-workspace lock above.
       const tags = await this.git.run([...this.base(workspaceId, workspaceDir), "tag", "--list", "run/*"]);
       const n = tags.stdout.trim() === "" ? 1 : tags.stdout.trim().split("\n").length + 1;
-      const sha = await this.commit(workspaceId, workspaceDir, `run ${n}: ${truncateSubject(summary)}`);
+      const sha = await this.commit(workspaceId, workspaceDir, `run ${n} (user prompt): ${truncateSubject(summary)}`);
       await this.git.run([...this.base(workspaceId, workspaceDir), "tag", `run/${n}`, sha]);
       return { sha, changed: true };
     });
@@ -179,18 +179,20 @@ export class WorkspaceVersioning implements IWorkspaceVersioning {
     return r.stdout;
   }
 
-  // Last `n` snapshots (across all refs, like history()) with each commit's per-file numstat vs
-  // its parent. Read-only, so no serialize() lock. The %x1e record separator prefixes every
-  // commit's pretty line; --numstat rows follow on subsequent lines. Binary files show "-" for
-  // add/del in numstat — we surface them as -1 so the formatter can mark them rather than lie.
-  async versionStats(workspaceId: string, workspaceDir: string, n: number): Promise<VersionStat[]> {
-    const count = Math.max(1, Math.min(20, Math.floor(n) || 1));
+  // Snapshots (across all refs, like history()) with each commit's per-file numstat vs its
+  // parent. Read-only, so no serialize() lock. The %x1e record separator prefixes every commit's
+  // pretty line; --numstat rows follow on subsequent lines. Binary files show "-" for add/del in
+  // numstat — we surface them as -1 so the formatter can mark them rather than lie. Omit `n` to
+  // list all snapshots; pass it to cap the overview at the newest N.
+  async versionStats(workspaceId: string, workspaceDir: string, n?: number): Promise<VersionStat[]> {
+    const count = n === undefined ? undefined : Math.max(1, Math.floor(n) || 1);
     const head = await this.headSha(workspaceId, workspaceDir);
     if (!head) return [];
+    const limitArgs = count === undefined ? [] : [`-n${count}`];
     const r = await this.git.run(
       [
         ...this.base(workspaceId, workspaceDir),
-        "log", "--all", `-n${count}`, "--no-renames", "--numstat",
+        "log", "--all", ...limitArgs, "--no-renames", "--numstat",
         "--pretty=format:%x1e%h%x1f%cr%x1f%s",
       ],
       { trimStdout: false },
@@ -221,22 +223,16 @@ export class WorkspaceVersioning implements IWorkspaceVersioning {
       });
   }
 
-  // Raw diff for a single snapshot (`git show sha`), or the cumulative diff across snapshots
-  // (`git diff from sha`) when opts.from is given — so the agent can see what changed between two
-  // arbitrary versions, not just one step. The tool layer strips boilerplate and pages length;
-  // here we just emit git's native output (optionally word-diff / path-scoped). Read-only.
+  // Raw diff for a single snapshot (`git show sha`), optionally narrowed to one path. The tool
+  // layer strips boilerplate and pages length; here we just emit git's native output. Read-only.
   async versionDiff(
     workspaceId: string,
     workspaceDir: string,
     sha: string,
-    opts: { path?: string; wordDiff?: boolean; from?: string } = {},
+    opts: { path?: string } = {},
   ): Promise<string> {
     const args = [...this.base(workspaceId, workspaceDir)];
-    // from → range diff (from..sha); otherwise the snapshot's own diff vs its parent.
-    args.push(opts.from ? "diff" : "show", "--no-renames");
-    if (opts.wordDiff) args.push("--word-diff=plain");
-    if (opts.from) args.push(opts.from, sha);
-    else args.push(sha);
+    args.push("show", "--no-renames", sha);
     if (opts.path) args.push("--", opts.path);
     const r = await this.git.run(args, { trimStdout: false });
     return r.stdout;

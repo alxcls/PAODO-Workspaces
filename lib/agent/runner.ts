@@ -258,11 +258,8 @@ export async function* runAgent(
   // Baseline snapshot of the workspace before the run touches anything. Best-effort: a git
   // failure must never block the agent, so it's guarded and logged. The result commit fires in
   // the `finally` below — even on abort/error — capturing whatever the run changed.
-  // We keep the baseline sha as the default target for an agent-initiated workspace_restore with
-  // no sha ("undo everything I did this run").
-  let baselineSha: string | null = null;
   if (versioning) {
-    try { baselineSha = (await versioning.commitBaseline(workspaceId, workspaceDir, userInput)).sha; }
+    try { await versioning.commitBaseline(workspaceId, workspaceDir, userInput); }
     catch (err) { wlog.warn({ err }, "versioning baseline commit failed"); }
   }
 
@@ -382,12 +379,12 @@ export async function* runAgent(
       // Agent-initiated rollback. workspace_restore is a signal only — it can't reach the platform
       // versioning history (deliberately outside the agent's reach), so the runner performs the
       // reset here, AFTER this turn's tools have settled, so it can't race a concurrent file write
-      // in the same batch. No sha → the run's pre-run baseline ("undo everything I did this run").
+      // in the same batch. Restore only happens for an explicit sha from workspace_history.
       // Best-effort: a failed/unknown target is logged, never throws into the loop.
       const restoreCall = settled.find(({ tc }) => tc.name === "workspace_restore");
       if (restoreCall && versioning) {
-        const target = (restoreCall.tc.args as { sha?: string }).sha ?? baselineSha;
-        if (target) {
+        const target = (restoreCall.tc.args as { sha?: string }).sha;
+        if (target && classifyToolStatus(restoreCall.resultStr) === "ok") {
           try {
             const ok = await versioning.restore(workspaceId, workspaceDir, target);
             if (ok) resolvedNotify({ type: "snapshot_restored", sha: target });

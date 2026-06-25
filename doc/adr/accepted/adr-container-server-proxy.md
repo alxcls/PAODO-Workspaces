@@ -19,7 +19,7 @@ Key choices:
 
 Consequences
 - Agents can build full-stack HTML tools (dashboards, forms, data explorers) without any extra user configuration.
-- Each container consumes one loopback port for its lifetime; the OS ephemeral range (~28 k ports on Linux) sets the practical per-host workspace ceiling.
+- Each container consumes one host port (bound to a specific interface, not `0.0.0.0`) for its lifetime; the OS ephemeral range (~28 k ports on Linux) sets the practical per-host workspace ceiling.
 - Port is lost on app restart (in-memory map); re-queried from docker port on next access with no user-visible impact.
 - Only plain HTTP; SSE and WebSocket through the proxy are not supported.
 

@@ -24,22 +24,21 @@ The workspace already keeps a snapshot of every run, and a person can browse and
 
 ## User stories
 
-- As the agent, I can list the recent snapshots with a short summary of what each one changed, and see which one the workspace is currently on.
+- As the agent, I can list snapshots with a short summary of what each one changed, optionally ask for just the last N, and see which one the workspace is currently on.
 - As the agent, I can open one snapshot to read exactly what changed, page through a large change, or narrow to a single file.
-- As the agent, I can roll the workspace files back — to the start of this run, or to an earlier snapshot — and try again.
+- As the agent, I can roll the workspace files back to an earlier snapshot and try again.
 
 ## Requirements
 
 ### Must have
 
 - A **browse** tool (`workspace_history`):
-  - With no snapshot given, lists the recent snapshots, each with its age, file count, and a short per-file change summary.
+  - With no snapshot given, lists snapshots, each with its age, file count, and a short per-file change summary.
+  - Supports an optional `last` argument to cap the list to the newest N snapshots when the history is large.
   - Marks the snapshot the workspace is currently on as `(current)`.
   - Given a snapshot, shows what changed in it. Large changes are paged and the tool says how much was left out; the agent can ask for the next page or narrow to one file.
-  - Can show the difference between two snapshots, not just one.
 - A **roll-back** tool (`workspace_restore`):
-  - With nothing specified, undoes just the current run's changes (back to where the run started).
-  - Given an earlier snapshot, rolls the files back to it.
+  - Given a snapshot from `workspace_history`, rolls the files back to it.
   - Always tells the agent it only undoes files, not external side effects.
   - Snapshots made after the restored point stay in the history, so nothing is lost and the move can be reversed.
 - The agent is told, in its instructions, to use these tools for history and roll-back and never the workspace's own `git`.

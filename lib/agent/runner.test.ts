@@ -197,7 +197,21 @@ describe("runAgent — git versioning brackets every run", () => {
 });
 
 describe("runAgent — agent-initiated workspace_restore is runner-mediated", () => {
-  it("restores to the run's baseline snapshot when workspace_restore is called with no sha", async () => {
+  it("restores to the named snapshot when workspace_restore carries a sha", async () => {
+    const { calls, versioning } = makeVersioning();
+    const buildAgentTools = makeBuildTools([
+      [namedToolCallChunk("workspace_restore", "call_1", '{"sha":"abad1de"}')],
+      [new AIMessageChunk({ content: "done" })],
+    ]);
+
+    for await (const _ of runAgent([], "fix it", "/tmp/ws", "ws-1", { ...noopDeps, versioning, buildAgentTools })) { /* drain */ }
+
+    const restore = calls.filter((c) => c.method === "restore");
+    expect(restore).toHaveLength(1);
+    expect(restore[0].args).toEqual(["ws-1", "/tmp/ws", "abad1de"]);
+  });
+
+  it("does not restore when workspace_restore is called without a sha", async () => {
     const { calls, versioning } = makeVersioning();
     const buildAgentTools = makeBuildTools([
       [namedToolCallChunk("workspace_restore", "call_1", "{}")],
@@ -207,23 +221,7 @@ describe("runAgent — agent-initiated workspace_restore is runner-mediated", ()
     for await (const _ of runAgent([], "fix it", "/tmp/ws", "ws-1", { ...noopDeps, versioning, buildAgentTools })) { /* drain */ }
 
     const restore = calls.filter((c) => c.method === "restore");
-    expect(restore).toHaveLength(1);
-    // commitBaseline's fake returns { sha: "base" }; no sha given ⇒ runner targets that baseline.
-    expect(restore[0].args).toEqual(["ws-1", "/tmp/ws", "base"]);
-  });
-
-  it("restores to the named snapshot when workspace_restore carries a sha", async () => {
-    const { calls, versioning } = makeVersioning();
-    const buildAgentTools = makeBuildTools([
-      [namedToolCallChunk("workspace_restore", "call_1", '{"sha":"abad1de"}')],
-      [new AIMessageChunk({ content: "done" })],
-    ]);
-
-    for await (const _ of runAgent([], "go back", "/tmp/ws", "ws-1", { ...noopDeps, versioning, buildAgentTools })) { /* drain */ }
-
-    const restore = calls.filter((c) => c.method === "restore");
-    expect(restore).toHaveLength(1);
-    expect(restore[0].args).toEqual(["ws-1", "/tmp/ws", "abad1de"]);
+    expect(restore).toHaveLength(0);
   });
 
   it("does not restore when no versioning service is injected", async () => {

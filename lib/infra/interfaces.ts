@@ -58,11 +58,10 @@ export interface IWorkspaceVersioning {
   commitResult(workspaceId: string, workspaceDir: string, summary: string): Promise<{ sha: string; changed: boolean }>;
   history(workspaceId: string, workspaceDir: string): Promise<HistoryEntry[]>;
   diff(workspaceId: string, workspaceDir: string, from: string, to: string): Promise<string>;
-  /** Last `n` snapshots, newest-first, each with its per-file diffstat vs its parent. */
-  versionStats(workspaceId: string, workspaceDir: string, n: number): Promise<VersionStat[]>;
-  /** Raw diff for one snapshot (`git show sha`), or the cumulative diff `from`→`sha` across
-   *  snapshots when `from` is given (`git diff from sha`). Optionally path-scoped / word-diffed. */
-  versionDiff(workspaceId: string, workspaceDir: string, sha: string, opts?: { path?: string; wordDiff?: boolean; from?: string }): Promise<string>;
+  /** Snapshots, newest-first, each with its per-file diffstat vs its parent. Omit `n` to list all. */
+  versionStats(workspaceId: string, workspaceDir: string, n?: number): Promise<VersionStat[]>;
+  /** Raw diff for one snapshot (`git show sha`), optionally narrowed to one path. */
+  versionDiff(workspaceId: string, workspaceDir: string, sha: string, opts?: { path?: string }): Promise<string>;
   restore(workspaceId: string, workspaceDir: string, sha: string): Promise<boolean>;
   /** Permanently remove a workspace's versioning repo. Called when the workspace is deleted. */
   deleteRepo(workspaceId: string): Promise<void>;

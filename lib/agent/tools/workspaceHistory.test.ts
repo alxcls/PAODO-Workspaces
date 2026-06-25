@@ -27,18 +27,18 @@ function tool(over: Partial<IWorkspaceVersioning>): WorkspaceHistoryTool {
 
 describe("WorkspaceHistoryTool — overview (no sha)", () => {
   const versions: VersionStat[] = [
-    { sha: "deadbee", age: "2 hours ago", subject: "run 2: edits", files: [{ path: "src/a.ts", add: 10, del: 4 }], totalAdd: 10, totalDel: 4, current: true },
-    { sha: "abad1de", age: "3 hours ago", subject: "run 1: init", files: [{ path: "logo.png", add: -1, del: -1 }], totalAdd: 0, totalDel: 0 },
+    { sha: "deadbee", age: "2 hours ago", subject: "run 2 (user prompt): edits", files: [{ path: "src/a.ts", add: 10, del: 4 }], totalAdd: 10, totalDel: 4, current: true },
+    { sha: "abad1de", age: "3 hours ago", subject: "run 1 (user prompt): init", files: [{ path: "logo.png", add: -1, del: -1 }], totalAdd: 0, totalDel: 0 },
   ];
 
   it("renders one block per version with numeric churn, binary marker, and the (current) tag on the sha", async () => {
     const out = await tool({ versionStats: async () => versions }).invoke({});
     expect(out).toBe(
       // (current) rides on the sha of the snapshot the work-tree is on, not the newest by default.
-      "deadbee (current)  2 hours ago  1 file +10/-4  run 2: edits\n" +
+      "deadbee (current)  2 hours ago  1 file +10/-4  run 2 (user prompt): edits\n" +
       "  src/a.ts  +10/-4\n\n" +
       // Binary files contribute 0 to the header totals; only the per-file line marks "binary".
-      "abad1de  3 hours ago  1 file +0/-0  run 1: init\n" +
+      "abad1de  3 hours ago  1 file +0/-0  run 1 (user prompt): init\n" +
       "  logo.png  binary"
     );
   });
@@ -52,11 +52,25 @@ describe("WorkspaceHistoryTool — overview (no sha)", () => {
     expect(out).toContain("…+3 more files");
   });
 
-  it("passes n through and reports empty history", async () => {
-    let seen = 0;
+  it("lists all snapshots by default and reports empty history", async () => {
+    let seen: number | undefined = -1;
     const t = tool({ versionStats: async (_id, _dir, n) => { seen = n; return []; } });
-    expect(await t.invoke({ n: 7 })).toBe("No snapshots yet.");
-    expect(seen).toBe(7);
+    expect(await t.invoke({})).toBe("No snapshots yet.");
+    expect(seen).toBeUndefined();
+  });
+
+  it("passes the overview last limit through, including '-10' shorthand", async () => {
+    let seen: number | undefined;
+    const t = tool({ versionStats: async (_id, _dir, n) => { seen = n; return versions; } });
+    await t.invoke({ last: "-10" });
+    expect(seen).toBe(10);
+  });
+
+  it("treats positive and negative last values the same: newest N snapshots", async () => {
+    let seen: number | undefined;
+    const t = tool({ versionStats: async (_id, _dir, n) => { seen = n; return versions; } });
+    await t.invoke({ last: 10 });
+    expect(seen).toBe(10);
   });
 
   it("filters the overview to a path and drops versions that don't touch it", async () => {
@@ -95,14 +109,14 @@ describe("WorkspaceHistoryTool — detail (sha given)", () => {
     expect(out).not.toContain("diff --git");
     expect(out).not.toContain("index aabf31d");
     expect(out).not.toContain("--- a/README.md");
-    expect(opts).toEqual({ path: undefined, wordDiff: undefined });
+    expect(opts).toEqual({ path: undefined });
   });
 
-  it("forwards path scope and word_diff to the service", async () => {
+  it("forwards path scope to the service", async () => {
     let opts: unknown;
     const t = tool({ versionDiff: async (_i, _d, _s, o) => { opts = o; return rawDiff; } });
-    await t.invoke({ sha: "deadbee", path: "README.md", word_diff: true });
-    expect(opts).toEqual({ path: "README.md", wordDiff: true });
+    await t.invoke({ sha: "deadbee", path: "README.md" });
+    expect(opts).toEqual({ path: "README.md" });
   });
 
   it("rejects a non-hex sha before calling the service", async () => {
@@ -150,18 +164,4 @@ describe("WorkspaceHistoryTool — detail (sha given)", () => {
     expect(out).toContain("+d");
   });
 
-  it("forwards `from` to the service for a cross-snapshot cumulative diff", async () => {
-    let opts: unknown;
-    const t = tool({ versionDiff: async (_i, _d, _s, o) => { opts = o; return longDiff; } });
-    await t.invoke({ sha: "deadbee", from: "abad1de" });
-    expect(opts).toEqual({ path: undefined, wordDiff: undefined, from: "abad1de" });
-  });
-
-  it("rejects a non-hex `from` before calling the service", async () => {
-    let called = false;
-    const t = tool({ versionDiff: async () => { called = true; return ""; } });
-    const out = await t.invoke({ sha: "deadbee", from: "not a sha!" });
-    expect(out).toContain("invalid from sha");
-    expect(called).toBe(false);
-  });
 });

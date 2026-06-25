@@ -42,6 +42,12 @@ The container can be deleted or rebuilt with zero data loss.
 **isolation** — each workspace runs on its own private network.
 Can reach the internet (install packages, run curl, etc.).
 Cannot reach any other workspace container.
+Its dev server (container port 8080) is published only to the app —
+bound to a specific host interface (`127.0.0.1` in local dev, the Docker
+bridge gateway in production), never `0.0.0.0` — so nothing else on the
+host or tailnet can reach it directly. The app bridges browser previews
+to it through `/api/workspaces/:id/proxy`; see
+`doc/adr/accepted/adr-container-server-proxy.md`.
 
 ---
 

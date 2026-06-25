@@ -1,11 +1,10 @@
 // Agent tool for reading the workspace's version history (the platform-owned per-run snapshots,
 // the same ones shown in the UI History panel). It is a SERVER-SIDE tool: it calls the versioning
 // service in-process rather than through the container shell, so the versioning git-dir stays
-// outside the agent's reach. The `sha` argument selects the mode — progressive disclosure:
-//   - no sha  → compact overview of the last N snapshots, each with its per-file churn.
-//   - sha set → that snapshot's full diff vs its parent (line-diff by default, word-diff opt-in).
-// Output is token-optimized: numeric churn (not +/- glyphs), boilerplate stripped from diffs,
-// git-standard @@ hunk headers kept, and hard caps so one fat snapshot can't flood the context.
+// outside the agent's reach. The `sha` argument selects the mode — no sha lists snapshots, sha
+// shows that snapshot's diff. Output is token-optimized: numeric churn (not +/- glyphs),
+// boilerplate stripped from diffs, git-standard @@ hunk headers kept, and hard caps so one fat
+// snapshot can't flood the context.
 
 import { StructuredTool } from "@langchain/core/tools";
 import { z } from "zod";
@@ -15,18 +14,18 @@ import type { IWorkspaceVersioning, VersionStat } from "../../infra/interfaces";
 const SHA = /^[0-9a-fA-F]{4,40}$/;
 const MAX_FILES_PER_VERSION = 6;
 const MAX_DIFF_LINES = 400;
+const OVERVIEW_LAST = z.union([
+  z.number().int().refine((n) => n !== 0, { message: "last must not be 0" }),
+  z.string().regex(/^-?[1-9]\d*$/),
+]);
 
 const schema = z.object({
-  n: z.number().int().min(1).max(20).optional()
-    .describe("Overview mode only: how many recent snapshots to list (default 5, max 20)."),
   sha: z.string().optional()
-    .describe("Omit to list recent snapshots. Pass a sha from that list to view what changed in it."),
+    .describe("Omit to list snapshots. Pass a sha from that list to view what changed in it."),
+  last: OVERVIEW_LAST.optional()
+    .describe("Overview mode only: limit to the newest N snapshots. Omit to list all snapshots. Accepts 10, -10, or \"-10\". Positive and negative mean the same thing here: the last N snapshots."),
   path: z.string().optional()
     .describe("Scope to one file/dir (relative to workspace root). In overview it filters the stats; in detail it narrows a large snapshot's diff."),
-  word_diff: z.boolean().optional()
-    .describe("Detail mode only: show an inline word-level diff instead of line-diff. Clearer for prose/small edits."),
-  from: z.string().optional()
-    .describe("Detail mode only (requires sha): a second, older sha from the overview. Shows the CUMULATIVE diff from `from` up to `sha` across snapshots, instead of just what `sha` changed on its own."),
   offset: z.number().int().min(0).optional()
     .describe("Detail mode only: skip this many diff lines, to page through a diff too large to fit. Default 0. The output footer reports the visible range and total line count."),
   limit: z.number().int().min(1).max(2000).optional()
@@ -53,6 +52,12 @@ function formatOverview(versions: VersionStat[]): string {
     return [header, ...shown].join("\n");
   });
   return blocks.join("\n\n");
+}
+
+function parseOverviewLast(last: z.infer<typeof OVERVIEW_LAST> | undefined): number | undefined {
+  if (last === undefined) return undefined;
+  const n = typeof last === "number" ? last : Number(last);
+  return Math.abs(n);
 }
 
 // Strip the per-file boilerplate git emits (diff --git / index / --- / +++) that carries no
@@ -94,15 +99,14 @@ export class WorkspaceHistoryTool extends StructuredTool<typeof schema> {
   description = `Review the workspace's version history — the automatic per-run snapshots (same ones the user sees in the History panel).
 
 Two modes, selected by the sha argument:
-- Omit sha → overview: the last N snapshots, each with sha, age, subject, and per-file churn (+added/-deleted). The snapshot the workspace is currently on is marked "(current)" — that is the live state on disk (it moves if the user restores an older snapshot), so don't assume the newest is current; read the marker.
+- Omit sha → overview: snapshots with sha, age, subject, and per-file churn (+added/-deleted). The snapshot the workspace is currently on is marked "(current)" — that is the live state on disk (it moves if the user restores an older snapshot), so don't assume the newest is current; read the marker.
 - Pass a sha (from the overview) → detail: exactly what changed in that snapshot, as a diff.
 
 Tips:
 - Workflow is list first, then drill in: read the overview, pick the sha that matters, call again with it.
+- Overview mode lists all snapshots by default. When the history is large, pass last to cap it (for example last: 10 or last: "-10" for the newest 10). There is no "oldest N" mode here.
 - path scopes things to one file/dir — use it to narrow a large snapshot's diff.
-- from (with sha) shows the CUMULATIVE diff across snapshots — pass an older sha as from and a newer one as sha to see everything that changed between two runs.
 - A large diff is paged: the footer reports "showing lines X-Y of Z". Use offset/limit to read the rest (e.g. offset 400) when path can't narrow a single big file further.
-- word_diff gives an inline word-level diff; reach for it on prose or small edits when the line-diff reads noisy.
 This is read-only: it never changes workspace files.`;
   schema = schema;
 
@@ -114,7 +118,7 @@ This is read-only: it never changes workspace files.`;
     super();
   }
 
-  protected async _call({ n, sha, path, word_diff, from, offset, limit }: z.infer<typeof schema>): Promise<string> {
+  protected async _call({ sha, last, path, offset, limit }: z.infer<typeof schema>): Promise<string> {
     let relpath: string | undefined;
     if (path !== undefined) {
       const normalized = normalizeRelpath(path);
@@ -122,11 +126,11 @@ This is read-only: it never changes workspace files.`;
       relpath = normalized;
     }
 
-    try {
-      if (sha === undefined) {
-        let versions = await this.versioning.versionStats(this.workspaceId, this.workspaceDir, n ?? 5);
-        if (relpath) {
-          versions = versions
+      try {
+        if (sha === undefined) {
+          let versions = await this.versioning.versionStats(this.workspaceId, this.workspaceDir, parseOverviewLast(last));
+          if (relpath) {
+            versions = versions
             .map((v) => {
               const files = v.files.filter((f) => f.path === relpath || f.path.startsWith(`${relpath}/`));
               const totalAdd = files.reduce((s, f) => s + (f.add > 0 ? f.add : 0), 0);
@@ -139,16 +143,11 @@ This is read-only: it never changes workspace files.`;
       }
 
       if (!SHA.test(sha)) return "Error: invalid sha — pass a sha from the overview (workspace_history with no sha).";
-      if (from !== undefined && !SHA.test(from)) return "Error: invalid from sha — pass an older sha from the overview, or omit it.";
       const raw = await this.versioning.versionDiff(this.workspaceId, this.workspaceDir, sha, {
         path: relpath,
-        wordDiff: word_diff,
-        from,
       });
       if (raw.trim() === "") {
-        return from
-          ? "No changes between those snapshots (or unknown sha / path)."
-          : "No changes in this snapshot (or unknown sha / path).";
+        return "No changes in this snapshot (or unknown sha / path).";
       }
       return formatDetail(raw, offset, limit);
     } catch (err: unknown) {

@@ -1,12 +1,9 @@
-// Registry of all workspaces. Each workspace has an isolated directory on disk and its own
-// conversation message history. Exposed two ways:
+// Registry of all workspaces. Each workspace has an isolated directory on disk. Exposed two ways:
 //   - the `WorkspaceStore` class (injectable map + persistence) for tests / isolated use
 //   - a default singleton + thin free-function exports (back-compat) used in production
 //
-// NOTE — conversation history is intentionally not persisted to disk. The `messages` array on
-// each Workspace lives only in the in-memory Map and resets on server restart or when the user
-// disconnects (server.ts calls resetWorkspaceMessages when the last WebSocket closes).
-// Workspace files (AGENTS.md, scripts, data) are the intended long-term memory layer for agents.
+// NOTE — conversation history lives in conversationStore.ts, persisted to disk per workspace and
+// surviving across restarts/disconnects. A workspace no longer carries any message history.
 import path from "path";
 import { readFileSync } from "fs";
 import fsAsync from "fs/promises";
@@ -15,11 +12,11 @@ import { atomicSaveJson } from "../infra/jsonPersist";
 import { scaffoldWorkspaceDir } from "./workspaceScaffold";
 import { defaultWorkspaceVersioning } from "../infra/git";
 import { WORKSPACES_ROOT } from "../infra/paths";
+import { deleteWorkspaceConversations } from "./conversationStore";
 import type { IWorkspaceStore } from "../infra/interfaces";
 export { WORKSPACES_ROOT };
 
 const log = createLogger("store");
-import type { BaseMessage } from "@langchain/core/messages";
 
 
 export interface WorkspaceMetadata {
@@ -30,9 +27,7 @@ export interface WorkspaceMetadata {
   maxIterations: number;
 }
 
-export interface Workspace extends WorkspaceMetadata {
-  messages: BaseMessage[];
-}
+export type Workspace = WorkspaceMetadata;
 
 interface WorkspaceRecord {
   id: string;
@@ -96,7 +91,6 @@ export class WorkspaceStore implements IWorkspaceStore {
         id: r.id,
         name: r.name,
         dir,
-        messages: [],
         createdAt: new Date(r.createdAt),
         maxIterations: r.maxIterations ?? 30,
       });
@@ -132,7 +126,6 @@ export class WorkspaceStore implements IWorkspaceStore {
       id,
       name,
       dir,
-      messages: [],
       createdAt: new Date(),
       maxIterations: 30,
     };
@@ -169,7 +162,8 @@ export class WorkspaceStore implements IWorkspaceStore {
       if (ws.dir !== newDir) {
         await fsAsync.rename(ws.dir, newDir);
         ws.dir = newDir;
-        ws.messages = [];
+        // Conversations are keyed by the stable workspace id and stored outside the workspace dir,
+        // so a rename leaves them intact — nothing to reset here.
       }
       ws.name = trimmed;
       this.save();
@@ -184,6 +178,7 @@ export class WorkspaceStore implements IWorkspaceStore {
     const ws = this.workspaces.get(id);
     if (!ws) return false;
     this.workspaces.delete(id);
+    deleteWorkspaceConversations(id);
     try {
       this.save();
     } catch (err) {
@@ -201,11 +196,6 @@ export class WorkspaceStore implements IWorkspaceStore {
     return true;
   }
 
-  async resetWorkspaceMessages(id: string): Promise<void> {
-    const ws = this.workspaces.get(id);
-    if (!ws) return;
-    ws.messages = [];
-  }
 }
 
 // ---- Default production singleton ----
@@ -218,7 +208,7 @@ if (!g._workspaces) g._workspaces = new Map();
 
 function defaultLoad(): WorkspaceRecord[] | null {
   // Only read the registry when this module instance owns a fresh map; otherwise an earlier
-  // instance already populated it and re-reading would duplicate/overwrite live `messages`.
+  // instance already populated it and re-reading would duplicate/overwrite live workspace state.
   if (!freshMap) return null;
   try {
     return JSON.parse(readFileSync(REGISTRY_FILE, "utf-8"));
@@ -244,4 +234,3 @@ export const listWorkspaces = () => defaultWorkspaceStore.listWorkspaces();
 export const renameWorkspace = (id: string, name: string) => defaultWorkspaceStore.renameWorkspace(id, name);
 export const deleteWorkspace = (id: string) => defaultWorkspaceStore.deleteWorkspace(id);
 export const setWorkspaceMaxIterations = (id: string, n: number) => defaultWorkspaceStore.setWorkspaceMaxIterations(id, n);
-export const resetWorkspaceMessages = (id: string) => defaultWorkspaceStore.resetWorkspaceMessages(id);

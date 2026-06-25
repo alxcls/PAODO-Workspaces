@@ -16,7 +16,6 @@ export interface IWorkspaceStore {
   renameWorkspace(id: string, name: string): Promise<boolean>;
   deleteWorkspace(id: string): Promise<boolean>;
   setWorkspaceMaxIterations(id: string, n: number): boolean;
-  resetWorkspaceMessages(id: string): Promise<void>;
 }
 
 export interface HistoryEntry {

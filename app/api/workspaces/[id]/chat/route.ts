@@ -1,14 +1,20 @@
 // Internal chat endpoint used by the browser UI.
-// Runs the agent loop and streams events (tokens, tool calls, errors) back as Server-Sent Events.
+// Two modes over one SSE response:
+//   - send:   body has a non-empty `message` → start a run for the conversation, then stream it
+//   - attach: body has an empty/absent `message` → re-attach to a conversation's in-flight run
+// In both modes the run is owned by the run broker (not this request), so closing the tab only
+// detaches this viewer — the agent keeps going until it finishes or is explicitly stopped.
 import type { NextRequest } from "next/server";
-import { getStore, getContainers, getVersioning } from "@/lib/infra/services";
-import { runAgent, type AgentEvent } from "@/lib/agent/runner";
+import { getStore } from "@/lib/infra/services";
+import type { AgentEvent } from "@/lib/agent/runner";
 import { buildSystemPrompt, buildPromptConfig } from "@/lib/agent/systemPrompt";
 import { loadAgentConfig } from "@/lib/agent/buildTools";
+import { setSystemPrompt } from "@/lib/agent/messageSerialization";
+import * as conversations from "@/lib/workspace/conversationStore";
+import * as broker from "@/lib/agent/runBroker";
 import { createLogger } from "@/lib/infra/logger";
 import { checkRateLimit } from "@/lib/infra/security/rateLimit";
 import { getClientIp } from "@/lib/infra/realtime/clientIp";
-import { recordTurnUsage } from "@/lib/workspace/usageStore";
 
 export async function POST(
   req: NextRequest,
@@ -29,40 +35,65 @@ export async function POST(
     });
   }
 
-  const body = await req.json() as { message?: string };
-  if (!body.message?.trim()) return new Response("message is required", { status: 400 });
+  const body = (await req.json()) as { message?: string; conversationId?: string };
+  const conversationId = body.conversationId ?? conversations.getActiveId(ws.id);
+  const messages = conversations.getMessages(ws.id, conversationId);
+  if (!messages) return new Response("Conversation not found", { status: 404 });
 
-  // Refresh the system prompt on every request so AGENTS.md changes are always picked up.
-  ws.messages[0] = buildSystemPrompt(ws.dir, buildPromptConfig(loadAgentConfig()));
+  const userMessage = body.message?.trim();
+  if (userMessage) {
+    // Refresh the system prompt on every run so AGENTS.md changes are always picked up.
+    setSystemPrompt(messages, buildSystemPrompt(ws.dir, buildPromptConfig(loadAgentConfig())));
+    const { alreadyRunning } = broker.startRun({
+      workspaceId: ws.id,
+      workspaceName: ws.name,
+      workspaceDir: ws.dir,
+      conversationId,
+      messages,
+      userInput: userMessage,
+      maxIterations: ws.maxIterations,
+    });
+    if (alreadyRunning) return new Response("A run is already in progress", { status: 409 });
+    conversations.setActiveId(ws.id, conversationId);
+  }
 
-  log.info("chat stream started");
+  log.info({ conversationId, mode: userMessage ? "send" : "attach" }, "chat stream started");
   const encoder = new TextEncoder();
-  const sessionId = crypto.randomUUID();
 
   const stream = new ReadableStream({
-    async start(controller) {
+    start(controller) {
+      let closed = false;
       const send = (event: AgentEvent) => {
+        if (closed) return;
         controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
       };
+      const close = () => {
+        if (closed) return;
+        closed = true;
+        sub?.unsubscribe();
+        try { controller.close(); } catch { /* already closed */ }
+      };
 
-      try {
-        for await (const event of runAgent(ws.messages, body.message!.trim(), ws.dir, ws.id, { signal: req.signal, maxIterations: ws.maxIterations, store: getStore(), containers: getContainers(), versioning: getVersioning() })) {
-          if (event.type === "turn_usage") {
-            recordTurnUsage({ sessionId, workspaceId: ws.id, workspaceName: ws.name }, event);
-            send(event);
-            continue;
-          }
-          send(event);
-          if (event.type === "done") break;
-        }
-      } catch (err) {
-        log.error({ err }, "chat stream error");
-        send({ type: "error", message: String(err) });
+      // Live events arrive here; 'done' ends the stream for this viewer.
+      const sub = broker.subscribe(ws.id, conversationId, (event) => {
+        send(event);
+        if (event.type === "done") close();
+      });
+
+      if (!sub) {
+        // The run finished (or never existed) between the client's load and this attach. Nothing to
+        // stream — the client already holds the persisted history.
         send({ type: "done" });
-      } finally {
-        log.info("chat stream ended");
-        controller.close();
+        close();
+        return;
       }
+
+      // Catch a late subscriber up, then live events flow via the callback above.
+      for (const event of sub.replay) send(event);
+      if (sub.status === "done") close();
+
+      // Tab closed / navigated away: detach this viewer only. The run continues.
+      req.signal.addEventListener("abort", close);
     },
   });
 

@@ -61,8 +61,12 @@ export async function GET(
   const ws = getStore().getWorkspace(id);
   if (!ws) return new Response("not found", { status: 404 });
 
+  // First segment is the per-workspace preview token (already validated in server.ts); the rest are
+  // the file's path. Carrying the token in the path lets module scripts and their nested relative
+  // imports authenticate, since a path prefix survives relative-URL resolution.
+  const [, ...rest] = filepath;
   // Reconstruct the absolute path from URL path segments (Next.js already decodes them)
-  const absPath = "/" + filepath.join("/");
+  const absPath = "/" + rest.join("/");
 
   try {
     const resolved = await assertInsideWorkspace(ws.dir, absPath);

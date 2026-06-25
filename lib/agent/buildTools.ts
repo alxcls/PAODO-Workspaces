@@ -16,10 +16,13 @@ import { GlobTool } from "./tools/glob";
 import { ListDirectoryTool } from "./tools/listDirectory";
 import { AgentCallTool } from "./tools/agentCall";
 import { ListAgentsTool } from "./tools/listAgents";
+import { WorkspaceHistoryTool } from "./tools/workspaceHistory";
+import { WorkspaceRestoreTool } from "./tools/workspaceRestore";
 import { defaultContainerManager } from "../infra/docker/containerManager";
 import { defaultWorkspaceStore } from "../workspace/workspaceStore";
+import { getVersioning } from "../infra/services";
 import { broadcastToWorkspace } from "../infra/realtime/wsHub";
-import type { IContainerManager, IWorkspaceStore } from "../infra/interfaces";
+import type { IContainerManager, IWorkspaceStore, IWorkspaceVersioning } from "../infra/interfaces";
 import type { AgentConfig, PrivilegedRunner, StreamingExecFn } from "./interfaces";
 
 function makeContainerRunner(workspaceId: string, workspaceDir: string, containers: IContainerManager): PrivilegedRunner {
@@ -57,10 +60,11 @@ export function buildTools(
   workspaceId: string,
   workspaceDir: string,
   config: AgentConfig,
-  deps: { containers?: IContainerManager; store?: IWorkspaceStore } = {},
+  deps: { containers?: IContainerManager; store?: IWorkspaceStore; versioning?: IWorkspaceVersioning } = {},
 ) {
   const containers = deps.containers ?? defaultContainerManager;
   const store = deps.store ?? defaultWorkspaceStore;
+  const versioning = deps.versioning ?? getVersioning();
   const model = buildModel(config);
   const runner = makeContainerRunner(workspaceId, workspaceDir, containers);
   const streamExec = makeStreamingExecFn(workspaceId, workspaceDir, containers);
@@ -77,6 +81,9 @@ export function buildTools(
     new WebFetchTool(),
     new GlobTool(runner),
     new ListDirectoryTool(runner),
+    new WorkspaceHistoryTool(workspaceId, workspaceDir, versioning),
+    // Signal-only: the runner performs the restore against the platform versioning (runner.ts).
+    new WorkspaceRestoreTool(),
     ...(config.graphEnabled
       ? [new AgentCallTool(workspaceId, store, containers), new ListAgentsTool(workspaceId, store)]
       : []),

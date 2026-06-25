@@ -376,6 +376,25 @@ export async function* runAgent(
         break;
       }
 
+      // Agent-initiated rollback. workspace_restore is a signal only — it can't reach the platform
+      // versioning history (deliberately outside the agent's reach), so the runner performs the
+      // reset here, AFTER this turn's tools have settled, so it can't race a concurrent file write
+      // in the same batch. Restore only happens for an explicit sha from workspace_history.
+      // Best-effort: a failed/unknown target is logged, never throws into the loop.
+      const restoreCall = settled.find(({ tc }) => tc.name === "workspace_restore");
+      if (restoreCall && versioning) {
+        const target = (restoreCall.tc.args as { sha?: string }).sha;
+        if (target && classifyToolStatus(restoreCall.resultStr) === "ok") {
+          try {
+            const ok = await versioning.restore(workspaceId, workspaceDir, target);
+            if (ok) resolvedNotify({ type: "snapshot_restored", sha: target });
+            else wlog.warn({ target }, "agent restore: target snapshot not found");
+          } catch (err) {
+            wlog.warn({ err, target }, "agent restore failed");
+          }
+        }
+      }
+
       // Agent-chosen context compaction. The compact_context tool is a signal only — it can't
       // reach `messages`, so the surgery happens here, AFTER this turn's assistant+tool_result
       // pair is committed above (so it's never orphaned: light/medium keep it, hard wipes both

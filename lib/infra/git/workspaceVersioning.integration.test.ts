@@ -50,7 +50,7 @@ describe("WorkspaceVersioning (real git)", () => {
     expect(result.changed).toBe(true);
 
     const history = await ver.history(ID, dir);
-    expect(history[0].message).toMatch(/^run 1: add app\.txt/);
+    expect(history[0].message).toMatch(/^run 1 \(user prompt\): add app\.txt/);
 
     // Restoring to the baseline removes the file from the actual workspace dir.
     expect(await ver.restore(ID, dir, baseline)).toBe(true);

@@ -32,10 +32,11 @@ const STATIC_INSTRUCTIONS = `# Environment
 - Internet access: the \`http_get\` tool performs a real server-side HTTP request to any public URL.
 
 # Server
-When setting up a server always start a server on \`0.0.0.0:8080\`; 
+Run the user-facing server on \`0.0.0.0:8080\` — it is the only port the browser/preview can reach.
 
 # Doing Tasks
 - At the start of every session, call \`list_directory\` to orient yourself.
+- Use \`workspace_history\` to inspect prior platform-managed snapshots, and \`workspace_restore\` only with an explicit sha chosen from that history. Never use shell \`git\` for this history; restores affect files only, not external actions.
 - Prefer editing existing files over creating new ones. Only create files when explicitly required.
 - Use the minimum number of tool calls necessary.
 - Before reporting a task complete, verify it actually worked.

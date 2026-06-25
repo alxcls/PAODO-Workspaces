@@ -73,7 +73,7 @@ The critic is a **separate, fresh agent** — not the working agent grading itse
 
 ## Dependencies
 
-- **Workspace versioning** ([prd-workspace-git-versioning.md](prd-workspace-git-versioning.md)) — provides the per-run snapshots the critic diffs against and the mechanism for discarding critic mutations. (Agent-facing restore is deferred — see [prd-restore-snapshot-tool.md](prd-restore-snapshot-tool.md); the agent fixes forward.)
+- **Workspace versioning** ([prd-workspace-git-versioning.md](prd-workspace-git-versioning.md)) — provides the per-run snapshots the critic diffs against and the mechanism for discarding critic mutations. (Agent-facing browse and roll-back shipped — see [prd-agent-version-history.md](../accepted/prd-agent-version-history.md).)
 
 ## Open questions
 

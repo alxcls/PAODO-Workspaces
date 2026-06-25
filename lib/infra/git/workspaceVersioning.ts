@@ -17,7 +17,7 @@ import { mkdir, rm } from "fs/promises";
 import { createLogger } from "../logger";
 import { WORKSPACES_ROOT } from "../paths";
 import { GitClient, type IGitClient } from "./gitClient";
-import type { HistoryEntry, IWorkspaceVersioning } from "../interfaces";
+import type { HistoryEntry, IWorkspaceVersioning, VersionStat, VersionFileStat } from "../interfaces";
 
 const log = createLogger("versioning");
 
@@ -121,7 +121,7 @@ export class WorkspaceVersioning implements IWorkspaceVersioning {
         const sha = await this.headSha(workspaceId, workspaceDir);
         return { sha: sha! };
       }
-      const sha = await this.commit(workspaceId, workspaceDir, `pre-run: ${truncateSubject(prompt)}`);
+      const sha = await this.commit(workspaceId, workspaceDir, `pre-run (user prompt): ${truncateSubject(prompt)}`);
       return { sha };
     });
   }
@@ -138,7 +138,7 @@ export class WorkspaceVersioning implements IWorkspaceVersioning {
       // stays correct under the per-workspace lock above.
       const tags = await this.git.run([...this.base(workspaceId, workspaceDir), "tag", "--list", "run/*"]);
       const n = tags.stdout.trim() === "" ? 1 : tags.stdout.trim().split("\n").length + 1;
-      const sha = await this.commit(workspaceId, workspaceDir, `run ${n}: ${truncateSubject(summary)}`);
+      const sha = await this.commit(workspaceId, workspaceDir, `run ${n} (user prompt): ${truncateSubject(summary)}`);
       await this.git.run([...this.base(workspaceId, workspaceDir), "tag", `run/${n}`, sha]);
       return { sha, changed: true };
     });
@@ -176,6 +176,65 @@ export class WorkspaceVersioning implements IWorkspaceVersioning {
       [...this.base(workspaceId, workspaceDir), "diff", from, to],
       { trimStdout: false },
     );
+    return r.stdout;
+  }
+
+  // Snapshots (across all refs, like history()) with each commit's per-file numstat vs its
+  // parent. Read-only, so no serialize() lock. The %x1e record separator prefixes every commit's
+  // pretty line; --numstat rows follow on subsequent lines. Binary files show "-" for add/del in
+  // numstat — we surface them as -1 so the formatter can mark them rather than lie. Omit `n` to
+  // list all snapshots; pass it to cap the overview at the newest N.
+  async versionStats(workspaceId: string, workspaceDir: string, n?: number): Promise<VersionStat[]> {
+    const count = n === undefined ? undefined : Math.max(1, Math.floor(n) || 1);
+    const head = await this.headSha(workspaceId, workspaceDir);
+    if (!head) return [];
+    const limitArgs = count === undefined ? [] : [`-n${count}`];
+    const r = await this.git.run(
+      [
+        ...this.base(workspaceId, workspaceDir),
+        "log", "--all", ...limitArgs, "--no-renames", "--numstat",
+        "--pretty=format:%x1e%h%x1f%cr%x1f%s",
+      ],
+      { trimStdout: false },
+    );
+    if (r.code !== 0) return [];
+    return r.stdout
+      .split("\x1e")
+      .filter((rec) => rec.trim() !== "")
+      .map((rec) => {
+        const lines = rec.replace(/^\n/, "").split("\n");
+        const [sha, age, subject] = lines[0].split("\x1f");
+        const files: VersionFileStat[] = [];
+        let totalAdd = 0;
+        let totalDel = 0;
+        for (const line of lines.slice(1)) {
+          const m = line.match(/^(\d+|-)\t(\d+|-)\t(.+)$/);
+          if (!m) continue;
+          const add = m[1] === "-" ? -1 : Number(m[1]);
+          const del = m[2] === "-" ? -1 : Number(m[2]);
+          files.push({ path: m[3], add, del });
+          if (add > 0) totalAdd += add;
+          if (del > 0) totalDel += del;
+        }
+        // head is the full %H; the log emits abbreviated %h, so prefix-match to flag the snapshot
+        // the work-tree is currently on (this is what a UI restore's reset --hard moves).
+        const current = head.startsWith(sha);
+        return { sha, age: age ?? "", subject: subject ?? "", files, totalAdd, totalDel, current };
+      });
+  }
+
+  // Raw diff for a single snapshot (`git show sha`), optionally narrowed to one path. The tool
+  // layer strips boilerplate and pages length; here we just emit git's native output. Read-only.
+  async versionDiff(
+    workspaceId: string,
+    workspaceDir: string,
+    sha: string,
+    opts: { path?: string } = {},
+  ): Promise<string> {
+    const args = [...this.base(workspaceId, workspaceDir)];
+    args.push("show", "--no-renames", sha);
+    if (opts.path) args.push("--", opts.path);
+    const r = await this.git.run(args, { trimStdout: false });
     return r.stdout;
   }
 

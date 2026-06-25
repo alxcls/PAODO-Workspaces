@@ -4,6 +4,20 @@ import { NextRequest, NextResponse } from "next/server";
 
 type Params = { id: string; path: string[] };
 
+// The preview iframe runs at an opaque (null) origin, so it must be granted CORS to read these
+// responses. `null` ACAO is safe here because access is gated by the unguessable per-workspace
+// preview token (validated in server.ts), not by origin — and no cookies/credentials are used.
+const CORS_HEADERS: Record<string, string> = {
+  "Access-Control-Allow-Origin": "null",
+  "Access-Control-Allow-Methods": "GET,POST,PUT,PATCH,DELETE,OPTIONS",
+  "Access-Control-Allow-Headers": "authorization,content-type",
+  "Vary": "Origin",
+};
+
+export async function OPTIONS(): Promise<NextResponse> {
+  return new NextResponse(null, { status: 204, headers: CORS_HEADERS });
+}
+
 async function handle(req: NextRequest, { params }: { params: Promise<Params> }): Promise<NextResponse> {
   const { id, path } = await params;
   const workspace = getStore().getWorkspace(id);
@@ -50,6 +64,7 @@ async function handle(req: NextRequest, { params }: { params: Promise<Params> })
   return new NextResponse(responseBody, {
     status: upstream.status,
     headers: {
+      ...CORS_HEADERS,
       "content-type": ct,
       "x-content-type-options": "nosniff",
       ...(isHtml && {

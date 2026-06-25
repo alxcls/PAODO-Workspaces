@@ -16,6 +16,7 @@ This is a single-user, self-hosted app accessed exclusively over a private Tails
 - App reachable only by authenticated Tailscale devices; `tailscale serve` proxies to `127.0.0.1:<PORT>` — nothing else reaches that port
 - SSH via Tailscale SSH (`tailscale up --ssh`); port 22 closed — no public SSH surface, no fail2ban needed
 - Each workspace container gets its own bridge network — no inter-container traffic
+- Workspace dev-server ports are published on a specific interface, never `0.0.0.0` — `127.0.0.1` in local dev, the Docker bridge gateway in production — so only the app can reach a workspace's server, not the wider tailnet/host (`containerManager.ts` `resolveBindHost`)
 
 **Host**
 - Unattended OS security upgrades — security packages install automatically; kernel patches require a manual reboot to take effect
@@ -51,6 +52,8 @@ This is a single-user, self-hosted app accessed exclusively over a private Tails
 **Browser**
 - Security headers: `X-Content-Type-Options`, `X-Frame-Options: DENY`, CSP, `Referrer-Policy`, `Permissions-Policy`
 - HTML/SVG serve route sets `CSP: sandbox` without `allow-same-origin` — prevents CORS bypass by agent-written previews
+- The HTML-preview iframe also runs at an opaque origin (`sandbox="allow-scripts allow-forms"`, no `allow-same-origin`) — agent-written HTML cannot ride the user's session into the app API or other workspaces. It reaches only its own workspace backend via a per-workspace `PREVIEW_TOKEN` (HMAC-derived, `previewToken.ts`) that server.ts accepts as a Basic-Auth bypass for that workspace's proxy/serve routes only; those responses use `Access-Control-Allow-Origin: null`, safe because access is gated by the unguessable token, not origin
+- CSRF guard: state-changing requests to `/api/*` are rejected when `Sec-Fetch-Site` is cross-site (server.ts `isCsrf`) — blocks blind cross-workspace writes that ambient Basic Auth would otherwise allow from a malicious preview. Non-browser clients (no `Sec-Fetch-Site`, e.g. the Bearer-authed agent API) and the token-gated proxy/serve routes are exempt
 
 **Supply chain**
 - Dependabot weekly PRs + CI gate (`npm audit --audit-level=high`) block high/critical CVE merges

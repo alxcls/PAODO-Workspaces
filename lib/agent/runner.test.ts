@@ -39,7 +39,10 @@ function makeBuildTools(turns: Chunk[][]) {
       })();
     },
   };
-  const toolMap = { execute_command: { invoke: async () => "command ran" } };
+  const toolMap = {
+    execute_command: { invoke: async () => "command ran" },
+    workspace_restore: { invoke: async () => "[restoring]" },
+  };
   return () => ({ modelWithTools, model: modelWithTools, toolMap }) as never;
 }
 
@@ -48,6 +51,14 @@ function toolCallsChunk(...calls: { id: string; args: string }[]): Chunk {
   return new AIMessageChunk({
     content: "",
     tool_call_chunks: calls.map((c, index) => ({ index, id: c.id, name: "execute_command", args: c.args, type: "tool_call_chunk" })),
+  });
+}
+
+// One chunk carrying a single named tool call — for tools other than execute_command.
+function namedToolCallChunk(name: string, id: string, args: string): Chunk {
+  return new AIMessageChunk({
+    content: "",
+    tool_call_chunks: [{ index: 0, id, name, args, type: "tool_call_chunk" }],
   });
 }
 
@@ -122,7 +133,9 @@ function makeVersioning() {
       commitResult: (async (...a: unknown[]) => { calls.push({ method: "commitResult", args: a }); return { sha: "res", changed: true }; }) as never,
       history: rec("history") as never,
       diff: rec("diff") as never,
-      restore: rec("restore") as never,
+      versionStats: rec("versionStats") as never,
+      versionDiff: rec("versionDiff") as never,
+      restore: (async (...a: unknown[]) => { calls.push({ method: "restore", args: a }); return true; }) as never,
       deleteRepo: rec("deleteRepo") as never,
     },
   };
@@ -179,6 +192,48 @@ describe("runAgent — git versioning brackets every run", () => {
     for await (const event of runAgent([], "hello", "/tmp/ws", "ws-1", { ...noopDeps, buildAgentTools })) {
       events.push(event);
     }
+    expect(events.at(-1)).toEqual({ type: "done" });
+  });
+});
+
+describe("runAgent — agent-initiated workspace_restore is runner-mediated", () => {
+  it("restores to the named snapshot when workspace_restore carries a sha", async () => {
+    const { calls, versioning } = makeVersioning();
+    const buildAgentTools = makeBuildTools([
+      [namedToolCallChunk("workspace_restore", "call_1", '{"sha":"abad1de"}')],
+      [new AIMessageChunk({ content: "done" })],
+    ]);
+
+    for await (const _ of runAgent([], "fix it", "/tmp/ws", "ws-1", { ...noopDeps, versioning, buildAgentTools })) { /* drain */ }
+
+    const restore = calls.filter((c) => c.method === "restore");
+    expect(restore).toHaveLength(1);
+    expect(restore[0].args).toEqual(["ws-1", "/tmp/ws", "abad1de"]);
+  });
+
+  it("does not restore when workspace_restore is called without a sha", async () => {
+    const { calls, versioning } = makeVersioning();
+    const buildAgentTools = makeBuildTools([
+      [namedToolCallChunk("workspace_restore", "call_1", "{}")],
+      [new AIMessageChunk({ content: "retried from clean state" })],
+    ]);
+
+    for await (const _ of runAgent([], "fix it", "/tmp/ws", "ws-1", { ...noopDeps, versioning, buildAgentTools })) { /* drain */ }
+
+    const restore = calls.filter((c) => c.method === "restore");
+    expect(restore).toHaveLength(0);
+  });
+
+  it("does not restore when no versioning service is injected", async () => {
+    const buildAgentTools = makeBuildTools([
+      [namedToolCallChunk("workspace_restore", "call_1", "{}")],
+      [new AIMessageChunk({ content: "ok" })],
+    ]);
+    const events: AgentEvent[] = [];
+    for await (const event of runAgent([], "fix it", "/tmp/ws", "ws-1", { ...noopDeps, buildAgentTools })) {
+      events.push(event);
+    }
+    // Nothing to assert on versioning (absent); the run must simply complete cleanly.
     expect(events.at(-1)).toEqual({ type: "done" });
   });
 });

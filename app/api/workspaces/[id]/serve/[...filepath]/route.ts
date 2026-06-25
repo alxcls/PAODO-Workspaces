@@ -14,6 +14,20 @@ import { assertInsideWorkspace } from "@/lib/infra/workspaceContainment";
 const SANDBOX_CSP =
   "sandbox allow-scripts allow-forms allow-popups allow-modals allow-top-navigation-by-user-activation";
 
+// The opaque-origin preview reaches its own workspace's files here; grant CORS so subresources
+// fetched by script resolve. `null` ACAO is safe — access is gated by the per-workspace preview
+// token (validated in server.ts), not by origin, and no credentials are used.
+const CORS_HEADERS: Record<string, string> = {
+  "Access-Control-Allow-Origin": "null",
+  "Access-Control-Allow-Methods": "GET,OPTIONS",
+  "Access-Control-Allow-Headers": "authorization,content-type",
+  "Vary": "Origin",
+};
+
+export async function OPTIONS(): Promise<Response> {
+  return new Response(null, { status: 204, headers: CORS_HEADERS });
+}
+
 const EXT_MIME: Record<string, string> = {
   html: "text/html; charset=utf-8",
   htm: "text/html; charset=utf-8",
@@ -57,6 +71,7 @@ export async function GET(
     const needsSandbox = mime.startsWith("text/html") || mime === "image/svg+xml";
     return new Response(buf, {
       headers: {
+        ...CORS_HEADERS,
         "Content-Type": mime,
         "Cache-Control": "no-cache",
         ...(needsSandbox && { "Content-Security-Policy": SANDBOX_CSP }),

@@ -28,6 +28,28 @@ export interface HistoryEntry {
   current?: boolean;
 }
 
+/** One file's churn within a snapshot. add/del are -1 for binary files (git emits "-"). */
+export interface VersionFileStat {
+  path: string;
+  add: number;
+  del: number;
+}
+
+/** A snapshot enriched with its per-file diffstat vs its parent — feeds the agent's history
+ *  overview and (later) a richer UI history view. Structured so each consumer formats its own way. */
+export interface VersionStat {
+  sha: string;
+  /** Git-relative age, e.g. "2 hours ago". */
+  age: string;
+  subject: string;
+  files: VersionFileStat[];
+  totalAdd: number;
+  totalDel: number;
+  /** True for the snapshot the work-tree is currently at (HEAD) — the state on disk. After a UI
+   *  restore, HEAD moves, so this marks where the user parked, not necessarily the newest snapshot. */
+  current?: boolean;
+}
+
 // Per-workspace git versioning. Methods take (workspaceId, workspaceDir): the id keys the
 // external git-dir (stable across renames), the dir is the work-tree. See workspaceVersioning.ts.
 export interface IWorkspaceVersioning {
@@ -36,6 +58,10 @@ export interface IWorkspaceVersioning {
   commitResult(workspaceId: string, workspaceDir: string, summary: string): Promise<{ sha: string; changed: boolean }>;
   history(workspaceId: string, workspaceDir: string): Promise<HistoryEntry[]>;
   diff(workspaceId: string, workspaceDir: string, from: string, to: string): Promise<string>;
+  /** Snapshots, newest-first, each with its per-file diffstat vs its parent. Omit `n` to list all. */
+  versionStats(workspaceId: string, workspaceDir: string, n?: number): Promise<VersionStat[]>;
+  /** Raw diff for one snapshot (`git show sha`), optionally narrowed to one path. */
+  versionDiff(workspaceId: string, workspaceDir: string, sha: string, opts?: { path?: string }): Promise<string>;
   restore(workspaceId: string, workspaceDir: string, sha: string): Promise<boolean>;
   /** Permanently remove a workspace's versioning repo. Called when the workspace is deleted. */
   deleteRepo(workspaceId: string): Promise<void>;

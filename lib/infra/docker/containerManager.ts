@@ -9,6 +9,7 @@
 import { rm } from "fs/promises";
 import { spawn } from "child_process";
 import { randomUUID } from "crypto";
+import { lookup } from "dns/promises";
 import { getFreePort, cachePort, getCachedPort, invalidatePort, queryDockerPort } from "./portAllocator";
 import path from "path";
 import { createLogger } from "../logger";
@@ -28,6 +29,27 @@ const IDLE_TIMEOUT_MS = parseInt(process.env.CONTAINER_IDLE_MS ?? "", 10) || 10 
 // "paodo_ws") + "_" + volume key ("workspaces"). Falls back to a plain bind mount when unset
 // so local dev (app running directly on host) still works without Docker Compose.
 const WORKSPACES_VOLUME_NAME = process.env.WORKSPACES_VOLUME_NAME ?? "";
+
+// Host interface the workspace server port is published on. Binding to a specific interface
+// (rather than the default 0.0.0.0) keeps workspace dev servers off the public/tailnet interfaces
+// so only the app can reach them — realizing the "never reachable from outside the host" intent.
+//   - Local dev (app runs on the host): 127.0.0.1 — the proxy reaches it via localhost.
+//   - Production (app runs in a container): the Docker bridge gateway the app already uses via
+//     host.docker.internal, resolved once at runtime. If resolution fails we fall back to 0.0.0.0
+//     (today's behavior) so a publish never breaks — hardening, never a functional regression.
+let _bindHostCache: string | undefined;
+async function resolveBindHost(): Promise<string> {
+  if (process.env.WORKSPACE_BIND_HOST) return process.env.WORKSPACE_BIND_HOST;
+  if (!WORKSPACES_VOLUME_NAME) return "127.0.0.1";
+  if (_bindHostCache) return _bindHostCache;
+  try {
+    const { address } = await lookup("host.docker.internal");
+    return (_bindHostCache = address);
+  } catch {
+    log.warn("could not resolve host.docker.internal — publishing workspace port on 0.0.0.0 (unhardened fallback)");
+    return "0.0.0.0";
+  }
+}
 
 export class ContainerManager implements IContainerManager {
   private docker: IDockerClient;
@@ -125,6 +147,7 @@ export class ContainerManager implements IContainerManager {
     log.debug({ workspaceId }, "creating container");
     await this.ensureNetwork(workspaceId);
     const serverPort = await getFreePort();
+    const bindHost = await resolveBindHost();
     const r = await this.docker.cmd(
       "run", "-d",
       // --init runs tini as PID 1 so it reaps orphaned/killed processes. Without it, the keep-alive
@@ -135,7 +158,7 @@ export class ContainerManager implements IContainerManager {
       "--network", this.networkName(workspaceId),
       `--memory=${CONTAINER_MEMORY}`,
       `--cpus=${CONTAINER_CPUS}`,
-      "-p", `${serverPort}:8080`,
+      "-p", `${bindHost}:${serverPort}:8080`,
       ...this.buildVolumeArg(workspaceDir),
       ...(hash ? ["--label", `${HASH_LABEL}=${hash}`] : []),
       // Drop all Linux capabilities, then add back only the minimal set dpkg/apt and the chown sweep

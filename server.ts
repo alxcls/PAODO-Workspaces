@@ -20,6 +20,7 @@ import {
   getConnectionCount,
 } from "./lib/infra/realtime/wsHub";
 import { ensureWatcher, stopWatcher, markSelfWrite, stopAllWatchers } from "./lib/workspace/workspaceWatcher";
+import { validatePreviewToken } from "./lib/infra/security/previewToken";
 
 const dev = process.env.NODE_ENV !== "production";
 const port = parseInt(process.env.PORT ?? "3000", 10);
@@ -69,25 +70,36 @@ function clearAuthFailures(ip: string): void {
   authFailures.delete(ip);
 }
 
-function setSecurityHeaders(res: import("http").ServerResponse): void {
+function setSecurityHeaders(req: import("http").IncomingMessage, res: import("http").ServerResponse): void {
   res.setHeader("X-Content-Type-Options", "nosniff");
   res.setHeader("X-Frame-Options", "DENY");
   res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
   res.setHeader("Permissions-Policy", "geolocation=(), microphone=(), camera=()");
+  // The HTML-preview iframe runs at an OPAQUE origin (sandboxed, no allow-same-origin) and, being a
+  // srcdoc document, INHERITS this page's CSP. Under an opaque origin `'self'` no longer matches our
+  // own app origin, so the preview's app-origin subresources (images/styles/fonts/scripts/base href
+  // via the serve route) and its token-gated proxy fetch would be blocked. Naming our own origin
+  // explicitly alongside `'self'` fixes that — for any normal same-origin document it is equivalent
+  // to `'self'`; it only additionally lets opaque-origin previews load OUR-origin resources (display-
+  // only or token-gated), never any third-party origin.
+  const proto = (((req.headers["x-forwarded-proto"] as string) || "").split(",")[0].trim())
+    || (process.env.NODE_ENV === "production" ? "https" : "http");
+  const host = req.headers["host"];
+  const self = host ? `'self' ${proto}://${host}` : "'self'";
   res.setHeader(
     "Content-Security-Policy",
     [
-      "default-src 'self'",
-      `script-src 'self' 'unsafe-inline'${process.env.NODE_ENV !== "production" ? " 'unsafe-eval'" : ""}`,
-      "style-src 'self' 'unsafe-inline'",
-      "img-src 'self' data: blob:",
-      "font-src 'self'",
-      "connect-src 'self' ws: wss:",
-      "worker-src 'self' blob: data:",
+      `default-src ${self}`,
+      `script-src ${self} 'unsafe-inline'${process.env.NODE_ENV !== "production" ? " 'unsafe-eval'" : ""}`,
+      `style-src ${self} 'unsafe-inline'`,
+      `img-src ${self} data: blob:`,
+      `font-src ${self}`,
+      `connect-src ${self} ws: wss:`,
+      `worker-src ${self} blob: data:`,
       "frame-src 'self'",
       "frame-ancestors 'none'",
-      "form-action 'self'",
-      "base-uri 'self'",
+      `form-action ${self}`,
+      `base-uri ${self}`,
     ].join("; ")
   );
   if (process.env.NODE_ENV === "production") {
@@ -96,6 +108,26 @@ function setSecurityHeaders(res: import("http").ServerResponse): void {
 }
 
 const PUBLIC_API_RE = /^\/api\/workspaces\/[^/]+\/agent$/;
+// The HTML-preview iframe runs at an opaque origin and reaches its OWN workspace's backend via
+// these routes, authenticating with a per-workspace preview token instead of the user's Basic
+// Auth. Capture group 1 is the workspace id the token must match.
+const PREVIEW_AUTH_RE = /^\/api\/workspaces\/([^/]+)\/(?:proxy|serve)\//;
+const MUTATING_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
+
+// CSRF guard: the browser attaches cached Basic Auth to cross-origin requests too, so a malicious
+// opaque-origin preview could fire BLIND state-changing requests at other workspaces (it can't
+// read the reply, but the write still executes). Browsers always send Sec-Fetch-Site; reject
+// cross-site mutations. Requests without the header (non-browser clients, e.g. the external agent
+// API using Bearer) are allowed. The preview's own cross-origin calls hit the token-gated
+// proxy/serve routes, which are exempt.
+function isCsrf(req: import("http").IncomingMessage, pathname: string): boolean {
+  if (!MUTATING_METHODS.has(req.method ?? "GET")) return false;
+  if (!pathname.startsWith("/api/")) return false;
+  if (PREVIEW_AUTH_RE.test(pathname)) return false;
+  const site = req.headers["sec-fetch-site"];
+  if (typeof site !== "string") return false; // non-browser client
+  return site !== "same-origin" && site !== "none";
+}
 
 function checkAuth(ip: string, req: import("http").IncomingMessage): "ok" | "challenge" | "unauthorized" | "blocked" {
   if (!UI_USER || !UI_PASS) return "ok";
@@ -104,6 +136,16 @@ function checkAuth(ip: string, req: import("http").IncomingMessage): "ok" | "cha
   // The agent endpoint authenticates via Bearer API key — exempt it from basic auth.
   const url = new URL(req.url ?? "/", "http://localhost");
   if (req.method === "POST" && PUBLIC_API_RE.test(url.pathname)) return "ok";
+
+  // Preview routes: let the CORS preflight through (it carries no credentials and returns only
+  // headers), and accept a valid per-workspace preview token as a Basic-Auth bypass for that
+  // workspace only. A token for workspace A presented on workspace B's URL fails the match.
+  const preview = PREVIEW_AUTH_RE.exec(url.pathname);
+  if (preview) {
+    if (req.method === "OPTIONS") return "ok";
+    const bearer = /^Bearer (.+)$/.exec(req.headers["authorization"] ?? "");
+    if (bearer && validatePreviewToken(preview[1], bearer[1])) return "ok";
+  }
 
   const auth = req.headers["authorization"] ?? "";
   if (!auth.startsWith("Basic ")) {
@@ -154,7 +196,7 @@ httpServer.on("request", (req, res) => {
   res.once("finish", logRequest);
   res.once("close", logRequest);
 
-  setSecurityHeaders(res);
+  setSecurityHeaders(req, res);
 
   const ip = getClientIp(req);
   const authResult = checkAuth(ip, req);
@@ -180,6 +222,14 @@ httpServer.on("request", (req, res) => {
   if (req.headers["authorization"] && !authLoggedOnce) {
     authLoggedOnce = true;
     log.info({ event: "auth_ok" }, "auth configured and working");
+  }
+
+  const pathname = new URL(url, "http://localhost").pathname;
+  if (isCsrf(req, pathname)) {
+    log.warn({ ip, method, url, event: "csrf_blocked" }, "csrf blocked");
+    res.writeHead(403);
+    res.end("Forbidden");
+    return;
   }
 
   handle(req, res);

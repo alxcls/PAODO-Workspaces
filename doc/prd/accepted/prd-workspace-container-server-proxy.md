@@ -34,7 +34,7 @@ This made it impossible to build interactive HTML tools that read or write data 
 ### Must have
 
 - A proxy route on the app server (`/api/workspaces/:id/proxy/...`) that forwards browser requests to the container's port 8080 and returns the response.
-- Each workspace container gets a unique, randomly assigned host port mapped to its internal port 8080. Ports are bound to `127.0.0.1` only (never reachable from the network).
+- Each workspace container gets a unique, randomly assigned host port mapped to its internal port 8080. The port is published on a specific interface — `127.0.0.1` in local dev, the Docker bridge gateway the app uses in production — never `0.0.0.0`, so only the app can reach it, not the wider tailnet/host.
 - HTML previews automatically receive the proxy URL as `window.API_BASE` so they can call it without hardcoding anything.
 - Existing containers without a port mapping are silently recreated the next time the agent runs a command — workspace files on the volume are unaffected.
 - Works on both macOS (`npm run dev`) and the Linux VPS (app inside Docker Compose).

@@ -3,6 +3,7 @@
 // useAgentStream owns the state + RAF coalescing and delegates all shaping here, which keeps
 // this layer unit-testable under the plain node vitest config.
 import type { AgentEvent } from "@/lib/agent/runner";
+import type { CallAgentMeta } from "@/lib/agent/tools/agentCall";
 
 export interface Message {
   role: "user" | "assistant" | "tool_start" | "error" | "limit_notice" | "reasoning" | "usage";
@@ -10,7 +11,10 @@ export interface Message {
   toolName?: string;
   toolSummary?: string;
   toolDone?: boolean;
-  toolResult?: string;
+  // Set only on a completed call_agent tool bubble: deep-link to the callee's persisted session.
+  calleeWorkspaceId?: string;
+  calleeWorkspaceName?: string;
+  calleeConversationId?: string;
   thinking?: boolean;
   inputTokens?: number;
   outputTokens?: number;
@@ -92,16 +96,36 @@ function appendToolStart(messages: Message[], name: string, args: Record<string,
   return [...messages, toolMsg];
 }
 
-// Flips the most recent open tool bubble for `name` to done, attaching its result if provided.
-function markToolDone(messages: Message[], name: string, result?: string): Message[] {
+// Flips the most recent open tool bubble for `name` to done, attaching the callee session link
+// if one was provided (call_agent only).
+function markToolDone(messages: Message[], name: string, link?: CallAgentMeta): Message[] {
   const next = [...messages];
   for (let j = next.length - 1; j >= 0; j--) {
     if (next[j].role === "tool_start" && next[j].toolName === name && !next[j].toolDone) {
-      next[j] = { ...next[j], toolDone: true, ...(result ? { toolResult: result } : {}) };
+      next[j] = {
+        ...next[j],
+        toolDone: true,
+        ...(link ? { calleeWorkspaceId: link.workspaceId, calleeWorkspaceName: link.workspaceName, calleeConversationId: link.conversationId } : {}),
+      };
       break;
     }
   }
   return next;
+}
+
+// Attaches the callee session deep-link to the most recent still-open tool bubble for `name`
+// (call_agent), without flipping it to done — the spinner keeps running while the callee works,
+// but the "View session" link is already clickable. No-op if the bubble already carries the link.
+function attachToolLink(messages: Message[], name: string, link: CallAgentMeta): Message[] {
+  const next = [...messages];
+  for (let j = next.length - 1; j >= 0; j--) {
+    if (next[j].role === "tool_start" && next[j].toolName === name && !next[j].toolDone) {
+      if (next[j].calleeConversationId === link.conversationId) return messages;
+      next[j] = { ...next[j], calleeWorkspaceId: link.workspaceId, calleeWorkspaceName: link.workspaceName, calleeConversationId: link.conversationId };
+      return next;
+    }
+  }
+  return messages;
 }
 
 // Flips every still-open tool bubble to done. Used when a turn ends without a tool_result for
@@ -129,10 +153,12 @@ export function applyDiscreteEvent(state: TranscriptState, event: AgentEvent): T
   switch (event.type) {
     case "tool_start":
       return { ...state, messages: appendToolStart(state.messages, event.name, event.args) };
+    case "tool_link":
+      return { ...state, messages: attachToolLink(state.messages, event.name, event.meta) };
     case "tool_result":
       return {
         ...state,
-        messages: markToolDone(state.messages, event.name, event.name === "call_agent" ? event.result : undefined),
+        messages: markToolDone(state.messages, event.name, event.name === "call_agent" ? event.meta : undefined),
       };
     case "turn_usage":
       return { ...state, totalInput: state.totalInput + event.inputTokens, totalOutput: state.totalOutput + event.outputTokens };

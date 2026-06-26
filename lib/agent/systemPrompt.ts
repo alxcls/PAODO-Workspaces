@@ -2,12 +2,11 @@
 // Also exports buildStructuredResponderBlock, appended per skill call by executeSkill.
 
 import { SystemMessage } from "@langchain/core/messages";
-import fs from "fs";
 import path from "path";
-import { createLogger } from "../infra/logger";
 import { getProviderMetadata } from "./buildModel";
 import type { LLMProviderConfig } from "./interfaces";
 import { NEEDS_INPUT_KEY, type SkillDefinition } from "../workspace/skillTypes";
+import type { WorkspacePromptInputs } from "./promptContext";
 
 export interface PromptConfig {
   supportsPromptCaching: boolean;
@@ -21,15 +20,13 @@ export function buildPromptConfig(config: LLMProviderConfig): PromptConfig {
   };
 }
 
-const log = createLogger("systemPrompt");
-
 const STATIC_INSTRUCTIONS = `# Environment
 - Operating System: Linux (Ubuntu, inside an isolated Docker container)
 - Shell: /bin/bash
 - Runtime: you run as a NON-ROOT user (uid 1000) confined to the workspace container. You cannot read or modify system paths (/root, /etc, /usr) — attempts will fail with "Permission denied". Changes only affect this workspace.
 - Packages: install language packages freely via \`npm\`/\`pip3\` and language versions via \`nvm\`/\`pyenv\` from execute_command. To install SYSTEM packages (apt) use the \`apt_install\` tool — \`apt-get\`/\`sudo\` are NOT available in the shell.
 - Available runtimes include **Python 3** (\`python3\`, \`pip3\`) and **Node.js** (\`node\`, \`npm\`), among others.
-- Internet access: the \`http_get\` tool performs a real server-side HTTP request to any public URL.
+- Internet access: you have a tool that performs real server-side HTTP requests to public URLs.
 
 # Server
 Run the user-facing server on \`0.0.0.0:8080\` — it is the only port the browser/preview can reach.
@@ -77,24 +74,18 @@ Every field declared in the schema must be present with the correct type. Extra 
 If the args are insufficient or unresolvable (e.g. an id that does not exist in your data), do NOT guess — reply instead with exactly {"${NEEDS_INPUT_KEY}": "<one specific question or correction the caller needs>"}. Investigate first: only ask after your own data could not resolve the args. If the schema itself can express the negative result (e.g. a not-found field), prefer answering with the schema.`;
 }
 
-// Accepts optional agentsContent to allow pure prompt construction without filesystem I/O.
-// When omitted, falls back to reading AGENTS.md from workspaceDir (production default).
-export function buildSystemPrompt(workspaceDir: string, promptConfig: PromptConfig, agentsContent?: string): SystemMessage {
+// Pure prompt construction: callers gather the per-workspace pieces (AGENTS.md, drives, callee
+// guidance) via buildWorkspacePromptInputs and pass the whole object straight through. Taking the
+// bag rather than positional optionals means no call site can silently drop a piece, and any new
+// field added to WorkspacePromptInputs flows here automatically. Does no filesystem I/O of its own.
+export function buildSystemPrompt(workspaceDir: string, promptConfig: PromptConfig, inputs: WorkspacePromptInputs = {}): SystemMessage {
+  const { agentsContent, drivesInfo, calleeInfo } = inputs;
   const date = new Date().toDateString();
 
-  let agentsSection = "";
-  if (agentsContent !== undefined) {
-    agentsSection = agentsContent.trim();
-  } else {
-    try {
-      const agentsMd = fs.readFileSync(path.join(workspaceDir, "AGENTS.md"), "utf-8");
-      agentsSection = agentsMd.trim();
-    } catch {
-      log.debug(`AGENTS.md not found in ${workspaceDir} — skipping`);
-    }
-  }
+  const agentsSection = agentsContent?.trim() ?? "";
 
-  const dynamicContext = `${agentsSection ? agentsSection + "\n\n" : ""}Workspace name: ${path.basename(workspaceDir)} — your working directory inside the container is /workspace
+  // Platform guidance (callee, then drives) leads; the user's AGENTS.md follows.
+  const dynamicContext = `${calleeInfo ? calleeInfo + "\n\n" : ""}${drivesInfo ? drivesInfo + "\n\n" : ""}${agentsSection ? agentsSection + "\n\n" : ""}Workspace name: ${path.basename(workspaceDir)} — your working directory inside the container is /workspace
 Today's date: ${date}`;
 
   return new SystemMessage({

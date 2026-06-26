@@ -4,7 +4,7 @@
 // file tree (via treeRefreshKey) and the file viewer (via the imperative FileViewerHandle ref).
 "use client";
 
-import { use, useState, useEffect, useRef, useCallback } from "react";
+import { use, useState, useEffect, useRef, useCallback, Suspense } from "react";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import FileTreePanel from "@/components/workspace/FileTreePanel";
@@ -18,7 +18,17 @@ import { useWorkspaceSocket } from "@/lib/client/hooks/useWorkspaceSocket";
 import { useWorkspaceMeta } from "@/lib/client/hooks/useWorkspaceMeta";
 import { useConversations } from "@/lib/client/hooks/useConversations";
 
+// useConversations reads useSearchParams() (for the ?conversation= deep-link), which Next requires
+// to sit under a Suspense boundary, so the page body is wrapped below.
 export default function WorkspacePage({ params }: { params: Promise<{ id: string }> }) {
+  return (
+    <Suspense>
+      <WorkspacePageInner params={params} />
+    </Suspense>
+  );
+}
+
+function WorkspacePageInner({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const router = useRouter();
   const { name: workspaceName } = useWorkspaceMeta(id);

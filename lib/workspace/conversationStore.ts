@@ -25,6 +25,9 @@ const log = createLogger("conversations");
 export interface ConversationMeta {
   id: string;
   title: string;
+  /** "skill-call" marks a conversation created by an agent-to-agent call_agent invocation
+   *  (vs the default user-initiated chat); lets the switcher label/filter them distinctly. */
+  kind?: "user" | "skill-call";
   createdAt: string;
   updatedAt: string;
   lastMessageAt: string;
@@ -113,13 +116,17 @@ export function setActiveId(workspaceId: string, convId: string): void {
   if (s.metas.some((m) => m.id === convId)) s.activeId = convId;
 }
 
-export function createConversation(workspaceId: string): ConversationMeta {
+export function createConversation(
+  workspaceId: string,
+  opts?: { title?: string; kind?: ConversationMeta["kind"] },
+): ConversationMeta {
   const s = ensureLoaded(workspaceId);
   const now = new Date().toISOString();
   const id = crypto.randomUUID();
   const meta: ConversationMeta = {
     id,
-    title: id.slice(0, 8), // short, stable label; never rewritten
+    title: opts?.title ?? id.slice(0, 8), // default: short, stable id label; never rewritten
+    ...(opts?.kind ? { kind: opts.kind } : {}),
     createdAt: now,
     updatedAt: now,
     lastMessageAt: now,

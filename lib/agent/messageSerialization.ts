@@ -94,9 +94,19 @@ export function messagesToTranscript(messages: BaseMessage[]): Message[] {
       case "tool": {
         const tm = m as ToolMessage;
         const idx = bubbleByCallId.get(tm.tool_call_id);
-        // Mirror the live stream, which only surfaces a result body for call_agent.
+        // Mirror the live stream: a call_agent bubble carries a deep-link to the callee's session,
+        // not a result body. The link was stashed on the ToolMessage's additional_kwargs at run
+        // time (runner.ts) so it survives reload.
         if (idx !== undefined && out[idx].toolName === "call_agent") {
-          out[idx] = { ...out[idx], toolResult: contentToText(tm.content) };
+          const kw = tm.additional_kwargs as { calleeConversationId?: unknown; calleeWorkspaceId?: unknown; calleeWorkspaceName?: unknown } | undefined;
+          if (typeof kw?.calleeConversationId === "string" && typeof kw?.calleeWorkspaceId === "string") {
+            out[idx] = {
+              ...out[idx],
+              calleeConversationId: kw.calleeConversationId,
+              calleeWorkspaceId: kw.calleeWorkspaceId,
+              ...(typeof kw.calleeWorkspaceName === "string" ? { calleeWorkspaceName: kw.calleeWorkspaceName } : {}),
+            };
+          }
         }
         break;
       }

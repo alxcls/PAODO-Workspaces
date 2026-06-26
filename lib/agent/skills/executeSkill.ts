@@ -16,13 +16,17 @@ import Ajv, { type ErrorObject, type ValidateFunction } from "ajv";
 import type { BaseMessage } from "@langchain/core/messages";
 import { canCall } from "../../workspace/workspaceGraph";
 import { loadSkills } from "../../workspace/skillStore";
+import { createConversation, getMessages, persist } from "../../workspace/conversationStore";
+import { setSystemPrompt } from "../messageSerialization";
 import { appendUsage, recordTurnUsage } from "../../workspace/usageStore";
 import { NEEDS_INPUT_KEY, type SkillCallResult, type SkillSchema } from "../../workspace/skillTypes";
 import type { IWorkspaceStore, IContainerManager } from "../../infra/interfaces";
 import { buildSystemPrompt, buildPromptConfig, buildStructuredResponderBlock } from "../systemPrompt";
+import { buildWorkspacePromptInputs } from "../promptContext";
 import { createLogger } from "../../infra/logger";
-import type { runAgent } from "../runner";
-// runner is imported dynamically inside executeSkill to avoid the circular:
+import type { runAgent, AgentEvent } from "../runner";
+// runner (and runBroker, which pulls in runner) are imported dynamically inside executeSkill to
+// avoid the circular:
 // tools/index → AgentCallTool → executeSkill → runner → buildTools → tools/index
 
 const log = createLogger("executeSkill");
@@ -31,11 +35,18 @@ export interface ExecuteSkillOptions {
   signal?: AbortSignal;
   store?: IWorkspaceStore;
   containers?: IContainerManager;
-  /** Test seams — production uses the real graph, skill store, and runner. */
+  /** Test seams — production uses the real graph, skill store, runner, and conversation store. */
   canCallFn?: typeof canCall;
   loadSkillsFn?: typeof loadSkills;
   runAgentFn?: typeof runAgent;
   appendUsageFn?: typeof appendUsage;
+  createConversationFn?: typeof createConversation;
+  getMessagesFn?: typeof getMessages;
+  persistFn?: typeof persist;
+  /** Fired the instant the callee's conversation is created (before the run finishes), so the
+   *  caller's UI can show the session deep-link mid-call. createConversation already writes the
+   *  conversation to disk, so the link resolves immediately. */
+  onConversationStart?: (conversationId: string) => void;
   outputMaxRetries?: number;
 }
 
@@ -103,6 +114,7 @@ async function runCalleeTurn(
   callee: { dir: string; id: string; name: string; maxIterations: number },
   sessionId: string,
   opts: ExecuteSkillOptions,
+  onEvent?: (event: AgentEvent) => void,
 ): Promise<{ text: string } | { error: string }> {
   const recordUsage = opts.appendUsageFn ?? appendUsage;
   let text = "";
@@ -112,6 +124,7 @@ async function runCalleeTurn(
     store: opts.store,
     containers: opts.containers,
   })) {
+    onEvent?.(event);
     if (event.type === "token") text += event.content;
     if (event.type === "error") return { error: event.message };
     if (event.type === "turn_usage") {
@@ -168,60 +181,103 @@ export async function executeSkill(
     return { state: "failed", code: "EXECUTION_ERROR", message: `skill "${action}" has a broken output schema (the skill file needs fixing): ${validateOutput.compileError}` };
   }
 
-  // 4. Run the callee — fresh isolated conversation, same construction the free-form
-  // call_agent used, plus the structured-responder block carrying this skill's output schema.
+  // 4. Run the callee — same prompt construction the free-form call_agent used, plus the
+  // structured-responder block carrying this skill's output schema. The run is persisted as a
+  // real conversation in the CALLEE's workspace so the caller's UI can deep-link to it and the
+  // operator can review the full session (reasoning, tool calls, messages) in the callee's tab.
   const { loadAgentConfig } = await import("../buildTools");
   const config = loadAgentConfig();
   const run = opts.runAgentFn ?? (await import("../runner")).runAgent;
-  const messages: BaseMessage[] = [buildSystemPrompt(callee.dir, buildPromptConfig(config))];
+  const inputs = buildWorkspacePromptInputs(callee.id, callee.dir);
   const caller = opts.store?.getWorkspace(callerId);
+
+  // Created only now, after every pre-run rejection has been ruled out, so failed validations
+  // never leave empty conversations behind.
+  // No explicit title: fall back to createConversation's default (short id label), so a
+  // call_agent session is named exactly like one started from the chat UI. `kind` is kept for
+  // provenance only — it's not surfaced in the conversation list.
+  const conv = (opts.createConversationFn ?? createConversation)(callee.id, {
+    kind: "skill-call",
+  });
+  const messages = (opts.getMessagesFn ?? getMessages)(callee.id, conv.id) ?? ([] as BaseMessage[]);
+  setSystemPrompt(messages, buildSystemPrompt(callee.dir, buildPromptConfig(config), inputs));
+
   const firstInput = `${caller ? `[From: ${caller.name}] ` : ""}Skill call: ${skill.id}${skill.name !== skill.id ? ` (${skill.name})` : ""}
 Args:
 ${JSON.stringify(args, null, 2)}
 
 ${buildStructuredResponderBlock(skill)}`;
 
+  // Register the callee's run with the run broker so its conversation tab is live-subscribable
+  // while it works — without this the callee runs entirely off-broker and a caller deep-linking
+  // into the session sees a blank, "stuck" UI (no broker session to attach to, history persisted
+  // only at the end). Imported dynamically to keep executeSkill out of the runBroker→runner cycle.
+  // The per-turn `done` events runAgent emits are suppressed; a single `done` is published in the
+  // finally below, after persist, so a correction retry never prematurely closes a subscriber.
+  const { startExternalRun } = await import("../runBroker");
+  const liveRun = startExternalRun(callee.id, conv.id, firstInput);
+  const publish = liveRun
+    ? (event: AgentEvent) => { if (event.type !== "done") liveRun.publish(event); }
+    : undefined;
+
+  // Announce the session only now — after the broker run is registered — so a caller that clicks
+  // the "View session" link the instant it appears finds a live run to attach to, not an empty
+  // (not-yet-registered) session. createConversation already wrote it to disk, so it resolves.
+  opts.onConversationStart?.(conv.id);
+
   const maxRetries = opts.outputMaxRetries ?? config.skillOutputMaxRetries;
   let input = firstInput;
   let lastError = "";
 
-  // 5. Output validation + bounded correction retries on the same live conversation.
-  for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    elog.debug({ attempt }, "skill call running callee");
-    let turn: { text: string } | { error: string };
-    try {
-      turn = await runCalleeTurn(run, messages, input, callee, sessionId, opts);
-    } catch (err) {
-      turn = { error: err instanceof Error ? err.message : String(err) };
-    }
-    if ("error" in turn) {
-      // The runner catches everything (including aborts) and yields an error event, so an
-      // abort surfaces here — name it instead of leaking a raw "operation was aborted".
-      if (opts.signal?.aborted) {
-        elog.warn({ attempt }, "skill call aborted");
-        return { state: "failed", code: "EXECUTION_ERROR", message: "the call was aborted before the agent finished (timeout or cancellation)." };
+  // 5. Output validation + bounded correction retries on the same live conversation. The whole
+  // loop is bracketed by a persist() so the session is saved on every exit path — including
+  // failures, which are the ones most worth inspecting.
+  try {
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      elog.debug({ attempt }, "skill call running callee");
+      let turn: { text: string } | { error: string };
+      try {
+        turn = await runCalleeTurn(run, messages, input, callee, sessionId, opts, publish);
+      } catch (err) {
+        turn = { error: err instanceof Error ? err.message : String(err) };
       }
-      elog.error({ attempt, agentError: turn.error }, "skill call execution error");
-      return { state: "failed", code: "EXECUTION_ERROR", message: turn.error };
+      if ("error" in turn) {
+        // The runner catches everything (including aborts) and yields an error event, so an
+        // abort surfaces here — name it instead of leaking a raw "operation was aborted".
+        if (opts.signal?.aborted) {
+          elog.warn({ attempt }, "skill call aborted");
+          return { state: "failed", code: "EXECUTION_ERROR", message: "the call was aborted before the agent finished (timeout or cancellation).", conversationId: conv.id };
+        }
+        elog.error({ attempt, agentError: turn.error }, "skill call execution error");
+        return { state: "failed", code: "EXECUTION_ERROR", message: turn.error, conversationId: conv.id };
+      }
+
+      const parsed = parseOutput(turn.text);
+      // Reserved envelope, checked before output validation: the callee asked for different
+      // input instead of answering. Not a malformatted response, so no correction retries —
+      // the fix has to come from the caller, not from re-prompting the callee.
+      if (parsed.ok && typeof parsed.value[NEEDS_INPUT_KEY] === "string" && parsed.value[NEEDS_INPUT_KEY].trim()) {
+        const question = (parsed.value[NEEDS_INPUT_KEY] as string).trim();
+        elog.info({ attempt, question }, "skill call needs different input");
+        return { state: "failed", code: "NEEDS_INPUT", message: question, conversationId: conv.id };
+      }
+      if (parsed.ok && validateOutput(parsed.value)) {
+        elog.debug({ attempt }, "skill call completed");
+        return { state: "completed", output: parsed.value, conversationId: conv.id };
+      }
+      lastError = parsed.ok ? formatAjvErrors(validateOutput.errors) : parsed.error;
+      elog.warn({ attempt, validationError: lastError }, "skill output invalid");
+      input = `Your response is not valid: ${lastError}. Reply with a single corrected JSON object matching the output schema — no prose, no fences.`;
     }
 
-    const parsed = parseOutput(turn.text);
-    // Reserved envelope, checked before output validation: the callee asked for different
-    // input instead of answering. Not a malformatted response, so no correction retries —
-    // the fix has to come from the caller, not from re-prompting the callee.
-    if (parsed.ok && typeof parsed.value[NEEDS_INPUT_KEY] === "string" && parsed.value[NEEDS_INPUT_KEY].trim()) {
-      const question = (parsed.value[NEEDS_INPUT_KEY] as string).trim();
-      elog.info({ attempt, question }, "skill call needs different input");
-      return { state: "failed", code: "NEEDS_INPUT", message: question };
+    return { state: "failed", code: "OUTPUT_VALIDATION_ERROR", message: lastError, conversationId: conv.id };
+  } finally {
+    (opts.persistFn ?? persist)(callee.id, conv.id);
+    // Persist first, then close the live run: a client reconnecting at this instant replays from
+    // the just-written on-disk history and receives `done` to end its stream cleanly.
+    if (liveRun) {
+      liveRun.publish({ type: "done" });
+      liveRun.finish();
     }
-    if (parsed.ok && validateOutput(parsed.value)) {
-      elog.debug({ attempt }, "skill call completed");
-      return { state: "completed", output: parsed.value };
-    }
-    lastError = parsed.ok ? formatAjvErrors(validateOutput.errors) : parsed.error;
-    elog.warn({ attempt, validationError: lastError }, "skill output invalid");
-    input = `Your response is not valid: ${lastError}. Reply with a single corrected JSON object matching the output schema — no prose, no fences.`;
   }
-
-  return { state: "failed", code: "OUTPUT_VALIDATION_ERROR", message: lastError };
 }

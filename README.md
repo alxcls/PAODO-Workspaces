@@ -14,6 +14,7 @@ Each *workspace* is an isolated Docker container running its own ReAct loop codi
 - **HTTP API** — call any workspace's agent externally with a per-workspace API key
 - **Live console** — shell output and file changes stream to the UI in real time
 - **Agent network** — connect workspaces in a graph; agents discover and call each other to build multi-agent workflows
+- **Shared drives** — named shared storage you connect to multiple workspaces from the graph; agents pass files through it (`drive_ls`/`drive_read`/`drive_upload`/`drive_download`/`drive_delete`), and you can browse, upload, and download drive files from the UI
 
 ## Quick start
 
@@ -90,7 +91,7 @@ doc/                     Architecture docs, PRDs, ADRs
 
 ## Roadmap
 
-Shared file drive · automatic (size-triggered) compaction · budget monitoring · scheduled triggers · database storage and tools.
+Automatic (size-triggered) compaction · budget monitoring · scheduled triggers · database storage and tools.
 
 ## Contributing
 

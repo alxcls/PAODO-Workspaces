@@ -92,12 +92,35 @@ describe("applyDiscreteEvent", () => {
     ]);
   });
 
-  // Only call_agent keeps its result text in the bubble; other tools just mark done.
-  it("tool_result attaches the result only for call_agent", () => {
+  // call_agent carries a deep-link (callee workspace + conversation) instead of an inline result;
+  // other tools just mark done.
+  it("tool_result attaches the callee session link only for call_agent", () => {
     const start = state([{ role: "tool_start", toolName: "call_agent", toolDone: false }]);
-    const event: AgentEvent = { type: "tool_result", name: "call_agent", result: "sub-answer" };
+    const event: AgentEvent = {
+      type: "tool_result", name: "call_agent", result: "sub-answer",
+      meta: { conversationId: "conv-1", workspaceId: "ws-b", workspaceName: "Agent B" },
+    };
     expect(applyDiscreteEvent(start, event).messages).toEqual([
-      { role: "tool_start", toolName: "call_agent", toolDone: true, toolResult: "sub-answer" },
+      { role: "tool_start", toolName: "call_agent", toolDone: true, calleeWorkspaceId: "ws-b", calleeWorkspaceName: "Agent B", calleeConversationId: "conv-1" },
+    ]);
+  });
+
+  // The link arrives mid-run via tool_link (the callee conversation was just created): the bubble
+  // gains the deep-link but keeps spinning (toolDone stays false) until its tool_result lands.
+  it("tool_link attaches the callee session link to the still-open call_agent bubble", () => {
+    const start = state([{ role: "tool_start", toolName: "call_agent", toolDone: false }]);
+    const event: AgentEvent = { type: "tool_link", name: "call_agent", meta: { conversationId: "conv-2", workspaceId: "ws-c", workspaceName: "Agent C" } };
+    expect(applyDiscreteEvent(start, event).messages).toEqual([
+      { role: "tool_start", toolName: "call_agent", toolDone: false, calleeWorkspaceId: "ws-c", calleeWorkspaceName: "Agent C", calleeConversationId: "conv-2" },
+    ]);
+  });
+
+  // Without meta (e.g. a pre-run rejection), the bubble just marks done — no link.
+  it("tool_result without meta leaves a call_agent bubble linkless", () => {
+    const start = state([{ role: "tool_start", toolName: "call_agent", toolDone: false }]);
+    const event: AgentEvent = { type: "tool_result", name: "call_agent", result: "denied" };
+    expect(applyDiscreteEvent(start, event).messages).toEqual([
+      { role: "tool_start", toolName: "call_agent", toolDone: true },
     ]);
   });
 

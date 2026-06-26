@@ -123,10 +123,16 @@ export default function ChatPanel({ workspaceId, conversationId, initialConversa
                   <b>{toolLabel(m.toolName ?? "")}</b>
                   {m.toolSummary && <span className="text-text-3"> {m.toolSummary}</span>}
                 </div>
-                {m.toolResult && (
-                  <div className="tool-result">
-                    <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>{m.toolResult}</ReactMarkdown>
-                  </div>
+                {m.calleeConversationId && m.calleeWorkspaceId && (
+                  <a
+                    href={`/workspace/${m.calleeWorkspaceId}?conversation=${m.calleeConversationId}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="font-mono text-[12px] leading-[1.4] text-primary hover:underline px-0.5 self-start"
+                  >
+                    ↳ View conversation {m.calleeConversationId}
+                    {m.calleeWorkspaceName ? ` with agent ${m.calleeWorkspaceName}` : ""} ↗
+                  </a>
                 )}
               </div>
             );

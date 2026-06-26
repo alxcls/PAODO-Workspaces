@@ -21,6 +21,8 @@ interface Options {
   clearSelection: () => void;
   onDeletedPaths?: (paths: string[]) => void;
   refreshKey?: number;
+  /** API base for file routes. Defaults to the workspace path; drives pass /api/drives/<id>. */
+  apiBase?: string;
 }
 
 export function useFileOperations({
@@ -30,7 +32,9 @@ export function useFileOperations({
   clearSelection,
   onDeletedPaths,
   refreshKey,
+  apiBase,
 }: Options) {
+  const base = apiBase ?? `/api/workspaces/${workspaceId}`;
   const [tree, setTree] = useState<TreeNode[]>([]);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const deleteTimerRef = useRef<number | null>(null);
@@ -55,17 +59,17 @@ export function useFileOperations({
 
   const fetchTree = useCallback(async () => {
     try {
-      const res = await fetch(`/api/workspaces/${workspaceId}/files`);
+      const res = await fetch(`${base}/files`);
       if (!res.ok) return;
       const { tree: data } = (await res.json()) as { tree: TreeNode[] };
       setTree(data);
     } catch { /* silent */ }
-  }, [workspaceId]);
+  }, [base]);
 
   useEffect(() => { fetchTree(); }, [fetchTree, refreshKey]);
 
   const handleDownload = async () => {
-    const res = await fetch(`/api/workspaces/${workspaceId}/files/download`, {
+    const res = await fetch(`${base}/files/download`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ paths: Array.from(selected) }),
@@ -90,7 +94,7 @@ export function useFileOperations({
     try {
       const resArr = await Promise.all(
         roots.map((p) =>
-          fetch(`/api/workspaces/${workspaceId}/files/content?path=${encodeURIComponent(p)}`, {
+          fetch(`${base}/files/content?path=${encodeURIComponent(p)}`, {
             method: "DELETE",
           })
         )

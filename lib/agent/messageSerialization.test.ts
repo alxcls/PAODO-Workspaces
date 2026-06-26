@@ -58,16 +58,36 @@ describe("messagesToTranscript", () => {
     expect(t[1]).toMatchObject({ role: "assistant", content: "let me look", thinking: true });
     // Historical tool bubbles are already done; non-call_agent results are not surfaced inline.
     expect(t[2]).toMatchObject({ role: "tool_start", toolName: "file_read", toolDone: true });
-    expect(t[2].toolResult).toBeUndefined();
+    expect(t[2].calleeConversationId).toBeUndefined();
     expect(t[3]).toEqual({ role: "assistant", content: "here is the answer" });
   });
 
-  it("surfaces call_agent results inline, mirroring the live stream", () => {
+  it("rebuilds the call_agent session deep-link from the ToolMessage's additional_kwargs", () => {
+    const messages = [
+      new AIMessage({ content: "", tool_calls: [{ id: "c1", name: "call_agent", args: { workspace: "b" } }] }),
+      new ToolMessage({
+        tool_call_id: "c1",
+        content: "neighbor reply",
+        additional_kwargs: { calleeConversationId: "conv-9", calleeWorkspaceId: "ws-b", calleeWorkspaceName: "Agent B" },
+      }),
+    ];
+    const t = messagesToTranscript(messages);
+    expect(t[0]).toMatchObject({
+      role: "tool_start",
+      toolName: "call_agent",
+      calleeConversationId: "conv-9",
+      calleeWorkspaceId: "ws-b",
+      calleeWorkspaceName: "Agent B",
+    });
+  });
+
+  it("omits the link for a call_agent ToolMessage with no persisted meta", () => {
     const messages = [
       new AIMessage({ content: "", tool_calls: [{ id: "c1", name: "call_agent", args: { workspace: "b" } }] }),
       new ToolMessage({ tool_call_id: "c1", content: "neighbor reply" }),
     ];
     const t = messagesToTranscript(messages);
-    expect(t[0]).toMatchObject({ role: "tool_start", toolName: "call_agent", toolResult: "neighbor reply" });
+    expect(t[0]).toMatchObject({ role: "tool_start", toolName: "call_agent", toolDone: true });
+    expect(t[0].calleeConversationId).toBeUndefined();
   });
 });

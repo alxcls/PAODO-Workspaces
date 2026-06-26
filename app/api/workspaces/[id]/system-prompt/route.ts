@@ -9,6 +9,7 @@ export const runtime = "nodejs";
 import { type NextRequest, NextResponse } from "next/server";
 import { getStore } from "@/lib/infra/services";
 import { buildSystemPrompt, buildPromptConfig } from "@/lib/agent/systemPrompt";
+import { buildWorkspacePromptInputs } from "@/lib/agent/promptContext";
 import { loadAgentConfig } from "@/lib/agent/buildTools";
 
 // The SystemMessage content is an array of text blocks; join their text into one string.
@@ -30,6 +31,7 @@ export async function GET(
   const { id } = await params;
   const ws = getStore().getWorkspace(id);
   if (!ws) return new Response("Workspace not found", { status: 404 });
-  const msg = buildSystemPrompt(ws.dir, buildPromptConfig(loadAgentConfig()));
+  const inputs = buildWorkspacePromptInputs(ws.id, ws.dir);
+  const msg = buildSystemPrompt(ws.dir, buildPromptConfig(loadAgentConfig()), inputs);
   return NextResponse.json({ prompt: systemPromptText(msg.content) });
 }

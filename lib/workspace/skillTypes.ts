@@ -30,10 +30,16 @@ export interface SkillDefinition {
   output: SkillSchema;
 }
 
-/** Result of a skill call, returned by executeSkill. */
+/**
+ * Result of a skill call, returned by executeSkill. `conversationId` is the id of the persisted
+ * conversation in the CALLEE's workspace for this run — present whenever the callee actually ran
+ * (completed, or failed after starting), absent for pre-run rejections (NOT_CONNECTED,
+ * SKILL_NOT_FOUND, INPUT_VALIDATION_ERROR). It is UI metadata for deep-linking, never shown to
+ * the calling model.
+ */
 export type SkillCallResult =
-  | { state: "completed"; output: Record<string, unknown> }
-  | { state: "failed"; code: SkillErrorCode; message: string };
+  | { state: "completed"; output: Record<string, unknown>; conversationId?: string }
+  | { state: "failed"; code: SkillErrorCode; message: string; conversationId?: string };
 
 export type SkillErrorCode =
   | "NOT_CONNECTED"

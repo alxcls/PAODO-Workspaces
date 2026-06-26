@@ -119,6 +119,60 @@ export function startRun(params: StartRunParams): { alreadyRunning: boolean } {
   return { alreadyRunning: false };
 }
 
+/**
+ * A producer-driven run: its events are generated elsewhere rather than by a detached runAgent
+ * loop. executeSkill uses this for agent-to-agent calls — it has to drive the callee's runAgent
+ * itself (it needs the streamed text for output validation and correction retries), but the
+ * callee's run must still be live-subscribable so the callee's own conversation tab can attach and
+ * watch it (otherwise a caller deep-linking into the callee session sees a blank, "stuck" UI while
+ * the run only logs to the console and persists at the very end).
+ */
+export interface ExternalRun {
+  /** Buffer + fan out one event to subscribers, exactly as the detached loop in startRun does. */
+  publish: (event: AgentEvent) => void;
+  /** Mark the run done and schedule eviction. Persist the conversation BEFORE calling this so a
+   *  client reconnecting at the end replays from a consistent on-disk history. */
+  finish: () => void;
+}
+
+/**
+ * Register a producer-driven run for a conversation. Returns null if a run is already live for it
+ * (mirrors startRun's one-run-per-conversation rule). The caller publishes each event and calls
+ * finish() when the whole call — including any correction retries — has completed.
+ */
+export function startExternalRun(workspaceId: string, conversationId: string, userInput: string): ExternalRun | null {
+  const k = key(workspaceId, conversationId);
+  const existing = sessions.get(k);
+  if (existing && existing.status === "running") return null;
+
+  const session: RunSession = {
+    workspaceId,
+    conversationId,
+    userInput,
+    buffer: [],
+    subscribers: new Set(),
+    abort: new AbortController(),
+    status: "running",
+  };
+  sessions.set(k, session);
+
+  return {
+    publish: (event) => {
+      session.buffer.push(event);
+      for (const sub of session.subscribers) {
+        try { sub(event); } catch (err) { log.warn({ err }, "subscriber threw"); }
+      }
+    },
+    finish: () => {
+      if (session.status === "done") return;
+      session.status = "done";
+      setTimeout(() => {
+        if (sessions.get(k) === session) sessions.delete(k);
+      }, DONE_LINGER_MS);
+    },
+  };
+}
+
 export interface Subscription {
   /** Every event so far — re-emit these first, then live events arrive via the callback. */
   replay: AgentEvent[];

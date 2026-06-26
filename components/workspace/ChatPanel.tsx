@@ -4,7 +4,8 @@
 import { useState, useRef, useEffect } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { useAgentStream, toolLabel } from "@/lib/client/hooks/useAgentStream";
+import { useAgentStream, toolLabel, type Message } from "@/lib/client/hooks/useAgentStream";
+import type { InitialConversation } from "@/lib/client/hooks/useConversations";
 
 const mdComponents: Components = {
   table: ({ node: _n, ...props }) => (
@@ -19,35 +20,64 @@ const SendIcon = () => (
   </svg>
 );
 
-export default function ChatPanel({ workspaceId, onAgentTurnComplete }: { workspaceId: string; onAgentTurnComplete?: () => void }) {
+export default function ChatPanel({ workspaceId, conversationId, initialConversation, onAgentTurnComplete, onRunStart }: { workspaceId: string; conversationId: string | null; initialConversation?: InitialConversation | null; onAgentTurnComplete?: () => void; onRunStart?: () => void }) {
   const [draft, setDraft] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
+  // The id whose inline payload we've already consumed, so we use it once (first paint) and then
+  // always re-fetch — the payload can go stale once the conversation is used.
+  const consumedInitialRef = useRef<string | null>(null);
 
-  const { messages, streaming, pendingTools, sendMessage, reset, abort } = useAgentStream(workspaceId, {
-    onTurnComplete: onAgentTurnComplete,
-  });
+  const { messages, streaming, pendingTools, sendMessage, attachLive, hydrate, reset, detach, stop } = useAgentStream(
+    workspaceId,
+    conversationId,
+    { onTurnComplete: onAgentTurnComplete },
+  );
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: streaming ? "instant" : "smooth" });
   }, [messages, streaming]);
 
+  // When a run begins, nudge the switcher to refresh so its "running" dot lights up immediately and
+  // its (idle-stopped) polling restarts for the duration of the run.
   useEffect(() => {
-    reset();
+    if (streaming) onRunStart?.();
+  }, [streaming, onRunStart]);
+
+  // Load the selected conversation: render its saved history, then re-attach to its in-flight run
+  // (if any) to watch it continue live. Detaches the previous conversation's stream on switch.
+  useEffect(() => {
     setDraft("");
-  }, [workspaceId, reset]);
+    if (!conversationId) { reset(); return; }
+    let cancelled = false;
+    // Fast path: the inline payload that came with the conversation list, used once on first paint.
+    if (initialConversation?.id === conversationId && consumedInitialRef.current !== conversationId) {
+      consumedInitialRef.current = conversationId;
+      hydrate(initialConversation.transcript);
+      if (initialConversation.running) attachLive(initialConversation.userInput);
+      return () => { cancelled = true; detach(); };
+    }
+    (async () => {
+      const res = await fetch(`/api/workspaces/${workspaceId}/conversations/${conversationId}`);
+      if (cancelled || !res.ok) return;
+      const data = (await res.json()) as { transcript: Message[]; running: boolean; userInput: string | null };
+      hydrate(data.transcript);
+      if (data.running) attachLive(data.userInput);
+    })();
+    return () => { cancelled = true; detach(); };
+  }, [workspaceId, conversationId, hydrate, attachLive, reset, detach, initialConversation]);
 
   useEffect(() => {
     if (!streaming) return;
     function onKeyDown(e: KeyboardEvent) {
-      if (e.key === "Escape") abort();
+      if (e.key === "Escape") stop();
     }
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, [streaming, abort]);
+  }, [streaming, stop]);
 
   function handleSubmit() {
-    if (!draft.trim() || streaming) return;
+    if (!draft.trim() || streaming || !conversationId) return;
     const msg = draft.trim();
     setDraft("");
     if (taRef.current) taRef.current.style.height = "auto";
@@ -55,7 +85,7 @@ export default function ChatPanel({ workspaceId, onAgentTurnComplete }: { worksp
   }
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col flex-1 min-h-0">
       <div className="flex-1 overflow-auto p-[14px_16px] flex flex-col gap-2">
         {messages.length === 0 && !streaming && (
           <div className="text-text-3 text-ms text-center mt-6">
@@ -172,17 +202,24 @@ export default function ChatPanel({ workspaceId, onAgentTurnComplete }: { worksp
             if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSubmit(); }
           }}
         />
-        <button
-          className="w-9 h-9 rounded-lg border-0 bg-primary text-white inline-flex items-center justify-center cursor-pointer transition-[background,opacity] duration-[140ms] flex-none hover:bg-primary-2 disabled:opacity-45 disabled:cursor-not-allowed"
-          disabled={!draft.trim() || streaming}
-          onClick={handleSubmit}
-          title="Send (Enter)"
-        >
-          {streaming
-            ? <span className="w-3.5 h-3.5 border-2 border-white/40 border-t-white rounded-full animate-[spin_.8s_linear_infinite]" />
-            : <SendIcon />
-          }
-        </button>
+        {streaming ? (
+          <button
+            className="w-9 h-9 rounded-lg border-0 bg-danger text-white inline-flex items-center justify-center cursor-pointer transition-[background,opacity] duration-[140ms] flex-none hover:opacity-90"
+            onClick={() => stop()}
+            title="Stop (Esc)"
+          >
+            <span className="w-3 h-3 bg-white rounded-[2px]" />
+          </button>
+        ) : (
+          <button
+            className="w-9 h-9 rounded-lg border-0 bg-primary text-white inline-flex items-center justify-center cursor-pointer transition-[background,opacity] duration-[140ms] flex-none hover:bg-primary-2 disabled:opacity-45 disabled:cursor-not-allowed"
+            disabled={!draft.trim() || !conversationId}
+            onClick={handleSubmit}
+            title="Send (Enter)"
+          >
+            <SendIcon />
+          </button>
+        )}
       </div>
     </div>
   );

@@ -48,7 +48,6 @@ async function main(): Promise<void> {
     id: wsId,
     name: "smoke-ws",
     dir: "/tmp/smoke-ws",
-    messages: [],
     createdAt: new Date(),
     maxIterations: 30,
   };

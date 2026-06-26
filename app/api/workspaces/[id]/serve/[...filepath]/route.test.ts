@@ -27,9 +27,10 @@ vi.mock("@/lib/infra/services", () => ({
 
 import { GET } from "./route";
 
-// The route builds its path from URL segments, so the test supplies the absolute path's segments.
+// The route builds its path from URL segments after the leading preview-token segment (validated
+// upstream in server.ts), so the test prepends a placeholder token then the absolute path's segments.
 function get(absPath: string): Promise<Response> {
-  const filepath = absPath.split("/").filter(Boolean);
+  const filepath = ["preview-token", ...absPath.split("/").filter(Boolean)];
   return GET(new Request("http://x/serve"), { params: Promise.resolve({ id: "ws", filepath }) });
 }
 
@@ -50,7 +51,7 @@ describe("serve GET — workspace containment", () => {
 
   it("404s for an unknown workspace", async () => {
     const res = await GET(new Request("http://x/serve"), {
-      params: Promise.resolve({ id: "nope", filepath: ["page.html"] }),
+      params: Promise.resolve({ id: "nope", filepath: ["preview-token", "page.html"] }),
     });
     expect(res.status).toBe(404);
   });

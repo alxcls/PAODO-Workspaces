@@ -14,6 +14,7 @@ import next from "next";
 import { WebSocketServer } from "ws";
 import { getStore, getContainers } from "./lib/infra/services";
 import { setTodos } from "./lib/workspace/todoStore";
+import { loadIndex } from "./lib/workspace/conversationStore";
 import {
   addConnection,
   removeConnection,
@@ -108,10 +109,16 @@ function setSecurityHeaders(req: import("http").IncomingMessage, res: import("ht
 }
 
 const PUBLIC_API_RE = /^\/api\/workspaces\/[^/]+\/agent$/;
-// The HTML-preview iframe runs at an opaque origin and reaches its OWN workspace's backend via
-// these routes, authenticating with a per-workspace preview token instead of the user's Basic
-// Auth. Capture group 1 is the workspace id the token must match.
-const PREVIEW_AUTH_RE = /^\/api\/workspaces\/([^/]+)\/(?:proxy|serve)\//;
+// The HTML-preview iframe runs at an opaque origin and reaches its OWN workspace's backend via the
+// proxy/serve routes, authenticating with a per-workspace preview token instead of the user's Basic
+// Auth. Proxy calls are fetch()-driven, so the token rides as a Bearer header (group 1 = the
+// workspace id it must match).
+const PROXY_AUTH_RE = /^\/api\/workspaces\/([^/]+)\/proxy\//;
+// Serve delivers the preview's static subresources (<link>, <script type=module> and its nested
+// relative imports), which the browser fetches itself — our fetch shim can't reach them and they
+// can't carry a header. So the token rides in the path as the first segment after /serve/, where it
+// survives relative-URL resolution. Group 1 = workspace id, group 2 = token.
+const SERVE_AUTH_RE = /^\/api\/workspaces\/([^/]+)\/serve\/([^/]+)/;
 const MUTATING_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
 // CSRF guard: the browser attaches cached Basic Auth to cross-origin requests too, so a malicious
@@ -123,7 +130,7 @@ const MUTATING_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 function isCsrf(req: import("http").IncomingMessage, pathname: string): boolean {
   if (!MUTATING_METHODS.has(req.method ?? "GET")) return false;
   if (!pathname.startsWith("/api/")) return false;
-  if (PREVIEW_AUTH_RE.test(pathname)) return false;
+  if (PROXY_AUTH_RE.test(pathname)) return false; // token-gated; serve is GET-only so never mutating
   const site = req.headers["sec-fetch-site"];
   if (typeof site !== "string") return false; // non-browser client
   return site !== "same-origin" && site !== "none";
@@ -137,15 +144,19 @@ function checkAuth(ip: string, req: import("http").IncomingMessage): "ok" | "cha
   const url = new URL(req.url ?? "/", "http://localhost");
   if (req.method === "POST" && PUBLIC_API_RE.test(url.pathname)) return "ok";
 
-  // Preview routes: let the CORS preflight through (it carries no credentials and returns only
-  // headers), and accept a valid per-workspace preview token as a Basic-Auth bypass for that
+  // Preview routes accept a valid per-workspace preview token as a Basic-Auth bypass for that
   // workspace only. A token for workspace A presented on workspace B's URL fails the match.
-  const preview = PREVIEW_AUTH_RE.exec(url.pathname);
-  if (preview) {
+  // Proxy: token as a Bearer header; let the CORS preflight (no credentials, headers only) through.
+  const proxy = PROXY_AUTH_RE.exec(url.pathname);
+  if (proxy) {
     if (req.method === "OPTIONS") return "ok";
     const bearer = /^Bearer (.+)$/.exec(req.headers["authorization"] ?? "");
-    if (bearer && validatePreviewToken(preview[1], bearer[1])) return "ok";
+    if (bearer && validatePreviewToken(proxy[1], bearer[1])) return "ok";
   }
+  // Serve: token is the first path segment. It's hex, so encodeURIComponent is identity and no
+  // decode is needed (avoids a throw on a malformed %-sequence in a hostile path).
+  const serve = SERVE_AUTH_RE.exec(url.pathname);
+  if (serve && validatePreviewToken(serve[1], serve[2])) return "ok";
 
   const auth = req.headers["authorization"] ?? "";
   if (!auth.startsWith("Basic ")) {
@@ -277,12 +288,14 @@ wss.on("connection", (ws, req) => {
   const wasEmpty = getConnectionCount(workspaceId) === 0;
   addConnection(workspaceId, ws);
   if (wasEmpty) {
-    // First connection — treat as a new session: clear conversation history and todos
-    // so prior agent state (including todo_write calls) never bleeds into the new session.
-    getStore().resetWorkspaceMessages(workspaceId).catch((err) =>
-      log.error({ workspaceId, err }, "failed to reset messages")
-    );
-    setTodos(workspaceId, []);
+    // First connection — load saved conversations from disk so a returning user immediately sees
+    // their history. Conversations persist across restarts and disconnects (and a run keeps going
+    // even with no one connected), so we deliberately no longer wipe message history here.
+    try {
+      loadIndex(workspaceId);
+    } catch (err) {
+      log.error({ workspaceId, err }, "failed to load conversations");
+    }
     ensureWatcher(workspaceId, workspace.dir);
   }
 
@@ -291,9 +304,6 @@ wss.on("connection", (ws, req) => {
     setTimeout(() => {
       if (getConnectionCount(workspaceId) === 0) {
         stopWatcher(workspaceId);
-        getStore().resetWorkspaceMessages(workspaceId).catch((err) =>
-          log.error({ workspaceId, err }, "failed to reset messages on disconnect")
-        );
         setTodos(workspaceId, []);
       }
     }, 5000);

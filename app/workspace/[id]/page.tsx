@@ -10,16 +10,19 @@ import { useRouter } from "next/navigation";
 import FileTreePanel from "@/components/workspace/FileTreePanel";
 import FileViewer, { type FileViewerHandle } from "@/components/workspace/FileViewer";
 import ChatPanel from "@/components/workspace/ChatPanel";
+import ConversationBar from "@/components/workspace/ConversationBar";
 import ConsolePanel from "@/components/workspace/ConsolePanel";
 import HistoryPanel from "@/components/workspace/HistoryPanel";
 import TopBar from "@/components/layout/TopBar";
 import { useWorkspaceSocket } from "@/lib/client/hooks/useWorkspaceSocket";
 import { useWorkspaceMeta } from "@/lib/client/hooks/useWorkspaceMeta";
+import { useConversations } from "@/lib/client/hooks/useConversations";
 
 export default function WorkspacePage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const router = useRouter();
   const { name: workspaceName } = useWorkspaceMeta(id);
+  const { conversations, activeId, setActiveId, create, refresh, initial } = useConversations(id);
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [viewerOpen, setViewerOpen] = useState(false);
 
@@ -161,7 +164,19 @@ export default function WorkspacePage({ params }: { params: Promise<{ id: string
         }
       >
         <div className="flex flex-col min-h-0 overflow-hidden" style={{ flex: chatRatio }}>
-          <ChatPanel workspaceId={id} onAgentTurnComplete={() => setTreeRefreshKey((k) => k + 1)} />
+          <ConversationBar
+            conversations={conversations}
+            activeId={activeId}
+            onSelect={setActiveId}
+            onNew={create}
+          />
+          <ChatPanel
+            workspaceId={id}
+            conversationId={activeId}
+            initialConversation={initial}
+            onRunStart={refresh}
+            onAgentTurnComplete={() => { setTreeRefreshKey((k) => k + 1); refresh(); }}
+          />
         </div>
         <div className="ws-right-handle" onMouseDown={startRowDrag} />
         <div className="flex flex-col min-h-0 overflow-hidden" style={{ flex: 1 - chatRatio }}>

@@ -5,7 +5,7 @@ import { describe, it, expect } from "vitest";
 import { AIMessage, AIMessageChunk, ToolMessage, type BaseMessage } from "@langchain/core/messages";
 import { runAgent, classifyToolStatus, type AgentEvent } from "./runner";
 
-// runAgent mutates the conversation history (ws.messages) in place. When a request is aborted
+// runAgent mutates the conversation history (the messages array) in place. When a request is aborted
 // (the user hits escape) the SSE consumer stops pulling and the generator is abandoned via
 // `.return()` at whatever `yield` it is suspended on. The invariant these tests pin: at every
 // such suspension point, history is either missing the whole tool-call turn or has it complete

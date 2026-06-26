@@ -1,8 +1,11 @@
-// Drives one chat turn against the agent: POSTs the user message to the workspace chat route
-// and consumes the SSE stream, folding each AgentEvent into the chat transcript. Token and
-// reasoning deltas are coalesced via requestAnimationFrame so streaming stays smooth; all
-// other shaping is delegated to the pure reducers in ./agentTranscript. Exposes the message
-// list plus sendMessage/reset/abort and the streaming/pendingTools flags.
+// Drives the chat transcript for one conversation against the agent. Sending a message and
+// re-attaching to an already-running agent share one SSE-consuming core: each AgentEvent is folded
+// into the transcript, with token/reasoning deltas coalesced via requestAnimationFrame for smooth
+// streaming. All transcript shaping is delegated to the pure reducers in ./agentTranscript.
+//
+// Because the run is owned by the server (not this request), closing/switching only detaches this
+// viewer — the agent keeps running. hydrate() loads a conversation's saved history; attachLive()
+// reconnects to its in-flight run and watches it continue; stop() ends the run for everyone.
 "use client";
 
 import { useState, useRef, useCallback, useEffect } from "react";
@@ -25,7 +28,7 @@ interface Options {
   onTurnComplete?: () => void;
 }
 
-export function useAgentStream(workspaceId: string, { onTurnComplete }: Options = {}) {
+export function useAgentStream(workspaceId: string, conversationId: string | null, { onTurnComplete }: Options = {}) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [streaming, setStreaming] = useState(false);
   const [pendingTools, setPendingTools] = useState(0);
@@ -36,25 +39,24 @@ export function useAgentStream(workspaceId: string, { onTurnComplete }: Options 
   const reasoningRafRef = useRef<number | null>(null);
 
   // Single source of truth for the rendered transcript + per-turn token totals; setMessages
-  // only mirrors it for rendering. Keeping both the token RAF flush and the discrete-event
-  // reducer writing through here avoids the two paths drifting apart.
+  // only mirrors it for rendering.
   const transcriptRef = useRef<TranscriptState>(emptyTranscript());
   const commit = useCallback((next: TranscriptState) => {
     transcriptRef.current = next;
     setMessages(next.messages);
   }, []);
 
-  // Captured in a ref so sendMessage never needs to be recreated when the callback changes.
-  // Updated in an effect (not during render) so the ref only ever tracks a committed render.
   const onTurnCompleteRef = useRef(onTurnComplete);
   useEffect(() => { onTurnCompleteRef.current = onTurnComplete; });
 
-  const reset = useCallback(() => {
-    transcriptRef.current = emptyTranscript();
-    setMessages([]);
-  }, []);
+  // Replace the whole transcript with a loaded conversation's saved history.
+  const hydrate = useCallback((loaded: Message[]) => {
+    commit({ messages: loaded, totalInput: 0, totalOutput: 0 });
+  }, [commit]);
 
-  const abort = useCallback(() => abortRef.current?.abort(), []);
+  const reset = useCallback(() => {
+    commit(emptyTranscript());
+  }, [commit]);
 
   const flushToken = useCallback(() => {
     const content = pendingTokenRef.current;
@@ -70,13 +72,16 @@ export function useAgentStream(workspaceId: string, { onTurnComplete }: Options 
     commit({ ...transcriptRef.current, messages: upsertReasoningText(transcriptRef.current.messages, content) });
   }, [commit]);
 
-  const sendMessage = useCallback(async (userMessage: string) => {
-    commit({ ...transcriptRef.current, messages: [...transcriptRef.current.messages, { role: "user", content: userMessage }], totalInput: 0, totalOutput: 0 });
+  // Shared SSE pump for both send and attach. `userBubble`, when given, is appended before the
+  // stream opens (the user's own message echo).
+  const consume = useCallback(async (body: object, userBubble?: string) => {
+    if (userBubble !== undefined) {
+      commit({ ...transcriptRef.current, messages: [...transcriptRef.current.messages, { role: "user", content: userBubble }], totalInput: 0, totalOutput: 0 });
+    }
     setStreaming(true);
 
     let assistantContent = "";
     let reasoningContent = "";
-    let hadToolCalls = false;
     let wasAborted = false;
 
     try {
@@ -84,12 +89,14 @@ export function useAgentStream(workspaceId: string, { onTurnComplete }: Options 
       const res = await fetch(`/api/workspaces/${workspaceId}/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: userMessage }),
+        body: JSON.stringify(body),
         signal: abortRef.current.signal,
       });
 
       if (!res.ok || !res.body) {
-        commit({ ...transcriptRef.current, messages: [...transcriptRef.current.messages, { role: "error", content: "Failed to reach server." }] });
+        if (res.status !== 409) {
+          commit({ ...transcriptRef.current, messages: [...transcriptRef.current.messages, { role: "error", content: "Failed to reach server." }] });
+        }
         return;
       }
 
@@ -109,7 +116,6 @@ export function useAgentStream(workspaceId: string, { onTurnComplete }: Options 
         } else if (event.type === "tool_start") {
           assistantContent = "";
           reasoningContent = "";
-          hadToolCalls = true;
           setPendingTools((n) => n + 1);
           commit(applyDiscreteEvent(transcriptRef.current, event));
         } else if (event.type === "tool_result") {
@@ -131,18 +137,40 @@ export function useAgentStream(workspaceId: string, { onTurnComplete }: Options 
       if (reasoningRafRef.current) { cancelAnimationFrame(reasoningRafRef.current); reasoningRafRef.current = null; }
       flushToken();
       flushReasoning();
-      // Finalize any tool row still spinning — on abort the stream is torn down before its
-      // tool_result arrives, so without this the tool bubble's spinner would run forever.
+      // Finalize any tool row still spinning — on detach the stream is torn down before its
+      // tool_result arrives, so without this a tool bubble's spinner would run forever.
       commit({ ...transcriptRef.current, messages: markAllToolsDone(transcriptRef.current.messages) });
       abortRef.current = null;
       setStreaming(false);
       setPendingTools(0);
-      if (!wasAborted && hadToolCalls && !assistantContent) {
-        commit({ ...transcriptRef.current, messages: [...transcriptRef.current.messages, { role: "error", content: "Agent stopped without generating a response." }] });
-      }
-      onTurnCompleteRef.current?.();
+      if (!wasAborted) onTurnCompleteRef.current?.();
     }
   }, [workspaceId, commit, flushToken, flushReasoning]);
 
-  return { messages, streaming, pendingTools, sendMessage, reset, abort };
+  const sendMessage = useCallback(async (userMessage: string) => {
+    if (!conversationId) return;
+    await consume({ message: userMessage, conversationId }, userMessage);
+  }, [conversationId, consume]);
+
+  // Reconnect to a conversation's in-flight run. `userInput` (the message that started it) is
+  // echoed as the user bubble since the saved history does not yet include this run.
+  const attachLive = useCallback(async (userInput?: string | null) => {
+    if (!conversationId) return;
+    await consume({ conversationId }, userInput ?? undefined);
+  }, [conversationId, consume]);
+
+  // Detach this viewer (stop reading the stream); the server-side run is unaffected.
+  const detach = useCallback(() => abortRef.current?.abort(), []);
+
+  // Stop the run for everyone. The server emits `done` and the stream closes naturally.
+  const stop = useCallback(async () => {
+    if (!conversationId) return;
+    try {
+      await fetch(`/api/workspaces/${workspaceId}/conversations/${conversationId}/stop`, { method: "POST" });
+    } catch {
+      // best-effort; the run will still end on its own terms
+    }
+  }, [workspaceId, conversationId]);
+
+  return { messages, streaming, pendingTools, sendMessage, attachLive, hydrate, reset, detach, stop };
 }

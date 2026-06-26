@@ -109,12 +109,20 @@ const FileViewer = forwardRef<FileViewerHandle, Props>(function FileViewer(
 
   const htmlForPreview = useMemo(() => {
     if (!isHtml || !draft || !filePath) return draft;
-    const dirSegments = filePath.split("/").slice(0, -1);
+    // filePath is absolute, so split() yields a leading "" — drop it (filter) to avoid a double
+    // slash (serve/TOKEN//Users), which Next.js 308-redirects to collapse, and that redirect carries
+    // no CORS header so the browser blocks the subresource mid-redirect at the opaque origin.
+    const dirSegments = filePath.split("/").slice(0, -1).filter(Boolean);
     const encodedDir = dirSegments.map(encodeURIComponent).join("/");
-    const base = `${window.location.origin}/api/workspaces/${workspaceId}/serve/${encodedDir}/`;
+    // Token rides in the <base> PATH: tag-driven subresources (<link>, <script type=module> + nested
+    // imports) are fetched from the opaque (null) origin and can carry neither Basic Auth nor a
+    // header, and queries are dropped on relative resolution — only a path prefix survives to
+    // authenticate them at the serve route (validated in server.ts).
+    const base = `${window.location.origin}/api/workspaces/${workspaceId}/serve/${encodeURIComponent(previewToken ?? "")}/${encodedDir}/`;
     const apiBase = `/api/workspaces/${workspaceId}/proxy`;
-    // Shim rewrites root-relative fetches to the workspace proxy and attaches the preview token so
-    // they authenticate as this workspace (the opaque origin carries no session of its own).
+    // Shim rewrites root-relative fetches (app-API calls) to the workspace proxy and attaches the
+    // preview token as a Bearer header — those are fetch()-driven so a header works. Relative fetches
+    // resolve via <base> to the serve route and authenticate through the path token above instead.
     const baseTag = `<base href="${base}"><script>window.API_BASE=${JSON.stringify(apiBase)};window.PREVIEW_TOKEN=${JSON.stringify(previewToken ?? "")};(function(){var _f=window.fetch;window.fetch=function(r,o){var u=typeof r==='string'?r:(r instanceof Request?r.url:String(r));if(u.startsWith('/')&&!u.startsWith('//')){var rw=window.API_BASE+u;var h=new Headers((o&&o.headers)||(r instanceof Request?r.headers:undefined));if(window.PREVIEW_TOKEN)h.set('Authorization','Bearer '+window.PREVIEW_TOKEN);var init=Object.assign({},o,{headers:h});return _f(typeof r==='string'?rw:new Request(rw,r),init);}return _f(r,o);};})();</script>`;
     const html = /<head(\s[^>]*)?>/.test(draft)
       ? draft.replace(/<head(\s[^>]*)?>/, `$&${baseTag}`)
@@ -220,11 +228,13 @@ const FileViewer = forwardRef<FileViewerHandle, Props>(function FileViewer(
                 ? <JSONCrack key={previewKey} json={jsonParsed} theme="light" showGrid={false} className="json-preview" />
                 : <div className="flex-1 grid place-items-center text-text-2 text-sm bg-bg-tint p-6 text-center">File too big for preview</div>
             ) : isHtml ? (
-              tokenReady ? (
+              !tokenReady ? (
+                <div className="flex-1 grid place-items-center text-text-3 text-sm bg-bg-tint p-6 text-center">Loading preview…</div>
+              ) : previewToken ? (
                 <iframe key={previewKey} className="html-preview" srcDoc={htmlForPreview}
                   sandbox="allow-scripts allow-forms" title="HTML preview" />
               ) : (
-                <div className="flex-1 grid place-items-center text-text-3 text-sm bg-bg-tint p-6 text-center">Loading preview…</div>
+                <div className="flex-1 grid place-items-center text-danger text-sm bg-bg-tint p-6 text-center">Preview unavailable — could not obtain a preview token.</div>
               )
             ) : (
               <div className="md-preview md-prose">

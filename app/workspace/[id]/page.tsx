@@ -6,7 +6,7 @@
 
 import { use, useState, useEffect, useRef, useCallback, Suspense, lazy } from "react";
 import Image from "next/image";
-import { useRouter } from "next/navigation";
+import Link from "next/link";
 import FileTreePanel from "@/components/workspace/FileTreePanel";
 import { type FileViewerHandle } from "@/components/workspace/FileViewer";
 // FileViewer pulls in heavy, view-only deps (highlight.js with all languages,
@@ -34,7 +34,6 @@ export default function WorkspacePage({ params }: { params: Promise<{ id: string
 
 function WorkspacePageInner({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
-  const router = useRouter();
   const { name: workspaceName } = useWorkspaceMeta(id);
   const { conversations, activeId, setActiveId, create, refresh, initial } = useConversations(id);
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
@@ -114,14 +113,13 @@ function WorkspacePageInner({ params }: { params: Promise<{ id: string }> }) {
       <TopBar
         left={
           <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => router.push("/")}
+            <Link
+              href="/"
               title="Back to workspaces"
               className="w-[34px] h-[34px] rounded-[10px] overflow-hidden flex-shrink-0 inline-flex items-center justify-center bg-gradient-to-br from-primary to-primary-2 border-0 p-0 cursor-pointer"
             >
-              <Image src="/paodo-logo.svg" alt="Paodo logo" width={34} height={34} className="block w-full h-full object-cover" unoptimized />
-            </button>
+              <Image src="/paodo-logo.svg" alt="Paodo logo" width={34} height={34} draggable={false} className="block w-full h-full object-cover pointer-events-none" unoptimized />
+            </Link>
             <span className="font-semibold tracking-[-0.01em] text-lg leading-none inline-flex items-center">
               PAODO WS agents
             </span>

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useMemo, useRef, useCallback } from "react";
-import { useRouter } from "next/navigation";
+import Link from "next/link";
 import Image from "next/image";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -254,7 +254,6 @@ function SystemPromptSection({ workspaceId }: { workspaceId: string }) {
 }
 
 export default function DashboardPage() {
-  const router = useRouter();
   const [records, setRecords] = useState<LightTurnRecord[]>([]);
   const [openSession, setOpenSession] = useState<LightSession | null>(null);
   const [drawerWidth, setDrawerWidth] = useState(440);
@@ -317,14 +316,13 @@ export default function DashboardPage() {
       <TopBar
         left={
           <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => router.push("/")}
+            <Link
+              href="/"
               title="Back to workspaces"
               className="w-[34px] h-[34px] rounded-[10px] overflow-hidden flex-shrink-0 inline-flex items-center justify-center bg-gradient-to-br from-primary to-primary-2 border-0 p-0 cursor-pointer"
             >
-              <Image src="/paodo-logo.svg" alt="Paodo logo" width={34} height={34} className="block w-full h-full object-cover" unoptimized />
-            </button>
+              <Image src="/paodo-logo.svg" alt="Paodo logo" width={34} height={34} draggable={false} className="block w-full h-full object-cover pointer-events-none" unoptimized />
+            </Link>
             <span className="font-semibold tracking-[-0.01em] text-lg leading-none inline-flex items-center">
               PAODO WS agents
             </span>

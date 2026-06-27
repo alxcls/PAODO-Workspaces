@@ -5,14 +5,13 @@
 
 import { use, useState, useEffect, useRef, useCallback } from "react";
 import Image from "next/image";
-import { useRouter } from "next/navigation";
+import Link from "next/link";
 import FileTreePanel from "@/components/workspace/FileTreePanel";
 import FileViewer, { type FileViewerHandle } from "@/components/workspace/FileViewer";
 import TopBar from "@/components/layout/TopBar";
 
 export default function DrivePage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
-  const router = useRouter();
   const apiBase = `/api/drives/${id}`;
 
   const [driveName, setDriveName] = useState("");
@@ -53,14 +52,13 @@ export default function DrivePage({ params }: { params: Promise<{ id: string }> 
       <TopBar
         left={
           <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => router.push("/graph")}
+            <Link
+              href="/graph"
               title="Back to network"
               className="w-[34px] h-[34px] rounded-[10px] overflow-hidden flex-shrink-0 inline-flex items-center justify-center bg-gradient-to-br from-primary to-primary-2 border-0 p-0 cursor-pointer"
             >
-              <Image src="/paodo-logo.svg" alt="Paodo logo" width={34} height={34} className="block w-full h-full object-cover" unoptimized />
-            </button>
+              <Image src="/paodo-logo.svg" alt="Paodo logo" width={34} height={34} draggable={false} className="block w-full h-full object-cover pointer-events-none" unoptimized />
+            </Link>
             <span className="font-semibold tracking-[-0.01em] text-lg leading-none inline-flex items-center">
               PAODO WS agents
             </span>

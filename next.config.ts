@@ -5,7 +5,6 @@ import path from "path";
 
 const nextConfig: NextConfig = {
   devIndicators: false,
-  transpilePackages: ["jsoncrack-react", "reaflow", "reablocks", "reakeys"],
   serverExternalPackages: ["pino", "pino-pretty"],
   logging: {
     incomingRequests: false,
@@ -15,8 +14,6 @@ const nextConfig: NextConfig = {
   // ESM natively so no conditionNames equivalent is needed.
   turbopack: {},
   webpack: (config, { webpack }) => {
-    // jsoncrack-react ships ESM-only ("import" condition); webpack defaults don't include it
-    config.resolve.conditionNames = ["import", ...(config.resolve.conditionNames ?? [])];
     // Prevent workspace data files from triggering HMR rebuilds — WatchIgnorePlugin
     // avoids touching watchOptions.ignored (which has a strict schema in Next.js's webpack).
     config.plugins.push(new webpack.WatchIgnorePlugin({ paths: [path.resolve(__dirname, "data")] }));

@@ -46,10 +46,10 @@ As a citizen developer reviewing what the agent wrote, I can switch any previewe
 
 ### Must have
 
-- **Auto-preview on open**: When a file with extension `.md`, `.json`, `.html`, or `.htm` is loaded in `FileViewer`, `showPreview` initializes to `true` instead of `false`.
+- **Auto-preview on open**: When a file with extension `.md`, `.html`, or `.htm` is loaded in `FileViewer`, `showPreview` initializes to `true` instead of `false`.
 - **Toggle remains available**: The existing Preview / Code button stays visible for all previewable files so users can switch modes freely.
 - **Markdown**: Rendered via `react-markdown` + `remark-gfm` (already implemented). Output must apply basic typographic styles (headings, bold, lists, code blocks) so it looks like a document, not HTML dump.
-- **JSON**: Rendered via `jsoncrack-react` (already implemented). Falls back to "File too big for preview" for oversized files (already handled).
+- **JSON**: Displayed in the syntax-highlighted code editor only — no graph/tree preview.
 - **HTML/HTM**: Rendered in the sandboxed iframe (already implemented). Relative assets load via the `/api/workspaces/[id]/serve/` route (already implemented).
 - **Real-time refresh**: When the agent modifies a previewed file, the preview reloads automatically (already implemented via WebSocket + `previewKey` bump — must confirm behavior works in preview mode, not just editor mode).
 

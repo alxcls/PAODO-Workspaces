@@ -4,14 +4,10 @@
 "use client";
 
 import { useState, useEffect, useRef, useMemo, forwardRef, useImperativeHandle } from "react";
-import dynamic from "next/dynamic";
 import hljs from "@/lib/client/highlighter";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import "jsoncrack-react/style.css";
 import { useFileContent } from "@/lib/client/hooks/useFileContent";
-
-const JSONCrack = dynamic(() => import("jsoncrack-react").then(m => m.JSONCrack), { ssr: false });
 
 function detectLang(filePath: string): string {
   const ext = filePath.split(".").pop()?.toLowerCase() ?? "";
@@ -68,7 +64,7 @@ const FileViewer = forwardRef<FileViewerHandle, Props>(function FileViewer(
 
   const [showPreview, setShowPreview] = useState(false);
   useEffect(() => {
-    setShowPreview(lang === "markdown" || isHtml || lang === "json");
+    setShowPreview(lang === "markdown" || isHtml);
   }, [lang, isHtml]);
 
   // Per-workspace preview token: the preview iframe runs at an opaque origin (no allow-same-origin),
@@ -147,11 +143,6 @@ const FileViewer = forwardRef<FileViewerHandle, Props>(function FileViewer(
     }
   }, [draft, lang, fileType]);
 
-  const jsonParsed = useMemo<object | null>(() => {
-    if (lang !== "json" || !draft) return null;
-    try { return JSON.parse(draft) as object; } catch { return null; }
-  }, [draft, lang]);
-
   const displayPath = filePath ? filePath.split("/").slice(-3).join("/") : "";
   const rawUrl = filePath
     ? `${base}/files/content?path=${encodeURIComponent(filePath)}&raw=1`
@@ -185,7 +176,7 @@ const FileViewer = forwardRef<FileViewerHandle, Props>(function FileViewer(
         </span>
         {!loading && !error && fileType !== null && (
           <>
-            {fileType === "text" && (lang === "markdown" || isHtml || lang === "json") && (
+            {fileType === "text" && (lang === "markdown" || isHtml) && (
               <button className="btn btn-sm" onClick={() => setShowPreview(v => !v)}
                 title={showPreview ? "Switch to editor" : "Switch to preview"}>
                 {showPreview ? "Code" : "Preview"}
@@ -230,11 +221,7 @@ const FileViewer = forwardRef<FileViewerHandle, Props>(function FileViewer(
       {!loading && !error && fileType === "text" && content !== null && (
         <div className="code-editor-wrap">
           {showPreview ? (
-            lang === "json" ? (
-              jsonParsed !== null
-                ? <JSONCrack key={previewKey} json={jsonParsed} theme="light" showGrid={false} className="json-preview" />
-                : <div className="flex-1 grid place-items-center text-text-2 text-sm bg-bg-tint p-6 text-center">File too big for preview</div>
-            ) : isHtml ? (
+            isHtml ? (
               !tokenReady ? (
                 <div className="flex-1 grid place-items-center text-text-3 text-sm bg-bg-tint p-6 text-center">Loading preview…</div>
               ) : previewToken ? (

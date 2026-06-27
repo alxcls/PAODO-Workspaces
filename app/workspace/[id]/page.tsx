@@ -9,7 +9,7 @@ import Image from "next/image";
 import { useRouter } from "next/navigation";
 import FileTreePanel from "@/components/workspace/FileTreePanel";
 import { type FileViewerHandle } from "@/components/workspace/FileViewer";
-// FileViewer pulls in heavy, view-only deps (highlight.js with all languages, jsoncrack,
+// FileViewer pulls in heavy, view-only deps (highlight.js with all languages,
 // react-markdown). It is only mounted once the user opens a file, so load its chunk lazily to
 // keep them out of the workspace page's initial bundle (the main first-open latency cost).
 const FileViewer = lazy(() => import("@/components/workspace/FileViewer"));

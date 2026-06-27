@@ -28,7 +28,6 @@
     "dotenv": "^17.4.2",
     "file-type": "^22.0.1",
     "highlight.js": "^11.11.1",
-    "jsoncrack-react": "^1.0.3",
     "jszip": "^3.10.1",
     "next": "^16.2.9",
     "pino": "^10.3.1",

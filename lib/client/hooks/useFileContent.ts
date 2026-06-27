@@ -2,7 +2,7 @@
 // from the files/content route, tracks an editable draft with a dirty flag, and exposes save and
 // delete actions. notifyFilesChanged/notifyFilesDeleted let the parent (driven by the workspace
 // socket) react to agent-side file changes: silently reloading the open file unless the user has
-// unsaved edits, bumping previewKey to refresh HTML/JSON previews (including sibling assets), and
+// unsaved edits, bumping previewKey to refresh the HTML preview (including sibling assets), and
 // closing the viewer when the open file is deleted.
 "use client";
 
@@ -122,7 +122,7 @@ export function useFileContent(
     );
     if (directMatch) {
       fetchContent(currentPath, true);
-      if (isHtmlFile || /\.json$/i.test(currentPath)) setPreviewKey((k) => k + 1);
+      if (isHtmlFile) setPreviewKey((k) => k + 1);
     } else if (siblingChanged) {
       setPreviewKey((k) => k + 1);
     }

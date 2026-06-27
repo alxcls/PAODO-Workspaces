@@ -52,6 +52,7 @@ function formatDateTime(iso: string): string {
 // One user message ("turn line") = one sessionId, aggregated from the light per-turn records.
 interface LightSession {
   sessionId: string;
+  conversationId?: string;
   workspaceId: string;
   workspaceName: string;
   timestamp: string;
@@ -68,6 +69,7 @@ function groupBySessions(records: LightTurnRecord[]): LightSession[] {
     if (!s) {
       s = {
         sessionId: r.sessionId,
+        conversationId: r.conversationId,
         workspaceId: r.workspaceId,
         workspaceName: r.workspaceName,
         timestamp: r.timestamp,
@@ -284,12 +286,29 @@ export default function DashboardPage() {
     document.body.style.cursor = "col-resize"; document.body.style.userSelect = "none";
   }, []);
 
-  useEffect(() => {
+  const loadUsage = useCallback(() => {
     fetch("/api/usage")
       .then((r) => r.json())
       .then(setRecords)
       .catch(() => {});
   }, []);
+
+  // Load on mount, and again whenever the page is shown after being navigated away from.
+  // The session links are full-page <a> navigations, so returning via Back restores the page
+  // from the browser's bfcache — React effects don't re-run on that restore, which would leave
+  // the stale (empty) render up. `pageshow` fires on bfcache restore; `visibilitychange` covers
+  // returning to the tab. Both just refetch the (cheap) light usage list.
+  useEffect(() => {
+    loadUsage();
+    const onPageShow = () => loadUsage();
+    const onVisible = () => { if (document.visibilityState === "visible") loadUsage(); };
+    window.addEventListener("pageshow", onPageShow);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      window.removeEventListener("pageshow", onPageShow);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [loadUsage]);
 
   const sessions = useMemo(() => groupBySessions(records), [records]);
 
@@ -323,6 +342,7 @@ export default function DashboardPage() {
           ) : (
             <table className="w-full text-ms border-separate border-spacing-0 whitespace-nowrap">
               <colgroup>
+                <col className="w-[140px]" />
                 <col />
                 <col className="w-[18%]" />
                 <col className="w-[14%]" />
@@ -332,6 +352,7 @@ export default function DashboardPage() {
               </colgroup>
               <thead>
                 <tr className="border-b border-border text-2xs font-semibold text-text-3 tracking-[.06em] uppercase h-[45px]">
+                  <th className="text-left px-6 font-semibold align-middle">Session</th>
                   <th className="text-left px-6 font-semibold align-middle">Workspace</th>
                   <th className="text-left px-6 font-semibold align-middle">Time</th>
                   <th className="text-right px-6 font-semibold align-middle">In ↑</th>
@@ -347,6 +368,23 @@ export default function DashboardPage() {
                     onClick={() => setOpenSession(s)}
                     className={`border-b border-border cursor-pointer transition-colors hover:bg-bg-deep ${openSession?.sessionId === s.sessionId ? "bg-bg-tint" : ""}`}
                   >
+                    {/* Session id deep-links to its conversation tab in the callee/UI workspace,
+                        matching the call_agent "View conversation" link. stopPropagation so the
+                        link navigates instead of opening the detail drawer (the row's click). */}
+                    <td className="px-6 py-2.5 font-mono">
+                      {s.conversationId ? (
+                        <a
+                          href={`/workspace/${s.workspaceId}?conversation=${s.conversationId}`}
+                          onClick={(e) => e.stopPropagation()}
+                          className="text-primary hover:underline"
+                          title="Open this session's conversation"
+                        >
+                          {s.sessionId.slice(0, 8)} ↗
+                        </a>
+                      ) : (
+                        <span className="text-text-3" title="No conversation to link (external agent run)">{s.sessionId.slice(0, 8)}</span>
+                      )}
+                    </td>
                     <td className="px-6 py-2.5 text-text-1 font-medium">{s.workspaceName}</td>
                     <td className="px-6 py-2.5 text-text-3">{formatDateTime(s.timestamp)}</td>
                     <td className="px-6 py-2.5 text-right font-mono text-text-1">{formatTokens(s.inputTokens)}</td>

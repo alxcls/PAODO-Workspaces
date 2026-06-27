@@ -113,6 +113,7 @@ async function runCalleeTurn(
   input: string,
   callee: { dir: string; id: string; name: string; maxIterations: number },
   sessionId: string,
+  conversationId: string,
   opts: ExecuteSkillOptions,
   onEvent?: (event: AgentEvent) => void,
 ): Promise<{ text: string } | { error: string }> {
@@ -128,7 +129,7 @@ async function runCalleeTurn(
     if (event.type === "token") text += event.content;
     if (event.type === "error") return { error: event.message };
     if (event.type === "turn_usage") {
-      recordTurnUsage({ sessionId, workspaceId: callee.id, workspaceName: callee.name }, event, recordUsage);
+      recordTurnUsage({ sessionId, conversationId, workspaceId: callee.id, workspaceName: callee.name }, event, recordUsage);
     }
   }
   return { text };
@@ -237,7 +238,7 @@ ${buildStructuredResponderBlock(skill)}`;
       elog.debug({ attempt }, "skill call running callee");
       let turn: { text: string } | { error: string };
       try {
-        turn = await runCalleeTurn(run, messages, input, callee, sessionId, opts, publish);
+        turn = await runCalleeTurn(run, messages, input, callee, sessionId, conv.id, opts, publish);
       } catch (err) {
         turn = { error: err instanceof Error ? err.message : String(err) };
       }

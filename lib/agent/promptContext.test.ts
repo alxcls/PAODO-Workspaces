@@ -69,7 +69,8 @@ describe("buildWorkspacePromptInputs", () => {
     expect(drivesInfo).toContain("- shared (id: shared-id) — team files");
     expect(drivesInfo).toContain("- scratch (id: scratch-id)"); // no description → no em dash
     expect(drivesInfo).not.toContain("scratch-id) —");
-    expect(drivesInfo).toContain("delete your local copy");
+    expect(drivesInfo).toContain("After uploading a file to a drive, delete your local copy");
+    expect(drivesInfo).toContain("After downloading a file from a drive, delete your local copy");
   });
 
   it("omits the skill-contract drive nudge when the workspace is not a callee", () => {

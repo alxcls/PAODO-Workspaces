@@ -51,7 +51,8 @@ function buildDrivesInfo(workspaceId: string, calleeWorkspace: boolean): string 
 Your workspace is your local machine. Drives are shared spaces — pull files to work on them, push results back, using your drive tools:
 ${list}
 When handing work to another agent, pass the drive id and the file path — not the file contents.
-After uploading a file to a drive, delete your local copy so no stale copy is left behind.${calleeWorkspace ? `\n${SKILL_DRIVE_CONTRACT_NUDGE}` : ""}`;
+After uploading a file to a drive, delete your local copy so no stale copy is left behind.
+After downloading a file from a drive, delete your local copy once you are done with it so no stale copy is left behind.${calleeWorkspace ? `\n${SKILL_DRIVE_CONTRACT_NUDGE}` : ""}`;
 }
 
 // Gathers everything per-workspace the system prompt needs. Pure read I/O; safe to call per request.

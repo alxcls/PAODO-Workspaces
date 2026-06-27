@@ -330,6 +330,37 @@ describe("executeSkill — callee run and output contract", () => {
     expect(received.filter((e) => e.type === "done")).toHaveLength(1);
   });
 
+  it("halts the callee when its own conversation is stopped from the broker (callee-tab Stop)", async () => {
+    // The callee's run is threaded with its broker session's abort signal, so a Stop on the
+    // callee's own tab (broker.stop on the callee conversation) reaches the runner — without this
+    // wiring stop() aborts a controller no one observes and the callee runs on regardless.
+    const CONV = "conv-callee-stop";
+    let sawAbort = false;
+    const run = async function* (
+      _m: unknown, _u: unknown, _d: unknown, _id: unknown, options: { signal?: AbortSignal },
+    ): AsyncGenerator<AgentEvent> {
+      await new Promise<void>((res) => {
+        if (options.signal?.aborted) return res();
+        options.signal?.addEventListener("abort", () => res());
+      });
+      sawAbort = options.signal?.aborted ?? false;
+      yield { type: "error", message: "AbortError: This operation was aborted" };
+    } as unknown as typeof runAgent;
+
+    const call = executeSkill(CALLEE.id, CALLER.id, "check-stock", { sku: "A1" },
+      opts({ run }, { createConversationFn: () => ({ id: CONV, title: "", createdAt: "", updatedAt: "", lastMessageAt: "" }), getMessagesFn: () => [] }));
+
+    // Let the broker session register and the runner start awaiting its signal, then Stop the callee.
+    await new Promise((r) => setTimeout(r, 0));
+    expect(broker.isRunning(CALLEE.id, CONV)).toBe(true);
+    expect(broker.stop(CALLEE.id, CONV)).toBe(true);
+
+    const res = await call;
+    expect(sawAbort).toBe(true);
+    expect(res).toMatchObject({ state: "failed", code: "EXECUTION_ERROR", conversationId: CONV });
+    expect((res as { message: string }).message).toContain("aborted");
+  });
+
   it("names an abort (timeout/cancel) instead of leaking the runner's raw error", async () => {
     // The runner never throws on abort — it yields an error event — so executeSkill must
     // recognize the aborted signal itself for the caller to see a meaningful message.

@@ -130,5 +130,15 @@ describe("runBroker", () => {
       expect(broker.startExternalRun("ws-ext2", "conv-ext2", "x")).toBeNull();
       first!.finish();
     });
+
+    it("exposes a signal that stop() aborts, so a Stop on the callee's own tab halts its runner", () => {
+      const ext = broker.startExternalRun("ws-ext3", "conv-ext3", "x");
+      expect(ext).not.toBeNull();
+      expect(ext!.signal.aborted).toBe(false);
+
+      expect(broker.stop("ws-ext3", "conv-ext3")).toBe(true);
+      expect(ext!.signal.aborted).toBe(true);
+      ext!.finish();
+    });
   });
 });

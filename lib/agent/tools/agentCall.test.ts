@@ -119,6 +119,43 @@ describe("AgentCallTool — callWithMeta surfaces the callee session link", () =
   });
 });
 
+describe("AgentCallTool — caller cancel cascades into the callee", () => {
+  it("threads the caller's signal into executeSkill so a caller Stop reaches the callee", async () => {
+    // executeSkill receives a signal that is aborted whenever the caller's signal is — this is
+    // what makes Stop on the caller cascade down and halt the in-flight callee run.
+    let seenSignal: AbortSignal | undefined;
+    mockedExecute.mockImplementation(async (_callee, _caller, _skillId, _args, opts) => {
+      seenSignal = opts?.signal;
+      return { state: "completed", output: { ok: true }, conversationId: "conv-1" };
+    });
+    const tool = makeTool();
+    const caller = new AbortController();
+
+    await tool.callWithMeta({ workspace: CALLEE.name, skill: "check-stock", args: { sku: "X" } }, undefined, caller.signal);
+    expect(seenSignal).toBeDefined();
+    expect(seenSignal!.aborted).toBe(false);
+    caller.abort();
+    expect(seenSignal!.aborted).toBe(true);
+  });
+
+  it("reports a caller cancel as cancelled, not a timeout", async () => {
+    // The callee run comes back aborted; the tool must word it as a cancellation (the caller's
+    // signal fired) rather than the 5-minute safety timeout.
+    const caller = new AbortController();
+    caller.abort();
+    mockedExecute.mockImplementation(async (_callee, _caller, _skillId, _args, opts) => {
+      // Mirror executeSkill: when aborted it returns a failed/aborted result, signal stays aborted.
+      void opts;
+      return { state: "failed", code: "EXECUTION_ERROR", message: "the call was aborted", conversationId: "conv-1" };
+    });
+    const tool = makeTool();
+
+    const res = await tool.callWithMeta({ workspace: CALLEE.name, skill: "check-stock", args: { sku: "X" } }, undefined, caller.signal);
+    expect(res.result).toContain("cancelled");
+    expect(res.result).not.toContain("timed out");
+  });
+});
+
 describe("AgentCallTool — NEEDS_INPUT rounds", () => {
   it("tells the caller to re-call, then cuts off after the configured rounds", async () => {
     mockedExecute.mockResolvedValue(NEEDS_INPUT);

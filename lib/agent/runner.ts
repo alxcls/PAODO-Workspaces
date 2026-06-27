@@ -70,6 +70,7 @@ type ResolvedToolCall = { id: string; name: string; args: Record<string, unknown
 type AgentCallWithMeta = (
   args: Record<string, unknown>,
   onLink?: (meta: CallAgentMeta) => void,
+  callerSignal?: AbortSignal,
 ) => Promise<{ result: string; meta?: CallAgentMeta }>;
 type PartialTC = { id: string; name: string; args: string };
 
@@ -376,7 +377,7 @@ export async function* runAgent(
           const withMeta = tc.name === "call_agent" ? (tool as { callWithMeta?: AgentCallWithMeta }).callWithMeta : undefined;
           if (withMeta) {
             const r = await withMeta
-              .call(tool, tc.args, (m) => emitLink(tc.name, m))
+              .call(tool, tc.args, (m) => emitLink(tc.name, m), signal)
               .catch((err) => ({ result: `Error: ${String(err)}`, meta: undefined }));
             resultStr = r.result;
             meta = r.meta;

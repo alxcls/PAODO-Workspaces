@@ -73,11 +73,11 @@ A workspace with no declared skills is not callable. If the workspace is not con
    * `onLink`, when given, fires as soon as the callee conversation is created — before the call
    * finishes — so the runner can surface the link mid-run rather than only at completion.
    */
-  async callWithMeta(input: z.infer<typeof schema>, onLink?: (meta: CallAgentMeta) => void): Promise<CallAgentResult> {
-    return this.runCall(input, onLink);
+  async callWithMeta(input: z.infer<typeof schema>, onLink?: (meta: CallAgentMeta) => void, callerSignal?: AbortSignal): Promise<CallAgentResult> {
+    return this.runCall(input, onLink, callerSignal);
   }
 
-  private async runCall({ workspace, skill, args }: z.infer<typeof schema>, onLink?: (meta: CallAgentMeta) => void): Promise<CallAgentResult> {
+  private async runCall({ workspace, skill, args }: z.infer<typeof schema>, onLink?: (meta: CallAgentMeta) => void, callerSignal?: AbortSignal): Promise<CallAgentResult> {
     const callee = this.store.getWorkspaceByName(workspace);
     if (!callee) {
       this.log.warn({ callerWorkspaceId: this.callerWorkspaceId, callee: workspace }, "call_agent target not found");
@@ -96,7 +96,11 @@ A workspace with no declared skills is not callable. If the workspace is not con
 
     this.log.debug({ callerWorkspaceId: this.callerWorkspaceId, callee: workspace, skill }, "call_agent start");
 
-    const signal = AbortSignal.timeout(TIMEOUT_MS);
+    // Run the callee under whichever fires first: the caller's abort (user hit Stop on the caller —
+    // the cascade) or the 5-minute safety timeout. timeout is kept separate so we can tell the two
+    // apart and word the result correctly (a cancel is not a timeout).
+    const timeout = AbortSignal.timeout(TIMEOUT_MS);
+    const signal = callerSignal ? AbortSignal.any([callerSignal, timeout]) : timeout;
     try {
       const result = await executeSkill(callee.id, this.callerWorkspaceId, skill, args, {
         signal,
@@ -113,12 +117,17 @@ A workspace with no declared skills is not callable. If the workspace is not con
         ? { conversationId: result.conversationId, workspaceId: callee.id, workspaceName: callee.name }
         : undefined;
 
-      // The runner converts aborts into error events rather than throwing, so a timeout
+      // The runner converts aborts into error events rather than throwing, so an abort
       // comes back as a failed result — detect it via the signal, not the error name.
       if (signal.aborted) {
-        this.log.warn({ callerWorkspaceId: this.callerWorkspaceId, callee: workspace, skill, timeoutMs: TIMEOUT_MS }, "call_agent timed out");
         this.inputFailures.delete(retryKey);
         this.needsInputRounds.delete(retryKey);
+        // Caller cancel (user hit Stop) vs the safety timeout — only the latter is a "timeout".
+        if (callerSignal?.aborted && !timeout.aborted) {
+          this.log.info({ callerWorkspaceId: this.callerWorkspaceId, callee: workspace, skill }, "call_agent cancelled by caller");
+          return { result: `Error: call to "${workspace}" was cancelled.`, meta };
+        }
+        this.log.warn({ callerWorkspaceId: this.callerWorkspaceId, callee: workspace, skill, timeoutMs: TIMEOUT_MS }, "call_agent timed out");
         return { result: `Error: call to "${workspace}" timed out after ${TIMEOUT_MS / 1000}s — the target agent is too slow or stuck.`, meta };
       }
 
@@ -171,6 +180,10 @@ A workspace with no declared skills is not callable. If the workspace is not con
       return { result: truncated, meta };
     } catch (err) {
       if (signal.aborted) {
+        if (callerSignal?.aborted && !timeout.aborted) {
+          this.log.info({ callerWorkspaceId: this.callerWorkspaceId, callee: workspace, skill }, "call_agent cancelled by caller");
+          return { result: `Error: call to "${workspace}" was cancelled.` };
+        }
         this.log.warn({ callerWorkspaceId: this.callerWorkspaceId, callee: workspace, skill, timeoutMs: TIMEOUT_MS }, "call_agent timed out");
         return { result: `Error: call to "${workspace}" timed out after ${TIMEOUT_MS / 1000}s — the target agent is too slow or stuck.` };
       }

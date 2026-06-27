@@ -133,6 +133,10 @@ export interface ExternalRun {
   /** Mark the run done and schedule eviction. Persist the conversation BEFORE calling this so a
    *  client reconnecting at the end replays from a consistent on-disk history. */
   finish: () => void;
+  /** Fires when stop() is called for this conversation. The producer (executeSkill) must thread
+   *  this into the callee's runner so a Stop on the callee's own tab actually halts it — otherwise
+   *  the session's AbortController has no listener and stop() is a no-op. */
+  signal: AbortSignal;
 }
 
 /**
@@ -170,6 +174,7 @@ export function startExternalRun(workspaceId: string, conversationId: string, us
         if (sessions.get(k) === session) sessions.delete(k);
       }, DONE_LINGER_MS);
     },
+    signal: session.abort.signal,
   };
 }
 

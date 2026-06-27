@@ -115,12 +115,13 @@ async function runCalleeTurn(
   sessionId: string,
   conversationId: string,
   opts: ExecuteSkillOptions,
+  signal: AbortSignal | undefined,
   onEvent?: (event: AgentEvent) => void,
 ): Promise<{ text: string } | { error: string }> {
   const recordUsage = opts.appendUsageFn ?? appendUsage;
   let text = "";
   for await (const event of run(messages, input, callee.dir, callee.id, {
-    signal: opts.signal,
+    signal,
     maxIterations: callee.maxIterations,
     store: opts.store,
     containers: opts.containers,
@@ -221,6 +222,15 @@ ${buildStructuredResponderBlock(skill)}`;
     ? (event: AgentEvent) => { if (event.type !== "done") liveRun.publish(event); }
     : undefined;
 
+  // The signal the callee actually runs under: whichever of these fires first halts it.
+  //   - opts.signal      — the caller's abort + the call_agent timeout (Stop on the CALLER cascades)
+  //   - liveRun.signal   — this callee session's own abort (Stop on the CALLEE's own tab)
+  // Threading liveRun.signal here is what makes broker.stop() on the callee's conversation work; it
+  // also becomes the opts.signal of any deeper nested call_agent, so the cascade is recursive.
+  const calleeSignal = liveRun
+    ? AbortSignal.any([opts.signal, liveRun.signal].filter((s): s is AbortSignal => Boolean(s)))
+    : opts.signal;
+
   // Announce the session only now — after the broker run is registered — so a caller that clicks
   // the "View session" link the instant it appears finds a live run to attach to, not an empty
   // (not-yet-registered) session. createConversation already wrote it to disk, so it resolves.
@@ -238,14 +248,16 @@ ${buildStructuredResponderBlock(skill)}`;
       elog.debug({ attempt }, "skill call running callee");
       let turn: { text: string } | { error: string };
       try {
-        turn = await runCalleeTurn(run, messages, input, callee, sessionId, conv.id, opts, publish);
+        turn = await runCalleeTurn(run, messages, input, callee, sessionId, conv.id, opts, calleeSignal, publish);
       } catch (err) {
         turn = { error: err instanceof Error ? err.message : String(err) };
       }
       if ("error" in turn) {
         // The runner catches everything (including aborts) and yields an error event, so an
-        // abort surfaces here — name it instead of leaking a raw "operation was aborted".
-        if (opts.signal?.aborted) {
+        // abort surfaces here — name it instead of leaking a raw "operation was aborted". Check
+        // calleeSignal: it covers both a caller cascade (opts.signal) and a Stop on the callee's
+        // own tab (liveRun.signal).
+        if (calleeSignal?.aborted) {
           elog.warn({ attempt }, "skill call aborted");
           return { state: "failed", code: "EXECUTION_ERROR", message: "the call was aborted before the agent finished (timeout or cancellation).", conversationId: conv.id };
         }

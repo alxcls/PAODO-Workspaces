@@ -84,7 +84,8 @@ function WorkspaceNode({ data, selected }: NodeProps) {
       label={data.label as string}
       description={data.description as string}
       selected={selected}
-      className="cursor-default"
+      title="Open workspace"
+      className="cursor-pointer"
     >
       <Handle
         id="workspace-target-top"
@@ -346,9 +347,10 @@ export default function GraphEditor() {
 
   const onNodeDragStop = useCallback(() => { setIsDirty(true); }, []);
 
-  // Double-click a drive node to open its file browser (workspace nodes are unaffected).
+  // Double-click a node to open it: drives go to their file browser, workspaces to the workspace.
   const onNodeDoubleClick = useCallback((_: React.MouseEvent, node: Node) => {
     if (node.data?.kind === "drive") router.push(`/drive/${node.id}`);
+    else router.push(`/workspace/${node.id}`);
   }, [router]);
 
   // Only workspace→workspace edges go to the agent graph; drive edges live in their own store.

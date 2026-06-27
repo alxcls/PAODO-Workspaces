@@ -81,7 +81,7 @@ export function startRun(params: StartRunParams): { alreadyRunning: boolean } {
   const recordUsage =
     params.onTurnUsage ??
     ((sid, event) =>
-      recordTurnUsage({ sessionId: sid, workspaceId: params.workspaceId, workspaceName: params.workspaceName }, event));
+      recordTurnUsage({ sessionId: sid, conversationId: params.conversationId, workspaceId: params.workspaceId, workspaceName: params.workspaceName }, event));
   const persist = params.onPersist ?? (() => conversations.persist(params.workspaceId, params.conversationId));
 
   const runOptions: RunAgentOptions = {

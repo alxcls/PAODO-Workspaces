@@ -41,6 +41,10 @@ export interface ToolCallRecord {
 export interface TurnRecord {
   id: string;
   sessionId: string;
+  /** The callee/UI conversation this run belongs to, when it has one (the browser chat flow and
+   *  skill calls). The external agent route runs conversation-less, so it stays undefined. Lets
+   *  the dashboard deep-link a session to its conversation tab (?conversation=<id>). */
+  conversationId?: string;
   workspaceId: string;
   workspaceName: string;
   timestamp: string;
@@ -62,10 +66,11 @@ export interface TurnRecord {
 // The fields the agent loop produces per turn (everything except the storage identity and
 // the workspace/session context). Shared by all three call sites that fold turn_usage events
 // into the store (chat route, agent stream, nested skill calls) so the mapping can't drift.
-export type TurnUsageFields = Omit<TurnRecord, "id" | "timestamp" | "sessionId" | "workspaceId" | "workspaceName">;
+export type TurnUsageFields = Omit<TurnRecord, "id" | "timestamp" | "sessionId" | "conversationId" | "workspaceId" | "workspaceName">;
 
 export interface UsageContext {
   sessionId: string;
+  conversationId?: string;
   workspaceId: string;
   workspaceName: string;
 }
@@ -75,6 +80,7 @@ export interface UsageContext {
 export interface LightTurnRecord {
   id: string;
   sessionId: string;
+  conversationId?: string;
   workspaceId: string;
   workspaceName: string;
   timestamp: string;
@@ -90,6 +96,7 @@ function toLight(r: TurnRecord): LightTurnRecord {
   return {
     id: r.id,
     sessionId: r.sessionId,
+    conversationId: r.conversationId,
     workspaceId: r.workspaceId,
     workspaceName: r.workspaceName,
     timestamp: r.timestamp,

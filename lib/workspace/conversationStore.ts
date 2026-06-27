@@ -162,6 +162,26 @@ export function getMessages(workspaceId: string, convId: string): BaseMessage[] 
   return msgs;
 }
 
+/**
+ * The last-persisted (on-disk) history for a conversation, read fresh from disk and NOT cached.
+ * Unlike getMessages, this never reflects an in-flight run: the runner mutates the live in-memory
+ * array (appending the user turn at run start), but persist() only snapshots to disk at run end.
+ * Callers rendering the "persisted transcript" of a possibly-running conversation must use this so
+ * the in-flight user turn isn't double-counted against the client's live `userInput` echo.
+ * Returns null if the conversation does not exist.
+ */
+export function getPersistedMessages(workspaceId: string, convId: string): BaseMessage[] | null {
+  const s = ensureLoaded(workspaceId);
+  if (!s.metas.some((m) => m.id === convId)) return null;
+  try {
+    const raw = readFileSync(filePath(workspaceId, convId), "utf-8");
+    const file = JSON.parse(raw) as ConversationFile;
+    return deserializeMessages(file.messages ?? []);
+  } catch {
+    return [];
+  }
+}
+
 export function getMeta(workspaceId: string, convId: string): ConversationMeta | undefined {
   return ensureLoaded(workspaceId).metas.find((m) => m.id === convId);
 }

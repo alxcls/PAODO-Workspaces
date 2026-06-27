@@ -14,10 +14,17 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
   if (!ws) return new Response("Workspace not found", { status: 404 });
 
   const meta = conversations.getMeta(id, convId);
-  const messages = conversations.getMessages(id, convId);
-  if (!meta || !messages) return new Response("Conversation not found", { status: 404 });
+  if (!meta) return new Response("Conversation not found", { status: 404 });
 
   const running = broker.isRunning(id, convId);
+  // Persisted history only: while running, the live in-memory array already holds the in-flight
+  // user turn (the runner appends it at run start), which the client re-adds as its own `userInput`
+  // echo — so read the on-disk snapshot to avoid a duplicate user bubble. When idle the two agree.
+  const messages = running
+    ? conversations.getPersistedMessages(id, convId)
+    : conversations.getMessages(id, convId);
+  if (!messages) return new Response("Conversation not found", { status: 404 });
+
   return Response.json({
     meta,
     running,

@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-label="Agent">
+  <!-- antenna -->
+  <line x1="12" y1="4" x2="12" y2="6.5" />
+  <circle cx="12" cy="3.5" r="1" fill="currentColor" stroke="none" />
+  <!-- head -->
+  <rect x="5" y="6.5" width="14" height="12" rx="3" />
+  <!-- eyes -->
+  <circle cx="9.5" cy="12" r="1.25" fill="currentColor" stroke="none" />
+  <circle cx="14.5" cy="12" r="1.25" fill="currentColor" stroke="none" />
+  <!-- mouth -->
+  <line x1="9.5" y1="15" x2="14.5" y2="15" />
+  <!-- ears -->
+  <line x1="5" y1="11" x2="3.5" y2="11" />
+  <line x1="19" y1="11" x2="20.5" y2="11" />
+</svg>

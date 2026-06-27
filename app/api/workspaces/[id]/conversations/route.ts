@@ -21,9 +21,13 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   let active = null;
   if (req.nextUrl.searchParams.get("include") === "active" && list.length > 0) {
     const convId = list[0].id;
-    const messages = conversations.getMessages(id, convId);
+    const isRunning = running.has(convId);
+    // Persisted history only while running — the live in-memory array already holds the in-flight
+    // user turn the client re-adds via its `userInput` echo (see [convId]/route.ts for the why).
+    const messages = isRunning
+      ? conversations.getPersistedMessages(id, convId)
+      : conversations.getMessages(id, convId);
     if (messages) {
-      const isRunning = running.has(convId);
       active = {
         id: convId,
         transcript: messagesToTranscript(messages),

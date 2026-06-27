@@ -23,7 +23,11 @@ const SendIcon = () => (
 export default function ChatPanel({ workspaceId, conversationId, initialConversation, onAgentTurnComplete, onRunStart }: { workspaceId: string; conversationId: string | null; initialConversation?: InitialConversation | null; onAgentTurnComplete?: () => void; onRunStart?: () => void }) {
   const [draft, setDraft] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
+  // Whether the view is "stuck" to the bottom. While true, new content auto-scrolls into view; once
+  // the user scrolls up to read, it goes false and streaming stops yanking them back down.
+  const pinnedRef = useRef(true);
   // The id whose inline payload we've already consumed, so we use it once (first paint) and then
   // always re-fetch — the payload can go stale once the conversation is used.
   const consumedInitialRef = useRef<string | null>(null);
@@ -35,8 +39,17 @@ export default function ChatPanel({ workspaceId, conversationId, initialConversa
   );
 
   useEffect(() => {
+    if (!pinnedRef.current) return;
     bottomRef.current?.scrollIntoView({ behavior: streaming ? "instant" : "smooth" });
   }, [messages, streaming]);
+
+  // Recompute stickiness on scroll: pinned when within ~80px of the bottom (covers smooth-scroll
+  // overshoot and sub-pixel rounding). Updating a ref avoids a re-render per scroll event.
+  function onScroll() {
+    const el = scrollRef.current;
+    if (!el) return;
+    pinnedRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+  }
 
   // When a run begins, nudge the switcher to refresh so its "running" dot lights up immediately and
   // its (idle-stopped) polling restarts for the duration of the run.
@@ -48,6 +61,7 @@ export default function ChatPanel({ workspaceId, conversationId, initialConversa
   // (if any) to watch it continue live. Detaches the previous conversation's stream on switch.
   useEffect(() => {
     setDraft("");
+    pinnedRef.current = true;
     if (!conversationId) { reset(); return; }
     let cancelled = false;
     // Fast path: the inline payload that came with the conversation list, used once on first paint.
@@ -81,12 +95,13 @@ export default function ChatPanel({ workspaceId, conversationId, initialConversa
     const msg = draft.trim();
     setDraft("");
     if (taRef.current) taRef.current.style.height = "auto";
+    pinnedRef.current = true;
     sendMessage(msg);
   }
 
   return (
     <div className="flex flex-col flex-1 min-h-0">
-      <div className="flex-1 overflow-auto p-[14px_16px] flex flex-col gap-2">
+      <div ref={scrollRef} onScroll={onScroll} className="flex-1 overflow-auto p-[14px_16px] flex flex-col gap-2">
         {messages.length === 0 && !streaming && (
           <div className="text-text-3 text-ms text-center mt-6">
             Ask the agent anything about this workspace.
@@ -130,7 +145,9 @@ export default function ChatPanel({ workspaceId, conversationId, initialConversa
                     rel="noopener noreferrer"
                     className="font-mono text-[12px] leading-[1.4] text-primary hover:underline px-0.5 self-start"
                   >
-                    ↳ View conversation {m.calleeConversationId}
+                    {/* Show the same short id the callee's conversation switcher displays
+                        (its title is id.slice(0, 8)), so the link matches what you see there. */}
+                    ↳ View conversation {m.calleeConversationId.slice(0, 8)}
                     {m.calleeWorkspaceName ? ` with agent ${m.calleeWorkspaceName}` : ""} ↗
                   </a>
                 )}

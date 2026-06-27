@@ -11,8 +11,11 @@ FROM node:20-alpine AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 
-# Docker CLI is required — the app spawns workspace containers via docker commands
-RUN apk add --no-cache docker-cli
+# Docker CLI is required — the app spawns workspace containers via docker commands.
+# git is required — workspace version history (snapshots) shells out to the `git` binary
+# (lib/infra/git/gitClient.ts); node:*-alpine ships none, so without this every snapshot
+# silently no-ops in production.
+RUN apk add --no-cache docker-cli git
 
 # Production dependencies + tsx (needed to run TypeScript server at runtime)
 COPY package*.json ./

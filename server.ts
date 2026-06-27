@@ -12,7 +12,7 @@ const log = createLogger("server");
 
 import next from "next";
 import { WebSocketServer } from "ws";
-import { getStore, getContainers } from "./lib/infra/services";
+import { getStore, getContainers, getVersioning } from "./lib/infra/services";
 import { setTodos } from "./lib/workspace/todoStore";
 import { loadIndex } from "./lib/workspace/conversationStore";
 import {
@@ -332,11 +332,27 @@ if ((!UI_USER || !UI_PASS) && !dev) {
   process.exit(1);
 }
 
-getContainers().assertDockerAvailable().then(() => app.prepare()).then(() => {
-  httpServer.listen(port, () => {
-    log.info(`Ready on http://localhost:${port}`);
+// Snapshots (workspace version history) shell out to the `git` binary, and those failures are
+// swallowed at runtime so a run never breaks. That makes a missing git invisible — which is exactly
+// how it silently disabled history in the production image once. Probe at boot: refuse to start in
+// production (like the Docker/credentials guards), warn in dev where snapshots are non-critical.
+async function assertGitAvailable() {
+  if (await getVersioning().isGitAvailable()) return;
+  if (!dev) {
+    log.error("git is not available — workspace version history (snapshots) would silently no-op. Refusing to start.");
+    process.exit(1);
+  }
+  log.warn("git is not available — workspace snapshots will be disabled until git is installed.");
+}
+
+assertGitAvailable()
+  .then(() => getContainers().assertDockerAvailable())
+  .then(() => app.prepare())
+  .then(() => {
+    httpServer.listen(port, () => {
+      log.info(`Ready on http://localhost:${port}`);
+    });
   });
-});
 
 function shutdown() {
   wss.close();

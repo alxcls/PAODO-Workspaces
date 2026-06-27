@@ -15,6 +15,7 @@ function fakeVersioning(over: Partial<IWorkspaceVersioning>): IWorkspaceVersioni
   return {
     initRepo: notUsed, commitBaseline: notUsed, commitResult: notUsed,
     history: notUsed, diff: notUsed, restore: notUsed, deleteRepo: notUsed,
+    isGitAvailable: notUsed as IWorkspaceVersioning["isGitAvailable"],
     versionStats: notUsed as IWorkspaceVersioning["versionStats"],
     versionDiff: notUsed as IWorkspaceVersioning["versionDiff"],
     ...over,

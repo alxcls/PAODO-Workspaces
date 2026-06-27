@@ -64,6 +64,12 @@ export interface IWorkspaceVersioning {
   restore(workspaceId: string, workspaceDir: string, sha: string): Promise<boolean>;
   /** Permanently remove a workspace's versioning repo. Called when the workspace is deleted. */
   deleteRepo(workspaceId: string): Promise<void>;
+  /**
+   * Probe that the `git` binary this service shells out to actually exists. Snapshot failures are
+   * swallowed at runtime (versioning must never break a run), so a missing binary would otherwise
+   * disable version history silently. Returns false if git can't be invoked.
+   */
+  isGitAvailable(): Promise<boolean>;
 }
 
 export interface IContainerManager {

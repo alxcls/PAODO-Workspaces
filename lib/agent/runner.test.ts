@@ -137,6 +137,7 @@ function makeVersioning() {
       versionDiff: rec("versionDiff") as never,
       restore: (async (...a: unknown[]) => { calls.push({ method: "restore", args: a }); return true; }) as never,
       deleteRepo: rec("deleteRepo") as never,
+      isGitAvailable: (async () => true) as never,
     },
   };
 }

@@ -60,6 +60,18 @@ describe("WorkspaceVersioning", () => {
     expect(add).toContain("core.excludesFile=/dev/null");
   });
 
+  it("isGitAvailable probes `git --version` and reflects the exit code", async () => {
+    const ok = new WorkspaceVersioning(new FakeGit(), opts());
+    expect(await ok.isGitAvailable()).toBe(true);
+
+    // git absent ⇒ gitClient resolves code 1 (spawn ENOENT) ⇒ probe reports unavailable.
+    const missing = new WorkspaceVersioning(
+      new FakeGit([{ match: (j) => j.includes("--version"), result: { code: 1 } }]),
+      opts(),
+    );
+    expect(await missing.isGitAvailable()).toBe(false);
+  });
+
   it("targets an external git-dir keyed on workspaceId, never inside the workspace", async () => {
     const git = new FakeGit();
     const ver = new WorkspaceVersioning(git, opts());

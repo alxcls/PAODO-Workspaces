@@ -245,6 +245,14 @@ export class WorkspaceVersioning implements IWorkspaceVersioning {
     return this.serialize(workspaceId, () => rm(this.gitDirFor(workspaceId), { recursive: true, force: true }));
   }
 
+  // Probe that the `git` binary exists. spawn("git") resolves to code 1 with an ENOENT stderr when
+  // git is absent from the image (see gitClient.ts), which is exactly the silent-failure mode that
+  // disabled snapshots in production. Read-only and identity-free, so no serialize() lock needed.
+  async isGitAvailable(): Promise<boolean> {
+    const r = await this.git.run(["--version"]);
+    return r.code === 0;
+  }
+
   restore(workspaceId: string, workspaceDir: string, sha: string): Promise<boolean> {
     return this.serialize(workspaceId, async () => {
       const verify = await this.git.run([...this.base(workspaceId, workspaceDir), "rev-parse", "--verify", `${sha}^{commit}`]);

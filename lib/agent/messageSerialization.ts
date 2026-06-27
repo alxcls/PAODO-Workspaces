@@ -60,7 +60,9 @@ export function setSystemPrompt(messages: BaseMessage[], system: BaseMessage): v
 /**
  * Project a saved message history into the client transcript (the same Message[] the live SSE
  * stream produces), so a reloaded conversation renders identically to one watched live. Reasoning
- * blocks and per-turn usage lines are streaming-only and intentionally omitted from replay.
+ * blocks are streaming-only and intentionally omitted from replay. The run-cumulative usage line,
+ * stashed on the terminal AIMessage's response_metadata by the runner, IS replayed — emitted just
+ * before the final assistant bubble to mirror the live stream's insertUsage placement.
  */
 export function messagesToTranscript(messages: BaseMessage[]): Message[] {
   const out: Message[] = [];
@@ -75,6 +77,12 @@ export function messagesToTranscript(messages: BaseMessage[]): Message[] {
         const text = contentToText(m.content);
         const toolCalls = (m as AIMessage).tool_calls ?? [];
         if (toolCalls.length === 0) {
+          // The terminal turn carries the run-cumulative usage on response_metadata; emit it just
+          // before the final assistant bubble, matching the live stream's insertUsage placement.
+          const runUsage = (m.response_metadata as { runUsage?: { inputTokens?: number; outputTokens?: number } } | undefined)?.runUsage;
+          if (runUsage && ((runUsage.inputTokens ?? 0) > 0 || (runUsage.outputTokens ?? 0) > 0)) {
+            out.push({ role: "usage", inputTokens: runUsage.inputTokens ?? 0, outputTokens: runUsage.outputTokens ?? 0 });
+          }
           if (text.trim()) out.push({ role: "assistant", content: text });
         } else {
           if (text.trim()) out.push({ role: "assistant", content: text, thinking: true });
@@ -94,9 +102,19 @@ export function messagesToTranscript(messages: BaseMessage[]): Message[] {
       case "tool": {
         const tm = m as ToolMessage;
         const idx = bubbleByCallId.get(tm.tool_call_id);
-        // Mirror the live stream, which only surfaces a result body for call_agent.
+        // Mirror the live stream: a call_agent bubble carries a deep-link to the callee's session,
+        // not a result body. The link was stashed on the ToolMessage's additional_kwargs at run
+        // time (runner.ts) so it survives reload.
         if (idx !== undefined && out[idx].toolName === "call_agent") {
-          out[idx] = { ...out[idx], toolResult: contentToText(tm.content) };
+          const kw = tm.additional_kwargs as { calleeConversationId?: unknown; calleeWorkspaceId?: unknown; calleeWorkspaceName?: unknown } | undefined;
+          if (typeof kw?.calleeConversationId === "string" && typeof kw?.calleeWorkspaceId === "string") {
+            out[idx] = {
+              ...out[idx],
+              calleeConversationId: kw.calleeConversationId,
+              calleeWorkspaceId: kw.calleeWorkspaceId,
+              ...(typeof kw.calleeWorkspaceName === "string" ? { calleeWorkspaceName: kw.calleeWorkspaceName } : {}),
+            };
+          }
         }
         break;
       }

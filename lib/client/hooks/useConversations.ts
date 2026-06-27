@@ -4,6 +4,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { useSearchParams } from "next/navigation";
 import type { Message } from "@/lib/client/agentTranscript";
 
 export interface ConversationMeta {
@@ -28,6 +29,9 @@ export function useConversations(workspaceId: string) {
   const [conversations, setConversations] = useState<ConversationMeta[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [initial, setInitial] = useState<InitialConversation | null>(null);
+  // Deep-link target (?conversation=<id>), e.g. from a call_agent "View session" link in another
+  // workspace. When it names a real conversation we open it instead of the newest.
+  const requestedConvId = useSearchParams().get("conversation");
 
   const refresh = useCallback(async (): Promise<ConversationMeta[]> => {
     const res = await fetch(`/api/workspaces/${workspaceId}/conversations`);
@@ -64,10 +68,12 @@ export function useConversations(workspaceId: string) {
       setConversations(conversations);
       if (conversations.length === 0) { await create(); return; }
       setInitial(active);
-      setActiveId(conversations[0].id);
+      // Honor a ?conversation= deep-link when it points at a real conversation; else newest.
+      const requested = requestedConvId && conversations.some((c) => c.id === requestedConvId) ? requestedConvId : null;
+      setActiveId(requested ?? conversations[0].id);
     })();
     return () => { cancelled = true; };
-  }, [workspaceId, create]);
+  }, [workspaceId, create, requestedConvId]);
 
   // Keep the per-conversation "running" dot fresh, but only while a run is actually in flight — so an
   // idle workspace makes zero background requests. Polling starts when something is running (a local

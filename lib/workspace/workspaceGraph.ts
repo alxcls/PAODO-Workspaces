@@ -76,3 +76,15 @@ export function canCall(fromId: string, toId: string): boolean {
 export function getCallees(fromId: string): string[] {
   return cache.edges.filter((e) => e.source === fromId).map((e) => e.target);
 }
+
+// True when some workspace can call this one — i.e. it is the target of an edge.
+// Drives the callee-only skills scaffold and the callee guidance block in the system prompt.
+export function isCallee(workspaceId: string): boolean {
+  return cache.edges.some((e) => e.target === workspaceId);
+}
+
+// True when this workspace can call another — i.e. it is the source of an edge.
+// Gates the agent_call/list_agents tools so a pure callee never receives them.
+export function isCaller(workspaceId: string): boolean {
+  return cache.edges.some((e) => e.source === workspaceId);
+}

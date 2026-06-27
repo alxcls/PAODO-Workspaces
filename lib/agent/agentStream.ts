@@ -3,6 +3,7 @@
 
 import type { Logger } from "pino";
 import { buildSystemPrompt, buildPromptConfig } from "./systemPrompt";
+import { buildWorkspacePromptInputs } from "./promptContext";
 import { loadAgentConfig } from "./buildTools";
 import { runAgent } from "./runner";
 import type { AgentEvent, AgentRuntimeDeps } from "./runner";
@@ -45,7 +46,8 @@ export function makeAgentStream(ws: Workspace, message: string, log: Logger, dep
         controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
       const state: SseState = { response: "", limitReached: false };
       try {
-        const isolatedMessages = [buildSystemPrompt(ws.dir, buildPromptConfig(loadAgentConfig()))];
+        const inputs = buildWorkspacePromptInputs(ws.id, ws.dir);
+        const isolatedMessages = [buildSystemPrompt(ws.dir, buildPromptConfig(loadAgentConfig()), inputs)];
         for await (const event of runAgent(isolatedMessages, message, ws.dir, ws.id, { maxIterations: ws.maxIterations, ...deps })) {
           if (event.type === "turn_usage") {
             if (deps.sessionId && deps.workspaceId && deps.workspaceName) {

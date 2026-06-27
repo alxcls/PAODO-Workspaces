@@ -14,6 +14,7 @@ import type { IContainerManager, IWorkspaceStore, IWorkspaceVersioning } from ".
 import { getWsForWorkspace } from "../infra/realtime/wsHub";
 import { createLogger } from "../infra/logger";
 import type { ToolStatus } from "../workspace/usageStore";
+import type { CallAgentMeta } from "./tools/agentCall";
 
 const log = createLogger("agent");
 
@@ -21,7 +22,11 @@ export type AgentEvent =
   | { type: "token"; content: string }
   | { type: "reasoning"; content: string }
   | { type: "tool_start"; name: string; args: Record<string, unknown> }
-  | { type: "tool_result"; name: string; result: string }
+  // call_agent only: emitted mid-run, the moment the callee's conversation is created, so the
+  // caller shows the "View session" deep-link while the callee is still working (not just at end).
+  | { type: "tool_link"; name: string; meta: CallAgentMeta }
+  // `meta` is set only for call_agent: a deep-link to the callee's persisted session.
+  | { type: "tool_result"; name: string; result: string; meta?: CallAgentMeta }
   | { type: "error"; message: string }
   | { type: "limit_reached" }
   | { type: "done" }
@@ -58,6 +63,14 @@ export type AgentRuntimeDeps = Pick<RunAgentOptions, "store" | "containers" | "v
 
 type AnyTool = { invoke: (args: Record<string, unknown>, config?: { signal?: AbortSignal }) => Promise<unknown> };
 type ResolvedToolCall = { id: string; name: string; args: Record<string, unknown> };
+// Structural type for AgentCallTool.callWithMeta — duck-typed so the runner needn't import the
+// concrete tool class (which would deepen the buildTools → agentCall import chain). The optional
+// onLink callback fires as soon as the callee's conversation is created (before the call resolves)
+// so the runner can surface the deep-link mid-run.
+type AgentCallWithMeta = (
+  args: Record<string, unknown>,
+  onLink?: (meta: CallAgentMeta) => void,
+) => Promise<{ result: string; meta?: CallAgentMeta }>;
 type PartialTC = { id: string; name: string; args: string };
 
 type TurnEvent =
@@ -264,6 +277,11 @@ export async function* runAgent(
   }
 
   let iterations = 0;
+  // Run-cumulative token totals, summed across every turn. Mirrors the client's per-run usage
+  // line (agentTranscript.insertUsage): attached to the terminal assistant message below so a
+  // reloaded conversation shows the same single usage line the live stream did.
+  let runInputTokens = 0;
+  let runOutputTokens = 0;
   try {
     while (true) {
       if (iterations >= maxIterations) {
@@ -303,11 +321,15 @@ export async function* runAgent(
         ...(reasoningText ? { reasoningText } : {}),
         ...(fullText ? { outputText: fullText } : {}),
       };
+      runInputTokens += usageBase.inputTokens;
+      runOutputTokens += usageBase.outputTokens;
 
       if (!toolCalls.length) {
         // Final text response — tokens already streamed as they arrived; just persist and exit.
         yield { type: "turn_usage", ...usageBase, toolCalls: [] };
-        messages.push(new AIMessage(fullText));
+        // Stash the run-cumulative usage on the persisted message so messagesToTranscript can
+        // replay the usage line on reload (response_metadata survives serialization).
+        messages.push(new AIMessage({ content: fullText, response_metadata: { runUsage: { inputTokens: runInputTokens, outputTokens: runOutputTokens } } }));
         wlog.info("agent run done");
         yield { type: "done" };
         break;
@@ -330,17 +352,56 @@ export async function* runAgent(
         wlog.debug({ name: tc.name, args: tc.args }, "tool call");
       }
 
-      const settled = await Promise.all(
+      // call_agent surfaces its callee-session deep-link the moment the callee conversation is
+      // created (via the onLink callback below), not when the whole call finishes — so the caller
+      // sees "View session" while the callee is still working. Those links land in linkQueue and
+      // are yielded as tool_link events by the drain loop until every tool has settled.
+      const linkQueue: Array<{ name: string; meta: CallAgentMeta }> = [];
+      let onLinkReady: (() => void) | null = null;
+      const emitLink = (name: string, meta: CallAgentMeta) => {
+        linkQueue.push({ name, meta });
+        onLinkReady?.();
+        onLinkReady = null;
+      };
+
+      let settledResolved = false;
+      const settledPromise = Promise.all(
         activeCalls.map(async (tc) => {
           const tool = typedToolMap[tc.name];
           const toolStart = Date.now();
-          const resultStr = tool
-            ? await invokeTool(tool, tc.args, signal).catch((err) => `Error: ${String(err)}`)
-            : `Error: unknown tool "${tc.name}"`;
+          let resultStr: string;
+          let meta: CallAgentMeta | undefined;
+          // call_agent exposes callWithMeta so the runner can capture the callee's persisted
+          // conversation id alongside the model-facing string (used only for the UI deep-link).
+          const withMeta = tc.name === "call_agent" ? (tool as { callWithMeta?: AgentCallWithMeta }).callWithMeta : undefined;
+          if (withMeta) {
+            const r = await withMeta
+              .call(tool, tc.args, (m) => emitLink(tc.name, m))
+              .catch((err) => ({ result: `Error: ${String(err)}`, meta: undefined }));
+            resultStr = r.result;
+            meta = r.meta;
+          } else {
+            resultStr = tool
+              ? await invokeTool(tool, tc.args, signal).catch((err) => `Error: ${String(err)}`)
+              : `Error: unknown tool "${tc.name}"`;
+          }
           wlog.debug({ name: tc.name, toolMs: Date.now() - toolStart }, "tool timing");
-          return { tc, resultStr };
+          return { tc, resultStr, meta };
         })
-      );
+      ).then((s) => { settledResolved = true; onLinkReady?.(); onLinkReady = null; return s; });
+
+      // Drain link events as they arrive; exit once all tools have settled and the queue is empty.
+      // Suspends here only before the atomic history-commit below, so an abort during the wait can
+      // never leave a half-written turn.
+      while (!settledResolved || linkQueue.length) {
+        while (linkQueue.length) {
+          const { name, meta } = linkQueue.shift()!;
+          yield { type: "tool_link", name, meta };
+        }
+        if (settledResolved) break;
+        await new Promise<void>((res) => { onLinkReady = res; });
+      }
+      const settled = await settledPromise;
 
       // Commit the assistant turn and all its tool results in one synchronous block, with no
       // yield or await in between. If the request is aborted (the user hits escape) the runner
@@ -348,12 +409,18 @@ export async function* runAgent(
       // none of this turn or all of it, never an AIMessage whose tool_calls lack their
       // ToolMessages (which OpenAI rejects on the next request).
       messages.push(assistantTurn);
-      for (const { tc, resultStr } of settled) {
-        messages.push(new ToolMessage({ tool_call_id: tc.id, content: resultStr }));
+      for (const { tc, resultStr, meta } of settled) {
+        // Persist the callee deep-link on the ToolMessage so a reloaded caller conversation can
+        // rebuild the link (the live `meta` event is gone by then). See messagesToTranscript.
+        messages.push(new ToolMessage({
+          tool_call_id: tc.id,
+          content: resultStr,
+          ...(meta ? { additional_kwargs: { calleeConversationId: meta.conversationId, calleeWorkspaceId: meta.workspaceId, calleeWorkspaceName: meta.workspaceName } } : {}),
+        }));
       }
 
-      for (const { tc, resultStr } of settled) {
-        yield { type: "tool_result", name: tc.name, result: resultStr };
+      for (const { tc, resultStr, meta } of settled) {
+        yield { type: "tool_result", name: tc.name, result: resultStr, ...(meta ? { meta } : {}) };
         if (tc.name !== "execute_command") {
           resolvedNotify({ type: "tool_result_log", name: tc.name, result: resultStr });
         }

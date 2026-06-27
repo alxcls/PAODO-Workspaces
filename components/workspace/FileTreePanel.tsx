@@ -3,7 +3,6 @@
 import { useState } from "react";
 import { useFileTreeSelection } from "@/lib/client/hooks/useFileTreeSelection";
 import { useFileOperations, TreeNode } from "@/lib/client/hooks/useFileOperations";
-import JSZip from "jszip";
 
 type CheckState = "none" | "some" | "all";
 
@@ -145,7 +144,7 @@ const TreeNodeList = ({
 };
 
 // ---- Upload button ----
-const UploadMenu = ({ workspaceId, onUploaded }: { workspaceId: string; onUploaded: () => void }) => {
+const UploadMenu = ({ apiBase, onUploaded }: { apiBase: string; onUploaded: () => void }) => {
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -161,7 +160,7 @@ const UploadMenu = ({ workspaceId, onUploaded }: { workspaceId: string; onUpload
         while (queue.length > 0) {
           const file = queue.shift()!;
           const res = await fetch(
-            `/api/workspaces/${workspaceId}/files/upload?path=${encodeURIComponent(file.name)}`,
+            `${apiBase}/files/upload?path=${encodeURIComponent(file.name)}`,
             { method: "POST", body: file }
           );
           if (!res.ok) throw new Error(`Failed to upload ${file.name}`);
@@ -182,6 +181,9 @@ const UploadMenu = ({ workspaceId, onUploaded }: { workspaceId: string; onUpload
     if (files.length === 0) return;
     setError(null);
     try {
+      // Loaded on demand — jszip is only needed for folder uploads, so keep it out of the
+      // initial workspace bundle (see the lazy FileViewer note in the workspace page).
+      const { default: JSZip } = await import("jszip");
       const zip = new JSZip();
       for (const file of files) {
         const entryPath = file.webkitRelativePath || file.name;
@@ -193,7 +195,7 @@ const UploadMenu = ({ workspaceId, onUploaded }: { workspaceId: string; onUpload
         (meta) => setStatus(`Compressing ${Math.round(meta.percent)}%`)
       );
       setStatus("Uploading archive…");
-      const res = await fetch(`/api/workspaces/${workspaceId}/files/upload`, {
+      const res = await fetch(`${apiBase}/files/upload`, {
         method: "POST",
         headers: { "Content-Type": "application/zip" },
         body: blob,
@@ -269,17 +271,20 @@ interface Props {
   onDeletedPaths?: (paths: string[]) => void;
   style?: React.CSSProperties;
   refreshKey?: number;
+  /** API base for file routes. Defaults to the workspace path; drives pass /api/drives/<id>. */
+  apiBase?: string;
 }
 
 export default function FileTreePanel({
   workspaceId, workspaceName, selectedPath,
-  onFileSelect, onDeletedPaths, style, refreshKey,
+  onFileSelect, onDeletedPaths, style, refreshKey, apiBase,
 }: Props) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const base = apiBase ?? `/api/workspaces/${workspaceId}`;
 
   const { selected, handleSelect, clearSelection } = useFileTreeSelection();
-  const { tree, fetchTree, handleDownload, handleDelete, deleteError } = useFileOperations({
-    workspaceId, workspaceName, selected, clearSelection, onDeletedPaths, refreshKey,
+  const { tree, fetchTree, handleDownload, downloading, handleDelete, deleteError } = useFileOperations({
+    workspaceId, workspaceName, selected, clearSelection, onDeletedPaths, refreshKey, apiBase: base,
   });
 
   const toggleExpanded = (path: string) =>
@@ -294,7 +299,7 @@ export default function FileTreePanel({
       </div>
 
       <div className="flex gap-1.5 px-3 pb-2.5 border-b border-border">
-        <UploadMenu workspaceId={workspaceId} onUploaded={fetchTree} />
+        <UploadMenu apiBase={base} onUploaded={fetchTree} />
       </div>
 
       <div className="flex-1 overflow-auto py-2">
@@ -308,10 +313,17 @@ export default function FileTreePanel({
       {(selected.size > 0 || deleteError) && (
         <div className="border-t border-border p-[10px_12px] bg-bg">
           <div className="flex gap-1">
-            <button className="btn btn-ghost btn-sm flex-1 justify-center whitespace-nowrap" onClick={handleDownload}>
-              Download .zip
+            <button
+              className="btn btn-ghost btn-sm flex-1 justify-center whitespace-nowrap items-center gap-1.5 disabled:opacity-60 disabled:cursor-wait"
+              onClick={handleDownload}
+              disabled={downloading}
+            >
+              {downloading && (
+                <span className="shrink-0 block w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin" />
+              )}
+              {downloading ? "Zipping…" : "Download .zip"}
             </button>
-            <button className="btn btn-ghost btn-sm flex-1 justify-center text-danger" onClick={handleDelete}>
+            <button className="btn btn-ghost btn-sm flex-1 justify-center text-danger" onClick={handleDelete} disabled={downloading}>
               Delete
             </button>
           </div>

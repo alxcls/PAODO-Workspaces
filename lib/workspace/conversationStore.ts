@@ -25,6 +25,9 @@ const log = createLogger("conversations");
 export interface ConversationMeta {
   id: string;
   title: string;
+  /** "skill-call" marks a conversation created by an agent-to-agent call_agent invocation
+   *  (vs the default user-initiated chat); lets the switcher label/filter them distinctly. */
+  kind?: "user" | "skill-call";
   createdAt: string;
   updatedAt: string;
   lastMessageAt: string;
@@ -113,13 +116,17 @@ export function setActiveId(workspaceId: string, convId: string): void {
   if (s.metas.some((m) => m.id === convId)) s.activeId = convId;
 }
 
-export function createConversation(workspaceId: string): ConversationMeta {
+export function createConversation(
+  workspaceId: string,
+  opts?: { title?: string; kind?: ConversationMeta["kind"] },
+): ConversationMeta {
   const s = ensureLoaded(workspaceId);
   const now = new Date().toISOString();
   const id = crypto.randomUUID();
   const meta: ConversationMeta = {
     id,
-    title: id.slice(0, 8), // short, stable label; never rewritten
+    title: opts?.title ?? id.slice(0, 8), // default: short, stable id label; never rewritten
+    ...(opts?.kind ? { kind: opts.kind } : {}),
     createdAt: now,
     updatedAt: now,
     lastMessageAt: now,
@@ -153,6 +160,26 @@ export function getMessages(workspaceId: string, convId: string): BaseMessage[] 
     s.messages.set(convId, msgs);
   }
   return msgs;
+}
+
+/**
+ * The last-persisted (on-disk) history for a conversation, read fresh from disk and NOT cached.
+ * Unlike getMessages, this never reflects an in-flight run: the runner mutates the live in-memory
+ * array (appending the user turn at run start), but persist() only snapshots to disk at run end.
+ * Callers rendering the "persisted transcript" of a possibly-running conversation must use this so
+ * the in-flight user turn isn't double-counted against the client's live `userInput` echo.
+ * Returns null if the conversation does not exist.
+ */
+export function getPersistedMessages(workspaceId: string, convId: string): BaseMessage[] | null {
+  const s = ensureLoaded(workspaceId);
+  if (!s.metas.some((m) => m.id === convId)) return null;
+  try {
+    const raw = readFileSync(filePath(workspaceId, convId), "utf-8");
+    const file = JSON.parse(raw) as ConversationFile;
+    return deserializeMessages(file.messages ?? []);
+  } catch {
+    return [];
+  }
 }
 
 export function getMeta(workspaceId: string, convId: string): ConversationMeta | undefined {

@@ -15,6 +15,7 @@ import { executeSkill, type ExecuteSkillOptions } from "./executeSkill";
 import type { SkillDefinition } from "../../workspace/skillTypes";
 import type { IWorkspaceStore } from "../../infra/interfaces";
 import type { runAgent, AgentEvent } from "../runner";
+import * as broker from "../runBroker";
 
 // executeSkill is the single enforcement point of the skill contract — every guarantee
 // the PRD makes (authz, both-sides validation, bounded correction retries) lives here.
@@ -57,6 +58,17 @@ function fakeRunner(responses: string[]) {
   return { run, inputs };
 }
 
+// Fake conversation store seams so the callee run is "persisted" deterministically and off disk.
+// Returns a fixed conversation id the persistence assertions key off.
+const FAKE_CONV_ID = "conv-test";
+function fakeConvStore(): Pick<ExecuteSkillOptions, "createConversationFn" | "getMessagesFn" | "persistFn"> {
+  return {
+    createConversationFn: () => ({ id: FAKE_CONV_ID, title: "t", createdAt: "", updatedAt: "", lastMessageAt: "" }),
+    getMessagesFn: () => [],
+    persistFn: () => {},
+  };
+}
+
 function opts(runner: { run: typeof runAgent }, extra: Partial<ExecuteSkillOptions> = {}): ExecuteSkillOptions {
   return {
     store,
@@ -64,6 +76,7 @@ function opts(runner: { run: typeof runAgent }, extra: Partial<ExecuteSkillOptio
     loadSkillsFn: async () => [SKILL],
     runAgentFn: runner.run,
     outputMaxRetries: 2,
+    ...fakeConvStore(),
     ...extra,
   };
 }
@@ -78,7 +91,7 @@ describe("executeSkill — pre-run rejections (callee must never run)", () => {
     expect(runner.inputs).toHaveLength(0);
   });
 
-  it("rejects an unknown action with SKILL_NOT_FOUND, listing available skills", async () => {
+  it("rejects an unknown skill with SKILL_NOT_FOUND, listing available skills", async () => {
     const runner = fakeRunner([GOOD_OUTPUT]);
     const res = await executeSkill(CALLEE.id, CALLER.id, "nope", {}, opts(runner));
     expect(res).toMatchObject({ state: "failed", code: "SKILL_NOT_FOUND" });
@@ -126,7 +139,7 @@ describe("executeSkill — callee run and output contract", () => {
   it("completes with the parsed output object and injects the structured-responder block", async () => {
     const runner = fakeRunner([GOOD_OUTPUT]);
     const res = await executeSkill(CALLEE.id, CALLER.id, "check-stock", { sku: "A1" }, opts(runner));
-    expect(res).toEqual({ state: "completed", output: { in_stock: true, quantity: 3 } });
+    expect(res).toEqual({ state: "completed", output: { in_stock: true, quantity: 3 }, conversationId: FAKE_CONV_ID });
     expect(runner.inputs).toHaveLength(1);
     expect(runner.inputs[0]).toContain("[From: shop-agent]");
     expect(runner.inputs[0]).toContain("Skill call: check-stock");
@@ -227,7 +240,94 @@ describe("executeSkill — callee run and output contract", () => {
       yield { type: "error", message: "model exploded" };
     } as unknown as typeof runAgent;
     const res = await executeSkill(CALLEE.id, CALLER.id, "check-stock", { sku: "A1" }, opts({ run }));
-    expect(res).toEqual({ state: "failed", code: "EXECUTION_ERROR", message: "model exploded" });
+    expect(res).toEqual({ state: "failed", code: "EXECUTION_ERROR", message: "model exploded", conversationId: FAKE_CONV_ID });
+  });
+
+  it("persists the callee run as a skill-call conversation in the callee workspace and returns its id", async () => {
+    const createConversationFn = vi.fn((_wsId: string, o?: { title?: string; kind?: "user" | "skill-call" }) =>
+      ({ id: "conv-1", title: o?.title ?? "", kind: o?.kind, createdAt: "", updatedAt: "", lastMessageAt: "" }));
+    const persistFn = vi.fn();
+
+    const runner = fakeRunner([GOOD_OUTPUT]);
+    const res = await executeSkill(CALLEE.id, CALLER.id, "check-stock", { sku: "A1" },
+      opts(runner, { createConversationFn, getMessagesFn: () => [], persistFn }));
+
+    expect(res).toMatchObject({ state: "completed", conversationId: "conv-1" });
+    expect(createConversationFn).toHaveBeenCalledWith(CALLEE.id, { kind: "skill-call" });
+    expect(persistFn).toHaveBeenCalledWith(CALLEE.id, "conv-1");
+  });
+
+  it("persists and returns the conversation id even when output validation fails", async () => {
+    const persistFn = vi.fn();
+    const res = await executeSkill(CALLEE.id, CALLER.id, "check-stock", { sku: "A1" },
+      opts(fakeRunner([JSON.stringify({ in_stock: true })]), {
+        outputMaxRetries: 0,
+        createConversationFn: () => ({ id: "conv-9", title: "", createdAt: "", updatedAt: "", lastMessageAt: "" }),
+        getMessagesFn: () => [],
+        persistFn,
+      }));
+    expect(res).toMatchObject({ state: "failed", code: "OUTPUT_VALIDATION_ERROR", conversationId: "conv-9" });
+    expect(persistFn).toHaveBeenCalledWith(CALLEE.id, "conv-9");
+  });
+
+  it("creates no conversation for a pre-run rejection (NOT_CONNECTED)", async () => {
+    const createConversationFn = vi.fn();
+    const res = await executeSkill(CALLEE.id, CALLER.id, "check-stock", { sku: "A1" },
+      opts(fakeRunner([GOOD_OUTPUT]), { canCallFn: () => false, createConversationFn }));
+    expect(res).toMatchObject({ state: "failed", code: "NOT_CONNECTED" });
+    expect((res as { conversationId?: string }).conversationId).toBeUndefined();
+    expect(createConversationFn).not.toHaveBeenCalled();
+  });
+
+  it("registers the callee run with the broker so its session is live-subscribable mid-flight", async () => {
+    // The whole point of routing through the broker: a caller deep-linking into the callee's
+    // session must be able to attach and watch it stream, not see a blank/"stuck" UI.
+    let resolveGate!: () => void;
+    const gate = new Promise<void>((r) => (resolveGate = r));
+    const run = async function* (): AsyncGenerator<AgentEvent> {
+      yield { type: "reasoning", content: "thinking…" };
+      await gate; // hold the run open so the test can subscribe while it's live
+      yield { type: "token", content: GOOD_OUTPUT };
+      yield { type: "done" };
+    } as unknown as typeof runAgent;
+
+    const CONV = "conv-live";
+    const call = executeSkill(CALLEE.id, CALLER.id, "check-stock", { sku: "A1" },
+      opts({ run }, { createConversationFn: () => ({ id: CONV, title: "", createdAt: "", updatedAt: "", lastMessageAt: "" }), getMessagesFn: () => [] }));
+
+    // Give the runner a tick to emit its first token into the broker buffer.
+    await new Promise((r) => setTimeout(r, 0));
+    const received: AgentEvent[] = [];
+    const sub = broker.subscribe(CALLEE.id, CONV, (e) => received.push(e));
+    expect(sub).not.toBeNull();
+    expect(sub!.replay).toContainEqual({ type: "reasoning", content: "thinking…" });
+    expect(broker.isRunning(CALLEE.id, CONV)).toBe(true);
+
+    resolveGate();
+    const res = await call;
+    expect(res.state).toBe("completed");
+    // Live subscriber saw the rest of the run and a terminal done; run is no longer marked running.
+    expect(received).toContainEqual({ type: "token", content: GOOD_OUTPUT });
+    expect(received).toContainEqual({ type: "done" });
+    expect(broker.isRunning(CALLEE.id, CONV)).toBe(false);
+    sub!.unsubscribe();
+  });
+
+  it("publishes exactly one terminal done across correction retries (per-turn dones suppressed)", async () => {
+    // A retry runs runAgent again — each turn ends in its own `done`. Forwarding those would
+    // close the callee-session viewer mid-call, so only a single done is published at the end.
+    const runner = fakeRunner(["not json", GOOD_OUTPUT]);
+    const CONV = "conv-retry-done";
+    const received: AgentEvent[] = [];
+    // Subscribe synchronously after the broker session exists by intercepting the first turn.
+    const res = await executeSkill(CALLEE.id, CALLER.id, "check-stock", { sku: "A1" },
+      opts(runner, {
+        createConversationFn: () => ({ id: CONV, title: "", createdAt: "", updatedAt: "", lastMessageAt: "" }),
+        getMessagesFn: () => [],
+        onConversationStart: () => { broker.subscribe(CALLEE.id, CONV, (e) => received.push(e)); },
+      }));
+    expect(res.state).toBe("completed");
+    expect(received.filter((e) => e.type === "done")).toHaveLength(1);
   });
 
   it("names an abort (timeout/cancel) instead of leaking the runner's raw error", async () => {

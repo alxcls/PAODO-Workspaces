@@ -14,6 +14,7 @@ Each *workspace* is an isolated Docker container running its own ReAct loop codi
 - **HTTP API** — call any workspace's agent externally with a per-workspace API key
 - **Live console** — shell output and file changes stream to the UI in real time
 - **Agent network** — connect workspaces in a graph; agents discover and call each other to build multi-agent workflows
+- **Shared drives** — shared storage space you connect to multiple workspaces from the graph user interface. Each agents can then download, or share files files through it for multi-agent collaboration requirement shared materials.
 
 ## Quick start
 
@@ -45,13 +46,21 @@ Persistence is lightweight: workspace metadata and the network graph live as JSO
 
 For the full architecture, see [`doc/`](doc/).
 
+The agent runs a ReAct loop with the following tools:
+
+- **Files** — `file_read` · `file_write` · `file_edit` · `list_directory` · `glob`
+- **System** — `execute_command` · `apt_install` · `http_get`
+- **Session** — `todo_write` · `compact_context` · `workspace_history` · `workspace_restore`
+- **Agent network** — `list_agents` · `call_agent`
+- **Shared drives** — `drive_ls` · `drive_read` · `drive_download` · `drive_upload` · `drive_delete`
+
 ## Agent network
 
 Workspaces can call each other. The network page connects them into a directed graph; an edge **A → B** lets A's agent invoke B's. Agents find their neighbors with `list_agents` and call them with `call_agent`.
 
 Calls are **contract-first**: each workspace publishes typed *skills* (`skills/*.json`), and the platform validates the caller's input and the callee's output against the skill's schema. The callee runs in a fresh, isolated conversation. No graph edge, no call.
 
-> Enabled by default. Set `GRAPH_ENABLED=false` in `.env` to turn it off.
+*A newsroom fleet, the editor delegates to specialists who collaborate through one shared drive :*
 
 ![Agent Network](doc/images/NETWORK_EXAMPLE.png)
 
@@ -90,7 +99,7 @@ doc/                     Architecture docs, PRDs, ADRs
 
 ## Roadmap
 
-Shared file drive · automatic (size-triggered) compaction · budget monitoring · scheduled triggers · database storage and tools.
+Automatic (size-triggered) compaction · budget monitoring · scheduled triggers · database storage and tools.
 
 ## Contributing
 

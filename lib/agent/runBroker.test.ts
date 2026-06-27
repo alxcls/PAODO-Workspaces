@@ -99,4 +99,36 @@ describe("runBroker", () => {
     expect(broker.subscribe("nope", "nope", () => {})).toBeNull();
     expect(broker.isRunning("nope", "nope")).toBe(false);
   });
+
+  describe("startExternalRun", () => {
+    it("buffers + fans out producer-published events, and marks the conversation running", () => {
+      const ext = broker.startExternalRun("ws-ext", "conv-ext", "hello");
+      expect(ext).not.toBeNull();
+      expect(broker.isRunning("ws-ext", "conv-ext")).toBe(true);
+      expect(broker.runningConversationIds("ws-ext")).toContain("conv-ext");
+
+      // Event published before anyone subscribes is replayed on attach.
+      ext!.publish({ type: "token", content: "a" });
+      const received: AgentEvent[] = [];
+      const sub = broker.subscribe("ws-ext", "conv-ext", (e) => received.push(e));
+      expect(sub).not.toBeNull();
+      expect(sub!.replay).toEqual([{ type: "token", content: "a" }]);
+      expect(sub!.userInput).toBe("hello");
+
+      // Subsequent events stream live to the subscriber.
+      ext!.publish({ type: "token", content: "b" });
+      expect(received).toEqual([{ type: "token", content: "b" }]);
+
+      ext!.publish({ type: "done" });
+      ext!.finish();
+      expect(broker.isRunning("ws-ext", "conv-ext")).toBe(false);
+    });
+
+    it("rejects a second external run for a conversation already running", () => {
+      const first = broker.startExternalRun("ws-ext2", "conv-ext2", "x");
+      expect(first).not.toBeNull();
+      expect(broker.startExternalRun("ws-ext2", "conv-ext2", "x")).toBeNull();
+      first!.finish();
+    });
+  });
 });

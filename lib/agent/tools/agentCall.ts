@@ -1,6 +1,6 @@
 // Agent tool that invokes a declared skill on another workspace's agent.
 // Structured calls only — the free-form `message` field is removed: the caller names a
-// skill (`action`) and supplies typed `args`; all contract enforcement (authz, input/output
+// skill (`skill`) and supplies typed `args`; all contract enforcement (authz, input/output
 // validation, correction retries) lives in executeSkill, which runs the callee in-process
 // with a fresh, isolated conversation.
 // Only works when a directed edge exists from the caller workspace to the target workspace
@@ -20,15 +20,28 @@ const TIMEOUT_MS = 300_000;
 
 const schema = z.object({
   workspace: z.string().describe("Name of the target workspace to call"),
-  action: z.string().describe("Skill id to invoke — see list_agents for each workspace's skills"),
+  skill: z.string().describe("Skill id to invoke — see list_agents for each workspace's skills"),
   args: z.record(z.string(), z.unknown()).describe("Key-value object matching the skill's input fields"),
 });
+
+/** Deep-link target for the callee's persisted session — the callee's workspace + conversation. */
+export interface CallAgentMeta {
+  conversationId: string;
+  workspaceId: string;
+  workspaceName: string;
+}
+
+/** What runCall/callWithMeta return: the model-facing string plus optional UI link metadata. */
+export interface CallAgentResult {
+  result: string;
+  meta?: CallAgentMeta;
+}
 
 export class AgentCallTool extends StructuredTool<typeof schema> {
   name = "call_agent";
   description = `Invoke a declared skill on a connected workspace to delegate a task, place an order, or request information.
 ALWAYS use this when the user asks you to contact, call, notify, or order from another workspace.
-Call list_agents first to see each workspace's skills, their input fields, and what they return — then fill in "action" (the skill id) and "args" exactly.
+Call list_agents first to see each workspace's skills, their input fields, and what they return — then fill in "skill" (the skill id) and "args" exactly.
 The target agent runs in a fresh isolated context — it has no memory of your conversation.
 A workspace with no declared skills is not callable. If the workspace is not connected you will receive a permission error, but always attempt the call rather than refusing.`;
   schema = schema;
@@ -49,50 +62,75 @@ A workspace with no declared skills is not callable. If the workspace is not con
     super();
   }
 
-  protected async _call({ workspace, action, args }: z.infer<typeof schema>): Promise<string> {
+  protected async _call(input: z.infer<typeof schema>): Promise<string> {
+    return (await this.runCall(input)).result;
+  }
+
+  /**
+   * Like _call, but also returns UI-only metadata: the callee's persisted conversation id (when
+   * the callee actually ran), so the runner can attach a deep-link to the callee's session. The
+   * `result` string is byte-for-byte what the model receives via _call — `meta` never reaches it.
+   * `onLink`, when given, fires as soon as the callee conversation is created — before the call
+   * finishes — so the runner can surface the link mid-run rather than only at completion.
+   */
+  async callWithMeta(input: z.infer<typeof schema>, onLink?: (meta: CallAgentMeta) => void): Promise<CallAgentResult> {
+    return this.runCall(input, onLink);
+  }
+
+  private async runCall({ workspace, skill, args }: z.infer<typeof schema>, onLink?: (meta: CallAgentMeta) => void): Promise<CallAgentResult> {
     const callee = this.store.getWorkspaceByName(workspace);
     if (!callee) {
       this.log.warn({ callerWorkspaceId: this.callerWorkspaceId, callee: workspace }, "call_agent target not found");
-      return `Error: workspace "${workspace}" not found.`;
+      return { result: `Error: workspace "${workspace}" not found.` };
     }
 
-    const retryKey = `${callee.id}:${action}`;
+    const retryKey = `${callee.id}:${skill}`;
     const maxInputRetries = loadAgentConfig().skillInputMaxRetries;
     if ((this.inputFailures.get(retryKey) ?? 0) >= maxInputRetries) {
-      return (
-        `Error: ${maxInputRetries} consecutive invalid calls to skill "${action}" on "${workspace}". ` +
-        `Stop retrying this skill — re-read its input schema via list_agents and reconsider your approach.`
-      );
+      return {
+        result:
+          `Error: ${maxInputRetries} consecutive invalid calls to skill "${skill}" on "${workspace}". ` +
+          `Stop retrying this skill — re-read its input schema via list_agents and reconsider your approach.`,
+      };
     }
 
-    this.log.debug({ callerWorkspaceId: this.callerWorkspaceId, callee: workspace, action }, "call_agent start");
+    this.log.debug({ callerWorkspaceId: this.callerWorkspaceId, callee: workspace, skill }, "call_agent start");
 
     const signal = AbortSignal.timeout(TIMEOUT_MS);
     try {
-      const result = await executeSkill(callee.id, this.callerWorkspaceId, action, args, {
+      const result = await executeSkill(callee.id, this.callerWorkspaceId, skill, args, {
         signal,
         store: this.store,
         containers: this.containers,
+        // callee.id is the link's workspace; pair it with the conversation id the instant it exists.
+        onConversationStart: onLink
+          ? (conversationId) => onLink({ conversationId, workspaceId: callee.id, workspaceName: callee.name })
+          : undefined,
       });
+      // The callee's persisted session, present whenever it actually ran. Surfaced as link
+      // metadata regardless of success/failure — failed sessions are worth inspecting too.
+      const meta = result.conversationId
+        ? { conversationId: result.conversationId, workspaceId: callee.id, workspaceName: callee.name }
+        : undefined;
 
       // The runner converts aborts into error events rather than throwing, so a timeout
       // comes back as a failed result — detect it via the signal, not the error name.
       if (signal.aborted) {
-        this.log.warn({ callerWorkspaceId: this.callerWorkspaceId, callee: workspace, action, timeoutMs: TIMEOUT_MS }, "call_agent timed out");
+        this.log.warn({ callerWorkspaceId: this.callerWorkspaceId, callee: workspace, skill, timeoutMs: TIMEOUT_MS }, "call_agent timed out");
         this.inputFailures.delete(retryKey);
         this.needsInputRounds.delete(retryKey);
-        return `Error: call to "${workspace}" timed out after ${TIMEOUT_MS / 1000}s — the target agent is too slow or stuck.`;
+        return { result: `Error: call to "${workspace}" timed out after ${TIMEOUT_MS / 1000}s — the target agent is too slow or stuck.`, meta };
       }
 
       if (result.state === "failed") {
-        this.log.warn({ callerWorkspaceId: this.callerWorkspaceId, callee: workspace, action, code: result.code, agentError: result.message }, "call_agent failed");
+        this.log.warn({ callerWorkspaceId: this.callerWorkspaceId, callee: workspace, skill, code: result.code, agentError: result.message }, "call_agent failed");
         if (result.code === "INPUT_VALIDATION_ERROR") {
           const failures = (this.inputFailures.get(retryKey) ?? 0) + 1;
           this.inputFailures.set(retryKey, failures);
           const terminal = failures >= maxInputRetries
             ? " Do NOT retry with the same args — re-read the skill's input schema via list_agents."
             : "";
-          return `Error (${result.code}): ${result.message}${terminal}`;
+          return { result: `Error (${result.code}): ${result.message}${terminal}`, meta };
         }
         if (result.code === "NEEDS_INPUT") {
           this.inputFailures.delete(retryKey);
@@ -100,39 +138,44 @@ A workspace with no declared skills is not callable. If the workspace is not con
           const rounds = (this.needsInputRounds.get(retryKey) ?? 0) + 1;
           this.needsInputRounds.set(retryKey, rounds);
           if (rounds >= maxRounds) {
-            return (
-              `Error (NEEDS_INPUT): the target agent still needs different input: "${result.message}" ` +
-              `That was round ${rounds} of ${maxRounds} — stop re-calling this skill and report what you learned instead.`
-            );
+            return {
+              result:
+                `Error (NEEDS_INPUT): the target agent still needs different input: "${result.message}" ` +
+                `That was round ${rounds} of ${maxRounds} — stop re-calling this skill and report what you learned instead.`,
+              meta,
+            };
           }
-          return `Needs input: the target agent needs different input: "${result.message}" Re-call the same skill with corrected args.`;
+          return { result: `Needs input: the target agent needs different input: "${result.message}" Re-call the same skill with corrected args.`, meta };
         }
         this.inputFailures.delete(retryKey);
         this.needsInputRounds.delete(retryKey);
         if (result.code === "NOT_CONNECTED") {
-          return (
-            `Permission denied: this workspace is not connected to "${workspace}" in the Agent Network. ` +
-            `Add an edge in the /graph page first.`
-          );
+          return {
+            result:
+              `Permission denied: this workspace is not connected to "${workspace}" in the Agent Network. ` +
+              `Add an edge in the /graph page first.`,
+            meta,
+          };
         }
-        return `Error (${result.code}): ${result.message}`;
+        return { result: `Error (${result.code}): ${result.message}`, meta };
       }
 
       this.inputFailures.delete(retryKey);
       this.needsInputRounds.delete(retryKey);
       const output = JSON.stringify(result.output, null, 2);
-      this.log.debug({ callerWorkspaceId: this.callerWorkspaceId, callee: workspace, action, responseChars: output.length }, "call_agent done");
-      return output.length > MAX_RESPONSE_CHARS
+      this.log.debug({ callerWorkspaceId: this.callerWorkspaceId, callee: workspace, skill, responseChars: output.length }, "call_agent done");
+      const truncated = output.length > MAX_RESPONSE_CHARS
         ? output.slice(0, MAX_RESPONSE_CHARS) +
             `\n\n[response truncated — ${output.length} chars total, showing first ${MAX_RESPONSE_CHARS}]`
         : output;
+      return { result: truncated, meta };
     } catch (err) {
       if (signal.aborted) {
-        this.log.warn({ callerWorkspaceId: this.callerWorkspaceId, callee: workspace, action, timeoutMs: TIMEOUT_MS }, "call_agent timed out");
-        return `Error: call to "${workspace}" timed out after ${TIMEOUT_MS / 1000}s — the target agent is too slow or stuck.`;
+        this.log.warn({ callerWorkspaceId: this.callerWorkspaceId, callee: workspace, skill, timeoutMs: TIMEOUT_MS }, "call_agent timed out");
+        return { result: `Error: call to "${workspace}" timed out after ${TIMEOUT_MS / 1000}s — the target agent is too slow or stuck.` };
       }
-      this.log.error({ err, callerWorkspaceId: this.callerWorkspaceId, callee: workspace, action }, "call_agent failed");
-      return `Error: ${err instanceof Error ? err.message : String(err)}`;
+      this.log.error({ err, callerWorkspaceId: this.callerWorkspaceId, callee: workspace, skill }, "call_agent failed");
+      return { result: `Error: ${err instanceof Error ? err.message : String(err)}` };
     }
   }
 }

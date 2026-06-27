@@ -43,22 +43,28 @@ export interface FileViewerHandle {
 interface Props {
   workspaceId: string; filePath: string | null;
   onClose: () => void; onSelfWrite?: (path: string) => void;
+  /** API base for file routes. Defaults to the workspace path; drives pass /api/drives/<id>. */
+  apiBase?: string;
+  /** HTML live-preview needs a running container; off for drives (passive storage, no container). */
+  enableHtmlPreview?: boolean;
 }
 
 const FileViewer = forwardRef<FileViewerHandle, Props>(function FileViewer(
-  { workspaceId, filePath, onClose, onSelfWrite },
+  { workspaceId, filePath, onClose, onSelfWrite, apiBase, enableHtmlPreview = true },
   ref
 ) {
+  const base = apiBase ?? `/api/workspaces/${workspaceId}`;
   const {
     fileType, content, draft, setDraft,
     loading, error, saving, deleting,
     isDirty, previewKey,
     handleSave, deleteFile,
     notifyFilesChanged, notifyFilesDeleted,
-  } = useFileContent(workspaceId, filePath, { onClose, onSelfWrite });
+  } = useFileContent(workspaceId, filePath, { onClose, onSelfWrite, apiBase: base });
 
   const lang = filePath ? detectLang(filePath) : "txt";
-  const isHtml = /\.(html?|htm)$/i.test(filePath ?? "");
+  // HTML files render as live preview only when the backend can serve them through a container.
+  const isHtml = /\.(html?|htm)$/i.test(filePath ?? "") && enableHtmlPreview;
 
   const [showPreview, setShowPreview] = useState(false);
   useEffect(() => {
@@ -75,15 +81,16 @@ const FileViewer = forwardRef<FileViewerHandle, Props>(function FileViewer(
   // is what fired the cross-origin/401 errors users saw until they toggled Code→Preview.
   const [tokenReady, setTokenReady] = useState(false);
   useEffect(() => {
+    if (!enableHtmlPreview) { setTokenReady(true); return; }
     let cancelled = false;
     setTokenReady(false);
-    fetch(`/api/workspaces/${workspaceId}/preview-token`)
+    fetch(`${base}/preview-token`)
       .then(r => r.ok ? r.json() : null)
       .then(d => { if (!cancelled && d?.token) setTokenEntry({ ws: workspaceId, token: d.token as string }); })
       .catch(() => {})
       .finally(() => { if (!cancelled) setTokenReady(true); });
     return () => { cancelled = true; };
-  }, [workspaceId]);
+  }, [workspaceId, base, enableHtmlPreview]);
   const previewToken = tokenEntry?.ws === workspaceId ? tokenEntry.token : null;
 
   const preRef = useRef<HTMLPreElement>(null);
@@ -118,17 +125,17 @@ const FileViewer = forwardRef<FileViewerHandle, Props>(function FileViewer(
     // imports) are fetched from the opaque (null) origin and can carry neither Basic Auth nor a
     // header, and queries are dropped on relative resolution — only a path prefix survives to
     // authenticate them at the serve route (validated in server.ts).
-    const base = `${window.location.origin}/api/workspaces/${workspaceId}/serve/${encodeURIComponent(previewToken ?? "")}/${encodedDir}/`;
-    const apiBase = `/api/workspaces/${workspaceId}/proxy`;
+    const serveBase = `${window.location.origin}${base}/serve/${encodeURIComponent(previewToken ?? "")}/${encodedDir}/`;
+    const apiProxyBase = `${base}/proxy`;
     // Shim rewrites root-relative fetches (app-API calls) to the workspace proxy and attaches the
     // preview token as a Bearer header — those are fetch()-driven so a header works. Relative fetches
     // resolve via <base> to the serve route and authenticate through the path token above instead.
-    const baseTag = `<base href="${base}"><script>window.API_BASE=${JSON.stringify(apiBase)};window.PREVIEW_TOKEN=${JSON.stringify(previewToken ?? "")};(function(){var _f=window.fetch;window.fetch=function(r,o){var u=typeof r==='string'?r:(r instanceof Request?r.url:String(r));if(u.startsWith('/')&&!u.startsWith('//')){var rw=window.API_BASE+u;var h=new Headers((o&&o.headers)||(r instanceof Request?r.headers:undefined));if(window.PREVIEW_TOKEN)h.set('Authorization','Bearer '+window.PREVIEW_TOKEN);var init=Object.assign({},o,{headers:h});return _f(typeof r==='string'?rw:new Request(rw,r),init);}return _f(r,o);};})();</script>`;
+    const baseTag = `<base href="${serveBase}"><script>window.API_BASE=${JSON.stringify(apiProxyBase)};window.PREVIEW_TOKEN=${JSON.stringify(previewToken ?? "")};(function(){var _f=window.fetch;window.fetch=function(r,o){var u=typeof r==='string'?r:(r instanceof Request?r.url:String(r));if(u.startsWith('/')&&!u.startsWith('//')){var rw=window.API_BASE+u;var h=new Headers((o&&o.headers)||(r instanceof Request?r.headers:undefined));if(window.PREVIEW_TOKEN)h.set('Authorization','Bearer '+window.PREVIEW_TOKEN);var init=Object.assign({},o,{headers:h});return _f(typeof r==='string'?rw:new Request(rw,r),init);}return _f(r,o);};})();</script>`;
     const html = /<head(\s[^>]*)?>/.test(draft)
       ? draft.replace(/<head(\s[^>]*)?>/, `$&${baseTag}`)
       : baseTag + draft;
     return `<!--v:${previewKey}-->${html}`;
-  }, [draft, filePath, isHtml, workspaceId, previewKey, previewToken]);
+  }, [draft, filePath, isHtml, base, previewKey, previewToken]);
 
   const highlightedHtml = useMemo(() => {
     if (!draft || fileType !== "text") return draft ?? "";
@@ -147,7 +154,7 @@ const FileViewer = forwardRef<FileViewerHandle, Props>(function FileViewer(
 
   const displayPath = filePath ? filePath.split("/").slice(-3).join("/") : "";
   const rawUrl = filePath
-    ? `/api/workspaces/${workspaceId}/files/content?path=${encodeURIComponent(filePath)}&raw=1`
+    ? `${base}/files/content?path=${encodeURIComponent(filePath)}&raw=1`
     : "";
 
   const closeBtn = (

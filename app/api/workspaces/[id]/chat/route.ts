@@ -8,6 +8,7 @@ import type { NextRequest } from "next/server";
 import { getStore } from "@/lib/infra/services";
 import type { AgentEvent } from "@/lib/agent/runner";
 import { buildSystemPrompt, buildPromptConfig } from "@/lib/agent/systemPrompt";
+import { buildWorkspacePromptInputs } from "@/lib/agent/promptContext";
 import { loadAgentConfig } from "@/lib/agent/buildTools";
 import { setSystemPrompt } from "@/lib/agent/messageSerialization";
 import * as conversations from "@/lib/workspace/conversationStore";
@@ -42,8 +43,9 @@ export async function POST(
 
   const userMessage = body.message?.trim();
   if (userMessage) {
-    // Refresh the system prompt on every run so AGENTS.md changes are always picked up.
-    setSystemPrompt(messages, buildSystemPrompt(ws.dir, buildPromptConfig(loadAgentConfig())));
+    // Refresh the system prompt on every run so AGENTS.md and drive changes are always picked up.
+    const inputs = buildWorkspacePromptInputs(ws.id, ws.dir);
+    setSystemPrompt(messages, buildSystemPrompt(ws.dir, buildPromptConfig(loadAgentConfig()), inputs));
     const { alreadyRunning } = broker.startRun({
       workspaceId: ws.id,
       workspaceName: ws.name,

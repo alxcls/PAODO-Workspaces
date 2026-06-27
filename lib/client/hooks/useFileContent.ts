@@ -13,13 +13,16 @@ export type FileType = "text" | "image" | "binary" | null;
 interface Options {
   onClose: () => void;
   onSelfWrite?: (path: string) => void;
+  /** API base for file routes. Defaults to the workspace path; drives pass /api/drives/<id>. */
+  apiBase?: string;
 }
 
 export function useFileContent(
   workspaceId: string,
   filePath: string | null,
-  { onClose, onSelfWrite }: Options
+  { onClose, onSelfWrite, apiBase }: Options
 ) {
+  const base = apiBase ?? `/api/workspaces/${workspaceId}`;
   const [fileType, setFileType] = useState<FileType>(null);
   const [content, setContent] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
@@ -53,7 +56,7 @@ export function useFileContent(
     if (!silent) { setLoading(true); setFileType(null); setContent(null); setDraft(""); }
     setError(null);
     try {
-      const res = await fetch(`/api/workspaces/${workspaceId}/files/content?path=${encodeURIComponent(path)}`);
+      const res = await fetch(`${base}/files/content?path=${encodeURIComponent(path)}`);
       if (res.status === 404) { onCloseRef.current(); return; }
       if (!res.ok) { if (!silent) setError("Cannot load file"); return; }
       const data = (await res.json()) as { type: "text" | "image" | "binary"; content?: string };
@@ -65,7 +68,7 @@ export function useFileContent(
     } finally {
       if (!silent) setLoading(false);
     }
-  }, [workspaceId]);
+  }, [base]);
 
   useEffect(() => {
     if (filePath) fetchContent(filePath);
@@ -78,7 +81,7 @@ export function useFileContent(
     const currentDraft = draftRef.current;
     setSaving(true); setError(null);
     try {
-      const res = await fetch(`/api/workspaces/${workspaceId}/files/content`, {
+      const res = await fetch(`${base}/files/content`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ path, content: currentDraft }),
@@ -88,7 +91,7 @@ export function useFileContent(
       onSelfWriteRef.current?.(path);
     } catch { setError("Save failed"); }
     finally { setSaving(false); }
-  }, [workspaceId]);
+  }, [base]);
 
   const deleteFile = useCallback(async () => {
     const path = filePathRef.current;
@@ -96,7 +99,7 @@ export function useFileContent(
     setDeleting(true);
     try {
       const res = await fetch(
-        `/api/workspaces/${workspaceId}/files/content?path=${encodeURIComponent(path)}`,
+        `${base}/files/content?path=${encodeURIComponent(path)}`,
         { method: "DELETE" }
       );
       if (!res.ok) {
@@ -107,7 +110,7 @@ export function useFileContent(
       }
     } catch { setError("Delete failed"); }
     finally { setDeleting(false); }
-  }, [workspaceId]);
+  }, [base]);
 
   const notifyFilesChanged = useCallback((paths: string[]) => {
     if (isDirtyRef.current) return;

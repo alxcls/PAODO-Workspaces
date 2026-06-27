@@ -355,8 +355,8 @@
   width: 8px !important; height: 8px !important;
   background: var(--color-text-3) !important;
   border: 2px solid #fff !important;
-  transition: transform .12s;
-  &:hover { transform: scale(1.4); }
+  transition: background-color .12s, border-color .12s;
+  &:hover { background: var(--color-primary) !important; }
 }
 .react-flow__controls {
   box-shadow: var(--shadow-sm) !important;

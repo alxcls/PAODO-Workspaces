@@ -4,11 +4,15 @@
 // file tree (via treeRefreshKey) and the file viewer (via the imperative FileViewerHandle ref).
 "use client";
 
-import { use, useState, useEffect, useRef, useCallback } from "react";
+import { use, useState, useEffect, useRef, useCallback, Suspense, lazy } from "react";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import FileTreePanel from "@/components/workspace/FileTreePanel";
-import FileViewer, { type FileViewerHandle } from "@/components/workspace/FileViewer";
+import { type FileViewerHandle } from "@/components/workspace/FileViewer";
+// FileViewer pulls in heavy, view-only deps (highlight.js with all languages, jsoncrack,
+// react-markdown). It is only mounted once the user opens a file, so load its chunk lazily to
+// keep them out of the workspace page's initial bundle (the main first-open latency cost).
+const FileViewer = lazy(() => import("@/components/workspace/FileViewer"));
 import ChatPanel from "@/components/workspace/ChatPanel";
 import ConversationBar from "@/components/workspace/ConversationBar";
 import ConsolePanel from "@/components/workspace/ConsolePanel";
@@ -18,7 +22,17 @@ import { useWorkspaceSocket } from "@/lib/client/hooks/useWorkspaceSocket";
 import { useWorkspaceMeta } from "@/lib/client/hooks/useWorkspaceMeta";
 import { useConversations } from "@/lib/client/hooks/useConversations";
 
+// useConversations reads useSearchParams() (for the ?conversation= deep-link), which Next requires
+// to sit under a Suspense boundary, so the page body is wrapped below.
 export default function WorkspacePage({ params }: { params: Promise<{ id: string }> }) {
+  return (
+    <Suspense>
+      <WorkspacePageInner params={params} />
+    </Suspense>
+  );
+}
+
+function WorkspacePageInner({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const router = useRouter();
   const { name: workspaceName } = useWorkspaceMeta(id);
@@ -143,12 +157,14 @@ export default function WorkspacePage({ params }: { params: Promise<{ id: string
         <>
           <div className="ws-divider" onMouseDown={() => startColDrag("left")} />
           <section className="flex-1 flex flex-col min-w-0 min-h-0 bg-bg">
-            <FileViewer
-              ref={viewerRef}
-              workspaceId={id} filePath={selectedFile}
-              onClose={() => setViewerOpen(false)}
-              onSelfWrite={(path) => sendMessage({ type: "self_write", path })}
-            />
+            <Suspense fallback={<div className="flex-1 grid place-items-center text-text-3 text-sm bg-bg-tint p-6 text-center">Loading viewer…</div>}>
+              <FileViewer
+                ref={viewerRef}
+                workspaceId={id} filePath={selectedFile}
+                onClose={() => setViewerOpen(false)}
+                onSelfWrite={(path) => sendMessage({ type: "self_write", path })}
+              />
+            </Suspense>
           </section>
         </>
       )}

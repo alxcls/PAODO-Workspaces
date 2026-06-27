@@ -18,6 +18,13 @@ import { AgentCallTool } from "./tools/agentCall";
 import { ListAgentsTool } from "./tools/listAgents";
 import { WorkspaceHistoryTool } from "./tools/workspaceHistory";
 import { WorkspaceRestoreTool } from "./tools/workspaceRestore";
+import { DriveLsTool } from "./tools/driveLs";
+import { DriveReadTool } from "./tools/driveRead";
+import { DriveDeleteTool } from "./tools/driveDelete";
+import { DriveDownloadTool } from "./tools/driveDownload";
+import { DriveUploadTool } from "./tools/driveUpload";
+import { getDrivesForWorkspace } from "../workspace/driveStore";
+import { isCaller } from "../workspace/workspaceGraph";
 import { defaultContainerManager } from "../infra/docker/containerManager";
 import { defaultWorkspaceStore } from "../workspace/workspaceStore";
 import { getVersioning } from "../infra/services";
@@ -84,8 +91,21 @@ export function buildTools(
     new WorkspaceHistoryTool(workspaceId, workspaceDir, versioning),
     // Signal-only: the runner performs the restore against the platform versioning (runner.ts).
     new WorkspaceRestoreTool(),
-    ...(config.graphEnabled
+    // Calling tools go only to a caller (a workspace with outgoing edges). A pure callee
+    // never receives call_agent/list_agents, even when the graph feature is enabled.
+    ...(config.graphEnabled && isCaller(workspaceId)
       ? [new AgentCallTool(workspaceId, store, containers), new ListAgentsTool(workspaceId, store)]
+      : []),
+    // Drive tools are injected only when this workspace has at least one connected drive,
+    // keeping the prompt lean for the common no-drive case.
+    ...(getDrivesForWorkspace(workspaceId).length > 0
+      ? [
+          new DriveLsTool(workspaceId),
+          new DriveReadTool(workspaceId),
+          new DriveDeleteTool(workspaceId),
+          new DriveDownloadTool(workspaceId, runner),
+          new DriveUploadTool(workspaceId, workspaceDir),
+        ]
       : []),
   ];
 

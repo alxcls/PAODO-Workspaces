@@ -58,16 +58,63 @@ describe("messagesToTranscript", () => {
     expect(t[1]).toMatchObject({ role: "assistant", content: "let me look", thinking: true });
     // Historical tool bubbles are already done; non-call_agent results are not surfaced inline.
     expect(t[2]).toMatchObject({ role: "tool_start", toolName: "file_read", toolDone: true });
-    expect(t[2].toolResult).toBeUndefined();
+    expect(t[2].calleeConversationId).toBeUndefined();
     expect(t[3]).toEqual({ role: "assistant", content: "here is the answer" });
   });
 
-  it("surfaces call_agent results inline, mirroring the live stream", () => {
+  it("replays the run-cumulative usage line before the terminal assistant bubble", () => {
+    const messages = [
+      new HumanMessage("hi"),
+      new AIMessage({ content: "answer", response_metadata: { runUsage: { inputTokens: 1200, outputTokens: 340 } } }),
+    ];
+    const t = messagesToTranscript(messages);
+    expect(t[0]).toEqual({ role: "user", content: "hi" });
+    expect(t[1]).toEqual({ role: "usage", inputTokens: 1200, outputTokens: 340 });
+    expect(t[2]).toEqual({ role: "assistant", content: "answer" });
+  });
+
+  it("emits no usage line when runUsage is absent or zero", () => {
+    const messages = [
+      new AIMessage("no usage"),
+      new AIMessage({ content: "zero usage", response_metadata: { runUsage: { inputTokens: 0, outputTokens: 0 } } }),
+    ];
+    const t = messagesToTranscript(messages);
+    expect(t.every((m) => m.role !== "usage")).toBe(true);
+  });
+
+  it("preserves response_metadata.runUsage across a serialize round-trip", () => {
+    const messages = [new AIMessage({ content: "answer", response_metadata: { runUsage: { inputTokens: 5, outputTokens: 6 } } })];
+    const back = deserializeMessages(serializeMessages(messages));
+    const t = messagesToTranscript(back);
+    expect(t[0]).toEqual({ role: "usage", inputTokens: 5, outputTokens: 6 });
+  });
+
+  it("rebuilds the call_agent session deep-link from the ToolMessage's additional_kwargs", () => {
+    const messages = [
+      new AIMessage({ content: "", tool_calls: [{ id: "c1", name: "call_agent", args: { workspace: "b" } }] }),
+      new ToolMessage({
+        tool_call_id: "c1",
+        content: "neighbor reply",
+        additional_kwargs: { calleeConversationId: "conv-9", calleeWorkspaceId: "ws-b", calleeWorkspaceName: "Agent B" },
+      }),
+    ];
+    const t = messagesToTranscript(messages);
+    expect(t[0]).toMatchObject({
+      role: "tool_start",
+      toolName: "call_agent",
+      calleeConversationId: "conv-9",
+      calleeWorkspaceId: "ws-b",
+      calleeWorkspaceName: "Agent B",
+    });
+  });
+
+  it("omits the link for a call_agent ToolMessage with no persisted meta", () => {
     const messages = [
       new AIMessage({ content: "", tool_calls: [{ id: "c1", name: "call_agent", args: { workspace: "b" } }] }),
       new ToolMessage({ tool_call_id: "c1", content: "neighbor reply" }),
     ];
     const t = messagesToTranscript(messages);
-    expect(t[0]).toMatchObject({ role: "tool_start", toolName: "call_agent", toolResult: "neighbor reply" });
+    expect(t[0]).toMatchObject({ role: "tool_start", toolName: "call_agent", toolDone: true });
+    expect(t[0].calleeConversationId).toBeUndefined();
   });
 });

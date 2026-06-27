@@ -1,6 +1,6 @@
 // Tool that lists the agents reachable from this workspace via call_agent, with each
 // workspace's declared skills (read live from its skills/ directory) so the calling agent
-// can fill in call_agent's action + args without guessing. A reachable workspace with no
+// can fill in call_agent's skill + args without guessing. A reachable workspace with no
 // skills is shown explicitly so the caller knows it exists but is not callable.
 
 import { StructuredTool } from "@langchain/core/tools";
@@ -35,7 +35,7 @@ export function formatSkill(skill: SkillDefinition): string {
 
 export class ListAgentsTool extends StructuredTool<typeof schema> {
   name = "list_agents";
-  description = "List all agents this workspace can contact via call_agent, with each agent's declared skills (action ids, input fields, and return shape)";
+  description = "List all agents this workspace can contact via call_agent, with each agent's declared skills (skill ids, input fields, and return shape)";
   schema = schema;
 
   constructor(

@@ -277,6 +277,11 @@ export async function* runAgent(
   }
 
   let iterations = 0;
+  // Run-cumulative token totals, summed across every turn. Mirrors the client's per-run usage
+  // line (agentTranscript.insertUsage): attached to the terminal assistant message below so a
+  // reloaded conversation shows the same single usage line the live stream did.
+  let runInputTokens = 0;
+  let runOutputTokens = 0;
   try {
     while (true) {
       if (iterations >= maxIterations) {
@@ -316,11 +321,15 @@ export async function* runAgent(
         ...(reasoningText ? { reasoningText } : {}),
         ...(fullText ? { outputText: fullText } : {}),
       };
+      runInputTokens += usageBase.inputTokens;
+      runOutputTokens += usageBase.outputTokens;
 
       if (!toolCalls.length) {
         // Final text response — tokens already streamed as they arrived; just persist and exit.
         yield { type: "turn_usage", ...usageBase, toolCalls: [] };
-        messages.push(new AIMessage(fullText));
+        // Stash the run-cumulative usage on the persisted message so messagesToTranscript can
+        // replay the usage line on reload (response_metadata survives serialization).
+        messages.push(new AIMessage({ content: fullText, response_metadata: { runUsage: { inputTokens: runInputTokens, outputTokens: runOutputTokens } } }));
         wlog.info("agent run done");
         yield { type: "done" };
         break;

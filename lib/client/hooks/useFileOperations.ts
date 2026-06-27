@@ -6,6 +6,7 @@
 // deleted paths so dependent views can update.
 
 import { useState, useEffect, useCallback, useRef } from "react";
+import { useDeferredPending } from "./useDeferredPending";
 
 export interface TreeNode {
   name: string;
@@ -36,6 +37,7 @@ export function useFileOperations({
 }: Options) {
   const base = apiBase ?? `/api/workspaces/${workspaceId}`;
   const [tree, setTree] = useState<TreeNode[]>([]);
+  const { pending: downloading, run: runDownload } = useDeferredPending();
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const deleteTimerRef = useRef<number | null>(null);
 
@@ -68,21 +70,26 @@ export function useFileOperations({
 
   useEffect(() => { fetchTree(); }, [fetchTree, refreshKey]);
 
-  const handleDownload = async () => {
-    const res = await fetch(`${base}/files/download`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ paths: Array.from(selected) }),
+  const handleDownload = () =>
+    runDownload(async () => {
+      const res = await fetch(`${base}/files/download`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ paths: Array.from(selected) }),
+      });
+      if (!res.ok) return;
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${workspaceName}.zip`;
+      // The anchor must be in the DOM for Firefox to honor the click, and the object URL must outlive
+      // the click — modern browsers cancel the download if it's revoked synchronously, so defer it.
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 0);
     });
-    if (!res.ok) return;
-    const blob = await res.blob();
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `${workspaceName}.zip`;
-    a.click();
-    URL.revokeObjectURL(url);
-  };
 
   const handleDelete = async () => {
     const paths = Array.from(selected);
@@ -123,5 +130,5 @@ export function useFileOperations({
     fetchTree();
   };
 
-  return { tree, fetchTree, handleDownload, handleDelete, deleteError };
+  return { tree, fetchTree, handleDownload, downloading, handleDelete, deleteError };
 }

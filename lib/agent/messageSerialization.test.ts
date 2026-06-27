@@ -62,6 +62,33 @@ describe("messagesToTranscript", () => {
     expect(t[3]).toEqual({ role: "assistant", content: "here is the answer" });
   });
 
+  it("replays the run-cumulative usage line before the terminal assistant bubble", () => {
+    const messages = [
+      new HumanMessage("hi"),
+      new AIMessage({ content: "answer", response_metadata: { runUsage: { inputTokens: 1200, outputTokens: 340 } } }),
+    ];
+    const t = messagesToTranscript(messages);
+    expect(t[0]).toEqual({ role: "user", content: "hi" });
+    expect(t[1]).toEqual({ role: "usage", inputTokens: 1200, outputTokens: 340 });
+    expect(t[2]).toEqual({ role: "assistant", content: "answer" });
+  });
+
+  it("emits no usage line when runUsage is absent or zero", () => {
+    const messages = [
+      new AIMessage("no usage"),
+      new AIMessage({ content: "zero usage", response_metadata: { runUsage: { inputTokens: 0, outputTokens: 0 } } }),
+    ];
+    const t = messagesToTranscript(messages);
+    expect(t.every((m) => m.role !== "usage")).toBe(true);
+  });
+
+  it("preserves response_metadata.runUsage across a serialize round-trip", () => {
+    const messages = [new AIMessage({ content: "answer", response_metadata: { runUsage: { inputTokens: 5, outputTokens: 6 } } })];
+    const back = deserializeMessages(serializeMessages(messages));
+    const t = messagesToTranscript(back);
+    expect(t[0]).toEqual({ role: "usage", inputTokens: 5, outputTokens: 6 });
+  });
+
   it("rebuilds the call_agent session deep-link from the ToolMessage's additional_kwargs", () => {
     const messages = [
       new AIMessage({ content: "", tool_calls: [{ id: "c1", name: "call_agent", args: { workspace: "b" } }] }),

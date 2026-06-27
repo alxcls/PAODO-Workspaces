@@ -1,6 +1,6 @@
 // Agent tool that invokes a declared skill on another workspace's agent.
 // Structured calls only — the free-form `message` field is removed: the caller names a
-// skill (`action`) and supplies typed `args`; all contract enforcement (authz, input/output
+// skill (`skill`) and supplies typed `args`; all contract enforcement (authz, input/output
 // validation, correction retries) lives in executeSkill, which runs the callee in-process
 // with a fresh, isolated conversation.
 // Only works when a directed edge exists from the caller workspace to the target workspace
@@ -20,7 +20,7 @@ const TIMEOUT_MS = 300_000;
 
 const schema = z.object({
   workspace: z.string().describe("Name of the target workspace to call"),
-  action: z.string().describe("Skill id to invoke — see list_agents for each workspace's skills"),
+  skill: z.string().describe("Skill id to invoke — see list_agents for each workspace's skills"),
   args: z.record(z.string(), z.unknown()).describe("Key-value object matching the skill's input fields"),
 });
 
@@ -41,7 +41,7 @@ export class AgentCallTool extends StructuredTool<typeof schema> {
   name = "call_agent";
   description = `Invoke a declared skill on a connected workspace to delegate a task, place an order, or request information.
 ALWAYS use this when the user asks you to contact, call, notify, or order from another workspace.
-Call list_agents first to see each workspace's skills, their input fields, and what they return — then fill in "action" (the skill id) and "args" exactly.
+Call list_agents first to see each workspace's skills, their input fields, and what they return — then fill in "skill" (the skill id) and "args" exactly.
 The target agent runs in a fresh isolated context — it has no memory of your conversation.
 A workspace with no declared skills is not callable. If the workspace is not connected you will receive a permission error, but always attempt the call rather than refusing.`;
   schema = schema;
@@ -77,28 +77,28 @@ A workspace with no declared skills is not callable. If the workspace is not con
     return this.runCall(input, onLink);
   }
 
-  private async runCall({ workspace, action, args }: z.infer<typeof schema>, onLink?: (meta: CallAgentMeta) => void): Promise<CallAgentResult> {
+  private async runCall({ workspace, skill, args }: z.infer<typeof schema>, onLink?: (meta: CallAgentMeta) => void): Promise<CallAgentResult> {
     const callee = this.store.getWorkspaceByName(workspace);
     if (!callee) {
       this.log.warn({ callerWorkspaceId: this.callerWorkspaceId, callee: workspace }, "call_agent target not found");
       return { result: `Error: workspace "${workspace}" not found.` };
     }
 
-    const retryKey = `${callee.id}:${action}`;
+    const retryKey = `${callee.id}:${skill}`;
     const maxInputRetries = loadAgentConfig().skillInputMaxRetries;
     if ((this.inputFailures.get(retryKey) ?? 0) >= maxInputRetries) {
       return {
         result:
-          `Error: ${maxInputRetries} consecutive invalid calls to skill "${action}" on "${workspace}". ` +
+          `Error: ${maxInputRetries} consecutive invalid calls to skill "${skill}" on "${workspace}". ` +
           `Stop retrying this skill — re-read its input schema via list_agents and reconsider your approach.`,
       };
     }
 
-    this.log.debug({ callerWorkspaceId: this.callerWorkspaceId, callee: workspace, action }, "call_agent start");
+    this.log.debug({ callerWorkspaceId: this.callerWorkspaceId, callee: workspace, skill }, "call_agent start");
 
     const signal = AbortSignal.timeout(TIMEOUT_MS);
     try {
-      const result = await executeSkill(callee.id, this.callerWorkspaceId, action, args, {
+      const result = await executeSkill(callee.id, this.callerWorkspaceId, skill, args, {
         signal,
         store: this.store,
         containers: this.containers,
@@ -116,14 +116,14 @@ A workspace with no declared skills is not callable. If the workspace is not con
       // The runner converts aborts into error events rather than throwing, so a timeout
       // comes back as a failed result — detect it via the signal, not the error name.
       if (signal.aborted) {
-        this.log.warn({ callerWorkspaceId: this.callerWorkspaceId, callee: workspace, action, timeoutMs: TIMEOUT_MS }, "call_agent timed out");
+        this.log.warn({ callerWorkspaceId: this.callerWorkspaceId, callee: workspace, skill, timeoutMs: TIMEOUT_MS }, "call_agent timed out");
         this.inputFailures.delete(retryKey);
         this.needsInputRounds.delete(retryKey);
         return { result: `Error: call to "${workspace}" timed out after ${TIMEOUT_MS / 1000}s — the target agent is too slow or stuck.`, meta };
       }
 
       if (result.state === "failed") {
-        this.log.warn({ callerWorkspaceId: this.callerWorkspaceId, callee: workspace, action, code: result.code, agentError: result.message }, "call_agent failed");
+        this.log.warn({ callerWorkspaceId: this.callerWorkspaceId, callee: workspace, skill, code: result.code, agentError: result.message }, "call_agent failed");
         if (result.code === "INPUT_VALIDATION_ERROR") {
           const failures = (this.inputFailures.get(retryKey) ?? 0) + 1;
           this.inputFailures.set(retryKey, failures);
@@ -163,7 +163,7 @@ A workspace with no declared skills is not callable. If the workspace is not con
       this.inputFailures.delete(retryKey);
       this.needsInputRounds.delete(retryKey);
       const output = JSON.stringify(result.output, null, 2);
-      this.log.debug({ callerWorkspaceId: this.callerWorkspaceId, callee: workspace, action, responseChars: output.length }, "call_agent done");
+      this.log.debug({ callerWorkspaceId: this.callerWorkspaceId, callee: workspace, skill, responseChars: output.length }, "call_agent done");
       const truncated = output.length > MAX_RESPONSE_CHARS
         ? output.slice(0, MAX_RESPONSE_CHARS) +
             `\n\n[response truncated — ${output.length} chars total, showing first ${MAX_RESPONSE_CHARS}]`
@@ -171,10 +171,10 @@ A workspace with no declared skills is not callable. If the workspace is not con
       return { result: truncated, meta };
     } catch (err) {
       if (signal.aborted) {
-        this.log.warn({ callerWorkspaceId: this.callerWorkspaceId, callee: workspace, action, timeoutMs: TIMEOUT_MS }, "call_agent timed out");
+        this.log.warn({ callerWorkspaceId: this.callerWorkspaceId, callee: workspace, skill, timeoutMs: TIMEOUT_MS }, "call_agent timed out");
         return { result: `Error: call to "${workspace}" timed out after ${TIMEOUT_MS / 1000}s — the target agent is too slow or stuck.` };
       }
-      this.log.error({ err, callerWorkspaceId: this.callerWorkspaceId, callee: workspace, action }, "call_agent failed");
+      this.log.error({ err, callerWorkspaceId: this.callerWorkspaceId, callee: workspace, skill }, "call_agent failed");
       return { result: `Error: ${err instanceof Error ? err.message : String(err)}` };
     }
   }

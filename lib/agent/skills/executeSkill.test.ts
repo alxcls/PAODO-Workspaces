@@ -91,7 +91,7 @@ describe("executeSkill — pre-run rejections (callee must never run)", () => {
     expect(runner.inputs).toHaveLength(0);
   });
 
-  it("rejects an unknown action with SKILL_NOT_FOUND, listing available skills", async () => {
+  it("rejects an unknown skill with SKILL_NOT_FOUND, listing available skills", async () => {
     const runner = fakeRunner([GOOD_OUTPUT]);
     const res = await executeSkill(CALLEE.id, CALLER.id, "nope", {}, opts(runner));
     expect(res).toMatchObject({ state: "failed", code: "SKILL_NOT_FOUND" });

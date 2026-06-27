@@ -3,7 +3,6 @@
 import { useState } from "react";
 import { useFileTreeSelection } from "@/lib/client/hooks/useFileTreeSelection";
 import { useFileOperations, TreeNode } from "@/lib/client/hooks/useFileOperations";
-import JSZip from "jszip";
 
 type CheckState = "none" | "some" | "all";
 
@@ -182,6 +181,9 @@ const UploadMenu = ({ apiBase, onUploaded }: { apiBase: string; onUploaded: () =
     if (files.length === 0) return;
     setError(null);
     try {
+      // Loaded on demand — jszip is only needed for folder uploads, so keep it out of the
+      // initial workspace bundle (see the lazy FileViewer note in the workspace page).
+      const { default: JSZip } = await import("jszip");
       const zip = new JSZip();
       for (const file of files) {
         const entryPath = file.webkitRelativePath || file.name;
@@ -281,7 +283,7 @@ export default function FileTreePanel({
   const base = apiBase ?? `/api/workspaces/${workspaceId}`;
 
   const { selected, handleSelect, clearSelection } = useFileTreeSelection();
-  const { tree, fetchTree, handleDownload, handleDelete, deleteError } = useFileOperations({
+  const { tree, fetchTree, handleDownload, downloading, handleDelete, deleteError } = useFileOperations({
     workspaceId, workspaceName, selected, clearSelection, onDeletedPaths, refreshKey, apiBase: base,
   });
 
@@ -311,10 +313,17 @@ export default function FileTreePanel({
       {(selected.size > 0 || deleteError) && (
         <div className="border-t border-border p-[10px_12px] bg-bg">
           <div className="flex gap-1">
-            <button className="btn btn-ghost btn-sm flex-1 justify-center whitespace-nowrap" onClick={handleDownload}>
-              Download .zip
+            <button
+              className="btn btn-ghost btn-sm flex-1 justify-center whitespace-nowrap items-center gap-1.5 disabled:opacity-60 disabled:cursor-wait"
+              onClick={handleDownload}
+              disabled={downloading}
+            >
+              {downloading && (
+                <span className="shrink-0 block w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin" />
+              )}
+              {downloading ? "Zipping…" : "Download .zip"}
             </button>
-            <button className="btn btn-ghost btn-sm flex-1 justify-center text-danger" onClick={handleDelete}>
+            <button className="btn btn-ghost btn-sm flex-1 justify-center text-danger" onClick={handleDelete} disabled={downloading}>
               Delete
             </button>
           </div>

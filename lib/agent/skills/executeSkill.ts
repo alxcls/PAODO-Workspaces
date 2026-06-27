@@ -3,7 +3,7 @@
 //
 // Order on every call (a rejection at any pre-run step returns `failed` without running):
 //   1. authorize      — workspaceGraph.canCall(callerId, calleeId)        → NOT_CONNECTED
-//   2. skill lookup   — `action` must match a skill id in skills/         → SKILL_NOT_FOUND
+//   2. skill lookup   — `skillId` must match a skill id in skills/        → SKILL_NOT_FOUND
 //   3. input check    — args validated against `parameters` (ajv)         → INPUT_VALIDATION_ERROR
 //   4. run callee     — fresh isolated runner with the structured-responder instruction
 //   5. output check   — final message parsed + validated against `output`; on failure the
@@ -137,14 +137,14 @@ async function runCalleeTurn(
 export async function executeSkill(
   calleeId: string,
   callerId: string,
-  action: string,
+  skillId: string,
   args: Record<string, unknown>,
   opts: ExecuteSkillOptions = {},
 ): Promise<SkillCallResult> {
   // One id per skill call: groups the callee's usage records (shared across correction
-  // retries) and disambiguates parallel calls with the same (caller, callee, action) in logs.
+  // retries) and disambiguates parallel calls with the same (caller, callee, skill) in logs.
   const sessionId = crypto.randomUUID();
-  const elog = log.child({ callerId, calleeId, action, sessionId });
+  const elog = log.child({ callerId, calleeId, skill: skillId, sessionId });
 
   // 1. Authorize — the existing DAG edge is the only caller identity.
   if (!(opts.canCallFn ?? canCall)(callerId, calleeId)) {
@@ -159,10 +159,10 @@ export async function executeSkill(
 
   // 2. Skill lookup — read from skills/ at call time; a workspace with no skills/ is not callable.
   const skills = await (opts.loadSkillsFn ?? loadSkills)(callee.dir);
-  const skill = skills.find((s) => s.id === action);
+  const skill = skills.find((s) => s.id === skillId);
   if (!skill) {
     const available = skills.length ? ` Available skills: ${skills.map((s) => s.id).join(", ")}.` : " This workspace declares no skills.";
-    return { state: "failed", code: "SKILL_NOT_FOUND", message: `"${callee.name}" has no skill "${action}".${available}` };
+    return { state: "failed", code: "SKILL_NOT_FOUND", message: `"${callee.name}" has no skill "${skillId}".${available}` };
   }
 
   // 3. Input validation. A schema that fails to COMPILE is the callee author's bug, not the
@@ -170,15 +170,15 @@ export async function executeSkill(
   // counts as an input-failure strike in AgentCallTool, and retrying can't fix a broken file).
   const validateInput = compileSchema(skill.parameters);
   if ("compileError" in validateInput) {
-    return { state: "failed", code: "EXECUTION_ERROR", message: `skill "${action}" has a broken parameters schema (the skill file needs fixing): ${validateInput.compileError}` };
+    return { state: "failed", code: "EXECUTION_ERROR", message: `skill "${skillId}" has a broken parameters schema (the skill file needs fixing): ${validateInput.compileError}` };
   }
   if (!validateInput(args)) {
-    return { state: "failed", code: "INPUT_VALIDATION_ERROR", message: `Invalid args for ${action}: ${formatAjvErrors(validateInput.errors)}.` };
+    return { state: "failed", code: "INPUT_VALIDATION_ERROR", message: `Invalid args for ${skillId}: ${formatAjvErrors(validateInput.errors)}.` };
   }
 
   const validateOutput = compileSchema(withDerivedRequired(skill.output));
   if ("compileError" in validateOutput) {
-    return { state: "failed", code: "EXECUTION_ERROR", message: `skill "${action}" has a broken output schema (the skill file needs fixing): ${validateOutput.compileError}` };
+    return { state: "failed", code: "EXECUTION_ERROR", message: `skill "${skillId}" has a broken output schema (the skill file needs fixing): ${validateOutput.compileError}` };
   }
 
   // 4. Run the callee — same prompt construction the free-form call_agent used, plus the

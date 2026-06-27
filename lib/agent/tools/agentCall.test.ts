@@ -41,7 +41,7 @@ function makeTool() {
 function call(tool: AgentCallTool, args: Record<string, unknown> = { sku: "X" }): Promise<string> {
   return (tool as unknown as { _call(i: unknown): Promise<string> })._call({
     workspace: CALLEE.name,
-    action: "check-stock",
+    skill: "check-stock",
     args,
   });
 }
@@ -88,7 +88,7 @@ describe("AgentCallTool — callWithMeta surfaces the callee session link", () =
     mockedExecute.mockResolvedValue({ state: "completed", output: { ok: true }, conversationId: "conv-7" });
     const tool = makeTool();
 
-    const withMeta = await tool.callWithMeta({ workspace: CALLEE.name, action: "check-stock", args: { sku: "X" } });
+    const withMeta = await tool.callWithMeta({ workspace: CALLEE.name, skill: "check-stock", args: { sku: "X" } });
     expect(withMeta.meta).toEqual({ conversationId: "conv-7", workspaceId: CALLEE.id, workspaceName: CALLEE.name });
     expect(withMeta.result).toContain('"ok": true');
 
@@ -100,21 +100,21 @@ describe("AgentCallTool — callWithMeta surfaces the callee session link", () =
   it("fires onLink with the callee workspace id the moment the callee conversation starts", async () => {
     // executeSkill announces the new conversation via opts.onConversationStart mid-run; the tool
     // must forward it as { conversationId, workspaceId: callee.id } so the link appears live.
-    mockedExecute.mockImplementation(async (_callee, _caller, _action, _args, opts) => {
+    mockedExecute.mockImplementation(async (_callee, _caller, _skillId, _args, opts) => {
       opts?.onConversationStart?.("conv-live");
       return { state: "completed", output: { ok: true }, conversationId: "conv-live" };
     });
     const tool = makeTool();
     const onLink = vi.fn();
 
-    await tool.callWithMeta({ workspace: CALLEE.name, action: "check-stock", args: { sku: "X" } }, onLink);
+    await tool.callWithMeta({ workspace: CALLEE.name, skill: "check-stock", args: { sku: "X" } }, onLink);
     expect(onLink).toHaveBeenCalledWith({ conversationId: "conv-live", workspaceId: CALLEE.id, workspaceName: CALLEE.name });
   });
 
   it("omits meta when the callee never ran (pre-run rejection, no conversationId)", async () => {
     mockedExecute.mockResolvedValue(INPUT_ERR); // no conversationId
     const tool = makeTool();
-    const withMeta = await tool.callWithMeta({ workspace: CALLEE.name, action: "check-stock", args: {} });
+    const withMeta = await tool.callWithMeta({ workspace: CALLEE.name, skill: "check-stock", args: {} });
     expect(withMeta.meta).toBeUndefined();
   });
 });

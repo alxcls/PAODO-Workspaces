@@ -1,6 +1,7 @@
 // Shared-drive browser — a two-column file tree + viewer, mirroring the workspace file view.
 // Reuses FileTreePanel and FileViewer pointed at the drive file API (apiBase=/api/drives/<id>).
-// Drives are passive storage, so there is no chat, console, socket, or HTML live-preview here.
+// Drives are passive storage, so there is no chat, console, or socket here. HTML files render as a
+// scriptless static preview (no container, no token) since drive content is shared/untrusted.
 "use client";
 
 import { use, useState, useEffect, useRef, useCallback } from "react";
@@ -89,7 +90,7 @@ export default function DrivePage({ params }: { params: Promise<{ id: string }> 
             <FileViewer
               ref={viewerRef}
               apiBase={apiBase}
-              enableHtmlPreview={false}
+              htmlPreview="static"
               workspaceId={id}
               filePath={selectedFile}
               onClose={() => { setViewerOpen(false); setSelectedFile(null); }}

@@ -8,6 +8,8 @@ import hljs from "@/lib/client/highlighter";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { useFileContent } from "@/lib/client/hooks/useFileContent";
+import HtmlLivePreview from "./HtmlLivePreview";
+import HtmlStaticPreview from "./HtmlStaticPreview";
 
 function detectLang(filePath: string): string {
   const ext = filePath.split(".").pop()?.toLowerCase() ?? "";
@@ -41,12 +43,15 @@ interface Props {
   onClose: () => void; onSelfWrite?: (path: string) => void;
   /** API base for file routes. Defaults to the workspace path; drives pass /api/drives/<id>. */
   apiBase?: string;
-  /** HTML live-preview needs a running container; off for drives (passive storage, no container). */
-  enableHtmlPreview?: boolean;
+  /**
+   * HTML preview mode. "live" = workspace token/proxy preview (scripts on); "static" = scriptless
+   * sandboxed render for shared drives (no container, no token); "off" = source only.
+   */
+  htmlPreview?: "live" | "static" | "off";
 }
 
 const FileViewer = forwardRef<FileViewerHandle, Props>(function FileViewer(
-  { workspaceId, filePath, onClose, onSelfWrite, apiBase, enableHtmlPreview = true },
+  { workspaceId, filePath, onClose, onSelfWrite, apiBase, htmlPreview = "live" },
   ref
 ) {
   const base = apiBase ?? `/api/workspaces/${workspaceId}`;
@@ -59,35 +64,13 @@ const FileViewer = forwardRef<FileViewerHandle, Props>(function FileViewer(
   } = useFileContent(workspaceId, filePath, { onClose, onSelfWrite, apiBase: base });
 
   const lang = filePath ? detectLang(filePath) : "txt";
-  // HTML files render as live preview only when the backend can serve them through a container.
-  const isHtml = /\.(html?|htm)$/i.test(filePath ?? "") && enableHtmlPreview;
+  // HTML files render as a preview (live or static) unless preview is turned off entirely.
+  const isHtml = /\.(html?|htm)$/i.test(filePath ?? "") && htmlPreview !== "off";
 
   const [showPreview, setShowPreview] = useState(false);
   useEffect(() => {
     setShowPreview(lang === "markdown" || isHtml);
   }, [lang, isHtml]);
-
-  // Per-workspace preview token: the preview iframe runs at an opaque origin (no allow-same-origin),
-  // so it authenticates to its own workspace backend through the proxy with this token instead of
-  // the user's session. Fetched once per workspace from the Basic-Auth-protected app API. Stored
-  // with its workspace id so a stale token from a previous workspace is never injected.
-  const [tokenEntry, setTokenEntry] = useState<{ ws: string; token: string } | null>(null);
-  // `ready` flips once the fetch settles (success OR failure). We gate the iframe on it so the
-  // preview never renders with an empty token and then has to reload — that first tokenless load
-  // is what fired the cross-origin/401 errors users saw until they toggled Code→Preview.
-  const [tokenReady, setTokenReady] = useState(false);
-  useEffect(() => {
-    if (!enableHtmlPreview) { setTokenReady(true); return; }
-    let cancelled = false;
-    setTokenReady(false);
-    fetch(`${base}/preview-token`)
-      .then(r => r.ok ? r.json() : null)
-      .then(d => { if (!cancelled && d?.token) setTokenEntry({ ws: workspaceId, token: d.token as string }); })
-      .catch(() => {})
-      .finally(() => { if (!cancelled) setTokenReady(true); });
-    return () => { cancelled = true; };
-  }, [workspaceId, base, enableHtmlPreview]);
-  const previewToken = tokenEntry?.ws === workspaceId ? tokenEntry.token : null;
 
   const preRef = useRef<HTMLPreElement>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
@@ -109,29 +92,6 @@ const FileViewer = forwardRef<FileViewerHandle, Props>(function FileViewer(
     if (!filePath || !confirm(`Delete ${filePath.split("/").pop()}?`)) return;
     deleteFile();
   }
-
-  const htmlForPreview = useMemo(() => {
-    if (!isHtml || !draft || !filePath) return draft;
-    // filePath is absolute, so split() yields a leading "" — drop it (filter) to avoid a double
-    // slash (serve/TOKEN//Users), which Next.js 308-redirects to collapse, and that redirect carries
-    // no CORS header so the browser blocks the subresource mid-redirect at the opaque origin.
-    const dirSegments = filePath.split("/").slice(0, -1).filter(Boolean);
-    const encodedDir = dirSegments.map(encodeURIComponent).join("/");
-    // Token rides in the <base> PATH: tag-driven subresources (<link>, <script type=module> + nested
-    // imports) are fetched from the opaque (null) origin and can carry neither Basic Auth nor a
-    // header, and queries are dropped on relative resolution — only a path prefix survives to
-    // authenticate them at the serve route (validated in server.ts).
-    const serveBase = `${window.location.origin}${base}/serve/${encodeURIComponent(previewToken ?? "")}/${encodedDir}/`;
-    const apiProxyBase = `${base}/proxy`;
-    // Shim rewrites root-relative fetches (app-API calls) to the workspace proxy and attaches the
-    // preview token as a Bearer header — those are fetch()-driven so a header works. Relative fetches
-    // resolve via <base> to the serve route and authenticate through the path token above instead.
-    const baseTag = `<base href="${serveBase}"><script>window.API_BASE=${JSON.stringify(apiProxyBase)};window.PREVIEW_TOKEN=${JSON.stringify(previewToken ?? "")};(function(){var _f=window.fetch;window.fetch=function(r,o){var u=typeof r==='string'?r:(r instanceof Request?r.url:String(r));if(u.startsWith('/')&&!u.startsWith('//')){var rw=window.API_BASE+u;var h=new Headers((o&&o.headers)||(r instanceof Request?r.headers:undefined));if(window.PREVIEW_TOKEN)h.set('Authorization','Bearer '+window.PREVIEW_TOKEN);var init=Object.assign({},o,{headers:h});return _f(typeof r==='string'?rw:new Request(rw,r),init);}return _f(r,o);};})();</script>`;
-    const html = /<head(\s[^>]*)?>/.test(draft)
-      ? draft.replace(/<head(\s[^>]*)?>/, `$&${baseTag}`)
-      : baseTag + draft;
-    return `<!--v:${previewKey}-->${html}`;
-  }, [draft, filePath, isHtml, base, previewKey, previewToken]);
 
   const highlightedHtml = useMemo(() => {
     if (!draft || fileType !== "text") return draft ?? "";
@@ -222,13 +182,11 @@ const FileViewer = forwardRef<FileViewerHandle, Props>(function FileViewer(
         <div className="code-editor-wrap">
           {showPreview ? (
             isHtml ? (
-              !tokenReady ? (
-                <div className="flex-1 grid place-items-center text-text-3 text-sm bg-bg-tint p-6 text-center">Loading preview…</div>
-              ) : previewToken ? (
-                <iframe key={previewKey} className="html-preview" srcDoc={htmlForPreview}
-                  sandbox="allow-scripts allow-forms" title="HTML preview" />
+              htmlPreview === "static" ? (
+                <HtmlStaticPreview draft={draft} previewKey={previewKey} />
               ) : (
-                <div className="flex-1 grid place-items-center text-danger text-sm bg-bg-tint p-6 text-center">Preview unavailable — could not obtain a preview token.</div>
+                <HtmlLivePreview workspaceId={workspaceId} base={base} draft={draft}
+                  filePath={filePath} previewKey={previewKey} />
               )
             ) : (
               <div className="md-preview md-prose">

@@ -85,7 +85,8 @@ export default function DrivePage({ params }: { params: Promise<{ id: string }> 
           className="w-[5px] cursor-col-resize flex-shrink-0 hover:bg-primary-soft"
           onMouseDown={() => { colDragging.current = true; setIsDragging(true); }}
         />
-        <div className="flex-1 min-w-0 flex flex-col bg-bg">
+        <div className="flex-1 min-w-0 flex flex-col bg-bg relative">
+          {isDragging && <div className="absolute inset-0 z-10" />}
           {viewerOpen ? (
             <FileViewer
               ref={viewerRef}

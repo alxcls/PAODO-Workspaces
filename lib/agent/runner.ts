@@ -61,7 +61,7 @@ export type RunAgentOptions = {
 // don't have to know about the test-only override seams.
 export type AgentRuntimeDeps = Pick<RunAgentOptions, "store" | "containers" | "versioning">;
 
-type AnyTool = { invoke: (args: Record<string, unknown>, config?: { signal?: AbortSignal }) => Promise<unknown> };
+type AnyTool = { name: string; invoke: (args: Record<string, unknown>, config?: { signal?: AbortSignal }) => Promise<unknown> };
 type ResolvedToolCall = { id: string; name: string; args: Record<string, unknown> };
 // Structural type for AgentCallTool.callWithMeta — duck-typed so the runner needn't import the
 // concrete tool class (which would deepen the buildTools → agentCall import chain). The optional
@@ -94,16 +94,24 @@ function contentToText(content: unknown): string {
   return "";
 }
 
-const MAX_RESULT_CHARS = 10_000;
+const MAX_RESULT_CHARS = 50_000;
 
 async function invokeTool(tool: AnyTool, args: Record<string, unknown>, signal?: AbortSignal): Promise<string> {
   // Thread the abort signal into the tool so a user escape reaches long-running work (e.g.
   // execute_command's in-container process). Tools that ignore the config are unaffected.
   const result = await tool.invoke(args, { signal });
   const str = String(result);
-  return str.length > MAX_RESULT_CHARS
-    ? str.slice(0, MAX_RESULT_CHARS) + `\n\n[output truncated — ${str.length} chars total, showing first ${MAX_RESULT_CHARS}]`
-    : str;
+  // file_read is exempt from the cap: it has its own offset/limit paging and the agent already
+  // knows each file's line count from list_directory, so it can self-limit large reads. Every
+  // other tool (execute_command, web_fetch, glob, …) has no paging and unpredictable output, so
+  // the cap stays as a guardrail against one result blowing out the context window.
+  if (tool.name === "file_read") return str;
+  if (str.length <= MAX_RESULT_CHARS) return str;
+  // Cut on a line boundary so the model never sees a half-line (e.g. mid-token in a JSON
+  // value). Fall back to a hard slice if the first line alone already exceeds the budget.
+  const lastNewline = str.lastIndexOf("\n", MAX_RESULT_CHARS);
+  const cut = lastNewline > 0 ? lastNewline : MAX_RESULT_CHARS;
+  return str.slice(0, cut) + `\n\n[output truncated — ${str.length} chars total, showing first ${cut}]`;
 }
 
 // Classifies a tool's final result string into a structured outcome. Thrown errors and

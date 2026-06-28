@@ -34,8 +34,7 @@ Run the user-facing server on \`0.0.0.0:8080\` — it is the only port the brows
 # Doing Tasks
 - At the start of every session, call \`list_directory\` to orient yourself.
 - Use \`workspace_history\` to inspect prior platform-managed snapshots, and \`workspace_restore\` only with an explicit sha chosen from that history. Never use shell \`git\` for this history; restores affect files only, not external actions.
-- Prefer editing existing files over creating new ones. Only create files when explicitly required.
-- Use the minimum number of tool calls necessary.
+- Prefer editing existing files over creating new ones.
 - Before reporting a task complete, verify it actually worked.
 
 # Multi-Task Execution
@@ -57,6 +56,9 @@ Call independent tools IN PARALLEL. Call dependent tools sequentially.
 
 # Response Formatting
 Always format responses using Markdown.
+
+# Instruction Precedence
+The workspace-specific instructions that follow below (the AGENTS.md section) are AUTHORITATIVE. When they conflict with any general guidance in this system prompt, follow the workspace instructions exactly as written — they override.
 
 `
 ;
@@ -83,9 +85,17 @@ export function buildSystemPrompt(workspaceDir: string, promptConfig: PromptConf
   const date = new Date().toDateString();
 
   const agentsSection = agentsContent?.trim() ?? "";
+  const agentsBlock = agentsSection
+    ? `# Workspace instructions (AGENTS.md) — AUTHORITATIVE
+These workspace-specific instructions take precedence over the general guidance in the system prompt above. When they conflict, follow these.
 
-  // Platform guidance (callee, then drives) leads; the user's AGENTS.md follows.
-  const dynamicContext = `${calleeInfo ? calleeInfo + "\n\n" : ""}${drivesInfo ? drivesInfo + "\n\n" : ""}${agentsSection ? agentsSection + "\n\n" : ""}Workspace name: ${path.basename(workspaceDir)} — your working directory inside the container is /workspace
+${agentsSection}
+
+`
+    : "";
+
+  // Platform guidance (callee, then drives) leads; the user's AGENTS.md follows and is authoritative.
+  const dynamicContext = `${calleeInfo ? calleeInfo + "\n\n" : ""}${drivesInfo ? drivesInfo + "\n\n" : ""}${agentsBlock}Workspace name: ${path.basename(workspaceDir)} — your working directory inside the container is /workspace
 Today's date: ${date}`;
 
   return new SystemMessage({

@@ -7,6 +7,7 @@ import { StructuredTool } from "@langchain/core/tools";
 import { z } from "zod";
 import { normalizeRelpath } from "../pathUtils";
 import type { ExecRunner } from "../interfaces";
+import { type FilePolicy, ALLOW_ALL_POLICY } from "../../infra/docker/agentPermissionStore";
 
 const schema = z.object({
   file_path: z.string().describe("File path relative to workspace root"),
@@ -25,13 +26,15 @@ Use this instead of cat, head, or tail.
 - You MUST read a file with this tool before editing it with file_edit.`;
   schema = schema;
 
-  constructor(private runner: ExecRunner) {
+  constructor(private runner: ExecRunner, private policy: FilePolicy = ALLOW_ALL_POLICY) {
     super();
   }
 
   protected async _call({ file_path, offset, limit }: z.infer<typeof schema>): Promise<string> {
     const relpath = normalizeRelpath(file_path);
     if (relpath === null) return "Error: path is outside the workspace";
+    if (this.policy.isDenyRead(relpath))
+      return `Error: the content of ${file_path} is restricted by workspace policy (the user has hidden it from the agent).`;
     try {
       const header = `${file_path}\n`;
 

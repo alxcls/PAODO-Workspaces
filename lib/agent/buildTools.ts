@@ -21,6 +21,7 @@ import { AgentCallTool } from "./tools/agentCall";
 import { ListAgentsTool } from "./tools/listAgents";
 import { WorkspaceHistoryTool } from "./tools/workspaceHistory";
 import { WorkspaceRestoreTool } from "./tools/workspaceRestore";
+import { RunPrivilegedScriptTool } from "./tools/runPrivilegedScript";
 import { DriveLsTool } from "./tools/driveLs";
 import { DriveReadTool } from "./tools/driveRead";
 import { DriveDeleteTool } from "./tools/driveDelete";
@@ -29,6 +30,7 @@ import { DriveUploadTool } from "./tools/driveUpload";
 import { getDrivesForWorkspace } from "../workspace/driveStore";
 import { isCaller } from "../workspace/workspaceGraph";
 import { defaultContainerManager } from "../infra/docker/containerManager";
+import { buildFilePolicy, hasPrivilegedScripts as filePolicyHasPrivilegedScripts } from "../infra/docker/agentPermissionStore";
 import { defaultWorkspaceStore } from "../workspace/workspaceStore";
 import { getVersioning } from "../infra/services";
 import { broadcastToWorkspace } from "../infra/realtime/wsHub";
@@ -79,13 +81,17 @@ export function buildTools(
   const runner = makeContainerRunner(workspaceId, workspaceDir, containers);
   const streamExec = makeStreamingExecFn(workspaceId, workspaceDir, containers);
   const broadcast = (msg: string) => broadcastToWorkspace(workspaceId, msg);
+  // Defense-in-depth: clean agent-facing errors for restricted paths. The kernel mount topology
+  // remains the actual boundary (a raw shell still hits it); this just avoids handing the agent a
+  // stub line or a bare EROFS.
+  const filePolicy = buildFilePolicy(workspaceId);
 
   const tools = [
     new ExecCommandTool(streamExec, broadcast, config),
     new AptInstallTool(runner),
-    new FileReadTool(runner),
-    new FileEditTool(runner),
-    new FileWriteTool(runner),
+    new FileReadTool(runner, filePolicy),
+    new FileEditTool(runner, filePolicy),
+    new FileWriteTool(runner, filePolicy),
     new TodoWriteTool(workspaceId),
     new CompactContextTool(),
     new WebFetchTool(),
@@ -101,6 +107,11 @@ export function buildTools(
           new AgentCallTool(workspaceId, store, containers, config),
           new ListAgentsTool(workspaceId, store),
         ]
+      : []),
+    // The privileged-script broker appears only once the user has registered at least one script
+    // (the key badge), keeping the prompt lean otherwise.
+    ...(filePolicyHasPrivilegedScripts(workspaceId)
+      ? [new RunPrivilegedScriptTool(workspaceId, workspaceDir, containers)]
       : []),
     // Drive tools are injected only when this workspace has at least one connected drive,
     // keeping the prompt lean for the common no-drive case.

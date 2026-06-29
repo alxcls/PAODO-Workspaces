@@ -10,6 +10,7 @@ import { z } from "zod";
 import path from "path";
 import { normalizeRelpath } from "../pathUtils";
 import type { ExecRunner } from "../interfaces";
+import { type FilePolicy, ALLOW_ALL_POLICY } from "../../infra/docker/agentPermissionStore";
 
 const schema = z.object({
   file_path: z.string().describe("File path relative to workspace root"),
@@ -28,13 +29,15 @@ export class FileEditTool extends StructuredTool<typeof schema> {
 - Set old_string to "" to create a new file (new_string becomes the full content).`;
   schema = schema;
 
-  constructor(private runner: ExecRunner) {
+  constructor(private runner: ExecRunner, private policy: FilePolicy = ALLOW_ALL_POLICY) {
     super();
   }
 
   protected async _call({ file_path, old_string, new_string, replace_all }: z.infer<typeof schema>): Promise<string> {
     const relpath = normalizeRelpath(file_path);
     if (relpath === null) return "Error: path is outside the workspace";
+    if (this.policy.isDenyEdit(relpath))
+      return `Error: ${file_path} is locked by workspace policy (read-only for the agent); it cannot be edited.`;
 
     if (old_string === "") {
       // Create new file branch

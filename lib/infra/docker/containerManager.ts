@@ -15,6 +15,7 @@ import path from "path";
 import { createLogger } from "../logger";
 import { DockerClient, IDockerClient } from "./dockerClient";
 import { ImageManager, HASH_LABEL } from "./imageManager";
+import { composeAgentMounts, mountPolicyHash } from "./agentPermissionStore";
 import type { IContainerManager } from "../interfaces";
 
 export type { DockerResult } from "./dockerClient";
@@ -22,6 +23,20 @@ export type { DockerResult } from "./dockerClient";
 const log = createLogger("container");
 
 const CONTAINER_IMAGE = process.env.CONTAINER_IMAGE ?? "paodo-workspace";
+// Label stamping the mount-affecting permission policy on the container, so a flip (deny-read/
+// deny-edit change) is detected on the next `ensure` and triggers exactly one commit-preserving
+// recreate. See agentPermissionStore.mountPolicyHash and the commit-on-flip handling below.
+const PERMS_LABEL = "paodo.perms-hash";
+
+// Hardening flags shared by the agent container and the one-shot privileged-script container: drop
+// ALL caps, add back only the minimal set apt/dpkg + the chown sweep need under a root exec, and
+// block setuid escalation. The agent's uid-1000 shell cannot reach these caps (no setuid path).
+const CAP_ARGS = [
+  "--cap-drop", "ALL",
+  "--cap-add", "CHOWN", "--cap-add", "DAC_OVERRIDE", "--cap-add", "FOWNER",
+  "--cap-add", "FSETID", "--cap-add", "SETGID", "--cap-add", "SETUID",
+  "--security-opt", "no-new-privileges:true",
+];
 const CONTAINER_MEMORY = process.env.CONTAINER_MEMORY ?? "1g";
 const CONTAINER_CPUS = process.env.CONTAINER_CPUS ?? "1.0";
 const IDLE_TIMEOUT_MS = parseInt(process.env.CONTAINER_IDLE_MS ?? "", 10) || 10 * 60 * 1000;
@@ -110,41 +125,81 @@ export class ContainerManager implements IContainerManager {
     ];
   }
 
+  private snapshotImage(workspaceId: string): string {
+    // Docker image refs must be lowercase; workspace ids already are, but be defensive.
+    return `paodo-snapshot-${workspaceId.toLowerCase()}`;
+  }
+
+  private async snapshotExists(workspaceId: string): Promise<boolean> {
+    const r = await this.docker.cmd("image", "inspect", this.snapshotImage(workspaceId));
+    return r.code === 0;
+  }
+
+  /** Commit the live writable layer (apt/pip/home deps) to the per-workspace snapshot image so a
+   *  flip recreate can restore it. Best-effort: on failure we log and fall back to the base image
+   *  (deps rebuild) rather than block the flip. */
+  private async commitSnapshot(workspaceId: string): Promise<void> {
+    const r = await this.docker.cmd("commit", this.containerName(workspaceId), this.snapshotImage(workspaceId));
+    if (r.code !== 0) log.warn({ workspaceId, stderr: r.stderr }, "commit-on-flip snapshot failed (deps will rebuild from base)");
+    else log.debug({ workspaceId }, "committed snapshot for flip");
+  }
+
+  async removeSnapshot(workspaceId: string): Promise<void> {
+    const r = await this.docker.cmd("rmi", "-f", this.snapshotImage(workspaceId));
+    if (r.code !== 0) log.debug({ workspaceId, stderr: r.stderr }, "snapshot rmi (may not exist)");
+  }
+
+  // Reads an arbitrary label off a container, or null if absent/missing.
+  private async getContainerLabel(workspaceId: string, label: string): Promise<string | null> {
+    const r = await this.docker.cmd(
+      "inspect", "--format", `{{index .Config.Labels "${label}"}}`, this.containerName(workspaceId),
+    );
+    return r.code === 0 ? r.stdout : null;
+  }
+
   private async _ensureContainer(workspaceId: string, workspaceDir: string): Promise<void> {
     const status = await this.getContainerStatus(workspaceId);
     const hash = await this.imageManager.getCurrentHash("Dockerfile.workspace");
+    const permsHash = mountPolicyHash(workspaceId);
 
     if (status === "running" || status === "stopped") {
       const containerHash = await this.imageManager.getContainerImageHash(this.containerName(workspaceId));
+      const containerPerms = await this.getContainerLabel(workspaceId, PERMS_LABEL);
       const portMissing = (await this.getServerPort(workspaceId)) === null;
-      if (!hash || containerHash === hash) {
-        if (!portMissing) {
-          if (status === "running") return;
-          // stopped, image unchanged, port mapped — just restart it
-          log.debug({ workspaceId }, "starting stopped container");
-          await this.ensureNetwork(workspaceId);
-          const connect = await this.docker.cmd(
-            "network",
-            "connect",
-            this.networkName(workspaceId),
-            this.containerName(workspaceId),
-          );
-          if (connect.code !== 0) throw new Error(`docker network connect failed: ${connect.stderr}`);
-          const r = await this.docker.cmd("start", this.containerName(workspaceId));
-          if (r.code !== 0) throw new Error(`docker start failed: ${r.stderr}`);
-          return;
-        }
-        // Port mapping missing (container predates this feature) — recreate to add it.
-        log.debug({ workspaceId }, "container missing server port mapping — recreating");
+      const hashChanged = Boolean(hash) && containerHash !== hash;
+      const permsChanged = (containerPerms ?? "none") !== permsHash;
+
+      if (!hashChanged && !permsChanged && !portMissing) {
+        if (status === "running") return;
+        // unchanged, port mapped — just restart the stopped container
+        log.debug({ workspaceId }, "starting stopped container");
+        await this.ensureNetwork(workspaceId);
+        const connect = await this.docker.cmd(
+          "network", "connect", this.networkName(workspaceId), this.containerName(workspaceId),
+        );
+        if (connect.code !== 0) throw new Error(`docker network connect failed: ${connect.stderr}`);
+        const r = await this.docker.cmd("start", this.containerName(workspaceId));
+        if (r.code !== 0) throw new Error(`docker start failed: ${r.stderr}`);
+        return;
+      }
+
+      if (hashChanged) {
+        // Base image changed (platform update): discard the snapshot and rebuild deps from base.
+        log.debug({ workspaceId }, "workspace image changed — recreating from base, discarding snapshot");
+        await this.removeSnapshot(workspaceId);
       } else {
-        // Image changed — remove so we recreate from the current image below.
-        log.debug({ workspaceId }, "workspace image changed — recreating container");
+        // Flip (perms change) or a port-mapping repair: commit the writable layer first so the
+        // recreate restores apt/pip/home deps (commit-on-flip). Only live processes/env are lost.
+        log.debug({ workspaceId, permsChanged, portMissing }, "recreating container (commit-preserving)");
+        await this.commitSnapshot(workspaceId);
       }
       await this.remove(workspaceId);
     }
 
-    // missing (or just removed) — create and start
-    log.debug({ workspaceId }, "creating container");
+    // missing (or just removed) — create and start. Run from the snapshot when one exists (deps
+    // preserved across a flip); otherwise from the base image.
+    const runImage = (await this.snapshotExists(workspaceId)) ? this.snapshotImage(workspaceId) : CONTAINER_IMAGE;
+    log.debug({ workspaceId, runImage }, "creating container");
     await this.ensureNetwork(workspaceId);
     const serverPort = await getFreePort();
     const bindHost = await resolveBindHost();
@@ -160,20 +215,18 @@ export class ContainerManager implements IContainerManager {
       `--cpus=${CONTAINER_CPUS}`,
       "-p", `${bindHost}:${serverPort}:8080`,
       ...this.buildVolumeArg(workspaceDir),
+      // Agent file-restriction mounts composed from the permission store (deny-read stubs, deny-edit
+      // :ro binds). These ARE the policy — kernel-enforced, not a tool check. Throws (fail-closed) on
+      // a corrupt store or unresolvable path, aborting the run rather than starting unrestricted.
+      ...composeAgentMounts(workspaceId, workspaceDir, Boolean(WORKSPACES_VOLUME_NAME)),
       ...(hash ? ["--label", `${HASH_LABEL}=${hash}`] : []),
+      "--label", `${PERMS_LABEL}=${permsHash}`,
       // Drop all Linux capabilities, then add back only the minimal set dpkg/apt and the chown sweep
       // need when run as root via `docker exec -u 0` (apt_install tool, ownership sweep). The agent's
       // shell is non-root with no setuid path, so it cannot use these caps — they are reachable only
       // by the app-initiated root execs. Combined with no-new-privileges this blocks setuid escalation.
-      "--cap-drop", "ALL",
-      "--cap-add", "CHOWN",
-      "--cap-add", "DAC_OVERRIDE",
-      "--cap-add", "FOWNER",
-      "--cap-add", "FSETID",
-      "--cap-add", "SETGID",
-      "--cap-add", "SETUID",
-      "--security-opt", "no-new-privileges:true",
-      CONTAINER_IMAGE,
+      ...CAP_ARGS,
+      runImage,
       "sleep", "infinity",
     );
     if (r.code !== 0) throw new Error(`docker run failed: ${r.stderr}`);
@@ -285,6 +338,36 @@ export class ContainerManager implements IContainerManager {
       asRoot: true,
       trimStdout: true,
     });
+  }
+
+  /**
+   * Run a registered privileged script in a ONE-SHOT container that mounts the workspace WITHOUT the
+   * restriction topology — "privilege by location". The script therefore sees deny-read content and
+   * can write deny-edit paths, while the agent that triggered it (whose own container keeps the
+   * restriction mounts) gains nothing. Hardened identically (uid 1000, cap set, no-new-privileges)
+   * and network-isolated, so the script is sandboxed exactly like the agent minus the restrictions.
+   * Fixed argv: only the script path runs — no agent-supplied args, no shell-interpolated input.
+   */
+  async runPrivilegedScript(
+    workspaceId: string,
+    workspaceDir: string,
+    scriptRelpath: string,
+  ): Promise<{ code: number | null; stdout: string; stderr: string }> {
+    // Ensure the agent container's writable layer is committed first, so the script runs against the
+    // same deps the agent has (apt/pip). Cheap no-op when no snapshot/commit is possible.
+    if (await this.snapshotExists(workspaceId)) await this.commitSnapshot(workspaceId);
+    const runImage = (await this.snapshotExists(workspaceId)) ? this.snapshotImage(workspaceId) : CONTAINER_IMAGE;
+    const r = await this.docker.cmd(
+      "run", "--rm", "-u", "1000:1000",
+      "--network", "none", // a privileged script handles unrestricted files; deny it egress.
+      ...CAP_ARGS,
+      ...this.buildVolumeArg(workspaceDir), // base mount only — NO composeAgentMounts restrictions.
+      "-w", "/workspace",
+      runImage,
+      // No shell wrapping of untrusted input: bash executes exactly the one registered path.
+      "bash", `/workspace/${scriptRelpath}`,
+    );
+    return { code: r.code, stdout: r.stdout, stderr: r.stderr };
   }
 
   async stop(workspaceId: string): Promise<void> {

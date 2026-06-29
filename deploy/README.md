@@ -69,7 +69,22 @@ apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker
 
 ---
 
-## Step 3 — Clone and configure
+## Step 3 — Cap the build cache
+
+Every `docker compose --build` deploy adds to a single global BuildKit cache pool that otherwise grows without bound (workspace snapshot images are separate — they share layers and are deleted with their workspace, so they don't need this). One global ceiling keeps it bounded:
+
+```bash
+cat > /etc/docker/daemon.json <<'EOF'
+{ "builder": { "gc": { "enabled": true, "defaultKeepStorage": "3GB" } } }
+EOF
+systemctl restart docker
+```
+
+`defaultKeepStorage` is one total budget for the whole daemon's build cache (not per workspace, not per snapshot). Docker GCs the oldest cache once the pool crosses it. Raise it on a roomy disk, lower it if disk is tight.
+
+---
+
+## Step 4 — Clone and configure
 
 ```bash
 git clone https://github.com/alxcls/PAODO_WS.git
@@ -105,7 +120,7 @@ nano .env
 
 ---
 
-## Step 4 — Start the app
+## Step 5 — Start the app
 
 ```bash
 # Pre-create the security-log dir owned by the app's UID (1000) so the bind-mounted
@@ -116,7 +131,7 @@ docker compose up -d
 
 ---
 
-## Step 5 — Expose via Tailscale and open the app
+## Step 6 — Expose via Tailscale and open the app
 
 First, enable Tailscale Serve in the admin console:
 
@@ -161,7 +176,9 @@ docker compose logs -f app                                          # live app l
 
 docker stats                                                        # live CPU/RAM per container
 
-docker system df                                                    # disk usage (images, containers, volumes)
+docker system df                                                    # disk usage (images, containers, volumes, build cache)
+
+docker builder prune                                                # optional: manually reclaim build cache now (GC caps it automatically)
 
 tailscale status                                                    # VPN status
 ```

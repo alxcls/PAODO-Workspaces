@@ -12,6 +12,17 @@ export interface TreeNode {
   name: string;
   type: "file" | "directory";
   path: string;
+  /** Workspace-relative path — the key the agent-permissions API uses. */
+  relPath?: string;
+  /** Agent file-restriction flags projected from the permission store (for the badge UI). Effective
+   *  (keyed here or inherited from an ancestor folder); the `*Inherited` flags mark the inherited-only
+   *  case so the badge renders dimmed and read-only (toggle it on the folder that set it). */
+  denyRead?: boolean;
+  denyEdit?: boolean;
+  privileged?: boolean;
+  denyReadInherited?: boolean;
+  denyEditInherited?: boolean;
+  privilegedInherited?: boolean;
   children?: TreeNode[];
 }
 

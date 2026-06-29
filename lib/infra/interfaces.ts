@@ -87,8 +87,19 @@ export interface IContainerManager {
     opts: { onStdout: (chunk: string) => void; onStderr: (chunk: string) => void; signal?: AbortSignal },
   ): Promise<{ code: number | null }>;
   execAsRoot(workspaceId: string, workspaceDir: string, cmdArgs: string[]): Promise<DockerResult>;
+  /** Run a registered privileged script in a one-shot container WITHOUT the agent's restriction
+   *  mounts (privilege by location): the script sees deny-read content and can write deny-edit
+   *  paths; the triggering agent gains nothing. Fixed argv — only the script path runs. */
+  runPrivilegedScript(
+    workspaceId: string,
+    workspaceDir: string,
+    scriptRelpath: string,
+  ): Promise<{ code: number | null; stdout: string; stderr: string }>;
   stop(workspaceId: string): Promise<void>;
   remove(workspaceId: string): Promise<void>;
+  /** Delete the per-workspace commit-on-flip snapshot image. Called on workspace deletion (NOT on
+   *  recreate, which reuses the snapshot). No-op when none exists. */
+  removeSnapshot(workspaceId: string): Promise<void>;
   getServerPort(workspaceId: string): Promise<number | null>;
   deleteWorkspaceDir(workspaceDir: string): Promise<void>;
   assertDockerAvailable(): Promise<void>;

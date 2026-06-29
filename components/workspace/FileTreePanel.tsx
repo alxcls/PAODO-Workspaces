@@ -62,16 +62,124 @@ const Checkbox = ({ state, onClick }: { state: CheckState; onClick: (e: React.Mo
   </span>
 );
 
+// ---- Agent-permission badges ----
+// Three per-row toggles that key the agent's file restrictions (eye = deny-read content, lock =
+// deny-edit, key = privileged script). Each PATCHes the agent-permissions store by workspace-
+// relative path, then refreshes the tree so the projected flag re-renders. Enforcement is the
+// container's mount topology, recomposed on the agent container's next (re)create.
+const ACTIVE = "#7c3aed";
+const IDLE = "var(--color-text-3)";
+
+const Badge = ({
+  node, workspaceId, list, on, inherited, onRefresh, title, children,
+}: {
+  node: TreeNode; workspaceId: string; list: "denyRead" | "denyEdit" | "privilegedScripts";
+  on: boolean; inherited: boolean; onRefresh: () => void; title: string; children: React.ReactNode;
+}) => {
+  const [busy, setBusy] = useState(false);
+  // Inherited badges are read-only: the restriction comes from an ancestor folder, so the toggle
+  // lives there. Render them dimmed and swallow the click rather than keying a redundant entry.
+  const toggle = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (inherited || busy || !node.relPath) return;
+    setBusy(true);
+    try {
+      const res = await fetch(`/api/workspaces/${workspaceId}/agent-permissions`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ list, path: node.relPath, on: !on }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      onRefresh();
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <span
+      className={`flex-shrink-0 inline-flex items-center justify-center w-[18px] h-[18px] rounded-[3px] select-none ml-1 transition-colors ${inherited ? "cursor-default" : "cursor-pointer hover:bg-black/[.12]"}`}
+      onClick={toggle}
+      title={inherited ? `Inherited from a parent folder — ${title}` : title}
+      style={{ opacity: busy ? 0.4 : inherited ? 0.45 : 1, color: on ? ACTIVE : IDLE }}
+    >
+      {children}
+    </span>
+  );
+};
+
+const PermBadges = ({
+  node, workspaceId, onRefresh,
+}: {
+  node: TreeNode; workspaceId: string; onRefresh: () => void;
+}) => {
+  if (!node.relPath) return null;
+  const denyRead = node.denyRead ?? false;
+  const denyEdit = node.denyEdit ?? false;
+  const privileged = node.privileged ?? false;
+  const denyReadInherited = node.denyReadInherited ?? false;
+  const denyEditInherited = node.denyEditInherited ?? false;
+  const privilegedInherited = node.privilegedInherited ?? false;
+  return (
+    <>
+      {/* Eye — deny-read: hide CONTENT from the agent (name stays visible). */}
+      <Badge
+        node={node} workspaceId={workspaceId} list="denyRead" on={denyRead} inherited={denyReadInherited} onRefresh={onRefresh}
+        title={denyRead ? "Content hidden from the agent — click to reveal." : "Visible to the agent — click to hide its content."}
+      >
+        {denyRead ? (
+          <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M9.88 9.88a3 3 0 0 0 4.24 4.24" />
+            <path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68" />
+            <path d="M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61" />
+            <line x1="2" y1="2" x2="22" y2="22" />
+          </svg>
+        ) : (
+          <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z" />
+            <circle cx="12" cy="12" r="3" />
+          </svg>
+        )}
+      </Badge>
+      {/* Key — privileged script: may run against full-access host volume. */}
+      <Badge
+        node={node} workspaceId={workspaceId} list="privilegedScripts" on={privileged} inherited={privilegedInherited} onRefresh={onRefresh}
+        title={privileged ? "Privileged script — the agent may trigger it with full access. Click to revoke." : "Grant privilege — let the agent trigger this script against unrestricted files."}
+      >
+        <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <circle cx="7.5" cy="12" r="4.5" /><line x1="12" y1="12" x2="22" y2="12" /><line x1="19" y1="12" x2="19" y2="15" /><line x1="17" y1="12" x2="17" y2="14" />
+        </svg>
+      </Badge>
+      {/* Lock — deny-edit: agent can read but not write/replace/delete. */}
+      <Badge
+        node={node} workspaceId={workspaceId} list="denyEdit" on={denyEdit} inherited={denyEditInherited} onRefresh={onRefresh}
+        title={denyEdit ? "Read-only for the agent — click to allow edits." : "Editable by the agent — click to lock."}
+      >
+        {denyEdit ? (
+          <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <rect width="18" height="11" x="3" y="11" rx="2" ry="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" />
+          </svg>
+        ) : (
+          <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <rect width="18" height="11" x="3" y="11" rx="2" ry="2" /><path d="M7 11V7a5 5 0 0 1 9.9-1" />
+          </svg>
+        )}
+      </Badge>
+    </>
+  );
+};
+
 // ---- Tree node list ----
 interface TreeListProps {
   nodes: TreeNode[]; depth: number; expanded: Record<string, boolean>;
   onToggle: (path: string) => void; activePath: string | null;
   selected: Set<string>; onSelect: (paths: string[], on: boolean) => void;
   onPick: (path: string) => void;
+  workspaceId: string; onRefresh: () => void;
 }
 
 const TreeNodeList = ({
   nodes, depth, expanded, onToggle, activePath, selected, onSelect, onPick,
+  workspaceId, onRefresh,
 }: TreeListProps) => {
   const sorted = [...nodes].sort((a, b) => {
     if (a.type !== b.type) return a.type === "directory" ? -1 : 1;
@@ -103,6 +211,7 @@ const TreeNodeList = ({
                   </span>
                   <span className="text-text-2 inline-flex flex-shrink-0"><FolderIcon /></span>
                   <span className="flex-1 whitespace-nowrap overflow-hidden text-ellipsis">{node.name}</span>
+                  <PermBadges node={node} workspaceId={workspaceId} onRefresh={onRefresh} />
                 </div>
               </button>
               {isOpen && node.children && (
@@ -110,6 +219,7 @@ const TreeNodeList = ({
                   nodes={node.children} depth={depth + 1} expanded={expanded}
                   onToggle={onToggle} activePath={activePath} selected={selected}
                   onSelect={onSelect} onPick={onPick}
+                  workspaceId={workspaceId} onRefresh={onRefresh}
                 />
               )}
             </div>
@@ -135,6 +245,7 @@ const TreeNodeList = ({
             <div className="flex items-center gap-1.5 flex-1 min-w-0 overflow-hidden" style={{ marginLeft: 6 + depth * 14 + 14 }}>
               <span className={`inline-flex flex-shrink-0 ${isActive ? "text-primary" : "text-text-2"}`}><FileIcon /></span>
               <span className="flex-1 whitespace-nowrap overflow-hidden text-ellipsis">{node.name}</span>
+              <PermBadges node={node} workspaceId={workspaceId} onRefresh={onRefresh} />
             </div>
           </button>
         );
@@ -307,6 +418,7 @@ export default function FileTreePanel({
           nodes={tree} depth={0} expanded={expanded} onToggle={toggleExpanded}
           activePath={selectedPath} selected={selected} onSelect={handleSelect}
           onPick={onFileSelect}
+          workspaceId={workspaceId} onRefresh={fetchTree}
         />
       </div>
 

@@ -16,6 +16,7 @@ const schema = z.object({
 
 export class FileReadTool extends StructuredTool<typeof schema> {
   name = "file_read";
+  readonly skipResultCap = true;
   description = `Read a file from the workspace. Returns content with line numbers (cat -n format).
 Use this instead of cat, head, or tail.
 

@@ -9,8 +9,8 @@
 import { StructuredTool } from "@langchain/core/tools";
 import { z } from "zod";
 import type { IWorkspaceStore, IContainerManager } from "../../infra/interfaces";
+import type { SkillConfig } from "../interfaces";
 import { executeSkill } from "../skills/executeSkill";
-import { loadAgentConfig } from "../buildTools";
 import { createLogger } from "../../infra/logger";
 
 // Shorter than the general tool result cap — skill outputs are structured data, not raw
@@ -58,6 +58,7 @@ A workspace with no declared skills is not callable. If the workspace is not con
     private readonly callerWorkspaceId: string,
     private readonly store: IWorkspaceStore,
     private readonly containers: IContainerManager,
+    private readonly skillConfig: SkillConfig,
   ) {
     super();
   }
@@ -67,14 +68,57 @@ A workspace with no declared skills is not callable. If the workspace is not con
   }
 
   /**
-   * Like _call, but also returns UI-only metadata: the callee's persisted conversation id (when
-   * the callee actually ran), so the runner can attach a deep-link to the callee's session. The
-   * `result` string is byte-for-byte what the model receives via _call — `meta` never reaches it.
-   * `onLink`, when given, fires as soon as the callee conversation is created — before the call
-   * finishes — so the runner can surface the link mid-run rather than only at completion.
+   * Returns UI-only metadata alongside the model-facing string: the callee's persisted
+   * conversation id so the runner can attach a deep-link to the callee's session.
+   * `onLink` fires as soon as the callee conversation is created — before the call finishes —
+   * so the runner surfaces the link mid-run rather than only at completion.
    */
-  async callWithMeta(input: z.infer<typeof schema>, onLink?: (meta: CallAgentMeta) => void, callerSignal?: AbortSignal): Promise<CallAgentResult> {
+  readonly callWithMeta = (input: z.infer<typeof schema>, onLink?: (meta: CallAgentMeta) => void, callerSignal?: AbortSignal): Promise<CallAgentResult> => {
     return this.runCall(input, onLink, callerSignal);
+  };
+
+  private handleFailedResult(
+    code: string,
+    message: string,
+    meta: CallAgentMeta | undefined,
+    workspace: string,
+    retryKey: string,
+    maxInputRetries: number,
+  ): CallAgentResult {
+    if (code === "INPUT_VALIDATION_ERROR") {
+      const failures = (this.inputFailures.get(retryKey) ?? 0) + 1;
+      this.inputFailures.set(retryKey, failures);
+      const terminal = failures >= maxInputRetries
+        ? " Do NOT retry with the same args — re-read the skill's input schema via list_agents."
+        : "";
+      return { result: `Error (${code}): ${message}${terminal}`, meta };
+    }
+    if (code === "NEEDS_INPUT") {
+      this.inputFailures.delete(retryKey);
+      const maxRounds = this.skillConfig.skillNeedsInputMaxRounds;
+      const rounds = (this.needsInputRounds.get(retryKey) ?? 0) + 1;
+      this.needsInputRounds.set(retryKey, rounds);
+      if (rounds >= maxRounds) {
+        return {
+          result:
+            `Error (NEEDS_INPUT): the target agent still needs different input: "${message}" ` +
+            `That was round ${rounds} of ${maxRounds} — stop re-calling this skill and report what you learned instead.`,
+          meta,
+        };
+      }
+      return { result: `Needs input: the target agent needs different input: "${message}" Re-call the same skill with corrected args.`, meta };
+    }
+    this.inputFailures.delete(retryKey);
+    this.needsInputRounds.delete(retryKey);
+    if (code === "NOT_CONNECTED") {
+      return {
+        result:
+          `Permission denied: this workspace is not connected to "${workspace}" in the Agent Network. ` +
+          `Add an edge in the /graph page first.`,
+        meta,
+      };
+    }
+    return { result: `Error (${code}): ${message}`, meta };
   }
 
   private async runCall({ workspace, skill, args }: z.infer<typeof schema>, onLink?: (meta: CallAgentMeta) => void, callerSignal?: AbortSignal): Promise<CallAgentResult> {
@@ -85,7 +129,7 @@ A workspace with no declared skills is not callable. If the workspace is not con
     }
 
     const retryKey = `${callee.id}:${skill}`;
-    const maxInputRetries = loadAgentConfig().skillInputMaxRetries;
+    const maxInputRetries = this.skillConfig.skillInputMaxRetries;
     if ((this.inputFailures.get(retryKey) ?? 0) >= maxInputRetries) {
       return {
         result:
@@ -133,40 +177,7 @@ A workspace with no declared skills is not callable. If the workspace is not con
 
       if (result.state === "failed") {
         this.log.warn({ callerWorkspaceId: this.callerWorkspaceId, callee: workspace, skill, code: result.code, agentError: result.message }, "call_agent failed");
-        if (result.code === "INPUT_VALIDATION_ERROR") {
-          const failures = (this.inputFailures.get(retryKey) ?? 0) + 1;
-          this.inputFailures.set(retryKey, failures);
-          const terminal = failures >= maxInputRetries
-            ? " Do NOT retry with the same args — re-read the skill's input schema via list_agents."
-            : "";
-          return { result: `Error (${result.code}): ${result.message}${terminal}`, meta };
-        }
-        if (result.code === "NEEDS_INPUT") {
-          this.inputFailures.delete(retryKey);
-          const maxRounds = loadAgentConfig().skillNeedsInputMaxRounds;
-          const rounds = (this.needsInputRounds.get(retryKey) ?? 0) + 1;
-          this.needsInputRounds.set(retryKey, rounds);
-          if (rounds >= maxRounds) {
-            return {
-              result:
-                `Error (NEEDS_INPUT): the target agent still needs different input: "${result.message}" ` +
-                `That was round ${rounds} of ${maxRounds} — stop re-calling this skill and report what you learned instead.`,
-              meta,
-            };
-          }
-          return { result: `Needs input: the target agent needs different input: "${result.message}" Re-call the same skill with corrected args.`, meta };
-        }
-        this.inputFailures.delete(retryKey);
-        this.needsInputRounds.delete(retryKey);
-        if (result.code === "NOT_CONNECTED") {
-          return {
-            result:
-              `Permission denied: this workspace is not connected to "${workspace}" in the Agent Network. ` +
-              `Add an edge in the /graph page first.`,
-            meta,
-          };
-        }
-        return { result: `Error (${result.code}): ${result.message}`, meta };
+        return this.handleFailedResult(result.code, result.message, meta, workspace, retryKey, maxInputRetries);
       }
 
       this.inputFailures.delete(retryKey);

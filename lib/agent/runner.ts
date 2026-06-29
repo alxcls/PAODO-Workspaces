@@ -7,9 +7,9 @@ import { HumanMessage, ToolMessage, AIMessage } from "@langchain/core/messages";
 import type { AIMessageChunk, BaseMessage } from "@langchain/core/messages";
 import type { Logger } from "pino";
 import { buildTools, loadAgentConfig } from "./buildTools";
-import { applyCompaction, type CompactLevel } from "./compact";
-import type { AgentConfig } from "./interfaces";
-import { defaultContainerManager } from "../infra/docker/containerManager";
+import { classifyToolStatus } from "./toolUtils";
+import type { AgentConfig, PostDispatchContext, PostDispatchFn } from "./interfaces";
+import { getContainers } from "../infra/services";
 import type { IContainerManager, IWorkspaceStore, IWorkspaceVersioning } from "../infra/interfaces";
 import { getWsForWorkspace } from "../infra/realtime/wsHub";
 import { createLogger } from "../infra/logger";
@@ -53,6 +53,11 @@ export type RunAgentOptions = {
    * git call is guarded, so an absent service simply skips all snapshotting.
    */
   versioning?: IWorkspaceVersioning;
+  /**
+   * Post-dispatch signal handlers — one per signal-tool name. Defaults to the map returned by
+   * buildAgentTools. Inject for testing to exercise runner dispatch without a full buildTools call.
+   */
+  signalHandlers?: Record<string, PostDispatchFn>;
 };
 
 // The injectable infra pair, threaded from the route layer (via getStore()/getContainers())
@@ -61,7 +66,16 @@ export type RunAgentOptions = {
 // don't have to know about the test-only override seams.
 export type AgentRuntimeDeps = Pick<RunAgentOptions, "store" | "containers" | "versioning">;
 
-type AnyTool = { name: string; invoke: (args: Record<string, unknown>, config?: { signal?: AbortSignal }) => Promise<unknown> };
+type AnyTool = {
+  name: string;
+  invoke: (args: Record<string, unknown>, config?: { signal?: AbortSignal }) => Promise<unknown>;
+  /** When true the runner skips the WS tool_result_log broadcast for this tool's result. */
+  suppressResultNotify?: boolean;
+  /** When true the runner skips the MAX_RESULT_CHARS truncation for this tool's result. */
+  skipResultCap?: boolean;
+  /** Present on tools that need to return UI metadata alongside the model-facing string. */
+  callWithMeta?: AgentCallWithMeta;
+};
 type ResolvedToolCall = { id: string; name: string; args: Record<string, unknown> };
 // Structural type for AgentCallTool.callWithMeta — duck-typed so the runner needn't import the
 // concrete tool class (which would deepen the buildTools → agentCall import chain). The optional
@@ -101,11 +115,10 @@ async function invokeTool(tool: AnyTool, args: Record<string, unknown>, signal?:
   // execute_command's in-container process). Tools that ignore the config are unaffected.
   const result = await tool.invoke(args, { signal });
   const str = String(result);
-  // file_read is exempt from the cap: it has its own offset/limit paging and the agent already
-  // knows each file's line count from list_directory, so it can self-limit large reads. Every
-  // other tool (execute_command, web_fetch, glob, …) has no paging and unpredictable output, so
-  // the cap stays as a guardrail against one result blowing out the context window.
-  if (tool.name === "file_read") return str;
+  // Tools with their own paging (e.g. file_read) opt out via skipResultCap. Every other tool
+  // (execute_command, web_fetch, glob, …) has no paging and unpredictable output, so the cap
+  // stays as a guardrail against one result blowing out the context window.
+  if (tool.skipResultCap) return str;
   if (str.length <= MAX_RESULT_CHARS) return str;
   // Cut on a line boundary so the model never sees a half-line (e.g. mid-token in a JSON
   // value). Fall back to a hard slice if the first line alone already exceeds the budget.
@@ -114,16 +127,7 @@ async function invokeTool(tool: AnyTool, args: Record<string, unknown>, signal?:
   return str.slice(0, cut) + `\n\n[output truncated — ${str.length} chars total, showing first ${cut}]`;
 }
 
-// Classifies a tool's final result string into a structured outcome. Thrown errors and
-// unknown tools are already turned into "Error: …" strings at the call site, so reading the
-// final string covers every case uniformly. Every tool honors the "Error:"/"Permission
-// denied:" failure convention (execute_command surfaces its exit code as such); the A2A
-// non-terminal retry state is tagged "Needs input:". See usageStore.ToolStatus.
-export function classifyToolStatus(resultStr: string): ToolStatus {
-  if (/^Needs input:/.test(resultStr)) return "needs_input";
-  if (/^(Error\b|Error \(|Permission denied)/.test(resultStr)) return "error";
-  return "ok";
-}
+export { classifyToolStatus } from "./toolUtils";
 
 // Splits a stream chunk into text tokens and reasoning/thinking blocks.
 // Centralises all provider-specific branch logic (OpenAI reasoning, Anthropic thinking,
@@ -254,17 +258,62 @@ async function* synthesizeLimit(model: any, messages: BaseMessage[], signal: Abo
   }
 }
 
+async function tryCommitBaseline(
+  versioning: IWorkspaceVersioning | undefined,
+  workspaceId: string, workspaceDir: string, prompt: string,
+  wlog: Logger,
+): Promise<void> {
+  if (!versioning) return;
+  try { await versioning.commitBaseline(workspaceId, workspaceDir, prompt); }
+  catch (err) { wlog.warn({ err }, "versioning baseline commit failed"); }
+}
+
+async function tryCommitResult(
+  versioning: IWorkspaceVersioning | undefined,
+  workspaceId: string, workspaceDir: string, prompt: string,
+  wlog: Logger,
+): Promise<void> {
+  if (!versioning) return;
+  try { await versioning.commitResult(workspaceId, workspaceDir, prompt); }
+  catch (err) { wlog.warn({ err }, "versioning result commit failed"); }
+}
+
+function createLinkQueue() {
+  const queue: Array<{ name: string; meta: CallAgentMeta }> = [];
+  let wakeUp: (() => void) | null = null;
+  let done = false;
+
+  return {
+    emitLink(name: string, meta: CallAgentMeta) {
+      queue.push({ name, meta });
+      wakeUp?.(); wakeUp = null;
+    },
+    notifySettled() {
+      done = true;
+      wakeUp?.(); wakeUp = null;
+    },
+    async *drainUntilSettled(): AsyncGenerator<{ name: string; meta: CallAgentMeta }> {
+      while (!done || queue.length) {
+        while (queue.length) yield queue.shift()!;
+        if (done) break;
+        await new Promise<void>(res => { wakeUp = res; });
+      }
+    },
+  };
+}
+
 export async function* runAgent(
   messages: BaseMessage[],
   userInput: string,
   workspaceDir: string,
   workspaceId: string,
-  { signal, maxIterations = 30, notify, warmContainer, loadConfig, buildAgentTools, containers, store, versioning }: RunAgentOptions = {},
+  { signal, maxIterations = 30, notify, warmContainer, loadConfig, buildAgentTools, containers, store, versioning, signalHandlers: injectedHandlers }: RunAgentOptions = {},
 ): AsyncGenerator<AgentEvent> {
   const wlog = log.child({ workspaceId });
   const config = (loadConfig ?? loadAgentConfig)();
-  const resolvedContainers = containers ?? defaultContainerManager;
-  const { modelWithTools, model, toolMap } = (buildAgentTools ?? buildTools)(workspaceId, workspaceDir, config, { containers: resolvedContainers, store });
+  const resolvedContainers = containers ?? getContainers();
+  const { modelWithTools, model, toolMap, signalHandlers: builtHandlers } = (buildAgentTools ?? buildTools)(workspaceId, workspaceDir, config, { containers: resolvedContainers, store });
+  const signalHandlers: Record<string, PostDispatchFn> = injectedHandlers ?? builtHandlers ?? {};
   const typedToolMap = toolMap as Record<string, AnyTool>;
 
   const resolvedNotify = notify ?? ((msg: object) => getWsForWorkspace(workspaceId)?.send(JSON.stringify(msg)));
@@ -274,16 +323,21 @@ export async function* runAgent(
   // it again later is a no-op if the container is already running.
   resolvedWarmContainer();
 
+  // Built once per run; passed to each PostDispatchFn after every tool turn settles.
+  const postDispatchCtx: PostDispatchContext = {
+    messages,
+    versioning,
+    workspaceId,
+    workspaceDir,
+    model,
+    notify: resolvedNotify,
+    log: wlog,
+  };
+
   messages.push(new HumanMessage(userInput));
   wlog.info({ maxIterations }, "agent run started");
 
-  // Baseline snapshot of the workspace before the run touches anything. Best-effort: a git
-  // failure must never block the agent, so it's guarded and logged. The result commit fires in
-  // the `finally` below — even on abort/error — capturing whatever the run changed.
-  if (versioning) {
-    try { await versioning.commitBaseline(workspaceId, workspaceDir, userInput); }
-    catch (err) { wlog.warn({ err }, "versioning baseline commit failed"); }
-  }
+  await tryCommitBaseline(versioning, workspaceId, workspaceDir, userInput, wlog);
 
   let iterations = 0;
   // Run-cumulative token totals, summed across every turn. Mirrors the client's per-run usage
@@ -363,29 +417,20 @@ export async function* runAgent(
 
       // call_agent surfaces its callee-session deep-link the moment the callee conversation is
       // created (via the onLink callback below), not when the whole call finishes — so the caller
-      // sees "View session" while the callee is still working. Those links land in linkQueue and
-      // are yielded as tool_link events by the drain loop until every tool has settled.
-      const linkQueue: Array<{ name: string; meta: CallAgentMeta }> = [];
-      let onLinkReady: (() => void) | null = null;
-      const emitLink = (name: string, meta: CallAgentMeta) => {
-        linkQueue.push({ name, meta });
-        onLinkReady?.();
-        onLinkReady = null;
-      };
-
-      let settledResolved = false;
+      // sees "View session" while the callee is still working. Links are drained as they arrive;
+      // all tools settle before the atomic history-commit block below.
+      const lq = createLinkQueue();
       const settledPromise = Promise.all(
         activeCalls.map(async (tc) => {
           const tool = typedToolMap[tc.name];
           const toolStart = Date.now();
           let resultStr: string;
           let meta: CallAgentMeta | undefined;
-          // call_agent exposes callWithMeta so the runner can capture the callee's persisted
-          // conversation id alongside the model-facing string (used only for the UI deep-link).
-          const withMeta = tc.name === "call_agent" ? (tool as { callWithMeta?: AgentCallWithMeta }).callWithMeta : undefined;
+          // Tools that return UI metadata alongside the model-facing string expose callWithMeta.
+          const withMeta = tool?.callWithMeta;
           if (withMeta) {
             const r = await withMeta
-              .call(tool, tc.args, (m) => emitLink(tc.name, m), signal)
+              .call(tool, tc.args, (m) => lq.emitLink(tc.name, m), signal)
               .catch((err) => ({ result: `Error: ${String(err)}`, meta: undefined }));
             resultStr = r.result;
             meta = r.meta;
@@ -397,18 +442,13 @@ export async function* runAgent(
           wlog.debug({ name: tc.name, toolMs: Date.now() - toolStart }, "tool timing");
           return { tc, resultStr, meta };
         })
-      ).then((s) => { settledResolved = true; onLinkReady?.(); onLinkReady = null; return s; });
+      ).then((s) => { lq.notifySettled(); return s; });
 
-      // Drain link events as they arrive; exit once all tools have settled and the queue is empty.
-      // Suspends here only before the atomic history-commit below, so an abort during the wait can
+      // Drain link events as they arrive; exits once all tools settled and queue is empty.
+      // Suspends only before the atomic history-commit below — an abort during the wait can
       // never leave a half-written turn.
-      while (!settledResolved || linkQueue.length) {
-        while (linkQueue.length) {
-          const { name, meta } = linkQueue.shift()!;
-          yield { type: "tool_link", name, meta };
-        }
-        if (settledResolved) break;
-        await new Promise<void>((res) => { onLinkReady = res; });
+      for await (const link of lq.drainUntilSettled()) {
+        yield { type: "tool_link", name: link.name, meta: link.meta };
       }
       const settled = await settledPromise;
 
@@ -430,7 +470,7 @@ export async function* runAgent(
 
       for (const { tc, resultStr, meta } of settled) {
         yield { type: "tool_result", name: tc.name, result: resultStr, ...(meta ? { meta } : {}) };
-        if (tc.name !== "execute_command") {
+        if (!typedToolMap[tc.name]?.suppressResultNotify) {
           resolvedNotify({ type: "tool_result_log", name: tc.name, result: resultStr });
         }
         wlog.debug({ name: tc.name, result: resultStr.slice(0, 200) }, "tool result");
@@ -452,35 +492,13 @@ export async function* runAgent(
         break;
       }
 
-      // Agent-initiated rollback. workspace_restore is a signal only — it can't reach the platform
-      // versioning history (deliberately outside the agent's reach), so the runner performs the
-      // reset here, AFTER this turn's tools have settled, so it can't race a concurrent file write
-      // in the same batch. Restore only happens for an explicit sha from workspace_history.
-      // Best-effort: a failed/unknown target is logged, never throws into the loop.
-      const restoreCall = settled.find(({ tc }) => tc.name === "workspace_restore");
-      if (restoreCall && versioning) {
-        const target = (restoreCall.tc.args as { sha?: string }).sha;
-        if (target && classifyToolStatus(restoreCall.resultStr) === "ok") {
-          try {
-            const ok = await versioning.restore(workspaceId, workspaceDir, target);
-            if (ok) resolvedNotify({ type: "snapshot_restored", sha: target });
-            else wlog.warn({ target }, "agent restore: target snapshot not found");
-          } catch (err) {
-            wlog.warn({ err, target }, "agent restore failed");
-          }
-        }
-      }
-
-      // Agent-chosen context compaction. The compact_context tool is a signal only — it can't
-      // reach `messages`, so the surgery happens here, AFTER this turn's assistant+tool_result
-      // pair is committed above (so it's never orphaned: light/medium keep it, hard wipes both
-      // together). model is tool-less, so the summarize call can't emit tool calls.
-      const compactCall = settled.find(({ tc }) => tc.name === "compact_context");
-      if (compactCall) {
-        const { level, next_step } = compactCall.tc.args as { level?: CompactLevel; next_step?: string };
-        if (level && next_step) {
-          await applyCompaction(model, messages, level, next_step);
-        }
+      // Signal-tool post-dispatch: runs AFTER the atomic turn commit above. Each handler in
+      // signalHandlers receives args + resultStr and performs its side-effect (restore, compact…).
+      // Adding a new signal tool only requires a new entry in buildTools.signalHandlers — this
+      // loop never changes. Best-effort: errors are caught inside each handler.
+      for (const { tc, resultStr } of settled) {
+        const handler = signalHandlers[tc.name];
+        if (handler) await handler(tc.args, resultStr, postDispatchCtx);
       }
     }
   } catch (err) {
@@ -494,15 +512,7 @@ export async function* runAgent(
     // Single result commit for the run, on EVERY exit path — normal completion, iteration limit,
     // user abort (the SSE consumer abandons this generator via `.return()`, which still runs
     // `finally`), and thrown errors. commitResult skips itself if the run changed nothing, so a
-    // no-op run leaves no commit. The snapshot is labelled with the user's prompt (commitResult
-    // collapses whitespace and truncates the subject); the actual "what changed" is read from the
-    // diff later. Guarded + try/caught so versioning never breaks the run.
-    if (versioning) {
-      try {
-        await versioning.commitResult(workspaceId, workspaceDir, userInput);
-      } catch (err) {
-        wlog.warn({ err }, "versioning result commit failed");
-      }
-    }
+    // no-op run leaves no commit. Guarded + try/caught so versioning never breaks the run.
+    await tryCommitResult(versioning, workspaceId, workspaceDir, userInput, wlog);
   }
 }

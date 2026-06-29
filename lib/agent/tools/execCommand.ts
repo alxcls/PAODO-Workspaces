@@ -45,6 +45,8 @@ USE THIS for: renaming files (mv), moving files, deleting files (rm), creating s
 Always use POSIX/bash syntax. Never use PowerShell syntax.
 You run as a NON-ROOT user, confined to the workspace. apt-get/sudo are NOT available here — to install system packages use the apt_install tool. npm/pip/nvm/pyenv work normally.`;
   schema = schema;
+  // Runner skips the WS tool_result_log broadcast for this tool — output already streams live.
+  readonly suppressResultNotify = true;
 
   private readonly log = createLogger("execCommand");
 

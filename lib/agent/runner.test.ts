@@ -43,8 +43,18 @@ function makeBuildTools(turns: Chunk[][]) {
     execute_command: { invoke: async () => "command ran" },
     workspace_restore: { invoke: async () => "[restoring]" },
   };
-  return () => ({ modelWithTools, model: modelWithTools, toolMap }) as never;
+  return () => ({ modelWithTools, model: modelWithTools, toolMap, signalHandlers: {} }) as never;
 }
+
+// Minimal workspace_restore signal handler for tests that verify runner dispatch.
+// Mirrors the production handler in buildTools without pulling in the full buildTools stack.
+const restoreHandler = async (args: Record<string, unknown>, resultStr: string, ctx: Parameters<import("./interfaces").PostDispatchFn>[2]) => {
+  const sha = (args as { sha?: string }).sha;
+  if (sha && classifyToolStatus(resultStr) === "ok" && ctx.versioning) {
+    const ok = await ctx.versioning.restore(ctx.workspaceId, ctx.workspaceDir, sha);
+    if (ok) ctx.notify({ type: "snapshot_restored", sha });
+  }
+};
 
 // One chunk carrying one or more tool calls (each a distinct execute_command so dedup keeps all).
 function toolCallsChunk(...calls: { id: string; args: string }[]): Chunk {
@@ -205,7 +215,7 @@ describe("runAgent — agent-initiated workspace_restore is runner-mediated", ()
       [new AIMessageChunk({ content: "done" })],
     ]);
 
-    for await (const _ of runAgent([], "fix it", "/tmp/ws", "ws-1", { ...noopDeps, versioning, buildAgentTools })) { /* drain */ }
+    for await (const _ of runAgent([], "fix it", "/tmp/ws", "ws-1", { ...noopDeps, versioning, buildAgentTools, signalHandlers: { workspace_restore: restoreHandler } })) { /* drain */ }
 
     const restore = calls.filter((c) => c.method === "restore");
     expect(restore).toHaveLength(1);
@@ -219,7 +229,7 @@ describe("runAgent — agent-initiated workspace_restore is runner-mediated", ()
       [new AIMessageChunk({ content: "retried from clean state" })],
     ]);
 
-    for await (const _ of runAgent([], "fix it", "/tmp/ws", "ws-1", { ...noopDeps, versioning, buildAgentTools })) { /* drain */ }
+    for await (const _ of runAgent([], "fix it", "/tmp/ws", "ws-1", { ...noopDeps, versioning, buildAgentTools, signalHandlers: { workspace_restore: restoreHandler } })) { /* drain */ }
 
     const restore = calls.filter((c) => c.method === "restore");
     expect(restore).toHaveLength(0);

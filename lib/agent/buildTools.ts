@@ -4,6 +4,9 @@
 // themselves only depend on the ContainerRunner interface defined in interfaces.ts.
 
 import { buildModel } from "./buildModel";
+import { applyCompaction, type CompactLevel } from "./compact";
+import { classifyToolStatus } from "./toolUtils";
+import type { PostDispatchFn } from "./interfaces";
 import { ExecCommandTool } from "./tools/execCommand";
 import { AptInstallTool } from "./tools/aptInstall";
 import { FileReadTool } from "./tools/fileRead";
@@ -55,8 +58,8 @@ export function loadAgentConfig(): AgentConfig {
     openaiApiKey:         process.env.OPENAI_API_KEY,
     deepseekModel:        process.env.DEEPSEEK_MODEL,
     deepseekApiKey:       process.env.DEEPSEEK_API_KEY,
-    execSilenceTimeoutMs: parseInt(process.env.EXEC_SILENCE_TIMEOUT_MS ?? "", 10) || 60_000,
-    execMaxTimeoutMs:     parseInt(process.env.EXEC_MAX_TIMEOUT_MS ?? "", 10) || 30 * 60_000,
+    silenceTimeoutMs: parseInt(process.env.EXEC_SILENCE_TIMEOUT_MS ?? "", 10) || 60_000,
+    maxTimeoutMs:     parseInt(process.env.EXEC_MAX_TIMEOUT_MS ?? "", 10) || 30 * 60_000,
     skillInputMaxRetries:       parseInt(process.env.SKILL_INPUT_MAX_RETRIES ?? "", 10) || 2,
     skillOutputMaxRetries:      parseInt(process.env.SKILL_OUTPUT_MAX_RETRIES ?? "", 10) || 2,
     skillNeedsInputMaxRounds:   parseInt(process.env.SKILL_NEEDS_INPUT_MAX_ROUNDS ?? "", 10) || 2,
@@ -78,7 +81,7 @@ export function buildTools(
   const broadcast = (msg: string) => broadcastToWorkspace(workspaceId, msg);
 
   const tools = [
-    new ExecCommandTool(streamExec, broadcast, { silenceTimeoutMs: config.execSilenceTimeoutMs, maxTimeoutMs: config.execMaxTimeoutMs }),
+    new ExecCommandTool(streamExec, broadcast, config),
     new AptInstallTool(runner),
     new FileReadTool(runner),
     new FileEditTool(runner),
@@ -94,7 +97,10 @@ export function buildTools(
     // Calling tools go only to a caller (a workspace with outgoing edges). A pure callee
     // never receives call_agent/list_agents, even when the graph feature is enabled.
     ...(config.graphEnabled && isCaller(workspaceId)
-      ? [new AgentCallTool(workspaceId, store, containers), new ListAgentsTool(workspaceId, store)]
+      ? [
+          new AgentCallTool(workspaceId, store, containers, config),
+          new ListAgentsTool(workspaceId, store),
+        ]
       : []),
     // Drive tools are injected only when this workspace has at least one connected drive,
     // keeping the prompt lean for the common no-drive case.
@@ -115,5 +121,28 @@ export function buildTools(
 
   const modelWithTools = model.bindTools(tools);
 
-  return { modelWithTools, model, toolMap };
+  // Signal handlers run after a tool turn settles. Registering one here is the ONLY change
+  // needed when a new signal tool is added — runAgent dispatches generically via this map.
+  const signalHandlers: Record<string, PostDispatchFn> = {
+    workspace_restore: async (args, resultStr, ctx) => {
+      const target = (args as { sha?: string }).sha;
+      if (target && classifyToolStatus(resultStr) === "ok" && ctx.versioning) {
+        try {
+          const ok = await ctx.versioning.restore(ctx.workspaceId, ctx.workspaceDir, target);
+          if (ok) ctx.notify({ type: "snapshot_restored", sha: target });
+          else ctx.log.warn({ target }, "agent restore: target snapshot not found");
+        } catch (err) {
+          ctx.log.warn({ err, target }, "agent restore failed");
+        }
+      }
+    },
+    compact_context: async (args, _resultStr, ctx) => {
+      const { level, next_step } = args as { level?: CompactLevel; next_step?: string };
+      if (level && next_step) {
+        await applyCompaction(ctx.model, ctx.messages, level, next_step);
+      }
+    },
+  };
+
+  return { modelWithTools, model, toolMap, signalHandlers };
 }

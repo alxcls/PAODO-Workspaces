@@ -1,5 +1,7 @@
 // Shared type definitions for the agent layer: exec runners, streaming exec, LLM provider
 // config, and the combined AgentConfig consumed by buildTools and the runner.
+import type { BaseMessage } from "@langchain/core/messages";
+import type { IWorkspaceVersioning } from "../infra/interfaces";
 
 export interface ExecResult {
   code: number;
@@ -45,11 +47,35 @@ export interface ExecConfig {
   maxTimeoutMs: number;
 }
 
-export interface AgentConfig extends LLMProviderConfig {
-  graphEnabled: boolean;
-  execSilenceTimeoutMs: number;
-  execMaxTimeoutMs: number;
+export interface SkillConfig {
   skillInputMaxRetries: number;
   skillOutputMaxRetries: number;
   skillNeedsInputMaxRounds: number;
 }
+
+export interface AgentConfig extends LLMProviderConfig, ExecConfig, SkillConfig {
+  graphEnabled: boolean;
+}
+
+// Context threaded to each PostDispatchFn after a tool turn settles. Handlers receive the live
+// messages array (mutable — compact rewrites it), the versioning service, and the notify/log
+// seams so they can broadcast WS events and log warnings without importing infra directly.
+export interface PostDispatchContext {
+  messages: BaseMessage[];
+  versioning: IWorkspaceVersioning | undefined;
+  workspaceId: string;
+  workspaceDir: string;
+  /** The bare model (no bound tools) — required by the compact handler to summarize history. Absent for handlers that don't need it. */
+  model?: unknown;
+  notify: (msg: object) => void;
+  log: { warn(obj: object, msg: string): void; debug(obj: object, msg: string): void };
+}
+
+// Called by the runner after every settled tool turn for any tool that registered a side-effect
+// (e.g. workspace_restore performs the actual git reset, compact_context rewrites messages).
+// Returning void; errors should be caught and logged inside the handler.
+export type PostDispatchFn = (
+  args: Record<string, unknown>,
+  resultStr: string,
+  ctx: PostDispatchContext,
+) => Promise<void>;

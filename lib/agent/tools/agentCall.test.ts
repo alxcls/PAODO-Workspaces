@@ -10,11 +10,6 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // each test scripts only the outcome sequence it cares about.
 
 vi.mock("../skills/executeSkill", () => ({ executeSkill: vi.fn() }));
-// Mock the whole tools/index barrel so importing agentCall doesn't pull in the container /
-// workspace-store singletons; only loadAgentConfig is consumed by agentCall.
-vi.mock(".", () => ({
-  loadAgentConfig: () => ({ skillInputMaxRetries: 2, skillNeedsInputMaxRounds: 2 }),
-}));
 
 import { AgentCallTool } from "./agentCall";
 import { executeSkill } from "../skills/executeSkill";
@@ -33,8 +28,10 @@ const containers = {} as IContainerManager;
 const INPUT_ERR: SkillCallResult = { state: "failed", code: "INPUT_VALIDATION_ERROR", message: "'sku' is required" };
 const NEEDS_INPUT: SkillCallResult = { state: "failed", code: "NEEDS_INPUT", message: "which warehouse?" };
 
+const skillConfig = { skillInputMaxRetries: 2, skillOutputMaxRetries: 2, skillNeedsInputMaxRounds: 2 };
+
 function makeTool() {
-  return new AgentCallTool("caller-1", store, containers);
+  return new AgentCallTool("caller-1", store, containers, skillConfig);
 }
 
 // _call is protected; call it directly to drive the counters without zod/invoke wrapping.

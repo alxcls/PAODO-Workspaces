@@ -1,7 +1,9 @@
 // Agent tool: copy a file from a shared drive into the local workspace so you can work on it with
-// your normal file tools. The drive file is read host-side; the workspace copy is written THROUGH
-// the container (mkdir -p + tee) so it is owned by the in-container user and you can edit it freely.
-// Lands at downloads/<drive-name>/<path>. Text files only in v1.
+// your normal file tools. The drive file is read host-side as raw bytes; the workspace copy is
+// written THROUGH the container (mkdir -p, then base64-decode into the dest) so it is owned by the
+// in-container user and you can edit it freely. The container transport (exec stdin) is text-only,
+// so bytes ride in base64-encoded and are decoded container-side — this keeps binary files (SQLite,
+// images, archives) intact. Lands at downloads/<drive-name>/<path>.
 
 import { StructuredTool } from "@langchain/core/tools";
 import { z } from "zod";
@@ -30,9 +32,9 @@ Use this when you need an editable local copy. For a quick read without a copy, 
     if (typeof resolved === "string") return resolved;
     if (!resolved.relPath) return "Error: a file path within the drive is required";
 
-    let content: string;
+    let content: Buffer;
     try {
-      content = await fs.readFile(resolved.absPath, "utf-8");
+      content = await fs.readFile(resolved.absPath);
     } catch (err: unknown) {
       const e = err as NodeJS.ErrnoException;
       if (e.code === "ENOENT") return `Error: file not found in drive "${drive_name}"`;
@@ -45,11 +47,17 @@ Use this when you need an editable local copy. For a quick read without a copy, 
     try {
       const mkdir = await this.runner.exec(["mkdir", "-p", `/workspace/${destDir}`]);
       if (mkdir.code !== 0) return `Error: could not create directory: ${mkdir.stderr}`;
-      const write = await this.runner.exec(["tee", `/workspace/${dest}`], { stdin: content });
+      // exec stdin is text-only, so the bytes ride in base64 and are decoded container-side. The
+      // dest path is passed as a positional arg ($1), not interpolated into the script, so an odd
+      // drive or file name cannot inject shell.
+      const write = await this.runner.exec(
+        ["sh", "-c", 'base64 -d > "$1"', "sh", `/workspace/${dest}`],
+        { stdin: content.toString("base64") },
+      );
       if (write.code !== 0) return `Error: ${write.stderr || "write failed"}`;
     } catch (err: unknown) {
       return `Error: ${err instanceof Error ? err.message : String(err)}`;
     }
-    return `Downloaded ${filePath} from drive "${drive_name}" to ${dest} (${content.length} chars)`;
+    return `Downloaded ${filePath} from drive "${drive_name}" to ${dest} (${content.length} bytes)`;
   }
 }

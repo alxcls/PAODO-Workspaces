@@ -2,7 +2,7 @@
 // The workspace file is read host-side and written into the drive host-side (drives are never
 // mounted into a container). A drive is a plain live filesystem: one file per path, newest wins.
 // Uploading over an existing path overwrites it and the result SIGNALS the overwrite, so a clobber
-// is never silent. Text files only in v1.
+// is never silent. Reads/writes raw bytes, so binary files (SQLite, images, archives) stay intact.
 
 import { StructuredTool } from "@langchain/core/tools";
 import { z } from "zod";

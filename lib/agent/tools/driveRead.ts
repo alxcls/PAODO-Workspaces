@@ -1,6 +1,8 @@
 // Agent tool: read a file from a shared drive directly into the agent's context (no local copy).
 // Reads host-side (drives are never mounted into a container). For a working copy you can edit
-// with your normal file tools, use drive_download instead. Text files only in v1.
+// with your normal file tools, use drive_download instead. This tool only returns text — binary
+// files (SQLite, images, archives) can't go into the LLM context as text, so it detects them and
+// points you to drive_download rather than returning mojibake.
 
 import { StructuredTool } from "@langchain/core/tools";
 import { z } from "zod";
@@ -28,7 +30,11 @@ Use this for a quick look. To get an editable copy in your workspace, use drive_
     if (!resolved.relPath) return "Error: a file path within the drive is required";
 
     try {
-      return await fs.readFile(resolved.absPath, "utf-8");
+      const buf = await fs.readFile(resolved.absPath);
+      if (buf.subarray(0, 8000).includes(0)) {
+        return `Error: "${filePath}" looks like a binary file and can't be read as text. Use drive_download to copy it into your workspace instead.`;
+      }
+      return buf.toString("utf-8");
     } catch (err: unknown) {
       const e = err as NodeJS.ErrnoException;
       if (e.code === "ENOENT") return `Error: file not found in drive "${drive_name}"`;

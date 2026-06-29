@@ -19,7 +19,6 @@ Let users create shared drives, connect them to multiple workspaces, and let age
 - Agent-to-agent signaling (agent A notifying agent B that a file is ready)
 - Agent-created drives
 - Access control per drive connection (all connections are read-write)
-- Binary file support in v1
 
 ## User stories
 
@@ -66,7 +65,6 @@ A drive is a plain live filesystem: one file per path, newest wins. Agents act f
 
 ### Nice to have
 
-- Binary file support for download/upload
 - Drive activity log (which agent wrote what and when)
 - Agent-to-agent signaling when a file is ready
 - Version history for drive files (rollback after an overwrite/delete)

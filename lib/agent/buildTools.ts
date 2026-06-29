@@ -96,7 +96,7 @@ export function buildTools(
     new CompactContextTool(),
     new WebFetchTool(),
     new GlobTool(runner),
-    new ListDirectoryTool(runner),
+    new ListDirectoryTool(runner, filePolicy),
     new WorkspaceHistoryTool(workspaceId, workspaceDir, versioning),
     // Signal-only: the runner performs the restore against the platform versioning (runner.ts).
     new WorkspaceRestoreTool(),

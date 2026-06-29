@@ -8,6 +8,7 @@
 import { StructuredTool } from "@langchain/core/tools";
 import { z } from "zod";
 import { normalizeDirPath } from "../pathUtils";
+import { type FilePolicy, ALLOW_ALL_POLICY } from "../../infra/docker/agentPermissionStore";
 import type { ExecRunner } from "../interfaces";
 
 const schema = z.object({
@@ -45,7 +46,7 @@ Each line: type (d=directory, -=file), name, line count (files) or child count (
 Use this instead of ls. For recursive or pattern-based search use glob instead.`;
   schema = schema;
 
-  constructor(private runner: ExecRunner) {
+  constructor(private runner: ExecRunner, private policy: FilePolicy = ALLOW_ALL_POLICY) {
     super();
   }
 
@@ -121,8 +122,13 @@ Use this instead of ls. For recursive or pattern-based search use glob instead.`
       const now = Date.now();
       const rows = entries.map((entry) => {
         const isDir = entry.type === "d";
+        const rel = relDir === "." ? entry.name : `${relDir}/${entry.name}`;
         let detail = "";
-        if (isDir) detail = formatItems(entry.childCount ?? 0);
+        // Deny-read paths are mounted over with a stub, so wc/find would report the stub's
+        // (1 line / 1 item) count rather than the real one. Withhold the count instead of
+        // leaking a misleading number — matches the clean message FileReadTool returns.
+        if (this.policy.isDenyRead(rel)) detail = "restricted";
+        else if (isDir) detail = formatItems(entry.childCount ?? 0);
         else if (entry.lineCount !== undefined) detail = formatLines(entry.lineCount);
         return {
           type: isDir ? "d" : "-",

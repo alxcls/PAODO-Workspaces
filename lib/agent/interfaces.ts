@@ -1,6 +1,7 @@
 // Shared type definitions for the agent layer: exec runners, streaming exec, LLM provider
 // config, and the combined AgentConfig consumed by buildTools and the runner.
 import type { BaseMessage } from "@langchain/core/messages";
+import type { BaseChatModel } from "@langchain/core/language_models/chat_models";
 import type { IWorkspaceVersioning } from "../infra/interfaces";
 
 export interface ExecResult {
@@ -66,7 +67,7 @@ export interface PostDispatchContext {
   workspaceId: string;
   workspaceDir: string;
   /** The bare model (no bound tools) — required by the compact handler to summarize history. Absent for handlers that don't need it. */
-  model?: unknown;
+  model?: BaseChatModel;
   notify: (msg: object) => void;
   log: { warn(obj: object, msg: string): void; debug(obj: object, msg: string): void };
 }

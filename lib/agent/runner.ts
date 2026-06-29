@@ -426,11 +426,11 @@ export async function* runAgent(
           const toolStart = Date.now();
           let resultStr: string;
           let meta: CallAgentMeta | undefined;
-          // Tools that return UI metadata alongside the model-facing string expose callWithMeta.
+          // Tools that return UI metadata alongside the model-facing string expose callWithMeta
+          // (a bound arrow property, so it can be called free-standing without a thisArg).
           const withMeta = tool?.callWithMeta;
           if (withMeta) {
-            const r = await withMeta
-              .call(tool, tc.args, (m) => lq.emitLink(tc.name, m), signal)
+            const r = await withMeta(tc.args, (m) => lq.emitLink(tc.name, m), signal)
               .catch((err) => ({ result: `Error: ${String(err)}`, meta: undefined }));
             resultStr = r.result;
             meta = r.meta;

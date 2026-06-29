@@ -4,6 +4,7 @@
 import { describe, it, expect } from "vitest";
 import { AIMessage, AIMessageChunk, ToolMessage, type BaseMessage } from "@langchain/core/messages";
 import { runAgent, classifyToolStatus, type AgentEvent } from "./runner";
+import { buildSignalHandlers } from "./buildTools";
 
 // runAgent mutates the conversation history (the messages array) in place. When a request is aborted
 // (the user hits escape) the SSE consumer stops pulling and the generator is abandoned via
@@ -46,15 +47,9 @@ function makeBuildTools(turns: Chunk[][]) {
   return () => ({ modelWithTools, model: modelWithTools, toolMap, signalHandlers: {} }) as never;
 }
 
-// Minimal workspace_restore signal handler for tests that verify runner dispatch.
-// Mirrors the production handler in buildTools without pulling in the full buildTools stack.
-const restoreHandler = async (args: Record<string, unknown>, resultStr: string, ctx: Parameters<import("./interfaces").PostDispatchFn>[2]) => {
-  const sha = (args as { sha?: string }).sha;
-  if (sha && classifyToolStatus(resultStr) === "ok" && ctx.versioning) {
-    const ok = await ctx.versioning.restore(ctx.workspaceId, ctx.workspaceDir, sha);
-    if (ok) ctx.notify({ type: "snapshot_restored", sha });
-  }
-};
+// The real production workspace_restore handler, so runner-dispatch tests exercise the same code
+// path the app runs (no hand-mirrored copy that can silently drift out of sync).
+const restoreHandler = buildSignalHandlers().workspace_restore;
 
 // One chunk carrying one or more tool calls (each a distinct execute_command so dedup keeps all).
 function toolCallsChunk(...calls: { id: string; args: string }[]): Chunk {
@@ -258,5 +253,64 @@ describe("classifyToolStatus", () => {
     expect(classifyToolStatus("Error: unknown tool \"foo\"")).toBe("error");
     expect(classifyToolStatus("Permission denied: not connected")).toBe("error");
     expect(classifyToolStatus('Needs input: the target agent needs different input: "which warehouse?"')).toBe("needs_input");
+  });
+});
+
+// Direct coverage of the production handlers (vs. only through runner dispatch). Pins the
+// PostDispatchFn contract: each handler catches and logs its own errors so a side-effect failure
+// never escapes into the run loop.
+describe("buildSignalHandlers", () => {
+  function makeCtx(over: Partial<import("./interfaces").PostDispatchContext> = {}): import("./interfaces").PostDispatchContext {
+    return {
+      messages: [],
+      versioning: undefined,
+      workspaceId: "ws-1",
+      workspaceDir: "/tmp/ws",
+      model: undefined,
+      notify: () => {},
+      log: { warn: () => {}, debug: () => {} },
+      ...over,
+    };
+  }
+
+  it("workspace_restore restores and notifies on an ok result", async () => {
+    const { calls, versioning } = makeVersioning();
+    const notes: object[] = [];
+    const ctx = makeCtx({ versioning, notify: (m) => { notes.push(m); } });
+    await buildSignalHandlers().workspace_restore({ sha: "abad1de" }, "restored", ctx);
+    expect(calls.filter((c) => c.method === "restore")).toHaveLength(1);
+    expect(notes).toEqual([{ type: "snapshot_restored", sha: "abad1de" }]);
+  });
+
+  it("workspace_restore skips when the tool result is an error", async () => {
+    const { calls, versioning } = makeVersioning();
+    const ctx = makeCtx({ versioning });
+    await buildSignalHandlers().workspace_restore({ sha: "abad1de" }, "Error: nope", ctx);
+    expect(calls.filter((c) => c.method === "restore")).toHaveLength(0);
+  });
+
+  it("workspace_restore swallows a thrown restore error", async () => {
+    const warnings: object[] = [];
+    const versioning = { restore: async () => { throw new Error("git boom"); } } as never;
+    const ctx = makeCtx({ versioning, log: { warn: (o: object) => { warnings.push(o); }, debug: () => {} } });
+    await expect(buildSignalHandlers().workspace_restore({ sha: "abad1de" }, "ok", ctx)).resolves.toBeUndefined();
+    expect(warnings).toHaveLength(1);
+  });
+
+  it("compact_context swallows an applyCompaction error instead of throwing into the run", async () => {
+    const warnings: object[] = [];
+    const model = { invoke: async () => { throw new Error("summarize boom"); } } as never;
+    const ctx = makeCtx({ model, log: { warn: (o: object) => { warnings.push(o); }, debug: () => {} } });
+    await expect(
+      buildSignalHandlers().compact_context({ level: "hard", next_step: "carry on" }, "ok", ctx),
+    ).resolves.toBeUndefined();
+    expect(warnings).toHaveLength(1);
+  });
+
+  it("compact_context is a no-op when the model is absent", async () => {
+    const ctx = makeCtx({ model: undefined });
+    await expect(
+      buildSignalHandlers().compact_context({ level: "hard", next_step: "carry on" }, "ok", ctx),
+    ).resolves.toBeUndefined();
   });
 });

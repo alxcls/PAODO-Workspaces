@@ -10,6 +10,7 @@
 
 import { AIMessage, HumanMessage, ToolMessage } from "@langchain/core/messages";
 import type { BaseMessage } from "@langchain/core/messages";
+import type { BaseChatModel } from "@langchain/core/language_models/chat_models";
 import { createLogger } from "../infra/logger";
 
 const log = createLogger("compact");
@@ -76,8 +77,7 @@ async function summarizeHistory(model: any, history: BaseMessage[], nextStep: st
 
 // Applies the chosen level to `messages` IN PLACE (splice preserves the array reference the
 // runner and the route layer both hold). messages[0] is the SystemMessage and is always kept.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export async function applyCompaction(model: any, messages: BaseMessage[], level: CompactLevel, nextStep: string): Promise<void> {
+export async function applyCompaction(model: BaseChatModel, messages: BaseMessage[], level: CompactLevel, nextStep: string): Promise<void> {
   const before = messages.length;
 
   if (level === "light") {

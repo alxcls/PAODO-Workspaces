@@ -121,9 +121,16 @@ export function buildTools(
 
   const modelWithTools = model.bindTools(tools);
 
-  // Signal handlers run after a tool turn settles. Registering one here is the ONLY change
-  // needed when a new signal tool is added — runAgent dispatches generically via this map.
-  const signalHandlers: Record<string, PostDispatchFn> = {
+  return { modelWithTools, model, toolMap, signalHandlers: buildSignalHandlers() };
+}
+
+// Signal handlers run after a tool turn settles. Adding an entry here is the ONLY change needed
+// when a new signal tool is introduced — runAgent dispatches generically via this map and never
+// changes. Exported (and closure-free — all state arrives via ctx) so it can be unit-tested
+// directly rather than through a hand-mirrored copy. Per the PostDispatchFn contract, every
+// handler catches and logs its own errors so a side-effect failure never aborts the run.
+export function buildSignalHandlers(): Record<string, PostDispatchFn> {
+  return {
     workspace_restore: async (args, resultStr, ctx) => {
       const target = (args as { sha?: string }).sha;
       if (target && classifyToolStatus(resultStr) === "ok" && ctx.versioning) {
@@ -138,11 +145,13 @@ export function buildTools(
     },
     compact_context: async (args, _resultStr, ctx) => {
       const { level, next_step } = args as { level?: CompactLevel; next_step?: string };
-      if (level && next_step) {
-        await applyCompaction(ctx.model, ctx.messages, level, next_step);
+      if (level && next_step && ctx.model) {
+        try {
+          await applyCompaction(ctx.model, ctx.messages, level, next_step);
+        } catch (err) {
+          ctx.log.warn({ err, level }, "agent compact_context failed");
+        }
       }
     },
   };
-
-  return { modelWithTools, model, toolMap, signalHandlers };
 }

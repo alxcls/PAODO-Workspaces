@@ -8,7 +8,7 @@ import { applyCompaction, stripToolOutputs, CLEARED, STRIPPABLE_TOOLS } from "./
 
 // A tool-less model stub whose invoke returns a fixed brief — exercises summarize paths without
 // a network call.
-const fakeModel = { invoke: async () => new AIMessage("BRIEF") };
+const fakeModel = { invoke: async () => new AIMessage("BRIEF") } as never;
 
 // Builds a realistic history: system, a user turn, then two work turns each = an AIMessage with
 // one tool_call followed by its ToolMessage, then the compact_context turn (ai + ack).

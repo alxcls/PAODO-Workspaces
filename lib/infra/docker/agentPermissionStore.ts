@@ -20,6 +20,7 @@ import {
   EMPTY_PERMISSIONS,
   PolicyError,
   type AgentPermissions,
+  type MountTopology,
   type PolicyProbes,
 } from "./agentPermissions";
 
@@ -222,32 +223,36 @@ function realProbes(workspaceDir: string): PolicyProbes {
  * Compose the extra `docker run` args that enforce this workspace's permissions, materializing any
  * deny-read stub assets on the host first. Returns [] when nothing is restricted.
  *
- * @param isVolumeMounted true when the base mount is a Docker named volume (production). The mount
- *   sources here are app-container paths the daemon cannot see in that mode, so restrictions are not
- *   yet supported there — we throw rather than emit mounts that would silently fail to protect.
- * @throws PolicyError on a corrupt store, an unresolvable path, or volume-mode-with-restrictions.
+ * @param volumeName the Docker named volume backing the workspaces root, or "" in dev (bind mode).
+ *   In volume mode the daemon cannot address the app-container source paths directly, so restrictions
+ *   are emitted as `volume-subpath` mounts — both the workspace files and the deny-read stubs live
+ *   inside that same volume (stubs under `.agent-permissions/...`, relative to WORKSPACES_ROOT).
+ * @throws PolicyError on a corrupt store or an unresolvable path (fail-closed: the caller refuses to
+ *   start the container rather than run unrestricted).
  */
 export function composeAgentMounts(
   workspaceId: string,
   workspaceDir: string,
-  isVolumeMounted: boolean,
+  volumeName: string,
 ): string[] {
   const perms = loadPermissions(workspaceId);
   if (!hasRestrictions(perms)) return [];
 
-  if (isVolumeMounted) {
-    // Fail closed: never run with restrictions configured but unenforced. Volume-subpath translation
-    // is the next slice (see ADR rename-brittleness / topology notes).
-    throw new PolicyError(
-      `agent file restrictions are set for ${workspaceId} but the volume-mount topology (WORKSPACES_VOLUME_NAME) does not yet support them — refusing to start unrestricted`,
-    );
-  }
+  const topology: MountTopology = volumeName
+    ? {
+        mode: "volume",
+        volumeName,
+        workspaceSubdir: path.basename(workspaceDir),
+        stubSubpathOf: (hostPath) => path.relative(WORKSPACES_ROOT, hostPath),
+      }
+    : { mode: "bind" };
 
   const { args, stubs } = buildRestrictionMounts(
     workspaceDir,
     stubRoot(workspaceId),
     perms,
     realProbes(workspaceDir),
+    topology,
   );
 
   for (const stub of stubs) {

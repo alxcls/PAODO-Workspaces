@@ -55,9 +55,11 @@ describe("permission store", () => {
 });
 
 describe("composeAgentMounts", () => {
+  const VOL = "paodo_ws_workspaces";
+
   it("returns [] when nothing is restricted", () => {
     const dir = makeWorkspace("empty");
-    expect(store.composeAgentMounts("empty", dir, false)).toEqual([]);
+    expect(store.composeAgentMounts("empty", dir, "")).toEqual([]);
   });
 
   it("materializes deny-read stubs and emits deny-read + deny-edit mount args (bind mode)", () => {
@@ -65,7 +67,7 @@ describe("composeAgentMounts", () => {
     store.savePermissions("ws2", {
       denyRead: ["secret.txt", "private"], denyEdit: ["config.yaml"], privilegedScripts: [],
     });
-    const args = store.composeAgentMounts("ws2", dir, false);
+    const args = store.composeAgentMounts("ws2", dir, "");
 
     // deny-read file -> ro stub bind; deny-read dir -> ro stub-dir bind; deny-edit -> ro self-bind.
     const joined = args.join(" ");
@@ -81,15 +83,45 @@ describe("composeAgentMounts", () => {
     expect(dirReadme).toContain("restricted");
   });
 
-  it("FAILS CLOSED in volume mode when restrictions are set", () => {
+  it("emits volume-subpath mounts (and still writes stubs) in volume mode", () => {
     const dir = makeWorkspace("ws3");
-    store.savePermissions("ws3", { denyRead: ["secret.txt"], denyEdit: [], privilegedScripts: [] });
-    expect(() => store.composeAgentMounts("ws3", dir, true)).toThrow(PolicyError);
+    store.savePermissions("ws3", {
+      denyRead: ["secret.txt", "private"], denyEdit: ["config.yaml"], privilegedScripts: [],
+    });
+    const args = store.composeAgentMounts("ws3", dir, VOL);
+    const joined = args.join(" ");
+
+    // No host-bind (`-v`) args at all — everything is addressed through the named volume.
+    expect(args).not.toContain("-v");
+    // deny-edit -> real file by subpath under the workspace dir, read-only.
+    expect(joined).toContain(
+      `type=volume,source=${VOL},target=/workspace/config.yaml,volume-subpath=ws3/config.yaml,readonly`,
+    );
+    // deny-read file/dir -> the STUB asset by its subpath under .agent-permissions, read-only.
+    expect(joined).toContain(
+      `target=/workspace/secret.txt,volume-subpath=.agent-permissions/ws3/stubs/read/${encodeURIComponent("secret.txt")},readonly`,
+    );
+    expect(joined).toContain(
+      "target=/workspace/private,volume-subpath=.agent-permissions/ws3/stubs/readdir/private,readonly",
+    );
+
+    // Stubs are still materialized on disk (inside the volume) so the daemon can mount them.
+    const stubRoot = path.join(TMP, ".agent-permissions", "ws3", "stubs");
+    expect(fs.readFileSync(path.join(stubRoot, "read", encodeURIComponent("secret.txt")), "utf-8")).toContain("restricted");
+    expect(fs.readFileSync(path.join(stubRoot, "readdir", "private", "README"), "utf-8")).toContain("restricted");
   });
 
   it("allows volume mode when nothing is restricted", () => {
     const dir = makeWorkspace("ws4");
-    expect(store.composeAgentMounts("ws4", dir, true)).toEqual([]);
+    expect(store.composeAgentMounts("ws4", dir, VOL)).toEqual([]);
+  });
+
+  it("still fails closed on a corrupt store in volume mode", () => {
+    const file = store.permissionsPath("ws5");
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, "{ not json");
+    const dir = makeWorkspace("ws5");
+    expect(() => store.composeAgentMounts("ws5", dir, VOL)).toThrow(PolicyError);
   });
 });
 

@@ -42,6 +42,46 @@ export interface RestrictionMounts {
   stubs: StubAsset[];
 }
 
+/**
+ * How a restriction source is reachable by the Docker daemon — the ONLY thing that differs between
+ * dev and prod. The policy decisions (which paths, stub vs real, nlink/coveredBy rules) are identical.
+ *
+ * - `bind`:   dev. The app runs on the host, so the daemon can bind a host path directly (`-v src:dst:ro`).
+ * - `volume`: prod. The workspace lives in a Docker named volume the daemon cannot address by host
+ *   path. But the workspace files AND the deny-read stubs both live inside that same volume, so each
+ *   source is reachable as a `volume-subpath` (matching the base `/workspace` mount).
+ */
+export type MountTopology =
+  | { mode: "bind" }
+  | {
+      mode: "volume";
+      /** The Docker named volume backing the workspaces root. */
+      volumeName: string;
+      /** Subpath (relative to the volume root) of the workspace dir itself, e.g. "<workspaceId>". */
+      workspaceSubdir: string;
+      /** Maps an absolute stub hostPath to its subpath relative to the volume root. */
+      stubSubpathOf: (hostPath: string) => string;
+    };
+
+/** Emit one read-only mount over `target`. In bind mode the daemon sees `hostPath`; in volume mode it
+ *  sees `volumeSubpath` inside the named volume (the two address the same bytes by different routes). */
+function pushReadonlyMount(
+  args: string[],
+  topology: MountTopology,
+  target: string,
+  hostPath: string,
+  volumeSubpath: string,
+): void {
+  if (topology.mode === "bind") {
+    args.push("-v", `${hostPath}:${target}:ro`);
+  } else {
+    args.push(
+      "--mount",
+      `type=volume,source=${topology.volumeName},target=${target},volume-subpath=${volumeSubpath},readonly`,
+    );
+  }
+}
+
 /** Filesystem kind of a workspace-relative path, as probed on the host volume. */
 export type PathKind = "file" | "dir" | "missing";
 
@@ -98,6 +138,7 @@ function coveredBy(set: Set<string>, rel: string): boolean {
  * @param stubRoot     absolute host dir, OUTSIDE any workspace mount, to hold deny-read stubs.
  * @param perms        the resolved permission store.
  * @param probes       host filesystem probes (statKind / nlinkOf).
+ * @param topology     how the daemon reaches each source — bind (dev) or volume-subpath (prod).
  * @throws PolicyError on any missing path, unsafe path, or multi-linked deny-read file — caller
  *         must fail closed.
  */
@@ -106,6 +147,7 @@ export function buildRestrictionMounts(
   stubRoot: string,
   perms: AgentPermissions,
   probes: PolicyProbes,
+  topology: MountTopology = { mode: "bind" },
 ): RestrictionMounts {
   const args: string[] = [];
   const stubs: StubAsset[] = [];
@@ -126,13 +168,15 @@ export function buildRestrictionMounts(
       }
       const stub = stubPathFor(stubRoot, "read", rel);
       stubs.push({ hostPath: stub, content: STUB_FILE_BODY });
-      args.push("-v", `${stub}:${target}:ro`);
+      pushReadonlyMount(args, topology, target, stub,
+        topology.mode === "volume" ? topology.stubSubpathOf(stub) : "");
     } else if (kind === "dir") {
       // Read-only bind of a stub dir (README only): real entries vanish, README explains. Chosen
       // over a ro tmpfs, which cannot be pre-seeded with the README (spike-confirmed).
       const stubDir = stubPathFor(stubRoot, "readdir", rel);
       stubs.push({ hostPath: path.join(stubDir, "README"), content: STUB_DIR_README });
-      args.push("-v", `${stubDir}:${target}:ro`);
+      pushReadonlyMount(args, topology, target, stubDir,
+        topology.mode === "volume" ? topology.stubSubpathOf(stubDir) : "");
     } else {
       throw new PolicyError(`deny-read path ${JSON.stringify(rel)} does not exist on the workspace volume`);
     }
@@ -150,7 +194,8 @@ export function buildRestrictionMounts(
       throw new PolicyError(`deny-edit path ${JSON.stringify(rel)} does not exist on the workspace volume`);
     }
     const source = path.join(workspaceDir, rel);
-    args.push("-v", `${source}:/workspace/${rel}:ro`);
+    pushReadonlyMount(args, topology, `/workspace/${rel}`, source,
+      topology.mode === "volume" ? path.posix.join(topology.workspaceSubdir, rel) : "");
   }
 
   return { args, stubs };

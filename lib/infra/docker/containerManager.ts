@@ -218,7 +218,7 @@ export class ContainerManager implements IContainerManager {
       // Agent file-restriction mounts composed from the permission store (deny-read stubs, deny-edit
       // :ro binds). These ARE the policy — kernel-enforced, not a tool check. Throws (fail-closed) on
       // a corrupt store or unresolvable path, aborting the run rather than starting unrestricted.
-      ...composeAgentMounts(workspaceId, workspaceDir, Boolean(WORKSPACES_VOLUME_NAME)),
+      ...composeAgentMounts(workspaceId, workspaceDir, WORKSPACES_VOLUME_NAME),
       ...(hash ? ["--label", `${HASH_LABEL}=${hash}`] : []),
       "--label", `${PERMS_LABEL}=${permsHash}`,
       // Drop all Linux capabilities, then add back only the minimal set dpkg/apt and the chown sweep

@@ -5,11 +5,13 @@
 // emits them — and refuses, never silently allows, on the ambiguous inputs that sank prior drafts.
 
 import { describe, it, expect } from "vitest";
+import path from "path";
 import {
   buildRestrictionMounts,
   PolicyError,
   EMPTY_PERMISSIONS,
   type AgentPermissions,
+  type MountTopology,
   type PolicyProbes,
   type PathKind,
 } from "./agentPermissions";
@@ -120,5 +122,58 @@ describe("buildRestrictionMounts", () => {
       .toThrow(PolicyError);
     expect(() => buildRestrictionMounts(WS, STUBS, perms({ denyRead: ["/etc/passwd"] }), probes({})))
       .toThrow(PolicyError);
+  });
+});
+
+describe("buildRestrictionMounts (volume topology)", () => {
+  // The volume root is /data; WS and STUBS both live under it, so subpaths are their /data-relative paths.
+  const VOL = "paodo_ws_workspaces";
+  const VOLUME: MountTopology = {
+    mode: "volume",
+    volumeName: VOL,
+    workspaceSubdir: path.basename(WS), // "ws_abc"
+    stubSubpathOf: (p) => path.relative("/data", p),
+  };
+
+  it("renders volume-subpath mounts instead of host binds — same policy, different syntax", () => {
+    const out = buildRestrictionMounts(
+      WS, STUBS,
+      perms({ denyRead: ["secrets/key.txt", "private"], denyEdit: ["config.yaml"] }),
+      probes({ "secrets/key.txt": "file", private: "dir", "config.yaml": "file" }),
+      VOLUME,
+    );
+    // No host-bind syntax leaks through.
+    expect(out.args).not.toContain("-v");
+    expect(out.args).toEqual([
+      // deny-read file -> the STUB asset, by its /data-relative subpath, read-only.
+      "--mount",
+      `type=volume,source=${VOL},target=/workspace/secrets/key.txt,volume-subpath=.agent-permissions/ws_abc/stubs/read/secrets%2Fkey.txt,readonly`,
+      // deny-read dir -> the stub dir.
+      "--mount",
+      `type=volume,source=${VOL},target=/workspace/private,volume-subpath=.agent-permissions/ws_abc/stubs/readdir/private,readonly`,
+      // deny-edit -> the REAL file under the workspace subdir.
+      "--mount",
+      `type=volume,source=${VOL},target=/workspace/config.yaml,volume-subpath=ws_abc/config.yaml,readonly`,
+    ]);
+    // Stub assets are emitted exactly as in bind mode (the caller materializes them into the volume).
+    expect(out.stubs).toHaveLength(2);
+  });
+
+  it("keeps the fail-closed rules in volume mode (missing path throws)", () => {
+    expect(() => buildRestrictionMounts(WS, STUBS, perms({ denyRead: ["gone.txt"] }), probes({}), VOLUME))
+      .toThrow(PolicyError);
+  });
+
+  it("keeps the deny-read-covers-deny-edit dedupe in volume mode", () => {
+    const out = buildRestrictionMounts(
+      WS, STUBS,
+      perms({ denyRead: ["skills"], denyEdit: ["skills"] }),
+      probes({ skills: "dir" }),
+      VOLUME,
+    );
+    expect(out.args).toEqual([
+      "--mount",
+      `type=volume,source=${VOL},target=/workspace/skills,volume-subpath=.agent-permissions/ws_abc/stubs/readdir/skills,readonly`,
+    ]);
   });
 });

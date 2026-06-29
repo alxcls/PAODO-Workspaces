@@ -63,6 +63,18 @@ container (re)create time.** The store is the source of truth; the mounts *are* 
   child deletion). Both kernel-enforced and spike-confirmed.
 - Everything else passes through read-write.
 
+**Two render topologies, one policy (dev bind vs prod volume-subpath).** The rows above describe the
+*mechanics*; how the daemon reaches each source depends on the deployment. In **dev** the app runs on
+the host, so sources are host paths bound directly (`-v src:dst:ro`). In **production** the workspace
+lives in a Docker named volume the daemon cannot address by host path — so the same mounts are emitted
+as **`--mount type=volume,…,volume-subpath=…,readonly`**, nested under the base `/workspace` mount
+(Docker orders mounts by target depth, so children mount over the parent). This works because the
+workspace files **and** the deny-read stubs both live inside that one volume (stubs under
+`.agent-permissions/<id>/stubs/…`, relative to `WORKSPACES_ROOT`, which *is* the volume). The policy
+core (`buildRestrictionMounts`) takes a `topology` descriptor and renders either syntax; all the
+fail-closed rules are identical. File-level `volume-subpath` (not just dir-level, as the base mount
+uses) was validated against a real daemon, and an integration test drives `docker run` in volume mode.
+
 **Why arbitrary shell cannot bypass this.** `execute_command` runs arbitrary `bash -c` as uid 1000 —
 preserved, and precisely why enforcement must be kernel-level, not in tool code (the shell defeats any
 tool check by `cat`/`python`-ing the file). Yet uid 1000 cannot alter the topology: `umount`/`unshare
@@ -80,7 +92,10 @@ container — which normally destroys the writable layer (apt `/usr`,`/var`,`/et
 only live processes and unexported env are lost. Trigger split (distinct paths in `_ensureContainer`,
 not a conflict): a **flip** recreates from the per-workspace snapshot (deps kept); a
 **`Dockerfile.workspace` hash change** still recreates from the fresh base (deps rebuild) so platform
-updates land. Spike-confirmed (Notes).
+updates land. Spike-confirmed (Notes). **Socket-proxy requirement:** `docker commit` is a distinct
+proxy endpoint — the proxy must set `COMMIT: 1` (alongside `CONTAINERS`/`IMAGES`/`POST`), or the commit
+is `403`-forbidden and deps silently rebuild from base on every flip. Best-effort: a failed commit logs
+and falls back to the base image rather than blocking the flip.
 
 **Privileged execution — app-brokered, runs against the host volume (privilege by location).** The
 agent invokes a tool that supplies **only a registered script path** — no command string, no

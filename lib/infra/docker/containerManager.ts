@@ -76,6 +76,14 @@ export class ContainerManager implements IContainerManager {
   private idleTimers = new Map<string, ReturnType<typeof setTimeout>>();
   // Prevents concurrent docker run/start calls for the same workspace.
   private startLocks = new Map<string, Promise<void>>();
+  // Commands currently executing per workspace, counted from request (before ensure) to exec
+  // completion. A flip (commit-preserving recreate) must NOT overlap an in-flight command: the
+  // recreate would tear the container out from under it, and a commit could capture a half-written
+  // dep layer. So an eager flip requested mid-command is deferred until this drains to zero.
+  private inflight = new Map<string, number>();
+  // Set when a permission change requested an eager flip but a command was in flight. Fires on the
+  // drain to zero in-flight. Value is the workspaceDir needed to recompose mounts on recreate.
+  private flipPending = new Map<string, string>();
 
   private containerName(workspaceId: string): string {
     return `ws_${workspaceId}`;
@@ -258,6 +266,70 @@ export class ContainerManager implements IContainerManager {
     return p;
   }
 
+  private incInflight(workspaceId: string): void {
+    this.inflight.set(workspaceId, (this.inflight.get(workspaceId) ?? 0) + 1);
+  }
+
+  // Decrement the in-flight count; when it hits zero, fire any flip deferred while commands ran.
+  private decInflight(workspaceId: string): void {
+    const next = (this.inflight.get(workspaceId) ?? 1) - 1;
+    if (next > 0) {
+      this.inflight.set(workspaceId, next);
+      return;
+    }
+    this.inflight.delete(workspaceId);
+    const dir = this.flipPending.get(workspaceId);
+    if (dir !== undefined) {
+      this.flipPending.delete(workspaceId);
+      void this.flip(workspaceId, dir);
+    }
+  }
+
+  // Wrap a command (ensure + exec) so it counts against in-flight for the whole span. Incrementing
+  // BEFORE ensure() means a concurrent requestFlip sees the command and defers, rather than racing
+  // the recreate against the about-to-start exec.
+  private async withInflight<T>(workspaceId: string, fn: () => Promise<T>): Promise<T> {
+    this.incInflight(workspaceId);
+    try {
+      return await fn();
+    } finally {
+      this.decInflight(workspaceId);
+    }
+  }
+
+  /** Perform an eager commit-preserving recreate now, doing the expensive commit+recreate off the
+   *  command critical path. Delegates to ensure(), whose _ensureContainer detects the perms-label
+   *  mismatch and does exactly one commit+recreate (a no-op when the label already matches, e.g. a
+   *  command already flipped lazily). Errors are logged, never thrown — the lazy backstop in ensure()
+   *  still flips on the next command if this fails. */
+  private async flip(workspaceId: string, workspaceDir: string): Promise<void> {
+    try {
+      await this.ensure(workspaceId, workspaceDir);
+      log.debug({ workspaceId }, "eager flip applied");
+    } catch (err) {
+      log.warn({ workspaceId, err: String(err) }, "eager flip failed (will apply lazily on next command)");
+    }
+  }
+
+  /** Eagerly apply a permission change (commit-preserving recreate) instead of waiting for the next
+   *  command to trigger it lazily — moving the commit+recreate cost off the command critical path.
+   *  Fire-and-forget: the permission PATCH handler does not await the flip.
+   *
+   *  Idle-gated: the recreate tears the container down, so it must not overlap an in-flight command.
+   *  If one is running the flip is deferred and fires when the workspace drains to zero in-flight.
+   *  Only acts on a RUNNING container — a stopped/missing one is recreated correctly by the next
+   *  command's ensure() anyway, and waking it eagerly would waste resources. */
+  async requestFlip(workspaceId: string, workspaceDir: string): Promise<void> {
+    const status = await this.getContainerStatus(workspaceId);
+    if (status !== "running") return;
+    if ((this.inflight.get(workspaceId) ?? 0) > 0) {
+      this.flipPending.set(workspaceId, workspaceDir);
+      log.debug({ workspaceId }, "flip deferred until workspace idle (command in flight)");
+      return;
+    }
+    void this.flip(workspaceId, workspaceDir);
+  }
+
   /**
    * Run a non-streaming command inside the workspace container via docker exec.
    * Ensures the container is running first (idempotent, resets idle timer).
@@ -270,11 +342,22 @@ export class ContainerManager implements IContainerManager {
     cmdArgs: string[],
     opts: { stdin?: string } = {},
   ) {
-    await this.ensure(workspaceId, workspaceDir);
-    return this.docker.exec(this.containerName(workspaceId), cmdArgs, { stdin: opts.stdin });
+    return this.withInflight(workspaceId, async () => {
+      await this.ensure(workspaceId, workspaceDir);
+      return this.docker.exec(this.containerName(workspaceId), cmdArgs, { stdin: opts.stdin });
+    });
   }
 
   async execStreaming(
+    workspaceId: string,
+    workspaceDir: string,
+    cmdArgs: string[],
+    opts: { onStdout: (chunk: string) => void; onStderr: (chunk: string) => void; signal?: AbortSignal },
+  ): Promise<{ code: number | null }> {
+    return this.withInflight(workspaceId, () => this._execStreaming(workspaceId, workspaceDir, cmdArgs, opts));
+  }
+
+  private async _execStreaming(
     workspaceId: string,
     workspaceDir: string,
     cmdArgs: string[],
@@ -333,10 +416,12 @@ export class ContainerManager implements IContainerManager {
   // packages. cmdArgs are passed as argv (no shell), so callers must still validate untrusted input.
   // The regular agent shell (exec / execute_command) never runs as root.
   async execAsRoot(workspaceId: string, workspaceDir: string, cmdArgs: string[]) {
-    await this.ensure(workspaceId, workspaceDir);
-    return this.docker.exec(this.containerName(workspaceId), cmdArgs, {
-      asRoot: true,
-      trimStdout: true,
+    return this.withInflight(workspaceId, async () => {
+      await this.ensure(workspaceId, workspaceDir);
+      return this.docker.exec(this.containerName(workspaceId), cmdArgs, {
+        asRoot: true,
+        trimStdout: true,
+      });
     });
   }
 
@@ -441,6 +526,7 @@ const _manager = new ContainerManager();
 export const defaultContainerManager = _manager;
 
 export const ensureContainer        = (id: string, dir: string)                                        => _manager.ensure(id, dir);
+export const requestContainerFlip   = (id: string, dir: string)                                        => _manager.requestFlip(id, dir);
 export const dockerExec             = (id: string, dir: string, cmd: string[], opts?: { stdin?: string }) => _manager.exec(id, dir, cmd, opts);
 export const dockerExecAsRoot       = (id: string, dir: string, cmd: string[])                         => _manager.execAsRoot(id, dir, cmd);
 export const dockerExecStreaming    = (id: string, dir: string, cmd: string[], opts: { onStdout: (chunk: string) => void; onStderr: (chunk: string) => void }) => _manager.execStreaming(id, dir, cmd, opts);

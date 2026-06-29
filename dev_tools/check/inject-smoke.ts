@@ -28,6 +28,7 @@ const execCalls: string[][] = [];
 const ok = (stdout: string): DockerResult => ({ stdout, stderr: "", code: 0 });
 const fakeContainers: IContainerManager = {
   ensure: async () => {},
+  requestFlip: async () => {},
   exec: async (_id, _dir, cmd) => {
     execCalls.push(cmd);
     return ok("hello from fake container\n");

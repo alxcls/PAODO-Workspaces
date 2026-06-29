@@ -74,6 +74,11 @@ export interface IWorkspaceVersioning {
 
 export interface IContainerManager {
   ensure(workspaceId: string, workspaceDir: string): Promise<void>;
+  /** Eagerly apply a permission change (commit-preserving recreate) off the command critical path,
+   *  instead of waiting for the next command to trigger it lazily. Fire-and-forget and idle-gated:
+   *  defers until no command is in flight. A stopped/missing container is left for the next command's
+   *  ensure() to recreate correctly. Safe to call when nothing changed (no-op). */
+  requestFlip(workspaceId: string, workspaceDir: string): Promise<void>;
   exec(
     workspaceId: string,
     workspaceDir: string,

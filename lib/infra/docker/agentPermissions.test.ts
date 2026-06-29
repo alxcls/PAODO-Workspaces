@@ -98,14 +98,16 @@ describe("buildRestrictionMounts", () => {
 
   // --- fail-closed rules: every one must THROW, never emit a pass-through ---
 
-  it("FAILS CLOSED on a missing deny-read path", () => {
-    expect(() => buildRestrictionMounts(WS, STUBS, perms({ denyRead: ["gone.txt"] }), probes({})))
-      .toThrow(PolicyError);
+  it("skips a missing deny-read path (file deleted after restriction was set)", () => {
+    const out = buildRestrictionMounts(WS, STUBS, perms({ denyRead: ["gone.txt"] }), probes({}));
+    expect(out.args).toEqual([]);
+    expect(out.stubs).toEqual([]);
   });
 
-  it("FAILS CLOSED on a missing deny-edit path", () => {
-    expect(() => buildRestrictionMounts(WS, STUBS, perms({ denyEdit: ["gone.txt"] }), probes({})))
-      .toThrow(PolicyError);
+  it("skips a missing deny-edit path (file deleted after restriction was set)", () => {
+    const out = buildRestrictionMounts(WS, STUBS, perms({ denyEdit: ["gone.txt"] }), probes({}));
+    expect(out.args).toEqual([]);
+    expect(out.stubs).toEqual([]);
   });
 
   it("FAILS CLOSED on a deny-read file with st_nlink>1 (hardlink would leak)", () => {
@@ -159,9 +161,10 @@ describe("buildRestrictionMounts (volume topology)", () => {
     expect(out.stubs).toHaveLength(2);
   });
 
-  it("keeps the fail-closed rules in volume mode (missing path throws)", () => {
-    expect(() => buildRestrictionMounts(WS, STUBS, perms({ denyRead: ["gone.txt"] }), probes({}), VOLUME))
-      .toThrow(PolicyError);
+  it("skips missing paths in volume mode (same as bind mode)", () => {
+    const out = buildRestrictionMounts(WS, STUBS, perms({ denyRead: ["gone.txt"] }), probes({}), VOLUME);
+    expect(out.args).toEqual([]);
+    expect(out.stubs).toEqual([]);
   });
 
   it("keeps the deny-read-covers-deny-edit dedupe in volume mode", () => {

@@ -178,7 +178,9 @@ export function buildRestrictionMounts(
       pushReadonlyMount(args, topology, target, stubDir,
         topology.mode === "volume" ? topology.stubSubpathOf(stubDir) : "");
     } else {
-      throw new PolicyError(`deny-read path ${JSON.stringify(rel)} does not exist on the workspace volume`);
+      // File was deleted after the restriction was set. Nothing to protect — skip rather than brick
+      // the workspace. "Fail closed" guards against read-write fallback, not against missing files.
+      continue;
     }
   }
 
@@ -191,7 +193,8 @@ export function buildRestrictionMounts(
     if (coveredBy(denyReadSet, rel)) continue;
     const kind = probes.statKind(rel);
     if (kind === "missing") {
-      throw new PolicyError(`deny-edit path ${JSON.stringify(rel)} does not exist on the workspace volume`);
+      // File was deleted after the restriction was set — nothing to protect, skip.
+      continue;
     }
     const source = path.join(workspaceDir, rel);
     pushReadonlyMount(args, topology, `/workspace/${rel}`, source,

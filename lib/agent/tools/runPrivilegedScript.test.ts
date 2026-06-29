@@ -44,7 +44,16 @@ describe("RunPrivilegedScriptTool", () => {
     const tool = new RunPrivilegedScriptTool("unreg", "/data/unreg", fakeContainers(run));
     const out = await tool.invoke({ script_path: "evil.sh" });
     expect(run).not.toHaveBeenCalled();
-    expect(out).toMatch(/not a registered privileged script/);
+    expect(out).toMatch(/not registered for execution/);
+  });
+
+  it("accepts a deny-read (hidden) script without an explicit privileged registration", async () => {
+    store.savePermissions("hidden", { denyRead: ["secret.sh"], denyEdit: [], privilegedScripts: [] });
+    const run = vi.fn().mockResolvedValue({ code: 0, stdout: "ran", stderr: "" });
+    const tool = new RunPrivilegedScriptTool("hidden", "/data/hidden", fakeContainers(run));
+    const out = await tool.invoke({ script_path: "secret.sh" });
+    expect(run).toHaveBeenCalledWith("hidden", "/data/hidden", "secret.sh");
+    expect(out).toContain("ran");
   });
 
   it("refuses a privileged script that is NOT locked (hand-edited store)", async () => {

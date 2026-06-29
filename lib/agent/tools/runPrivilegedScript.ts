@@ -48,9 +48,11 @@ A privileged script runs with full access to files that are otherwise hidden (de
       return `Error: could not read workspace permissions: ${err instanceof Error ? err.message : String(err)}`;
     }
 
-    // Ancestor-aware: privilege keyed on a folder trickles down to every script under it.
-    if (!policy.isPrivileged(relpath)) {
-      return `Error: ${script_path} is not a registered privileged script. Ask the user to grant it privilege (the key badge in the file tree) first.`;
+    // A script is runnable if the user made it privileged (key badge) OR hidden (deny-read). A hidden
+    // script is already unreadable and implicitly locked (isDenyEdit returns true for deny-read paths),
+    // so there is no extra security value in also requiring the key badge.
+    if (!policy.isPrivileged(relpath) && !policy.isDenyRead(relpath)) {
+      return `Error: ${script_path} is not registered for execution. Ask the user to either grant it privilege (the key badge) or hide it (the eye badge) in the file tree.`;
     }
 
     // Belt-and-suspenders against a hand-edited store: setPermission enforces privilege⟹lock at the

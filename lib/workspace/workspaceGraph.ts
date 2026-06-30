@@ -88,3 +88,13 @@ export function isCallee(workspaceId: string): boolean {
 export function isCaller(workspaceId: string): boolean {
   return cache.edges.some((e) => e.source === workspaceId);
 }
+
+/** Remove all edges and the position node for a deleted workspace. */
+export function removeWorkspaceFromGraph(workspaceId: string): void {
+  const edges = cache.edges.filter((e) => e.source !== workspaceId && e.target !== workspaceId);
+  const positions = { ...cache.positions };
+  delete positions[workspaceId];
+  if (edges.length === cache.edges.length && !(workspaceId in cache.positions)) return;
+  cache = { edges, positions };
+  atomicSaveJson(GRAPH_FILE, cache);
+}

@@ -2,6 +2,12 @@
 // GET returns its metadata; DELETE removes it from the registry and deletes its directory from disk.
 import { type NextRequest, NextResponse } from "next/server";
 import { getStore, getContainers, getVersioning } from "@/lib/infra/services";
+import { disconnectWorkspace } from "@/lib/workspace/driveStore";
+import { removeWorkspaceFromGraph } from "@/lib/workspace/workspaceGraph";
+import { deleteKey } from "@/lib/infra/security/apiKeyStore";
+import { rm } from "fs/promises";
+import path from "path";
+import { WORKSPACES_ROOT } from "@/lib/infra/paths";
 import { checkRateLimit } from "@/lib/infra/security/rateLimit";
 import { getClientIp } from "@/lib/infra/realtime/clientIp";
 import { createLogger } from "@/lib/infra/logger";
@@ -63,11 +69,16 @@ export async function DELETE(
   const ws = getStore().getWorkspace(id);
   if (!ws) return NextResponse.json({ deleted: false });
   await getStore().deleteWorkspace(id);
+  disconnectWorkspace(id);
+  removeWorkspaceFromGraph(id);
+  deleteKey(id);
   await Promise.all([
     getContainers().remove(id),
     getContainers().deleteWorkspaceDir(ws.dir),
     // Version history must not outlive the workspace.
     getVersioning().deleteRepo(id),
+    // Agent-permissions file written by the permission model — best-effort, may not exist.
+    rm(path.join(WORKSPACES_ROOT, ".agent-permissions", `${id}.json`), { force: true }),
   ]);
   return NextResponse.json({ deleted: true });
 }

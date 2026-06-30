@@ -55,6 +55,13 @@ export function revokeKey(workspaceId: string) {
   log.info({ workspaceId }, "api key revoked");
 }
 
+export function deleteKey(workspaceId: string) {
+  if (!(workspaceId in store)) return;
+  delete store[workspaceId];
+  save();
+  log.info({ workspaceId }, "api key deleted");
+}
+
 export function setEnabled(workspaceId: string, enabled: boolean) {
   store[workspaceId] = { keyHash: store[workspaceId]?.keyHash ?? null, enabled };
   save();

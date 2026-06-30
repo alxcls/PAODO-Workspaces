@@ -13,6 +13,10 @@ export interface TreeNode {
   type: "file" | "directory";
   path: string;
   children?: TreeNode[];
+  // Agent permission state (workspace tree only). Drives don't set these.
+  locked?: boolean;
+  hidden?: boolean;
+  privileged?: boolean;
 }
 
 interface Options {

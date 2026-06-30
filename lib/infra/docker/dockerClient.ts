@@ -6,7 +6,7 @@ export type DockerResult = { stdout: string; stderr: string; code: number };
 
 export interface IDockerClient {
   cmd(...args: string[]): Promise<DockerResult>;
-  exec(containerName: string, cmdArgs: string[], opts?: { stdin?: string; asRoot?: boolean; cwd?: string; trimStdout?: boolean }): Promise<DockerResult>;
+  exec(containerName: string, cmdArgs: string[], opts?: { stdin?: string; asRoot?: boolean; user?: string; cwd?: string; trimStdout?: boolean }): Promise<DockerResult>;
   build(buildArgs: string[], dockerfile: Buffer): Promise<void>;
 }
 
@@ -56,7 +56,8 @@ export class DockerClient implements IDockerClient {
 
   /**
    * docker exec inside a running container.
-   * - asRoot=true  → adds -u 0
+   * - asRoot=true  → runs as uid 0 (sugar for user:"0")
+   * - user         → -u <user> (uid or name, e.g. "privd"); takes precedence over asRoot
    * - cwd          → -w flag (default /workspace)
    * - trimStdout   → default false so file reads preserve trailing newlines;
    *                  pass true for commands where stdout is a short scalar (e.g. apt-get).
@@ -64,11 +65,12 @@ export class DockerClient implements IDockerClient {
   exec(
     containerName: string,
     cmdArgs: string[],
-    opts: { stdin?: string; asRoot?: boolean; cwd?: string; trimStdout?: boolean } = {},
+    opts: { stdin?: string; asRoot?: boolean; user?: string; cwd?: string; trimStdout?: boolean } = {},
   ): Promise<DockerResult> {
-    const { stdin, asRoot = false, cwd = "/workspace", trimStdout = false } = opts;
+    const { stdin, asRoot = false, user, cwd = "/workspace", trimStdout = false } = opts;
     const args = ["exec", "-i"];
-    if (asRoot) args.push("-u", "0");
+    const asUser = user ?? (asRoot ? "0" : undefined);
+    if (asUser !== undefined) args.push("-u", asUser);
     args.push("-w", cwd, containerName, ...cmdArgs);
     return this._spawn(args, { stdin, trimStdout });
   }

@@ -5,17 +5,24 @@ import { getStore } from "@/lib/infra/services";
 import fs from "fs/promises";
 import path from "path";
 import { createLogger } from "@/lib/infra/logger";
+import { getPermissions, type WorkspacePermissions } from "@/lib/infra/permissionStore";
 
 export interface TreeNode {
   name: string;
   type: "file" | "directory";
   path: string;
   children?: TreeNode[];
+  // Permission state, so the tree can render the lock/eye/key badges. Absent = unprotected.
+  locked?: boolean;
+  hidden?: boolean;
+  privileged?: boolean;
 }
 
 const IGNORED = [".git", "__pycache__", ".mypy_cache", ".pytest_cache", ".ruff_cache"];
 
 async function buildTree(
+  rootDir: string,
+  perms: WorkspacePermissions,
   dirPath: string,
   depth = 0
 ): Promise<TreeNode[]> {
@@ -32,15 +39,22 @@ async function buildTree(
   const nodes: TreeNode[] = [];
   for (const e of filtered) {
     const fullPath = path.join(dirPath, e.name);
+    const rel = path.relative(rootDir, fullPath);
+    const state = {
+      locked: perms.locked.includes(rel) || undefined,
+      hidden: perms.hidden.includes(rel) || undefined,
+      privileged: perms.privileged.includes(rel) || undefined,
+    };
     if (e.isDirectory()) {
       nodes.push({
         name: e.name,
         type: "directory",
         path: fullPath,
-        children: await buildTree(fullPath, depth + 1),
+        ...state,
+        children: await buildTree(rootDir, perms, fullPath, depth + 1),
       });
     } else {
-      nodes.push({ name: e.name, type: "file", path: fullPath });
+      nodes.push({ name: e.name, type: "file", path: fullPath, ...state });
     }
   }
 
@@ -54,6 +68,6 @@ export async function GET(
   const { id } = await params;
   const ws = getStore().getWorkspace(id);
   if (!ws) return NextResponse.json({ error: "not found" }, { status: 404 });
-  const tree = await buildTree(ws.dir);
+  const tree = await buildTree(ws.dir, getPermissions(id), ws.dir);
   return NextResponse.json({ tree });
 }

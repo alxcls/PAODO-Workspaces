@@ -5,8 +5,11 @@
 
 import { StructuredTool } from "@langchain/core/tools";
 import { z } from "zod";
-import { normalizeRelpath } from "../pathUtils";
+import { normalizeRelpath, isPermissionDenied } from "../pathUtils";
 import type { ExecRunner } from "../interfaces";
+
+const HIDDEN_READ_HINT =
+  " — this file is hidden ([H]); its content is not readable by you (or any script you run). Ask the user to reveal it (eye icon in the file tree) if you genuinely need it.";
 
 const schema = z.object({
   file_path: z.string().describe("File path relative to workspace root"),
@@ -37,7 +40,7 @@ Use this instead of cat, head, or tail.
 
       if (offset === undefined && limit === undefined) {
         const r = await this.runner.exec(["cat", `/workspace/${relpath}`]);
-        if (r.code !== 0) return `Error: ${r.stderr || "file not found or unreadable"}`;
+        if (r.code !== 0) return `Error: ${r.stderr || "file not found or unreadable"}${isPermissionDenied(r.stderr) ? HIDDEN_READ_HINT : ""}`;
         const lines = r.stdout.split("\n");
         return header + lines.map((line, i) => `${i + 1}\t${line}`).join("\n");
       } else {
@@ -46,7 +49,7 @@ Use this instead of cat, head, or tail.
         const r = await this.runner.exec([
           "sed", "-n", `${startLine},${endLine}p`, `/workspace/${relpath}`,
         ]);
-        if (r.code !== 0) return `Error: ${r.stderr || "file not found or unreadable"}`;
+        if (r.code !== 0) return `Error: ${r.stderr || "file not found or unreadable"}${isPermissionDenied(r.stderr) ? HIDDEN_READ_HINT : ""}`;
         const start = offset ?? 0;
         const lines = r.stdout.split("\n");
         return header + lines.map((line, i) => `${start + i + 1}\t${line}`).join("\n");

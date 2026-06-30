@@ -14,37 +14,53 @@ RUN apt-get update && apt-get install -y \
     rm -rf /var/lib/apt/lists/* && \
     ln -sf /usr/bin/python3 /usr/bin/python
 
-# Single non-root runtime identity: `dev` at UID 1000 — the SAME uid as the app server's `node`
-# user, so files created by the agent on the shared workspace volume are owned 1000:1000 and the
-# app can read/write/delete them with no chown. The agent runs as this user for everything; it
-# cannot touch /root, /etc, or system files. ubuntu:24.04 ships a default `ubuntu` user at uid 1000,
-# so remove it first to free the uid.
+# Three-identity permission model (see doc/adr/accepted/adr-agent-permission-model.md):
+#
+#   uid 1000  node    group paodo(1000)               — app/owner side; not a workspace exec
+#                                                         identity, present only for ownership.
+#   uid 1001  agent   group paodo(1000)               — the LLM. Default `docker exec` user for ALL
+#                                                         file tools + execute_command. Owns toolchains.
+#   uid 1002  privd   groups privd(1002)+paodo(1000)  — runs privileged scripts; owns protected files.
+#
+# Two groups:
+#   paodo(1000) = {node, agent, privd}  — normal-file collaboration (group-writable 664 files).
+#   privd(1002) = {privd}               — used as the GROUP on locked/hidden/privileged files so the
+#                                         agent (NOT a member) falls to "other": read-only on locked,
+#                                         no access on hidden. The kernel — not the prompt — enforces it.
+#
+# ubuntu:24.04 ships a default `ubuntu` user at uid 1000, so remove it first to free the uid.
 RUN userdel -r ubuntu 2>/dev/null || true && \
-    groupadd -g 1000 dev && \
-    useradd -u 1000 -g 1000 -m -s /bin/bash dev
+    groupadd -g 1000 paodo && \
+    groupadd -g 1002 privd && \
+    useradd  -u 1000 -g 1000 -m -s /bin/bash node && \
+    useradd  -u 1001 -g 1000 -m -s /bin/bash agent && \
+    useradd  -u 1002 -g 1002 -G 1000 -m -s /bin/bash privd
 
 # System-package installs are NOT available from the agent's shell (it is non-root, and there is no
 # setuid sudo — `no-new-privileges` would disable it anyway). The `apt_install` agent tool installs
 # packages by running apt-get via `docker exec -u 0` from the app server, which controls Docker.
 
-# nvm + Node LTS — installed as `dev`, who owns the install dirs and can therefore add Node versions
+# nvm + Node LTS — installed as `agent`, who owns the install dirs and can therefore add Node versions
 # at runtime. Real binaries (not the nvm wrapper) are symlinked into /usr/local/bin so node/npm/npx
 # resolve in any shell without sourcing nvm.sh.
-ENV NVM_DIR=/home/dev/.nvm
-RUN su - dev -c "curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash" && \
-    su - dev -c ". $NVM_DIR/nvm.sh && nvm install --lts && nvm alias default node" && \
-    NVM_BIN=$(su - dev -c ". $NVM_DIR/nvm.sh && dirname \$(which node)") && \
+ENV NVM_DIR=/home/agent/.nvm
+RUN su - agent -c "curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash" && \
+    su - agent -c ". $NVM_DIR/nvm.sh && nvm install --lts && nvm alias default node" && \
+    NVM_BIN=$(su - agent -c ". $NVM_DIR/nvm.sh && dirname \$(which node)") && \
     ln -sf "$NVM_BIN/node" /usr/local/bin/node && \
     ln -sf "$NVM_BIN/npm"  /usr/local/bin/npm  && \
     ln -sf "$NVM_BIN/npx"  /usr/local/bin/npx
 
-# pyenv — owned by `dev`, who can install Python versions at runtime.
-ENV PYENV_ROOT=/home/dev/.pyenv
+# pyenv — owned by `agent`, who can install Python versions at runtime.
+ENV PYENV_ROOT=/home/agent/.pyenv
 ENV PATH=$PYENV_ROOT/shims:$PYENV_ROOT/bin:$PATH
 RUN git clone --depth=1 https://github.com/pyenv/pyenv.git $PYENV_ROOT && \
     cd $PYENV_ROOT && src/configure && make -C src && \
-    chown -R dev:dev $PYENV_ROOT
+    chown -R agent:paodo $PYENV_ROOT
 
-RUN mkdir -p /workspace && chown dev:dev /workspace
+# /workspace: setgid so children inherit group `paodo`, sticky so the agent cannot unlink files it
+# does not own (defends locked/hidden files against rm). Owned by node:paodo, group-writable so the
+# agent (in paodo) can still create and manage its own files.
+RUN mkdir -p /workspace && chown node:paodo /workspace && chmod 3775 /workspace
 WORKDIR /workspace
-USER dev
+USER agent

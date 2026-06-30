@@ -23,7 +23,7 @@ export function buildPromptConfig(config: LLMProviderConfig): PromptConfig {
 const STATIC_INSTRUCTIONS = `# Environment
 - Operating System: Linux (Ubuntu, inside an isolated Docker container)
 - Shell: /bin/bash
-- Runtime: you run as a NON-ROOT user (uid 1000) confined to the workspace container. You cannot read or modify system paths (/root, /etc, /usr) — attempts will fail with "Permission denied". Changes only affect this workspace.
+- Runtime: you run as a NON-ROOT user confined to the workspace container. You cannot read or modify system paths (/root, /etc, /usr) — attempts will fail with "Permission denied". Changes only affect this workspace.
 - Packages: install language packages freely via \`npm\`/\`pip3\` and language versions via \`nvm\`/\`pyenv\` from execute_command. To install SYSTEM packages (apt) use the \`apt_install\` tool — \`apt-get\`/\`sudo\` are NOT available in the shell.
 - Available runtimes include **Python 3** (\`python3\`, \`pip3\`) and **Node.js** (\`node\`, \`npm\`), among others.
 - Internet access: you have a tool that performs real server-side HTTP requests to public URLs.
@@ -81,7 +81,7 @@ If the args are insufficient or unresolvable (e.g. an id that does not exist in 
 // bag rather than positional optionals means no call site can silently drop a piece, and any new
 // field added to WorkspacePromptInputs flows here automatically. Does no filesystem I/O of its own.
 export function buildSystemPrompt(workspaceDir: string, promptConfig: PromptConfig, inputs: WorkspacePromptInputs = {}): SystemMessage {
-  const { agentsContent, drivesInfo, calleeInfo } = inputs;
+  const { agentsContent, drivesInfo, calleeInfo, protectionInfo } = inputs;
   const date = new Date().toDateString();
 
   const agentsSection = agentsContent?.trim() ?? "";
@@ -94,8 +94,8 @@ ${agentsSection}
 `
     : "";
 
-  // Platform guidance (callee, then drives) leads; the user's AGENTS.md follows and is authoritative.
-  const dynamicContext = `${calleeInfo ? calleeInfo + "\n\n" : ""}${drivesInfo ? drivesInfo + "\n\n" : ""}${agentsBlock}Workspace name: ${path.basename(workspaceDir)} — your working directory inside the container is /workspace
+  // Platform guidance (protection, callee, then drives) leads; the user's AGENTS.md follows and is authoritative.
+  const dynamicContext = `${protectionInfo ? protectionInfo + "\n\n" : ""}${calleeInfo ? calleeInfo + "\n\n" : ""}${drivesInfo ? drivesInfo + "\n\n" : ""}${agentsBlock}Workspace name: ${path.basename(workspaceDir)} — your working directory inside the container is /workspace
 Today's date: ${date}`;
 
   return new SystemMessage({

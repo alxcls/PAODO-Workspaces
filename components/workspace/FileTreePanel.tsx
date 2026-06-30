@@ -27,6 +27,67 @@ const ChevIcon = () => (
     <polyline points="9 18 15 12 9 6" />
   </svg>
 );
+const LockIcon = () => (
+  <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <rect x="3" y="11" width="18" height="11" rx="2" ry="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" />
+  </svg>
+);
+const EyeIcon = () => (
+  <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7z" /><circle cx="12" cy="12" r="3" />
+  </svg>
+);
+const KeyIcon = () => (
+  <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <circle cx="7.5" cy="15.5" r="4.5" /><path d="M10.7 12.3 21 2m-4 4 3 3m-6-1 3 3" />
+  </svg>
+);
+
+type PermControl = "lock" | "hide" | "privilege";
+
+async function setPermission(apiBase: string, path: string, control: PermControl, value: boolean): Promise<void> {
+  await fetch(`${apiBase}/permissions`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ path, control, value }),
+  });
+}
+
+// Three per-file toggles shown on hover (always shown when active). Lock = read-only to the agent,
+// Eye = hidden from the agent, Key = privileged script. The server enforces the coupling (key ⇒
+// lock), so we just re-fetch the tree after each toggle to reflect the authoritative state.
+const PermissionBadges = ({ node, apiBase, onChanged }: { node: TreeNode; apiBase: string; onChanged: () => void }) => {
+  const [busy, setBusy] = useState(false);
+  const toggle = async (control: PermControl, current: boolean) => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await setPermission(apiBase, node.path, control, !current);
+      onChanged();
+    } finally {
+      setBusy(false);
+    }
+  };
+  const badge = (active: boolean, title: string, onClick: () => void, icon: React.ReactNode) => (
+    <span
+      role="button"
+      title={title}
+      aria-pressed={active}
+      onClick={(e) => { e.stopPropagation(); onClick(); }}
+      className={`inline-flex items-center justify-center w-[18px] h-[18px] rounded-[3px] transition-[color,opacity] duration-[120ms]
+        ${active ? "text-primary bg-primary-tint" : "text-text-3 opacity-40 group-hover:opacity-100 hover:!opacity-100 hover:text-text"}`}
+    >
+      {icon}
+    </span>
+  );
+  return (
+    <span className="flex items-center gap-0.5 flex-shrink-0 pl-1">
+      {badge(!!node.locked, node.locked ? "Read-only to the agent — click to unlock" : "Make read-only to the agent", () => toggle("lock", !!node.locked), <LockIcon />)}
+      {badge(!!node.hidden, node.hidden ? "Hidden from the agent — click to reveal" : "Hide content from the agent", () => toggle("hide", !!node.hidden), <EyeIcon />)}
+      {badge(!!node.privileged, node.privileged ? "Privileged script — click to revoke" : "Mark as privileged script", () => toggle("privilege", !!node.privileged), <KeyIcon />)}
+    </span>
+  );
+};
 
 // ---- Helpers ----
 function getAllNodes(nodes: TreeNode[]): TreeNode[] {
@@ -68,10 +129,12 @@ interface TreeListProps {
   onToggle: (path: string) => void; activePath: string | null;
   selected: Set<string>; onSelect: (paths: string[], on: boolean) => void;
   onPick: (path: string) => void;
+  permissions: boolean; apiBase: string; onPermChanged: () => void;
 }
 
 const TreeNodeList = ({
   nodes, depth, expanded, onToggle, activePath, selected, onSelect, onPick,
+  permissions, apiBase, onPermChanged,
 }: TreeListProps) => {
   const sorted = [...nodes].sort((a, b) => {
     if (a.type !== b.type) return a.type === "directory" ? -1 : 1;
@@ -87,7 +150,7 @@ const TreeNodeList = ({
           return (
             <div key={node.path}>
               <button
-                className={`flex items-center w-full border-0 border-l-[3px] border-l-transparent bg-transparent py-[5px] pl-2 pr-2 text-[13.5px] text-text cursor-pointer text-left transition-[background,border-color,color] duration-[120ms] hover:bg-black/[.04] ${state !== "none" ? "bg-select-tint" : ""}`}
+                className={`group flex items-center w-full border-0 border-l-[3px] border-l-transparent bg-transparent py-[5px] pl-2 pr-2 text-[13.5px] text-text cursor-pointer text-left transition-[background,border-color,color] duration-[120ms] hover:bg-black/[.04] ${state !== "none" ? "bg-select-tint" : ""}`}
                 onClick={() => onToggle(node.path)}
               >
                 <Checkbox state={state} onClick={(e) => {
@@ -104,12 +167,14 @@ const TreeNodeList = ({
                   <span className="text-text-2 inline-flex flex-shrink-0"><FolderIcon /></span>
                   <span className="flex-1 whitespace-nowrap overflow-hidden text-ellipsis">{node.name}</span>
                 </div>
+                {permissions && <PermissionBadges node={node} apiBase={apiBase} onChanged={onPermChanged} />}
               </button>
               {isOpen && node.children && (
                 <TreeNodeList
                   nodes={node.children} depth={depth + 1} expanded={expanded}
                   onToggle={onToggle} activePath={activePath} selected={selected}
                   onSelect={onSelect} onPick={onPick}
+                  permissions={permissions} apiBase={apiBase} onPermChanged={onPermChanged}
                 />
               )}
             </div>
@@ -121,7 +186,7 @@ const TreeNodeList = ({
         return (
           <button
             key={node.path}
-            className={`flex items-center w-full border-0 border-l-[3px] bg-transparent py-[5px] pl-2 pr-2 text-[13.5px] cursor-pointer text-left transition-[background,border-color,color] duration-[120ms]
+            className={`group flex items-center w-full border-0 border-l-[3px] bg-transparent py-[5px] pl-2 pr-2 text-[13.5px] cursor-pointer text-left transition-[background,border-color,color] duration-[120ms]
               ${isActive
                 ? "bg-primary-tint border-l-primary text-primary"
                 : `border-l-transparent text-text hover:bg-black/[.04] ${isSel ? "bg-select-tint" : ""}`
@@ -136,6 +201,7 @@ const TreeNodeList = ({
               <span className={`inline-flex flex-shrink-0 ${isActive ? "text-primary" : "text-text-2"}`}><FileIcon /></span>
               <span className="flex-1 whitespace-nowrap overflow-hidden text-ellipsis">{node.name}</span>
             </div>
+            {permissions && <PermissionBadges node={node} apiBase={apiBase} onChanged={onPermChanged} />}
           </button>
         );
       })}
@@ -307,6 +373,7 @@ export default function FileTreePanel({
           nodes={tree} depth={0} expanded={expanded} onToggle={toggleExpanded}
           activePath={selectedPath} selected={selected} onSelect={handleSelect}
           onPick={onFileSelect}
+          permissions={base.startsWith("/api/workspaces")} apiBase={base} onPermChanged={fetchTree}
         />
       </div>
 

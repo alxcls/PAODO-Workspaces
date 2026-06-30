@@ -1,6 +1,7 @@
 // Agent tool that installs system (apt) packages into the workspace container.
 //
-// The agent's shell runs as a non-root user (uid 1000) and cannot `apt-get install` directly. This
+// The agent's shell runs as a non-root user (the `agent` identity) and cannot `apt-get install`
+// directly. This
 // tool is the single, auditable channel for system packages: it runs apt-get AS ROOT via
 // execAsRoot (docker exec -u 0 from the app server). To keep it from becoming an arbitrary
 // root shell, package names are strictly validated and passed as separate argv (no shell), so no

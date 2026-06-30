@@ -34,6 +34,7 @@ const fakeContainers: IContainerManager = {
   },
   execStreaming: async () => ({ code: 0 }),
   execAsRoot: async () => ok(""),
+  execAsPrivileged: async () => ok(""),
   stop: async () => {},
   remove: async () => {},
   getServerPort: async () => null,

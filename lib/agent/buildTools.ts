@@ -17,6 +17,7 @@ import { CompactContextTool } from "./tools/compactContext";
 import { WebFetchTool } from "./tools/webFetch";
 import { GlobTool } from "./tools/glob";
 import { ListDirectoryTool } from "./tools/listDirectory";
+import { RunPrivilegedScriptTool } from "./tools/runPrivilegedScript";
 import { AgentCallTool } from "./tools/agentCall";
 import { ListAgentsTool } from "./tools/listAgents";
 import { WorkspaceHistoryTool } from "./tools/workspaceHistory";
@@ -37,8 +38,9 @@ import type { AgentConfig, PrivilegedRunner, StreamingExecFn } from "./interface
 
 function makeContainerRunner(workspaceId: string, workspaceDir: string, containers: IContainerManager): PrivilegedRunner {
   return {
-    exec:       (cmd, opts) => containers.exec(workspaceId, workspaceDir, cmd, opts),
-    execAsRoot: (cmd)       => containers.execAsRoot(workspaceId, workspaceDir, cmd),
+    exec:             (cmd, opts) => containers.exec(workspaceId, workspaceDir, cmd, opts),
+    execAsRoot:       (cmd)       => containers.execAsRoot(workspaceId, workspaceDir, cmd),
+    execAsPrivileged: (cmd, opts) => containers.execAsPrivileged(workspaceId, workspaceDir, cmd, opts),
   };
 }
 
@@ -91,6 +93,7 @@ export function buildTools(
     new WebFetchTool(),
     new GlobTool(runner),
     new ListDirectoryTool(runner),
+    new RunPrivilegedScriptTool(workspaceId, runner),
     new WorkspaceHistoryTool(workspaceId, workspaceDir, versioning),
     // Signal-only: the runner performs the restore against the platform versioning (runner.ts).
     new WorkspaceRestoreTool(),

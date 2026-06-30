@@ -7,7 +7,7 @@ import { execFileSync } from "child_process";
 // INTEGRATION TEST — needs Docker + the `paodo-workspace` image.
 // Verifies the workspace container's confinement, i.e. the security posture an
 // agent runs under: non-root, no write access outside /workspace. This guards
-// the IMAGE config (USER dev in Dockerfile.workspace) and is run faithfully with
+// the IMAGE config (USER agent in Dockerfile.workspace) and is run faithfully with
 // the same hardening flags containerManager applies (--cap-drop ALL,
 // --security-opt no-new-privileges). Run via `npm run test:integration`.
 

@@ -86,7 +86,8 @@ export interface IContainerManager {
     cmdArgs: string[],
     opts: { onStdout: (chunk: string) => void; onStderr: (chunk: string) => void; signal?: AbortSignal },
   ): Promise<{ code: number | null }>;
-  execAsRoot(workspaceId: string, workspaceDir: string, cmdArgs: string[]): Promise<DockerResult>;
+  execAsRoot(workspaceId: string, workspaceDir: string, cmdArgs: string[], opts?: { stdin?: string }): Promise<DockerResult>;
+  execAsPrivileged(workspaceId: string, workspaceDir: string, cmdArgs: string[], opts?: { cwd?: string }): Promise<DockerResult>;
   stop(workspaceId: string): Promise<void>;
   remove(workspaceId: string): Promise<void>;
   getServerPort(workspaceId: string): Promise<number | null>;

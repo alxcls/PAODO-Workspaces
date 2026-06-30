@@ -8,8 +8,11 @@
 import { StructuredTool } from "@langchain/core/tools";
 import { z } from "zod";
 import path from "path";
-import { normalizeRelpath } from "../pathUtils";
+import { normalizeRelpath, isPermissionDenied } from "../pathUtils";
 import type { ExecRunner } from "../interfaces";
+
+const LOCKED_WRITE_HINT =
+  " — this file is read-only ([R]) or hidden ([H]). You cannot modify it, even via a script. Ask the user to unlock it (lock icon in the file tree), or run a privileged script with run_privileged_script if one is approved for this.";
 
 const schema = z.object({
   file_path: z.string().describe("File path relative to workspace root"),
@@ -45,7 +48,7 @@ export class FileEditTool extends StructuredTool<typeof schema> {
           if (mkdirR.code !== 0) return `Error: could not create directory: ${mkdirR.stderr}`;
         }
         const writeR = await this.runner.exec(["tee", `/workspace/${relpath}`], { stdin: new_string });
-        if (writeR.code !== 0) return `Error: ${writeR.stderr || "write failed"}`;
+        if (writeR.code !== 0) return `Error: ${writeR.stderr || "write failed"}${isPermissionDenied(writeR.stderr) ? LOCKED_WRITE_HINT : ""}`;
         return `Created ${file_path}`;
       } catch (err: unknown) {
         return `Error: ${err instanceof Error ? err.message : String(err)}`;
@@ -56,7 +59,7 @@ export class FileEditTool extends StructuredTool<typeof schema> {
     try {
       // stdout must NOT be trimmed (preserves trailing newlines for correct string matching)
       const readR = await this.runner.exec(["cat", `/workspace/${relpath}`]);
-      if (readR.code !== 0) return `Error: ${readR.stderr || "file not found or unreadable"}`;
+      if (readR.code !== 0) return `Error: ${readR.stderr || "file not found or unreadable"}${isPermissionDenied(readR.stderr) ? " — this file is hidden ([H]); its content is not readable. Ask the user to reveal it (eye icon) if you need it." : ""}`;
 
       const content = readR.stdout;
       if (!content.includes(old_string)) {
@@ -71,7 +74,7 @@ export class FileEditTool extends StructuredTool<typeof schema> {
         : content.replace(old_string, new_string);
 
       const writeR = await this.runner.exec(["tee", `/workspace/${relpath}`], { stdin: updated });
-      if (writeR.code !== 0) return `Error: ${writeR.stderr || "write failed"}`;
+      if (writeR.code !== 0) return `Error: ${writeR.stderr || "write failed"}${isPermissionDenied(writeR.stderr) ? LOCKED_WRITE_HINT : ""}`;
       return `Updated ${file_path}`;
     } catch (err: unknown) {
       return `Error: ${err instanceof Error ? err.message : String(err)}`;

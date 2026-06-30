@@ -6,7 +6,7 @@
 import { StructuredTool } from "@langchain/core/tools";
 import { z } from "zod";
 import path from "path";
-import { normalizeRelpath } from "../pathUtils";
+import { normalizeRelpath, isPermissionDenied } from "../pathUtils";
 import type { ExecRunner } from "../interfaces";
 
 const schema = z.object({
@@ -37,7 +37,8 @@ If the file already exists and you need to preserve or merge its content, read i
       }
 
       const writeR = await this.runner.exec(["tee", `/workspace/${relpath}`], { stdin: content });
-      if (writeR.code !== 0) return `Error: ${writeR.stderr || "write failed"}`;
+      if (writeR.code !== 0)
+        return `Error: ${writeR.stderr || "write failed"}${isPermissionDenied(writeR.stderr) ? " — this file is read-only ([R]) or hidden ([H]). You cannot modify it, even via a script. Ask the user to unlock it (lock icon), or use run_privileged_script if an approved privileged script exists." : ""}`;
 
       return `Written ${file_path} (${content.length} chars)`;
     } catch (err: unknown) {

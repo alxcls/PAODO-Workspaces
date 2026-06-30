@@ -67,6 +67,14 @@ You run as a NON-ROOT user, confined to the workspace. apt-get/sudo are NOT avai
     // converge on one AbortController. Aborting it triggers the real in-container process-group
     // kill inside streamExec — there is no longer any "discard output but keep running" path.
     const userSignal = config?.signal;
+    // sudo is unavailable (non-root user, no setuid, no-new-privileges). Reject it explicitly so the
+    // agent doesn't waste a turn — privilege comes only from running a user-approved [P] script via
+    // run_privileged_script, never from the agent's own shell.
+    if (/\bsudo\b/.test(command)) {
+      return Promise.resolve(
+        "Error: sudo is not available in this workspace. You run as a non-root user with no privilege escalation. To act on locked or hidden files, ask the user to mark a script privileged ([P], key icon) and run it with run_privileged_script.",
+      );
+    }
     return new Promise<string>((resolve) => {
       let stdout = "";
       let stderr = "";

@@ -8,6 +8,7 @@ import path from "path";
 import { createLogger } from "../infra/logger";
 import { getDrivesForWorkspace, formatDriveLine } from "../workspace/driveStore";
 import { isCallee } from "../workspace/workspaceGraph";
+import { buildProtectionBlock } from "./tools/tags";
 
 const log = createLogger("promptContext");
 
@@ -15,6 +16,7 @@ export interface WorkspacePromptInputs {
   agentsContent?: string;
   drivesInfo?: string;
   calleeInfo?: string;
+  protectionInfo?: string;
 }
 
 // Injected into the system prompt only when this workspace is a callee (another workspace
@@ -62,5 +64,6 @@ export function buildWorkspacePromptInputs(workspaceId: string, workspaceDir: st
     agentsContent: readAgentsMd(workspaceDir),
     drivesInfo: buildDrivesInfo(workspaceId, calleeWorkspace),
     calleeInfo: calleeWorkspace ? CALLEE_GUIDANCE : undefined,
+    protectionInfo: buildProtectionBlock(workspaceId),
   };
 }

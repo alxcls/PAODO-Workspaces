@@ -15,11 +15,19 @@ import path from "path";
 import { createLogger } from "../logger";
 import { DockerClient, IDockerClient } from "./dockerClient";
 import { ImageManager, HASH_LABEL } from "./imageManager";
+import { reconcileOsPermissions } from "../osLock";
 import type { IContainerManager } from "../interfaces";
 
 export type { DockerResult } from "./dockerClient";
 
 const log = createLogger("container");
+
+// Wraps an argv so the command runs under umask 002 (group-writable file creation) without losing
+// the no-shell-injection guarantee: cmdArgs are still passed as literal positional parameters, not
+// interpolated into the script. `sh -c 'umask 002; exec "$@"' _ <argv...>` → $0="_", $1..=argv.
+function withUmask(cmdArgs: string[]): string[] {
+  return ["sh", "-c", 'umask 002; exec "$@"', "_", ...cmdArgs];
+}
 
 const CONTAINER_IMAGE = process.env.CONTAINER_IMAGE ?? "paodo-workspace";
 const CONTAINER_MEMORY = process.env.CONTAINER_MEMORY ?? "1g";
@@ -179,17 +187,19 @@ export class ContainerManager implements IContainerManager {
     if (r.code !== 0) throw new Error(`docker run failed: ${r.stderr}`);
     cachePort(workspaceId, serverPort);
 
-    // One-time ownership sweep: legacy workspaces created when the agent ran as root hold root-owned
-    // files the uid-1000 agent/app can no longer manage. Chown the tree to 1000:1000 so both can.
-    // Runs as root (-u 0) for this single bootstrap command only. Idempotent and cheap on
-    // already-1000-owned trees.
-    const chown = await this.docker.exec(
-      this.containerName(workspaceId),
-      ["chown", "-R", "1000:1000", "/workspace"],
-      { asRoot: true, trimStdout: true },
-    );
-    if (chown.code !== 0)
-      log.debug({ workspaceId, stderr: chown.stderr }, "workspace chown sweep failed (non-fatal)");
+    // Ownership/permission reconcile on (re)create: normalize the whole tree to the agent identity
+    // (agent:paodo, group-writable), then re-apply locked/hidden/privileged paths from the store on
+    // top. This both migrates legacy root-/1000-owned files and repairs any drift. Runs the raw root
+    // exec directly (NOT execAsRoot, which calls ensure() — we are inside _ensureContainer and would
+    // deadlock on our own start lock). Non-fatal: a fresh empty workspace has nothing to fix.
+    try {
+      await reconcileOsPermissions(
+        (cmd) => this.docker.exec(this.containerName(workspaceId), cmd, { asRoot: true, trimStdout: true }),
+        workspaceId,
+      );
+    } catch (err) {
+      log.debug({ workspaceId, err }, "permission reconcile on container create failed (non-fatal)");
+    }
   }
 
   async ensure(workspaceId: string, workspaceDir: string): Promise<void> {
@@ -218,7 +228,19 @@ export class ContainerManager implements IContainerManager {
     opts: { stdin?: string } = {},
   ) {
     await this.ensure(workspaceId, workspaceDir);
-    return this.docker.exec(this.containerName(workspaceId), cmdArgs, { stdin: opts.stdin });
+    return this.docker.exec(this.containerName(workspaceId), withUmask(cmdArgs), { stdin: opts.stdin });
+  }
+
+  // Privileged-script execution path: runs as the non-root `privd` user (uid 1002), which owns all
+  // locked/hidden/privileged files. This is how a user-approved script reaches protected content
+  // without granting the agent itself any elevated rights. Reachable only from the server-side
+  // run_privileged_script tool — the agent's own shell always runs as `agent` (uid 1001).
+  async execAsPrivileged(workspaceId: string, workspaceDir: string, cmdArgs: string[], opts: { cwd?: string } = {}) {
+    await this.ensure(workspaceId, workspaceDir);
+    return this.docker.exec(this.containerName(workspaceId), withUmask(cmdArgs), {
+      user: "privd",
+      cwd: opts.cwd,
+    });
   }
 
   async execStreaming(
@@ -237,7 +259,9 @@ export class ContainerManager implements IContainerManager {
       // cmdArgs is a runnable argv (e.g. ["/bin/bash","-c",command]); `exec "$0" "$@"` re-execs it
       // in place, so the recorded PID is exactly the process that runs the work.
       const pidFile = `/tmp/paodo-exec-${randomUUID()}.pid`;
-      const launcher = `echo $$ > ${pidFile}; exec "$0" "$@"`;
+      // umask 002 so files the agent creates (e.g. redirected shell output) are group-writable (664)
+      // — the `paodo` group (app + privd) can then read/write them without a chown round-trip.
+      const launcher = `umask 002; echo $$ > ${pidFile}; exec "$0" "$@"`;
       // setsid --wait: create the new session (so the work is a killable process-group leader) but
       // BLOCK until it finishes and propagate its exit code. Without --wait, setsid forks and the
       // parent exits immediately, so the docker exec client closes at once — the command looks
@@ -279,11 +303,12 @@ export class ContainerManager implements IContainerManager {
   // exec path for agent-facing functionality — used only by the `apt_install` tool to install system
   // packages. cmdArgs are passed as argv (no shell), so callers must still validate untrusted input.
   // The regular agent shell (exec / execute_command) never runs as root.
-  async execAsRoot(workspaceId: string, workspaceDir: string, cmdArgs: string[]) {
+  async execAsRoot(workspaceId: string, workspaceDir: string, cmdArgs: string[], opts: { stdin?: string } = {}) {
     await this.ensure(workspaceId, workspaceDir);
     return this.docker.exec(this.containerName(workspaceId), cmdArgs, {
       asRoot: true,
       trimStdout: true,
+      stdin: opts.stdin,
     });
   }
 
@@ -321,9 +346,9 @@ export class ContainerManager implements IContainerManager {
   }
 
   // Deletes a workspace directory from the volume. In production (WORKSPACES_VOLUME_NAME set) it
-  // mounts the full volume and removes the subdir as root (-u 0) — the agent now runs as uid 1000 so
-  // its files are normally removable directly, but a throwaway root rm also clears any legacy
-  // root-owned files left by workspaces created before the non-root migration.
+  // mounts the full volume and removes the subdir as root (-u 0) — workspace files are owned by a mix
+  // of agent (1001) and privd (1002), so a throwaway root rm clears them all (including protected,
+  // privd-owned files) regardless of which identity created them.
   // In local dev falls back to a plain fs.rm since the app runs as the host user.
   async deleteWorkspaceDir(workspaceDir: string): Promise<void> {
     if (WORKSPACES_VOLUME_NAME) {
@@ -360,6 +385,7 @@ export const defaultContainerManager = _manager;
 export const ensureContainer        = (id: string, dir: string)                                        => _manager.ensure(id, dir);
 export const dockerExec             = (id: string, dir: string, cmd: string[], opts?: { stdin?: string }) => _manager.exec(id, dir, cmd, opts);
 export const dockerExecAsRoot       = (id: string, dir: string, cmd: string[])                         => _manager.execAsRoot(id, dir, cmd);
+export const dockerExecAsPrivileged = (id: string, dir: string, cmd: string[], opts?: { cwd?: string }) => _manager.execAsPrivileged(id, dir, cmd, opts);
 export const dockerExecStreaming    = (id: string, dir: string, cmd: string[], opts: { onStdout: (chunk: string) => void; onStderr: (chunk: string) => void }) => _manager.execStreaming(id, dir, cmd, opts);
 export const stopContainer          = (id: string)                                                      => _manager.stop(id);
 export const removeContainer        = (id: string)                                                      => _manager.remove(id);

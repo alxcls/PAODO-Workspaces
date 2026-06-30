@@ -16,6 +16,9 @@ export interface ExecRunner {
 
 export interface PrivilegedRunner extends ExecRunner {
   execAsRoot(cmd: string[]): Promise<ExecResult>;
+  // Runs as the non-root `privd` user — the identity that owns locked/hidden/privileged files.
+  // Used only by the run_privileged_script tool. `cwd` runs the script from its own directory.
+  execAsPrivileged(cmd: string[], opts?: { cwd?: string }): Promise<ExecResult>;
 }
 
 // Backward-compat alias. ensureRunning removed — no tool ever calls it directly.

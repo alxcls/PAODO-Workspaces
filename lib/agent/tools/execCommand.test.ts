@@ -65,6 +65,25 @@ describe("ExecCommandTool exit-code surfacing", () => {
   });
 });
 
+describe("ExecCommandTool sudo guard", () => {
+  // sudo is unavailable in the container; the tool rejects it without ever invoking the exec layer.
+  it("rejects a sudo command and points to run_privileged_script", async () => {
+    let invoked = false;
+    const spyExec: StreamingExecFn = async () => { invoked = true; return { code: 0 }; };
+    const tool = makeTool(spyExec);
+    const result = await tool.invoke({ command: "sudo apt-get install cowsay" });
+    expect(result).toMatch(/^Error: sudo is not available/);
+    expect(result).toContain("run_privileged_script");
+    expect(invoked).toBe(false);
+  });
+
+  it("does not flag a command that merely contains 'sudo' as a substring", async () => {
+    const tool = makeTool(fakeExec({ stdout: "ok", code: 0 }));
+    const result = await tool.invoke({ command: "echo pseudonym" });
+    expect(result).not.toMatch(/sudo is not available/);
+  });
+});
+
 describe("ExecCommandTool user abort (escape)", () => {
   // Escape mid-command returns at once and fires the kill down to the exec layer.
   it("stops promptly and propagates the kill to the exec layer when the user aborts", async () => {

@@ -19,10 +19,10 @@
     "test:e2e:all": "playwright test"
   },
   "dependencies": {
-    "@langchain/anthropic": "^1.5.0",
+    "@langchain/anthropic": "^1.5.1",
     "@langchain/core": "^1.2.0",
-    "@langchain/openai": "^1.5.1",
-    "@xyflow/react": "^12.11.0",
+    "@langchain/openai": "^1.5.3",
+    "@xyflow/react": "^12.11.1",
     "ajv": "^8.20.0",
     "chokidar": "3.5.3",
     "dotenv": "^17.4.2",

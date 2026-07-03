@@ -60,9 +60,9 @@ export default function EnvVarsBlock({ wsId }: { wsId: string }) {
 
   return (
     <div className="flex flex-col gap-3 mt-4 border border-border rounded-card p-[14px_16px] bg-bg-tint">
-      <div className="flex items-baseline gap-2">
-        <span className="text-ms font-semibold text-text">Third-party API keys</span>
-        <span className="text-xs text-text-muted">kept out of the agent&apos;s context — leak-resistant, not an airtight vault</span>
+      <div>
+        <span className="text-ms font-semibold text-text">Third-party secrets</span>
+        <span className="text-xs text-text-3 ml-2">kept out of the agent&apos;s context</span>
       </div>
 
       {secrets.length > 0 && (
@@ -90,7 +90,7 @@ export default function EnvVarsBlock({ wsId }: { wsId: string }) {
 
       {!showForm ? (
         <button className="btn btn-sm self-start" onClick={() => { resetForm(); setShowForm(true); }}>
-          Add a key
+          Add a secret
         </button>
       ) : (
         <div className="flex flex-col gap-3 bg-white border border-border rounded-ctrl p-[12px_14px]">
@@ -131,7 +131,7 @@ export default function EnvVarsBlock({ wsId }: { wsId: string }) {
               onClick={add}
               disabled={adding || !name || !value || !domain}
             >
-              {adding ? "Saving…" : "Save key"}
+              {adding ? "Saving…" : "Save secret"}
             </button>
             <button className="linkbtn" onClick={() => { setShowForm(false); resetForm(); }}>Cancel</button>
           </div>

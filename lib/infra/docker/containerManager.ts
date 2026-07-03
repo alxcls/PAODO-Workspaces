@@ -8,7 +8,7 @@
 // Resource limits:  CONTAINER_MEMORY / CONTAINER_CPUS env vars (defaults: 1g / 1.0)
 import { rm } from "fs/promises";
 import { spawn } from "child_process";
-import { randomUUID } from "crypto";
+import { randomUUID, createHash } from "crypto";
 import { lookup } from "dns/promises";
 import { getFreePort, cachePort, getCachedPort, invalidatePort, queryDockerPort } from "./portAllocator";
 import path from "path";
@@ -24,6 +24,16 @@ import { WORKSPACES_ROOT } from "../paths";
 export type { DockerResult } from "./dockerClient";
 
 const log = createLogger("container");
+
+// Label recording which secrets were baked into the container's env at creation time (as a
+// hash of their sorted names — token values are derived from name+workspaceId alone, so a name
+// hash is enough to detect additions/removals; domain-only changes don't affect env args).
+const SECRETS_LABEL = "paodo.workspace-secrets-hash";
+
+function hashSecretNames(secrets: { name: string }[]): string {
+  const sorted = secrets.map((s) => s.name).sort();
+  return createHash("sha256").update(sorted.join(",")).digest("hex");
+}
 
 const CONTAINER_IMAGE = process.env.CONTAINER_IMAGE ?? "paodo-workspace";
 const CONTAINER_MEMORY = process.env.CONTAINER_MEMORY ?? "1g";
@@ -102,6 +112,17 @@ export class ContainerManager implements IContainerManager {
     return "stopped";
   }
 
+  // Returns the secrets-hash label from an existing container, or null if not present.
+  private async getContainerSecretsHash(containerName: string): Promise<string | null> {
+    const r = await this.docker.cmd(
+      "inspect",
+      "--format",
+      `{{index .Config.Labels "${SECRETS_LABEL}"}}`,
+      containerName,
+    );
+    return r.code === 0 ? r.stdout : null;
+  }
+
   // Builds the volume args for docker run.
   // When WORKSPACES_VOLUME_NAME is set (production / Docker Compose), uses Docker 25+ volume
   // subpath mounting — necessary because the Docker daemon sees host paths, not app-container
@@ -122,14 +143,18 @@ export class ContainerManager implements IContainerManager {
   private async _ensureContainer(workspaceId: string, workspaceDir: string): Promise<void> {
     const status = await this.getContainerStatus(workspaceId);
     const hash = await this.imageManager.getCurrentHash("Dockerfile.workspace");
+    const secretsHash = hashSecretNames(listSecretMeta(workspaceId));
 
     if (status === "running" || status === "stopped") {
       const containerHash = await this.imageManager.getContainerImageHash(this.containerName(workspaceId));
+      const containerSecretsHash = await this.getContainerSecretsHash(this.containerName(workspaceId));
       const portMissing = (await this.getServerPort(workspaceId)) === null;
-      if (!hash || containerHash === hash) {
+      const imageMatches = !hash || containerHash === hash;
+      const secretsMatch = containerSecretsHash === secretsHash;
+      if (imageMatches && secretsMatch) {
         if (!portMissing) {
           if (status === "running") return;
-          // stopped, image unchanged, port mapped — just restart it
+          // stopped, image unchanged, secrets unchanged, port mapped — just restart it
           log.debug({ workspaceId }, "starting stopped container");
           await this.ensureNetwork(workspaceId);
           const connect = await this.docker.cmd(
@@ -145,6 +170,10 @@ export class ContainerManager implements IContainerManager {
         }
         // Port mapping missing (container predates this feature) — recreate to add it.
         log.debug({ workspaceId }, "container missing server port mapping — recreating");
+      } else if (!secretsMatch) {
+        // Workspace secrets were added/removed since this container was created (or it
+        // predates the secrets-hash label) — recreate so env vars reflect the current set.
+        log.debug({ workspaceId }, "workspace secrets changed — recreating container");
       } else {
         // Image changed — remove so we recreate from the current image below.
         log.debug({ workspaceId }, "workspace image changed — recreating container");
@@ -203,6 +232,7 @@ export class ContainerManager implements IContainerManager {
       "-p", `${bindHost}:${serverPort}:8080`,
       ...this.buildVolumeArg(workspaceDir),
       ...(hash ? ["--label", `${HASH_LABEL}=${hash}`] : []),
+      "--label", `${SECRETS_LABEL}=${secretsHash}`,
       ...proxyEnvArgs,
       ...secretEnvArgs,
       // Drop all Linux capabilities, then add back only the minimal set dpkg/apt and the chown sweep

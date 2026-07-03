@@ -17,6 +17,7 @@ import * as tls from "tls";
 import * as http from "http";
 import * as https from "https";
 import { signDomainCert, verifyProxySecret } from "./proxyCA";
+import { isBlockedAddress, makeGuardedLookup } from "./destinationGuard";
 import { createLogger } from "../logger";
 import type { DomainRule } from "../security/workspaceSecretStore";
 
@@ -173,6 +174,11 @@ function collectBody(src: net.Socket, headers: Record<string, string>, remaining
 
 const HEADER_SEP = Buffer.from("\r\n\r\n");
 
+// Cap on the request head (status line + headers) we will buffer before finding the terminating
+// CRLFCRLF. The proxy is a single shared process, so an unbounded read lets one container OOM every
+// workspace. Mirrors MAX_BODY_SUBSTITUTE, which already bounds the body path.
+const MAX_HEADER_BYTES = 64 * 1024;
+
 async function readHttpHeaders(readable: NodeJS.ReadableStream): Promise<{
   statusLine: string;
   headers: Record<string, string>;
@@ -180,14 +186,24 @@ async function readHttpHeaders(readable: NodeJS.ReadableStream): Promise<{
 }> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
+    let received = 0;
     let done = false;
 
     const onData = (chunk: Buffer) => {
       if (done) return;
       chunks.push(chunk);
+      received += chunk.length;
       const all = Buffer.concat(chunks);
       const idx = all.indexOf(HEADER_SEP);
-      if (idx === -1) return;
+      if (idx === -1) {
+        if (received > MAX_HEADER_BYTES) {
+          done = true;
+          (readable as NodeJS.EventEmitter).removeListener("data", onData);
+          (readable as NodeJS.EventEmitter).removeListener("error", onError);
+          reject(new Error("request headers exceed cap"));
+        }
+        return;
+      }
       done = true;
       (readable as NodeJS.ReadableStream & { pause(): void; removeListener(e: string, fn: unknown): void }).pause();
       (readable as NodeJS.EventEmitter).removeListener("data", onData);
@@ -278,8 +294,14 @@ function buildResponseHead(res: http.IncomingMessage): string {
 export class CredentialProxy {
   private rules = new Map<string, DomainRule[]>();
   private server: net.Server;
+  // Predicate deciding whether a resolved destination IP is off-limits (SSRF guard), plus a
+  // hostname lookup built from it. Injectable so tests can point the proxy at a loopback stub.
+  private blockDestination: (ip: string) => boolean;
+  private lookup: net.LookupFunction;
 
-  constructor() {
+  constructor(opts?: { blockDestination?: (ip: string) => boolean }) {
+    this.blockDestination = opts?.blockDestination ?? isBlockedAddress;
+    this.lookup = makeGuardedLookup(this.blockDestination);
     this.server = net.createServer((socket) => {
       this.handleConnection(socket).catch((err) => {
         log.debug({ err: String(err) }, "proxy connection error");
@@ -326,18 +348,33 @@ export class CredentialProxy {
       const hostname = colonIdx !== -1 ? target.slice(0, colonIdx) : target;
       const port = colonIdx !== -1 ? parseInt(target.slice(colonIdx + 1), 10) : 443;
 
-      socket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
-
       // Only intercept TLS for hosts a secret is scoped to. Every other host (pypi, apt
       // mirrors, github…) is a straight tunnel, so package installs and clones are untouched.
       const tokenMap = tokenMapForHost(rules, hostname);
       if (tokenMap.size > 0) {
+        socket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
         await this.handleMitm(socket, hostname, port, tokenMap, remaining);
       } else {
-        const upstream = net.connect(port, hostname);
-        upstream.on("error", () => { socket.destroy(); upstream.destroy(); });
+        // SSRF guard: refuse tunnels to internal addresses. IP literals are checked here (net.connect
+        // skips DNS for them, so guardedLookup would never see them); hostnames are validated by the
+        // lookup, which rejects a resolved address in a blocked range. The 200 is withheld until the
+        // upstream is actually established, so a blocked target only ever gets a 403.
+        if (net.isIP(hostname) && this.blockDestination(hostname)) {
+          socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
+          socket.destroy();
+          return;
+        }
+        const upstream = net.connect({ host: hostname, port, lookup: this.lookup });
+        let established = false;
+        upstream.on("error", () => {
+          if (!established) { try { socket.write("HTTP/1.1 403 Forbidden\r\n\r\n"); } catch { /* socket gone */ } }
+          socket.destroy();
+          upstream.destroy();
+        });
         socket.on("error", () => { socket.destroy(); upstream.destroy(); });
         upstream.on("connect", () => {
+          established = true;
+          socket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
           if (remaining.length) upstream.write(remaining);
           socket.pipe(upstream);
           upstream.pipe(socket);
@@ -382,7 +419,7 @@ export class CredentialProxy {
 
     const startUpstream = () =>
       https.request(
-        { hostname, port, method, path: requestPath, headers, rejectUnauthorized: true },
+        { hostname, port, method, path: requestPath, headers, rejectUnauthorized: true, lookup: this.lookup },
         (upstreamRes) => {
           tlsSocket.write(buildResponseHead(upstreamRes));
           upstreamRes.pipe(tlsSocket);
@@ -457,6 +494,14 @@ export class CredentialProxy {
     const hostname = colonIdx !== -1 ? hostHeader.slice(0, colonIdx) : hostHeader;
     const port = colonIdx !== -1 ? parseInt(hostHeader.slice(colonIdx + 1), 10) : 80;
 
+    // SSRF guard: refuse plain-HTTP forwards to internal addresses. IP literals are checked here
+    // (http.request skips DNS for them); hostnames are validated by this.lookup below.
+    if (net.isIP(hostname) && this.blockDestination(hostname)) {
+      socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
+      socket.destroy();
+      return;
+    }
+
     // Secrets are injected over HTTPS only. Plain HTTP is cleartext on the wire, so substituting
     // a real value here would leak it to any on-path observer. We forward HTTP untouched (empty
     // token map = no substitution); the opaque token travels instead, which upstream rejects
@@ -469,7 +514,7 @@ export class CredentialProxy {
 
     const startUpstream = () =>
       http.request(
-        { hostname, port, method, path, headers },
+        { hostname, port, method, path, headers, lookup: this.lookup },
         (upstreamRes) => {
           socket.write(buildResponseHead(upstreamRes));
           upstreamRes.pipe(socket);

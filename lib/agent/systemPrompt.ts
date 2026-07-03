@@ -81,7 +81,7 @@ If the args are insufficient or unresolvable (e.g. an id that does not exist in 
 // bag rather than positional optionals means no call site can silently drop a piece, and any new
 // field added to WorkspacePromptInputs flows here automatically. Does no filesystem I/O of its own.
 export function buildSystemPrompt(workspaceDir: string, promptConfig: PromptConfig, inputs: WorkspacePromptInputs = {}): SystemMessage {
-  const { agentsContent, drivesInfo, calleeInfo } = inputs;
+  const { agentsContent, drivesInfo, calleeInfo, secretsInfo } = inputs;
   const date = new Date().toDateString();
 
   const agentsSection = agentsContent?.trim() ?? "";
@@ -94,8 +94,8 @@ ${agentsSection}
 `
     : "";
 
-  // Platform guidance (callee, then drives) leads; the user's AGENTS.md follows and is authoritative.
-  const dynamicContext = `${calleeInfo ? calleeInfo + "\n\n" : ""}${drivesInfo ? drivesInfo + "\n\n" : ""}${agentsBlock}Workspace name: ${path.basename(workspaceDir)} — your working directory inside the container is /workspace
+  // Platform guidance (callee, drives, secrets) leads; the user's AGENTS.md follows and is authoritative.
+  const dynamicContext = `${calleeInfo ? calleeInfo + "\n\n" : ""}${drivesInfo ? drivesInfo + "\n\n" : ""}${secretsInfo ? secretsInfo + "\n\n" : ""}${agentsBlock}Workspace name: ${path.basename(workspaceDir)} — your working directory inside the container is /workspace
 Today's date: ${date}`;
 
   return new SystemMessage({

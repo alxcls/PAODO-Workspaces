@@ -16,6 +16,10 @@ import { createLogger } from "../logger";
 import { DockerClient, IDockerClient } from "./dockerClient";
 import { ImageManager, HASH_LABEL } from "./imageManager";
 import type { IContainerManager } from "../interfaces";
+import { existsSync } from "fs";
+import { listSecretMeta, proxyToken } from "../security/workspaceSecretStore";
+import { deriveProxySecret } from "../proxy/proxyCA";
+import { WORKSPACES_ROOT } from "../paths";
 
 export type { DockerResult } from "./dockerClient";
 
@@ -29,6 +33,11 @@ const IDLE_TIMEOUT_MS = parseInt(process.env.CONTAINER_IDLE_MS ?? "", 10) || 10 
 // "paodo_ws") + "_" + volume key ("workspaces"). Falls back to a plain bind mount when unset
 // so local dev (app running directly on host) still works without Docker Compose.
 const WORKSPACES_VOLUME_NAME = process.env.WORKSPACES_VOLUME_NAME ?? "";
+const CREDENTIAL_PROXY_PORT = process.env.CREDENTIAL_PROXY_PORT ?? "9998";
+
+// Combined CA bundle (container system roots + proxy CA) that replacement-style trust vars
+// (REQUESTS_CA_BUNDLE / CURL_CA_BUNDLE / SSL_CERT_FILE) point at. Built by the bootstrap exec.
+const COMBINED_CA_BUNDLE = "/etc/proxy-ca-bundle.crt";
 
 // Host interface the workspace server port is published on. Binding to a specific interface
 // (rather than the default 0.0.0.0) keeps workspace dev servers off the public/tailnet interfaces
@@ -148,6 +157,39 @@ export class ContainerManager implements IContainerManager {
     await this.ensureNetwork(workspaceId);
     const serverPort = await getFreePort();
     const bindHost = await resolveBindHost();
+
+    // Build per-workspace secret token env vars (tokens only — real values stay in the proxy).
+    const secrets = listSecretMeta(workspaceId);
+    const secretEnvArgs = secrets.flatMap((s) => ["-e", `${s.name}=${proxyToken(workspaceId, s.name)}`]);
+    // Path is deterministic — avoids module-isolation issues with getCACertPath() across Next.js bundles.
+    const caCertPath = path.join(WORKSPACES_ROOT, ".proxy-ca", "ca.crt");
+    // The proxy is only wired up when its CA exists. deriveProxySecret needs the HMAC key that
+    // ensureCA creates alongside the CA, so computing the URL inside this branch keeps container
+    // creation working before the proxy is set up. The password is the workspace's derived proxy
+    // secret, so the proxy can verify this container is who it claims to be — a container that knows
+    // another workspace's id still can't forge its identity.
+    const hasProxyCA = existsSync(caCertPath);
+    const proxyUrl = hasProxyCA
+      ? `http://${workspaceId}:${deriveProxySecret(workspaceId)}@host.docker.internal:${CREDENTIAL_PROXY_PORT}`
+      : "";
+    const proxyEnvArgs = hasProxyCA ? [
+      // --add-host makes host.docker.internal resolve to the host gateway on Linux Docker
+      "--add-host=host.docker.internal:host-gateway",
+      "-e", `HTTP_PROXY=${proxyUrl}`,
+      "-e", `HTTPS_PROXY=${proxyUrl}`,
+      // NODE_EXTRA_CA_CERTS is additive (appended to Node's built-in roots), so it can point
+      // at the proxy CA alone. REQUESTS_CA_BUNDLE / CURL_CA_BUNDLE / SSL_CERT_FILE are
+      // *replacement* trust stores — pointing them at the proxy CA alone drops the public
+      // roots, so TLS to tunneled (non-MITM'd) hosts like pypi.org fails with "unable to get
+      // local issuer certificate". They instead point at a combined bundle (system roots +
+      // proxy CA) that the bootstrap exec builds below.
+      "-e", "NODE_EXTRA_CA_CERTS=/etc/proxy-ca.crt",
+      "-e", `REQUESTS_CA_BUNDLE=${COMBINED_CA_BUNDLE}`,
+      "-e", `CURL_CA_BUNDLE=${COMBINED_CA_BUNDLE}`,
+      "-e", `SSL_CERT_FILE=${COMBINED_CA_BUNDLE}`,
+      "-v", `${caCertPath}:/etc/proxy-ca.crt:ro`,
+    ] : [];
+
     const r = await this.docker.cmd(
       "run", "-d",
       // --init runs tini as PID 1 so it reaps orphaned/killed processes. Without it, the keep-alive
@@ -161,6 +203,8 @@ export class ContainerManager implements IContainerManager {
       "-p", `${bindHost}:${serverPort}:8080`,
       ...this.buildVolumeArg(workspaceDir),
       ...(hash ? ["--label", `${HASH_LABEL}=${hash}`] : []),
+      ...proxyEnvArgs,
+      ...secretEnvArgs,
       // Drop all Linux capabilities, then add back only the minimal set dpkg/apt and the chown sweep
       // need when run as root via `docker exec -u 0` (apt_install tool, ownership sweep). The agent's
       // shell is non-root with no setuid path, so it cannot use these caps — they are reachable only
@@ -190,6 +234,22 @@ export class ContainerManager implements IContainerManager {
     );
     if (chown.code !== 0)
       log.debug({ workspaceId, stderr: chown.stderr }, "workspace chown sweep failed (non-fatal)");
+
+    // Build the combined CA bundle the replacement-style trust vars point at: the image's own
+    // system roots concatenated with the mounted proxy CA. Without the system roots, TLS to
+    // tunneled (non-MITM'd) hosts like pypi.org fails to verify. If the system bundle is missing,
+    // fall back to the proxy CA alone (MITM hosts still verify; tunneled ones degrade as before).
+    if (existsSync(path.join(WORKSPACES_ROOT, ".proxy-ca", "ca.crt"))) {
+      const caBundle = await this.docker.exec(
+        this.containerName(workspaceId),
+        ["sh", "-c",
+          `cat /etc/ssl/certs/ca-certificates.crt /etc/proxy-ca.crt > ${COMBINED_CA_BUNDLE} 2>/dev/null || ` +
+          `cp /etc/proxy-ca.crt ${COMBINED_CA_BUNDLE}`],
+        { asRoot: true, trimStdout: true },
+      );
+      if (caBundle.code !== 0)
+        log.debug({ workspaceId, stderr: caBundle.stderr }, "combined CA bundle build failed (non-fatal)");
+    }
   }
 
   async ensure(workspaceId: string, workspaceDir: string): Promise<void> {

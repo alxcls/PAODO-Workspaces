@@ -8,6 +8,7 @@ import path from "path";
 import { createLogger } from "../infra/logger";
 import { getDrivesForWorkspace, formatDriveLine } from "../workspace/driveStore";
 import { isCallee } from "../workspace/workspaceGraph";
+import { listSecretMeta } from "../infra/security/workspaceSecretStore";
 
 const log = createLogger("promptContext");
 
@@ -15,6 +16,7 @@ export interface WorkspacePromptInputs {
   agentsContent?: string;
   drivesInfo?: string;
   calleeInfo?: string;
+  secretsInfo?: string;
 }
 
 // Injected into the system prompt only when this workspace is a callee (another workspace
@@ -55,6 +57,19 @@ After uploading a file to a drive, delete your local copy so no stale copy is le
 After downloading a file from a drive, delete your local copy once you are done with it so no stale copy is left behind.${calleeWorkspace ? `\n${SKILL_DRIVE_CONTRACT_NUDGE}` : ""}`;
 }
 
+function buildSecretsInfo(workspaceId: string): string | undefined {
+  const secrets = listSecretMeta(workspaceId);
+  if (!secrets.length) return undefined;
+  const lines = secrets.map((s) => `- ${s.name}`).join("\n");
+  return `# Available Secrets
+The following variables are injected into your shell environment. Their values are opaque proxy tokens — do not echo or log them. Use them directly in commands and scripts:
+${lines}
+The credential proxy automatically substitutes the real value into outgoing HTTPS requests. Just reference the variable normally:
+  curl -H "Authorization: Bearer $VARNAME" https://...
+  requests.get("https://...", headers={"Authorization": f"Bearer {os.environ['VARNAME']}"})
+Python tip: use \`requests\` for automatic proxy support; if using \`httpx\` pass \`trust_env=True\` to the client.`;
+}
+
 // Gathers everything per-workspace the system prompt needs. Pure read I/O; safe to call per request.
 export function buildWorkspacePromptInputs(workspaceId: string, workspaceDir: string): WorkspacePromptInputs {
   const calleeWorkspace = isCallee(workspaceId);
@@ -62,5 +77,6 @@ export function buildWorkspacePromptInputs(workspaceId: string, workspaceDir: st
     agentsContent: readAgentsMd(workspaceDir),
     drivesInfo: buildDrivesInfo(workspaceId, calleeWorkspace),
     calleeInfo: calleeWorkspace ? CALLEE_GUIDANCE : undefined,
+    secretsInfo: buildSecretsInfo(workspaceId),
   };
 }

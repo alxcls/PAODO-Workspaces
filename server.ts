@@ -12,7 +12,10 @@ const log = createLogger("server");
 
 import next from "next";
 import { WebSocketServer } from "ws";
-import { getStore, getContainers, getVersioning } from "./lib/infra/services";
+import { getStore, getContainers, getVersioning, getCredentialProxy } from "./lib/infra/services";
+import { ensureCA } from "./lib/infra/proxy/proxyCA";
+import { WORKSPACES_ROOT } from "./lib/infra/paths";
+import { getWorkspaceRules } from "./lib/infra/security/workspaceSecretStore";
 import { setTodos } from "./lib/workspace/todoStore";
 import { loadIndex } from "./lib/workspace/conversationStore";
 import {
@@ -345,8 +348,19 @@ async function assertGitAvailable() {
   log.warn("git is not available — workspace snapshots will be disabled until git is installed.");
 }
 
+const CREDENTIAL_PROXY_PORT = parseInt(process.env.CREDENTIAL_PROXY_PORT ?? "9998", 10);
+
 assertGitAvailable()
   .then(() => getContainers().assertDockerAvailable())
+  .then(() => {
+    ensureCA(WORKSPACES_ROOT);
+    const proxy = getCredentialProxy();
+    proxy.listen(CREDENTIAL_PROXY_PORT);
+    // Reload persisted rules into proxy memory (rules are lost on server restart).
+    for (const ws of getStore().listWorkspaces()) {
+      proxy.setRules(ws.id, getWorkspaceRules(ws.id));
+    }
+  })
   .then(() => app.prepare())
   .then(() => {
     httpServer.listen(port, () => {

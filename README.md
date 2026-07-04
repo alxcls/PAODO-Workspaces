@@ -42,7 +42,7 @@ The diagram shows the full picture: each workspace runs an isolated agent loop i
 
 Every sandboxed tool call — file ops, glob, shell, package installs — runs inside a per-workspace Docker container (`ws_<id>`) as a restricted non-root user, with only that workspace's directory mounted. Containers start on demand and stop after an idle timeout.
 
-Persistence is lightweight: workspace metadata and the network graph live as JSON under `data/`; conversation history is in-memory and resets on restart.
+Persistence is lightweight: workspace metadata and the network graph live as JSON under `data/`
 
 For the full architecture, see [`doc/`](doc/).
 
@@ -92,9 +92,9 @@ doc/                     Architecture docs, PRDs, ADRs
 ## Known limitations
 
 - **No automatic compaction** — the agent compacts context on demand via `compact_context`, but never automatically by size.
-- **History not persisted** — resets on restart; workspace files are the long-term memory.
-- **History varies by entry point** — browser chat is stateful per tab; the external API and agent-to-agent calls are stateless (each call starts fresh).
+
 - **No file write queue** — concurrent writes to the same file can overwrite each other under load.
+
 - **No image reading** — the agent handles images as raw files but can't see their content.
 
 ## Roadmap

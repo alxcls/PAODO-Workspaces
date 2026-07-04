@@ -1,5 +1,7 @@
-// Per-workspace secret store. Secrets are stored as plaintext (they must be recovered for
-// injection) but only written to disk under data/ which is never committed to git.
+// Per-workspace secret store. Secret values must stay recoverable (the proxy injects them), so
+// they are stored reversibly — but encrypted at rest (AES-256-GCM, secretsEncryption.ts) so
+// backups/snapshots of data/ don't expose plaintext. Legacy plaintext files are migrated to the
+// encrypted envelope on first load.
 // The values are never exposed through the API — only metadata (name, domain) is returned.
 // Each secret gets a stable opaque proxy token (e.g. __pxy_wsId_NAME__) injected into the
 // container environment instead of the real value. The credential proxy swaps the token for
@@ -9,6 +11,7 @@ import path from "path";
 import { WORKSPACES_ROOT } from "../paths";
 import { atomicSaveJson } from "../jsonPersist";
 import { createLogger } from "../logger";
+import { isEncEnvelope, encryptToEnvelope, decryptFromEnvelope } from "./secretsEncryption";
 
 const log = createLogger("secretStore");
 
@@ -43,21 +46,45 @@ export function normalizeDomain(input: string): string {
 }
 
 const g = global as typeof global & { _workspaceSecrets?: Store };
+let migrateLegacy = false;
 if (!g._workspaceSecrets) {
+  g._workspaceSecrets = {};
   try {
-    g._workspaceSecrets = JSON.parse(readFileSync(FILE, "utf-8")) as Store;
-  } catch {
-    g._workspaceSecrets = {};
+    const parsed: unknown = JSON.parse(readFileSync(FILE, "utf-8"));
+    if (isEncEnvelope(parsed)) {
+      g._workspaceSecrets = JSON.parse(decryptFromEnvelope(parsed)) as Store;
+    } else {
+      // Legacy plaintext store from before encryption at rest — load it, then re-save encrypted
+      // below so the plaintext doesn't linger on disk until the next mutation.
+      g._workspaceSecrets = parsed as Store;
+      migrateLegacy = true;
+    }
+  } catch (err) {
+    // ENOENT is the normal first-run case. Anything else (tampered/corrupt ciphertext, wrong
+    // key) fails closed: start empty rather than crash; the next setSecret overwrites the file.
+    // The error log is the recovery signal.
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+      log.error({ err, event: "secret_store_load_failed" }, "failed to load secret store — starting empty");
+    }
   }
 }
 const store = g._workspaceSecrets;
 
 function save() {
   try {
-    atomicSaveJson(FILE, store);
+    atomicSaveJson(FILE, encryptToEnvelope(JSON.stringify(store)));
   } catch (err) {
     log.error({ err }, "failed to save secret store");
     throw err;
+  }
+}
+
+if (migrateLegacy) {
+  try {
+    save();
+    log.info("migrated plaintext secret store to encrypted format");
+  } catch (err) {
+    log.error({ err }, "failed to re-save secret store encrypted");
   }
 }
 

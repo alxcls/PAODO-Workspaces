@@ -3,11 +3,18 @@
 // but needs no TLS/CA harness. Focus: an `Expect: 100-continue` client must get an interim 100 and
 // still have its body delivered upstream — previously it would hang forever.
 
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, beforeAll } from "vitest";
 import * as net from "net";
 import * as http from "http";
+import * as https from "https";
+import * as tls from "tls";
 import { once } from "events";
+import { mkdtempSync } from "fs";
+import { tmpdir } from "os";
+import path from "path";
+import forge from "node-forge";
 import { CredentialProxy } from "./credentialProxy";
+import { ensureCA, deriveProxySecret } from "./proxyCA";
 
 const cleanups: Array<() => void> = [];
 afterEach(() => {
@@ -152,6 +159,129 @@ describe("CredentialProxy SSRF guard", () => {
     const received = await readUntil(client, (s) => s.includes("HELLO"));
     expect(received).toContain("200 Connection Established");
     expect(received).toContain("HELLO");
+  });
+});
+
+// Full MITM loop: CONNECT with valid proxy auth → TLS terminated by the proxy → token substituted
+// into the upstream request → upstream response REDACTED (real value → token) before the client
+// sees it. This is the leak-resistance core: even an upstream that echoes the credential back
+// (API error messages) must never expose plaintext to the container.
+describe("CredentialProxy MITM response redaction", () => {
+  const WS = "ws-mitm";
+  const TOKEN = "__pxy_ws-mitm_API_KEY__";
+  const REAL = "sk-real-value-9876543210abcdef";
+
+  let stubKey: string;
+  let stubCert: string;
+
+  beforeAll(() => {
+    // deriveProxySecret/verifyProxySecret and the MITM's signDomainCert need an initialized CA.
+    ensureCA(mkdtempSync(path.join(tmpdir(), "proxy-mitm-test-")));
+
+    // Self-signed cert with an IP SAN for the loopback HTTPS stub. signDomainCert only emits DNS
+    // SANs, and the proxy re-originates with rejectUnauthorized:true — Node requires an IP SAN to
+    // verify a cert for "127.0.0.1", so the stub brings its own chain, injected via upstreamCa.
+    const keys = forge.pki.rsa.generateKeyPair(2048);
+    const cert = forge.pki.createCertificate();
+    cert.publicKey = keys.publicKey;
+    cert.serialNumber = "01";
+    cert.validity.notBefore = new Date();
+    cert.validity.notAfter = new Date(Date.now() + 24 * 3600 * 1000);
+    const attrs = [{ name: "commonName", value: "127.0.0.1" }];
+    cert.setSubject(attrs);
+    cert.setIssuer(attrs);
+    cert.setExtensions([
+      { name: "basicConstraints", cA: true },
+      { name: "subjectAltName", altNames: [{ type: 7, ip: "127.0.0.1" }] },
+    ]);
+    cert.sign(keys.privateKey, forge.md.sha256.create());
+    stubCert = forge.pki.certificateToPem(cert);
+    stubKey = forge.pki.privateKeyToPem(keys.privateKey);
+  }, 30_000);
+
+  async function startMitmProxy(): Promise<{ port: number; proxy: CredentialProxy }> {
+    const proxy = new CredentialProxy({ blockDestination: () => false, upstreamCa: stubCert });
+    proxy.setRules(WS, [{ domain: "127.0.0.1", tokenMap: new Map([[TOKEN, REAL]]) }]);
+    const server = (proxy as unknown as { server: net.Server }).server;
+    proxy.listen(0);
+    await once(server, "listening");
+    cleanups.push(() => server.close());
+    return { port: (server.address() as net.AddressInfo).port, proxy };
+  }
+
+  async function startHttpsStub(
+    handler: (req: http.IncomingMessage, res: http.ServerResponse) => void,
+  ): Promise<number> {
+    const server = https.createServer({ key: stubKey, cert: stubCert }, handler);
+    cleanups.push(() => server.close());
+    return await listeningPort(server);
+  }
+
+  // CONNECT through the proxy with valid workspace auth, TLS-handshake against the MITM cert,
+  // send one GET carrying the token, and return the full plaintext response the client saw.
+  async function requestThroughMitm(proxyPort: number, stubPort: number): Promise<string> {
+    const client = net.connect(proxyPort, "127.0.0.1");
+    cleanups.push(() => client.destroy());
+    await once(client, "connect");
+
+    const proxyAuth = Buffer.from(`${WS}:${deriveProxySecret(WS)}`).toString("base64");
+    client.write(
+      `CONNECT 127.0.0.1:${stubPort} HTTP/1.1\r\n` +
+        `Host: 127.0.0.1:${stubPort}\r\n` +
+        `Proxy-Authorization: Basic ${proxyAuth}\r\n\r\n`,
+    );
+    await readUntil(client, (s) => s.includes("200 Connection Established"));
+
+    // The proxy terminates TLS with its on-the-fly cert; the chain isn't what's under test here
+    // (production trust wiring is covered by the container CA-bundle setup), so skip verification.
+    const tlsSock = tls.connect({ socket: client, rejectUnauthorized: false });
+    cleanups.push(() => tlsSock.destroy());
+    await once(tlsSock, "secureConnect");
+
+    tlsSock.write(
+      `GET /echo HTTP/1.1\r\n` +
+        `Host: 127.0.0.1:${stubPort}\r\n` +
+        `Authorization: Bearer ${TOKEN}\r\n\r\n`,
+    );
+    // Response is connection-close delimited — read until the socket ends.
+    return await readUntil(tlsSock, () => false);
+  }
+
+  it("injects the real value upstream but redacts it from the echoed response (header + body)", async () => {
+    let upstreamAuth = "";
+    const stubPort = await startHttpsStub((req, res) => {
+      upstreamAuth = req.headers.authorization ?? "";
+      // Echo the credential back in both places an API typically leaks it.
+      res.writeHead(401, { "content-type": "text/plain", "x-echo": upstreamAuth });
+      res.end(`Invalid API key provided: ${REAL}. Check your credentials.`);
+    });
+    const { port: proxyPort } = await startMitmProxy();
+
+    const response = await requestThroughMitm(proxyPort, stubPort);
+
+    // Upstream received the REAL credential (injection worked end-to-end)…
+    expect(upstreamAuth).toBe(`Bearer ${REAL}`);
+    // …but the client-visible bytes never contain it — header and body are both redacted.
+    expect(response).not.toContain(REAL);
+    expect(response).toContain(`x-echo: Bearer ${TOKEN}`);
+    expect(response).toContain(`Invalid API key provided: ${TOKEN}.`);
+  });
+
+  it("redacts a value split across two streamed response writes", async () => {
+    const stubPort = await startHttpsStub((_req, res) => {
+      res.writeHead(200, { "content-type": "text/plain" });
+      res.write(`stream ${REAL.slice(0, 9)}`); // cut mid-value
+      setTimeout(() => {
+        res.write(`${REAL.slice(9)} end`);
+        res.end();
+      }, 25);
+    });
+    const { port: proxyPort } = await startMitmProxy();
+
+    const response = await requestThroughMitm(proxyPort, stubPort);
+
+    expect(response).not.toContain(REAL);
+    expect(response).toContain(`stream ${TOKEN} end`);
   });
 });
 

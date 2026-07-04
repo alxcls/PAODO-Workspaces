@@ -9,11 +9,19 @@ Each *workspace* is an isolated Docker container running its own ReAct loop codi
 ## Features
 
 - **Isolated workspaces** — one Docker container per workspace, with its own agent and `AGENTS.md` instructions, running as a restricted non-root user
+
 - **ReAct agent** — full tool set (file read/edit/write, shell, glob, directory listing, `apt_install`, web fetch, todo list, context compaction); streams progress live and is interruptible (press escape to kill the running command)
+
 - **File browser** — view, edit, upload, and download files from the UI, with syntax highlighting
+
 - **HTTP API** — call any workspace's agent externally with a per-workspace API key
+
 - **Live console** — shell output and file changes stream to the UI in real time
+
+- **Per-workspace secrets** — give each workspace its own third-party API keys; a credential proxy injects the real values into outbound requests so the keys never reach the agent or its container
+
 - **Agent network** — connect workspaces in a graph; agents discover and call each other to build multi-agent workflows
+
 - **Shared drives** — shared storage space you connect to multiple workspaces from the graph user interface. Each agents can then download, or share files files through it for multi-agent collaboration requirement shared materials.
 
 ## Quick start

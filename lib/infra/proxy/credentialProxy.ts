@@ -12,10 +12,15 @@
 // computation before transmission (AWS SigV4 / HMAC request signing, SCRAM DB auth): there is no
 // literal token on the wire to replace. Those secrets must be present in the container.
 // Domain allowlist prevents relay attacks: real values are only injected for the user-configured domain.
+// Responses on the MITM path are REDACTED in reverse (real value → token) so an upstream that
+// echoes the credential back (API error messages are the common case) never exposes plaintext to
+// the container. This covers the literal value only — an upstream that base64s or otherwise
+// transforms the secret before echoing is not caught; accidental-echo protection, not a guarantee.
 import * as net from "net";
 import * as tls from "tls";
 import * as http from "http";
 import * as https from "https";
+import { Transform } from "stream";
 import { signDomainCert, verifyProxySecret } from "./proxyCA";
 import { isBlockedAddress, makeGuardedLookup } from "./destinationGuard";
 import { createLogger } from "../logger";
@@ -78,6 +83,44 @@ export function substituteHeaderValue(value: string, tokenMap: Map<string, strin
     }
   }
   return direct;
+}
+
+// Invert a token map (token → real value) into a redaction map (real value → token) for the
+// response direction. Empty-string values are dropped defensively (they would match everywhere).
+export function reverseTokenMap(tokenMap: TokenMap): TokenMap {
+  const rev: TokenMap = new Map();
+  for (const [token, value] of tokenMap) {
+    if (value.length > 0) rev.set(value, token);
+  }
+  return rev;
+}
+
+// Redact real secret values back into their opaque tokens in a byte stream WITHOUT buffering it —
+// buffering whole responses would stall streaming APIs (SSE), which is exactly the traffic this
+// proxy fronts. A carry of (longest value - 1) bytes is held back between chunks so a value split
+// across a chunk boundary is still caught; the carry is flushed on stream end. Substitution runs
+// over carry+chunk each time — re-substituting already-redacted text is a no-op because tokens
+// never contain secret values. Latin1 keeps the transform byte-safe (same convention as the
+// request-body substitution below).
+export function createRedactTransform(redactMap: TokenMap): Transform {
+  const maxLen = Math.max(1, ...[...redactMap.keys()].map((v) => v.length));
+  const holdback = maxLen - 1;
+  let carry = "";
+  return new Transform({
+    transform(chunk: Buffer, _enc, cb) {
+      const s = substituteTokens(carry + chunk.toString("latin1"), redactMap);
+      const emitEnd = Math.max(0, s.length - holdback);
+      carry = s.slice(emitEnd);
+      if (emitEnd > 0) this.push(Buffer.from(s.slice(0, emitEnd), "latin1"));
+      cb();
+    },
+    flush(cb) {
+      // A partial value at the very end can never complete — emit the carry (one more idempotent
+      // substitution pass in case the final chunk completed a value exactly at the boundary).
+      if (carry.length) this.push(Buffer.from(substituteTokens(carry, redactMap), "latin1"));
+      cb();
+    },
+  });
 }
 
 // Substitute every request-line/header place a secret can ride: the request target (path + query
@@ -267,7 +310,8 @@ function pipeBody(
   src.resume();
 }
 
-function buildResponseHead(res: http.IncomingMessage): string {
+export function buildResponseHead(res: http.IncomingMessage, redactMap?: TokenMap): string {
+  const redact = (val: string): string => (redactMap ? substituteTokens(val, redactMap) : val);
   let head = `HTTP/1.1 ${res.statusCode} ${res.statusMessage}\r\n`;
   for (const [k, v] of Object.entries(res.headers)) {
     const key = k.toLowerCase();
@@ -278,10 +322,13 @@ function buildResponseHead(res: http.IncomingMessage): string {
     // We instead delimit the body by closing the connection (see below), so drop
     // both this and the upstream `connection` header.
     if (key === "transfer-encoding" || key === "connection") continue;
+    // When redacting (MITM path), body redaction can change its length, and the body is
+    // connection-close/EOF-delimited anyway — a stale content-length would truncate the client read.
+    if (redactMap && key === "content-length") continue;
     if (Array.isArray(v)) {
-      for (const val of v) head += `${k}: ${val}\r\n`;
+      for (const val of v) head += `${k}: ${redact(val)}\r\n`;
     } else if (v !== undefined) {
-      head += `${k}: ${v}\r\n`;
+      head += `${k}: ${redact(v)}\r\n`;
     }
   }
   // Body length is now unknown to us (chunked was stripped, no content-length added),
@@ -298,9 +345,13 @@ export class CredentialProxy {
   // hostname lookup built from it. Injectable so tests can point the proxy at a loopback stub.
   private blockDestination: (ip: string) => boolean;
   private lookup: net.LookupFunction;
+  // Extra CA(s) trusted for the re-originated upstream TLS. Test-only injection (lets an e2e
+  // test run an HTTPS stub with a self-signed chain); production always uses the system roots.
+  private upstreamCa?: string | string[];
 
-  constructor(opts?: { blockDestination?: (ip: string) => boolean }) {
+  constructor(opts?: { blockDestination?: (ip: string) => boolean; upstreamCa?: string | string[] }) {
     this.blockDestination = opts?.blockDestination ?? isBlockedAddress;
+    this.upstreamCa = opts?.upstreamCa;
     this.lookup = makeGuardedLookup(this.blockDestination);
     this.server = net.createServer((socket) => {
       this.handleConnection(socket).catch((err) => {
@@ -414,15 +465,32 @@ export class CredentialProxy {
     const method = parts[0] ?? "GET";
 
     delete headers["proxy-authorization"];
+    // Force an identity-encoded response so the redaction below can scan it. Secret-domain API
+    // traffic is small JSON — losing compression there is fine. (A non-compliant server that
+    // compresses anyway passes through unredacted: accidental-echo coverage, not a guarantee.)
+    delete headers["accept-encoding"];
     headers["connection"] = "close";
     const requestPath = substituteRequestMeta(parts[1] ?? "/", headers, tokenMap);
 
+    // Response direction: redact real values back into tokens so an upstream echoing the
+    // credential (error messages, request mirrors) never exposes plaintext to the container.
+    const redactMap = reverseTokenMap(tokenMap);
+
     const startUpstream = () =>
       https.request(
-        { hostname, port, method, path: requestPath, headers, rejectUnauthorized: true, lookup: this.lookup },
+        {
+          hostname,
+          port,
+          method,
+          path: requestPath,
+          headers,
+          rejectUnauthorized: true,
+          ca: this.upstreamCa,
+          lookup: this.lookup,
+        },
         (upstreamRes) => {
-          tlsSocket.write(buildResponseHead(upstreamRes));
-          upstreamRes.pipe(tlsSocket);
+          tlsSocket.write(buildResponseHead(upstreamRes, redactMap));
+          upstreamRes.pipe(createRedactTransform(redactMap)).pipe(tlsSocket);
           upstreamRes.on("error", () => tlsSocket.destroy());
         },
       );

@@ -27,13 +27,13 @@ This is a leak-resistance measure, not an unbreakable vault — see [Limitations
 
 ## User stories
 
-> As a user, I want my agent to call an external API without me putting my real credential somewhere it can read it.
+> As a citizen developer, I want my agent to call an external API without me putting my real credential somewhere it can read it.
 
-> As a user, I want a careless agent to be unable to leak my secret by accident.
+> As a citizen developer, I want a careless agent to be unable to leak my secret by accident.
 
-> As a user, I want each secret restricted to the one service it belongs to.
+> As a citizen developer, I want each secret restricted to the one service it belongs to.
 
-> As a user, I want to add and remove a workspace's secrets from its settings page.
+> As a citizen developer, I want to add and remove a workspace's secrets from its settings page.
 
 ## What the user gets
 

@@ -27,6 +27,7 @@ COPY public/ ./public/
 
 # Source files needed at runtime by tsx
 COPY server.ts ./
+COPY proxyEntry.ts ./
 COPY next.config.ts ./
 COPY tsconfig.json ./
 COPY Dockerfile.workspace ./

@@ -23,6 +23,7 @@ services:
       dockerfile: Dockerfile
       args:
         - PORT=${PORT:-3000}
+    image: paodo_ws_app
     ports:
       - "127.0.0.1:${PORT:-3000}:${PORT:-3000}"
     env_file:
@@ -48,6 +49,33 @@ services:
       - socket_proxy_net
       - app_net
 
+  # Credential-proxy sidecar. Runs ONLY the proxy (proxyEntry.ts) so the app never has to join a
+  # per-workspace network — the app attaches THIS container to each wsnet at runtime, exposing only
+  # port 9998 to the sandbox and never the control plane (app:3000 / /ws). It reads the CA + encrypted
+  # secret store from the shared volume read-only and shares no IPC with the app. It is deliberately
+  # NOT on app_net/socket_proxy_net, so it has no route to the app; `credproxy_net` provides upstream
+  # egress. 9998 is never published to the host.
+  credproxy:
+    image: paodo_ws_app
+    container_name: paodo_ws_credproxy
+    command: ["npx", "tsx", "proxyEntry.ts"]
+    env_file:
+      - .env
+    environment:
+      - WORKSPACES_ROOT=/app/data
+      - CREDENTIAL_PROXY_PORT=9998
+    volumes:
+      - workspaces:/app/data:ro
+    depends_on:
+      - app
+    restart: unless-stopped
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - credproxy_net
+
 volumes:
   workspaces:
 
@@ -55,3 +83,4 @@ networks:
   socket_proxy_net:
     internal: true
   app_net: {}
+  credproxy_net: {}

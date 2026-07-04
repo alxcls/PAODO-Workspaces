@@ -16,6 +16,8 @@ import { isEncEnvelope, encryptToEnvelope, decryptFromEnvelope } from "./secrets
 const log = createLogger("secretStore");
 
 const FILE = path.join(WORKSPACES_ROOT, ".workspace-secrets.json");
+// Exposed so the credential-proxy sidecar (a separate process) can watch it for changes.
+export const SECRET_STORE_FILE = FILE;
 
 interface SecretEntry {
   value: string;
@@ -135,4 +137,28 @@ export function deleteAllForWorkspace(wsId: string): void {
   delete store[wsId];
   save();
   log.info({ wsId }, "all secrets deleted for workspace");
+}
+
+// Workspace ids that currently have any secret. Used by the credential-proxy sidecar to know
+// which workspaces to (re)compute rules for after a reload.
+export function listSecretWorkspaceIds(): string[] {
+  return Object.keys(store);
+}
+
+// Re-read the on-disk secret store into memory. The credential-proxy sidecar runs in a separate
+// process from the app that writes this file, so it reloads on file change to keep injected values
+// current. Mutates `store` in place (it is a fixed reference). Failures fail closed: a missing file
+// is the normal empty case; a corrupt/tampered envelope leaves an empty store rather than throwing.
+export function reloadSecretStore(): void {
+  let next: Store = {};
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(FILE, "utf-8"));
+    next = isEncEnvelope(parsed) ? (JSON.parse(decryptFromEnvelope(parsed)) as Store) : (parsed as Store);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+      log.error({ err, event: "secret_store_reload_failed" }, "failed to reload secret store");
+    }
+  }
+  for (const k of Object.keys(store)) delete store[k];
+  Object.assign(store, next);
 }

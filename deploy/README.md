@@ -114,6 +114,14 @@ mkdir -p /var/log/paodo && chown 1000:1000 /var/log/paodo
 docker compose up -d
 ```
 
+This starts three containers: `app` (the web UI + agent), `socket-proxy` (a locked-down Docker API), and `credproxy` (the credential proxy that injects per-workspace secrets into outbound requests).
+
+### How workspace egress works (credential proxy)
+
+Workspace containers reach the internet only through the `credproxy` sidecar — their `HTTP_PROXY`/`HTTPS_PROXY` point at it. The proxy tunnels ordinary traffic (pip, apt, git, npm) untouched and substitutes secret tokens for real values only on requests to each workspace's configured domains.
+
+The proxy runs in its **own** container, deliberately kept off the app's networks. The app attaches `credproxy` — never itself — to each per-workspace network, so a workspace can reach port 9998 (the proxy) and nothing else the app hosts (the control plane on the web port and `/ws` stay unreachable from the sandbox). Because the proxy is reached over the internal Docker networks, **port 9998 is never published to the host and needs no firewall rule** — the UFW config from Step 1 is all that's required.
+
 ---
 
 ## Step 5 — Expose via Tailscale and open the app

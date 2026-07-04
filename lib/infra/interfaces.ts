@@ -89,6 +89,7 @@ export interface IContainerManager {
   execAsRoot(workspaceId: string, workspaceDir: string, cmdArgs: string[]): Promise<DockerResult>;
   stop(workspaceId: string): Promise<void>;
   remove(workspaceId: string): Promise<void>;
+  reattachProxyNetworks(): Promise<void>;
   getServerPort(workspaceId: string): Promise<number | null>;
   deleteWorkspaceDir(workspaceDir: string): Promise<void>;
   assertDockerAvailable(): Promise<void>;

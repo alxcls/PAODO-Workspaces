@@ -44,6 +44,13 @@ const IDLE_TIMEOUT_MS = parseInt(process.env.CONTAINER_IDLE_MS ?? "", 10) || 10 
 // so local dev (app running directly on host) still works without Docker Compose.
 const WORKSPACES_VOLUME_NAME = process.env.WORKSPACES_VOLUME_NAME ?? "";
 const CREDENTIAL_PROXY_PORT = process.env.CREDENTIAL_PROXY_PORT ?? "9998";
+// In production the credential proxy runs in its own sidecar container (compose service `credproxy`),
+// NOT in the app. The app attaches that sidecar — never itself — to each per-workspace network, so a
+// workspace can reach only port 9998 and never the app's control plane. CREDENTIAL_PROXY_ALIAS is the
+// network alias the workspace's HTTP_PROXY targets; CREDENTIAL_PROXY_CONTAINER is the container name
+// the app runs `docker network connect` against. Only used when the app is containerized (prod).
+const CREDENTIAL_PROXY_ALIAS = process.env.CREDENTIAL_PROXY_ALIAS ?? "credproxy";
+const CREDENTIAL_PROXY_CONTAINER = process.env.CREDENTIAL_PROXY_CONTAINER ?? "paodo_ws_credproxy";
 
 // Combined CA bundle (container system roots + proxy CA) that replacement-style trust vars
 // (REQUESTS_CA_BUNDLE / CURL_CA_BUNDLE / SSL_CERT_FILE) point at. Built by the bootstrap exec.
@@ -198,9 +205,17 @@ export class ContainerManager implements IContainerManager {
     // secret, so the proxy can verify this container is who it claims to be — a container that knows
     // another workspace's id still can't forge its identity.
     const hasProxyCA = existsSync(caCertPath);
+    // Prod (containerized app): reach the proxy sidecar by its network alias. Local dev (app on the
+    // host): the proxy runs in-process, reachable via the host gateway.
+    const proxyHost = WORKSPACES_VOLUME_NAME
+      ? `${CREDENTIAL_PROXY_ALIAS}:${CREDENTIAL_PROXY_PORT}`
+      : `host.docker.internal:${CREDENTIAL_PROXY_PORT}`;
     const proxyUrl = hasProxyCA
-      ? `http://${workspaceId}:${deriveProxySecret(workspaceId)}@host.docker.internal:${CREDENTIAL_PROXY_PORT}`
+      ? `http://${workspaceId}:${deriveProxySecret(workspaceId)}@${proxyHost}`
       : "";
+    // Attach the sidecar to this workspace's network so `${CREDENTIAL_PROXY_ALIAS}` resolves inside
+    // the container. Prod-only; in local dev there is no sidecar (proxy is in-process).
+    if (hasProxyCA && WORKSPACES_VOLUME_NAME) await this.attachProxyToNetwork(workspaceId);
     const proxyEnvArgs = hasProxyCA ? [
       // --add-host makes host.docker.internal resolve to the host gateway on Linux Docker
       "--add-host=host.docker.internal:host-gateway",
@@ -377,12 +392,47 @@ export class ContainerManager implements IContainerManager {
     });
   }
 
+  // Attach the credential-proxy sidecar (never the app itself) to a workspace's isolated network so
+  // the workspace resolves `${CREDENTIAL_PROXY_ALIAS}` to the proxy and can reach nothing else the
+  // app hosts. Idempotent: a repeat connect ("already exists") is not an error.
+  private async attachProxyToNetwork(workspaceId: string): Promise<void> {
+    const r = await this.docker.cmd(
+      "network", "connect", "--alias", CREDENTIAL_PROXY_ALIAS,
+      this.networkName(workspaceId), CREDENTIAL_PROXY_CONTAINER,
+    );
+    if (r.code !== 0 && !/already (exists|connected)/i.test(r.stderr)) {
+      log.warn({ workspaceId, stderr: r.stderr }, "failed to attach credential proxy to workspace network");
+    }
+  }
+
+  // Detach the sidecar before removing a workspace network — `network rm` fails while an endpoint is
+  // still attached. Non-fatal (the sidecar may not be attached in local dev).
+  private async detachProxyFromNetwork(workspaceId: string): Promise<void> {
+    const r = await this.docker.cmd(
+      "network", "disconnect", "-f", this.networkName(workspaceId), CREDENTIAL_PROXY_CONTAINER,
+    );
+    if (r.code !== 0) log.debug({ workspaceId, stderr: r.stderr }, "detach credential proxy (may not be attached)");
+  }
+
+  // On boot, reconnect the sidecar to every running workspace network. A redeploy recreates the
+  // sidecar (and the app), dropping its attachments while workspace containers keep running; without
+  // this their egress would black-hole until they are recreated. Prod-only (no sidecar in local dev).
+  async reattachProxyNetworks(): Promise<void> {
+    if (!WORKSPACES_VOLUME_NAME) return;
+    const r = await this.docker.cmd("ps", "--filter", "name=^ws_", "--format", "{{.Names}}");
+    if (r.code !== 0) { log.warn({ stderr: r.stderr }, "reattachProxyNetworks: docker ps failed"); return; }
+    for (const name of r.stdout.split("\n").map((s) => s.trim()).filter(Boolean)) {
+      await this.attachProxyToNetwork(name.replace(/^ws_/, ""));
+    }
+  }
+
   async stop(workspaceId: string): Promise<void> {
     const t = this.idleTimers.get(workspaceId);
     if (t) { clearTimeout(t); this.idleTimers.delete(workspaceId); }
     const r = await this.docker.cmd("stop", this.containerName(workspaceId));
     if (r.code !== 0) log.warn({ workspaceId, stderr: r.stderr }, "docker stop failed");
     await this.docker.cmd("network", "disconnect", this.networkName(workspaceId), this.containerName(workspaceId));
+    if (WORKSPACES_VOLUME_NAME) await this.detachProxyFromNetwork(workspaceId);
     const net = await this.docker.cmd("network", "rm", this.networkName(workspaceId));
     if (net.code !== 0) log.debug({ workspaceId, stderr: net.stderr }, "network rm on stop (may not exist)");
   }
@@ -397,6 +447,7 @@ export class ContainerManager implements IContainerManager {
     if (stop.code !== 0) log.debug({ workspaceId, stderr: stop.stderr }, "docker stop on remove (may not exist)");
     const rm = await this.docker.cmd("rm", this.containerName(workspaceId));
     if (rm.code !== 0) log.debug({ workspaceId, stderr: rm.stderr }, "docker rm on remove (may not exist)");
+    if (WORKSPACES_VOLUME_NAME) await this.detachProxyFromNetwork(workspaceId);
     const net = await this.docker.cmd("network", "rm", this.networkName(workspaceId));
     if (net.code !== 0) log.debug({ workspaceId, stderr: net.stderr }, "docker network rm on remove (may not exist)");
   }

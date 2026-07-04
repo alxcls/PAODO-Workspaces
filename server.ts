@@ -223,13 +223,22 @@ const CREDENTIAL_PROXY_PORT = parseInt(process.env.CREDENTIAL_PROXY_PORT ?? "999
 
 assertGitAvailable()
   .then(() => getContainers().assertDockerAvailable())
-  .then(() => {
+  .then(async () => {
+    // The app owns CA generation (writable data mount); the credproxy sidecar only loads it.
     ensureCA(WORKSPACES_ROOT);
-    const proxy = getCredentialProxy();
-    proxy.listen(CREDENTIAL_PROXY_PORT);
-    // Reload persisted rules into proxy memory (rules are lost on server restart).
-    for (const ws of getStore().listWorkspaces()) {
-      proxy.setRules(ws.id, getWorkspaceRules(ws.id));
+    if (!process.env.WORKSPACES_VOLUME_NAME) {
+      // Local dev: the app runs on the host, so it hosts the proxy in-process at
+      // host.docker.internal:9998. Reload persisted rules (lost on restart).
+      const proxy = getCredentialProxy();
+      proxy.listen(CREDENTIAL_PROXY_PORT);
+      for (const ws of getStore().listWorkspaces()) {
+        proxy.setRules(ws.id, getWorkspaceRules(ws.id));
+      }
+    } else {
+      // Production: the proxy runs in the `credproxy` sidecar (so the app never joins a workspace
+      // network). A redeploy recreates the sidecar and drops its attachments — reconnect running
+      // workspaces so their egress keeps working.
+      await getContainers().reattachProxyNetworks();
     }
   })
   .then(() => app.prepare())

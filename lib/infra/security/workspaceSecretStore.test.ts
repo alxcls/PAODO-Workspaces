@@ -89,3 +89,39 @@ describe("encryption at rest", () => {
     expect(store.listSecretMeta("anything")).toEqual([]);
   });
 });
+
+describe("reloadSecretStore (credential-proxy sidecar reader)", () => {
+  it("picks up secrets written by another process after reload", async () => {
+    // `reader` models the sidecar: it loaded the store once, then the app (a separate in-memory
+    // instance sharing the same file) mutates secrets on disk. Only reloadSecretStore() makes the
+    // reader see them.
+    const reader = await freshStore();
+    reader.setSecret("ws1", "K1", "v1", "api.openai.com");
+    expect(reader.listSecretWorkspaceIds()).toEqual(["ws1"]);
+
+    const app = await freshStore(); // fresh in-memory instance, same FILE on disk
+    app.setSecret("ws2", "K2", "v2", "api.example.com");
+
+    // Reader is stale until it reloads.
+    expect(reader.listSecretWorkspaceIds()).toEqual(["ws1"]);
+    reader.reloadSecretStore();
+    expect(reader.listSecretWorkspaceIds().sort()).toEqual(["ws1", "ws2"]);
+
+    expect(reader.getWorkspaceRules("ws2")).toEqual([
+      { domain: "api.example.com", tokenMap: new Map([[reader.proxyToken("ws2", "K2"), "v2"]]) },
+    ]);
+  });
+
+  it("drops a workspace whose secrets were all removed on disk after reload", async () => {
+    const reader = await freshStore();
+    reader.setSecret("ws1", "K1", "v1", "api.openai.com");
+    expect(reader.listSecretWorkspaceIds()).toEqual(["ws1"]);
+
+    const app = await freshStore();
+    app.setSecret("ws1", "K1", "v1", "api.openai.com"); // load current state
+    app.deleteAllForWorkspace("ws1");
+
+    reader.reloadSecretStore();
+    expect(reader.listSecretWorkspaceIds()).toEqual([]);
+  });
+});

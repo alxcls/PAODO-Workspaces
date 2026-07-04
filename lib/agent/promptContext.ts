@@ -62,12 +62,9 @@ function buildSecretsInfo(workspaceId: string): string | undefined {
   if (!secrets.length) return undefined;
   const lines = secrets.map((s) => `- ${s.name}`).join("\n");
   return `# Available Secrets
-The following variables are injected into your shell environment. Their values are opaque proxy tokens — do not echo or log them. Use them directly in commands and scripts:
+These are injected into your shell environment as opaque proxy tokens — use them directly. The credential proxy swaps in the real value on outgoing HTTPS requests, so just reference the variable normally:
 ${lines}
-The credential proxy automatically substitutes the real value into outgoing HTTPS requests. Just reference the variable normally:
-  curl -H "Authorization: Bearer $VARNAME" https://...
-  requests.get("https://...", headers={"Authorization": f"Bearer {os.environ['VARNAME']}"})
-Python tip: use \`requests\` for automatic proxy support; if using \`httpx\` pass \`trust_env=True\` to the client.`;
+Make requests through a client that honours the standard proxy environment variables`;
 }
 
 // Gathers everything per-workspace the system prompt needs. Pure read I/O; safe to call per request.

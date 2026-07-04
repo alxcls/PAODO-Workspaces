@@ -53,7 +53,7 @@ export default function ApiAccessBlock({ wsId }: { wsId: string }) {
     <div className="flex flex-col gap-3 mt-4 border border-border rounded-card p-[14px_16px] bg-bg-tint">
       <div className="flex items-center justify-between">
         <div>
-          <span className="text-ms font-semibold text-text">API Access</span>
+          <span className="text-ms font-semibold text-text">PAODO WS API Access</span>
           <span className="text-xs text-text-3 ml-2">{enabled ? "Enabled" : "Disabled"}</span>
         </div>
         <button

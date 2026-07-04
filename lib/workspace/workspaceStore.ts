@@ -14,6 +14,8 @@ import { defaultWorkspaceVersioning } from "../infra/git";
 import { WORKSPACES_ROOT } from "../infra/paths";
 import { deleteWorkspaceConversations } from "./conversationStore";
 import type { IWorkspaceStore } from "../infra/interfaces";
+import { deleteAllForWorkspace } from "../infra/security/workspaceSecretStore";
+import { getCredentialProxy } from "../infra/proxy";
 export { WORKSPACES_ROOT };
 
 const log = createLogger("store");
@@ -179,6 +181,8 @@ export class WorkspaceStore implements IWorkspaceStore {
     if (!ws) return false;
     this.workspaces.delete(id);
     deleteWorkspaceConversations(id);
+    deleteAllForWorkspace(id);
+    getCredentialProxy().clearRules(id);
     try {
       this.save();
     } catch (err) {

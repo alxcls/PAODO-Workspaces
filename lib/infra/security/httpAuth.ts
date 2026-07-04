@@ -1,0 +1,157 @@
+// Request authentication and CSRF logic for the custom HTTP server (server.ts).
+//
+// Kept out of server.ts so the security-critical pieces — timing-safe Basic-Auth comparison,
+// failure-based blocking, the preview-token bypass, and the CSRF guard — are unit-testable in
+// isolation rather than welded to the process entry point. server.ts is a thin adapter that
+// extracts primitives off the Node request and calls these functions.
+import type { IncomingMessage } from "http";
+import { timingSafeEqual } from "crypto";
+import { validatePreviewToken } from "./previewToken";
+
+// Constant-time string comparison. Used for the Basic-Auth username/password so a byte-by-byte
+// timing difference can't be measured to recover the secret.
+export function safeEqual(a: string, b: string): boolean {
+  const aBuf = Buffer.from(a);
+  const bBuf = Buffer.from(b);
+  if (aBuf.byteLength !== bBuf.byteLength) {
+    // dummy compare to avoid length-based timing oracle
+    timingSafeEqual(Buffer.alloc(1), Buffer.alloc(1));
+    return false;
+  }
+  return timingSafeEqual(aBuf, bBuf);
+}
+
+// Tracks per-IP Basic-Auth failures and blocks an IP once it exceeds `max` failures within
+// `windowMs`. In-memory, reset when the window elapses. A successful auth clears the IP.
+export class AuthFailureTracker {
+  private failures = new Map<string, { count: number; resetAt: number }>();
+
+  constructor(
+    private max = 5,
+    private windowMs = 60_000,
+  ) {}
+
+  isBlocked(ip: string): boolean {
+    const entry = this.failures.get(ip);
+    if (!entry || Date.now() > entry.resetAt) return false;
+    return entry.count >= this.max;
+  }
+
+  recordFailure(ip: string): void {
+    const now = Date.now();
+    const entry = this.failures.get(ip);
+    if (!entry || now > entry.resetAt) {
+      this.failures.set(ip, { count: 1, resetAt: now + this.windowMs });
+    } else {
+      entry.count++;
+    }
+  }
+
+  clear(ip: string): void {
+    this.failures.delete(ip);
+  }
+}
+
+// The agent endpoint authenticates via Bearer API key, not Basic Auth — exempt POSTs to it.
+const PUBLIC_API_RE = /^\/api\/workspaces\/[^/]+\/agent$/;
+// The HTML-preview iframe runs at an opaque origin and reaches its OWN workspace's backend via the
+// proxy/serve routes, authenticating with a per-workspace preview token instead of the user's Basic
+// Auth. Proxy calls are fetch()-driven, so the token rides as a Bearer header (group 1 = the
+// workspace id it must match).
+const PROXY_AUTH_RE = /^\/api\/workspaces\/([^/]+)\/proxy\//;
+// Serve delivers the preview's static subresources (<link>, <script type=module> and its nested
+// relative imports), which the browser fetches itself — our fetch shim can't reach them and they
+// can't carry a header. So the token rides in the path as the first segment after /serve/, where it
+// survives relative-URL resolution. Group 1 = workspace id, group 2 = token.
+const SERVE_AUTH_RE = /^\/api\/workspaces\/([^/]+)\/serve\/([^/]+)/;
+const MUTATING_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
+
+export type AuthResult = "ok" | "challenge" | "unauthorized" | "blocked";
+export type AuthCredentials = { user: string; pass: string };
+
+// The primitives checkAuth/isCsrf need off a request — extracted so the core logic never touches
+// Node's http types and can be unit-tested with plain objects.
+export type AuthRequest = { method: string; pathname: string; authorization: string };
+
+export function authRequestFromIncoming(req: IncomingMessage): AuthRequest {
+  const url = new URL(req.url ?? "/", "http://localhost");
+  return {
+    method: req.method ?? "GET",
+    pathname: url.pathname,
+    authorization: req.headers["authorization"] ?? "",
+  };
+}
+
+// Extracts the client IP, preferring the x-real-ip header (set by Tailscale Serve) and falling back
+// to the socket peer. Distinct from realtime/clientIp.ts, which reads a NextRequest.
+export function getClientIp(req: IncomingMessage): string {
+  const h = req.headers["x-real-ip"];
+  if (typeof h === "string" && h) return h;
+  return req.socket.remoteAddress ?? "unknown";
+}
+
+export function checkAuth(
+  ip: string,
+  req: AuthRequest,
+  credentials: AuthCredentials,
+  tracker: AuthFailureTracker,
+): AuthResult {
+  if (!credentials.user || !credentials.pass) return "ok";
+  if (tracker.isBlocked(ip)) return "blocked";
+
+  // The agent endpoint authenticates via Bearer API key — exempt it from basic auth.
+  if (req.method === "POST" && PUBLIC_API_RE.test(req.pathname)) return "ok";
+
+  // Preview routes accept a valid per-workspace preview token as a Basic-Auth bypass for that
+  // workspace only. A token for workspace A presented on workspace B's URL fails the match.
+  // Proxy: token as a Bearer header; let the CORS preflight (no credentials, headers only) through.
+  const proxy = PROXY_AUTH_RE.exec(req.pathname);
+  if (proxy) {
+    if (req.method === "OPTIONS") return "ok";
+    const bearer = /^Bearer (.+)$/.exec(req.authorization);
+    if (bearer && validatePreviewToken(proxy[1], bearer[1])) return "ok";
+  }
+  // Serve: token is the first path segment. It's hex, so encodeURIComponent is identity and no
+  // decode is needed (avoids a throw on a malformed %-sequence in a hostile path).
+  const serve = SERVE_AUTH_RE.exec(req.pathname);
+  if (serve && validatePreviewToken(serve[1], serve[2])) return "ok";
+
+  const auth = req.authorization;
+  if (!auth.startsWith("Basic ")) {
+    // No credentials sent — normal browser challenge-response handshake, not an attack
+    return "challenge";
+  }
+
+  const decoded = Buffer.from(auth.slice(6), "base64").toString();
+  const colon = decoded.indexOf(":");
+  if (colon === -1) {
+    tracker.recordFailure(ip);
+    return "unauthorized";
+  }
+
+  const userOk = safeEqual(decoded.slice(0, colon), credentials.user);
+  const passOk = safeEqual(decoded.slice(colon + 1), credentials.pass);
+
+  if (userOk && passOk) {
+    tracker.clear(ip);
+    return "ok";
+  }
+
+  tracker.recordFailure(ip);
+  return "unauthorized";
+}
+
+// CSRF guard: the browser attaches cached Basic Auth to cross-origin requests too, so a malicious
+// opaque-origin preview could fire BLIND state-changing requests at other workspaces (it can't
+// read the reply, but the write still executes). Browsers always send Sec-Fetch-Site; reject
+// cross-site mutations. Requests without the header (non-browser clients, e.g. the external agent
+// API using Bearer) are allowed. The preview's own cross-origin calls hit the token-gated
+// proxy/serve routes, which are exempt.
+export function isCsrf(req: { method: string; pathname: string; secFetchSite: string | undefined }): boolean {
+  if (!MUTATING_METHODS.has(req.method)) return false;
+  if (!req.pathname.startsWith("/api/")) return false;
+  if (PROXY_AUTH_RE.test(req.pathname)) return false; // token-gated; serve is GET-only so never mutating
+  const site = req.secFetchSite;
+  if (typeof site !== "string") return false; // non-browser client
+  return site !== "same-origin" && site !== "none";
+}

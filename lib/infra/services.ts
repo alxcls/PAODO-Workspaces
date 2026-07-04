@@ -1,7 +1,6 @@
-// Service provider for the two stateful infra singletons. API routes and server.ts obtain the
-// workspace store and container manager through getStore()/getContainers() instead of importing
-// the concrete singletons directly — so tests can swap in fakes via setServices() (Next.js route
-// handlers have fixed signatures, so this accessor is the per-request injection point).
+// Service provider for stateful infra singletons. API routes and server.ts obtain services
+// through getStore()/getContainers() instead of importing concrete singletons directly — so
+// tests can swap in fakes via setServices().
 //
 // Leaf module: imports only the concrete infra. The agent layer must NOT import this file — it
 // receives store/containers via constructor/argument injection to stay cycle-free and pure.
@@ -9,6 +8,10 @@ import { defaultWorkspaceStore } from "../workspace/workspaceStore";
 import { defaultContainerManager } from "./docker/containerManager";
 import { defaultWorkspaceVersioning } from "./git";
 import type { IWorkspaceStore, IContainerManager, IWorkspaceVersioning } from "./interfaces";
+// The credential proxy is a fourth infra singleton. It is re-exported here for convenience but is
+// not part of the swappable Services bundle below (no interface/fake) — it's a process-wide MITM
+// server accessed directly via getCredentialProxy() and also imported straight by workspaceStore.
+export { getCredentialProxy } from "./proxy";
 
 interface Services {
   store: IWorkspaceStore;

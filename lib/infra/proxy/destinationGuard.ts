@@ -38,13 +38,24 @@ function isBlockedIPv4(ip: string): boolean {
 }
 
 // True when an IPv6 address is not globally routable. Handles the common non-global forms plus
-// IPv4-mapped addresses (::ffff:a.b.c.d), which are re-checked through the IPv4 path.
+// IPv4-mapped addresses, which are re-checked through the IPv4 path in BOTH the dotted
+// (::ffff:1.2.3.4) and all-hex (::ffff:0102:0304) notations — the kernel routes either to the
+// embedded IPv4, so missing the hex form would let ::ffff:a9fe:a9fe reach 169.254.169.254.
 function isBlockedIPv6(ip: string): boolean {
   const lower = ip.toLowerCase().split("%")[0]; // drop any zone id
   if (lower === "::" || lower === "::1") return true; // unspecified + loopback
-  // IPv4-mapped / IPv4-compatible: defer to the v4 rules on the embedded address.
+  // IPv4-mapped / IPv4-compatible, dotted-quad tail: defer to the v4 rules on the embedded address.
   const mapped = /^::(?:ffff:)?(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/.exec(lower);
   if (mapped) return isBlockedIPv4(mapped[1]);
+  // Same address in all-hex tail form (::ffff:c0a8:0101, or the fully expanded
+  // 0:0:0:0:0:ffff:c0a8:0101). The leading run must be all zeros, so a genuine public address whose
+  // 6th group merely happens to be ffff won't match. Reconstruct the IPv4 from the last 32 bits.
+  const mappedHex = /^(?:0*:)*:?(?:ffff:)?([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(lower);
+  if (mappedHex) {
+    const hi = parseInt(mappedHex[1], 16);
+    const lo = parseInt(mappedHex[2], 16);
+    return isBlockedIPv4(`${hi >> 8}.${hi & 0xff}.${lo >> 8}.${lo & 0xff}`);
+  }
   const first = lower.split(":")[0] ?? "";
   const head = parseInt(first || "0", 16);
   if (Number.isNaN(head)) return true; // unparseable → fail closed

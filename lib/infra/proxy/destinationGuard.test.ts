@@ -32,8 +32,20 @@ describe("isBlockedAddress", () => {
     }
   });
 
+  it("blocks IPv4-mapped-internal IPv6 in all-hex notation (no dotted quad)", () => {
+    for (const ip of [
+      "::ffff:a9fe:a9fe", // 169.254.169.254 cloud metadata
+      "::ffff:7f00:1", // 127.0.0.1 loopback
+      "::ffff:c0a8:101", // 192.168.1.1 private
+      "::ffff:0a00:1", // 10.0.0.1 private
+      "0:0:0:0:0:ffff:a9fe:a9fe", // fully expanded metadata
+    ]) {
+      expect(isBlockedAddress(ip), ip).toBe(true);
+    }
+  });
+
   it("allows public IPv6", () => {
-    for (const ip of ["2606:4700:4700::1111", "2001:4860:4860::8888", "::ffff:8.8.8.8"]) {
+    for (const ip of ["2606:4700:4700::1111", "2001:4860:4860::8888", "::ffff:8.8.8.8", "::ffff:808:808"]) {
       expect(isBlockedAddress(ip), ip).toBe(false);
     }
   });

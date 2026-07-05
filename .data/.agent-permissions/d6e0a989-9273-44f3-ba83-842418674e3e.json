@@ -1,9 +1,0 @@
-{
-  "globalLock": false,
-  "locked": [
-    "data/pizza_log.json",
-    "scripts/make_pizza.py",
-    "scripts",
-    "AGENTS.md"
-  ]
-}

@@ -45,7 +45,7 @@ export async function POST(
   if (userMessage) {
     // Refresh the system prompt on every run so AGENTS.md and drive changes are always picked up.
     const inputs = buildWorkspacePromptInputs(ws.id, ws.dir);
-    setSystemPrompt(messages, buildSystemPrompt(ws.dir, buildPromptConfig(loadAgentConfig()), inputs));
+    setSystemPrompt(messages, buildSystemPrompt(ws.dir, buildPromptConfig(loadAgentConfig(ws.id)), inputs));
     const { alreadyRunning } = broker.startRun({
       workspaceId: ws.id,
       workspaceName: ws.name,

@@ -29,7 +29,26 @@ export type StreamingExecFn = (
   opts: { onStdout: (chunk: string) => void; onStderr: (chunk: string) => void; signal?: AbortSignal },
 ) => Promise<{ code: number | null }>;
 
-export type ReasoningEffort = "low" | "medium" | "high";
+// The full set of reasoning-effort levels across all providers, quietest first. Each provider accepts
+// only a SUBSET (see PROVIDER_METADATA in buildModel.ts): OpenAI takes none…xhigh, Anthropic low…max,
+// DeepSeek none. A stored/selected value is validated against the chosen provider's subset, not this
+// union — so this type is deliberately the widest thing any provider might carry.
+export type ReasoningEffort = "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+
+// Per-workspace LLM selection: provider + model + reasoning effort are chosen in the UI and stored on
+// the workspace record (not in .env). When a workspace has made no choice, the agent falls back to
+// DEFAULT_LLM. .env carries only the provider API keys.
+export interface WorkspaceLlmSelection {
+  provider: string;
+  model: string;
+  reasoningEffort: ReasoningEffort;
+}
+
+export const DEFAULT_LLM: WorkspaceLlmSelection = {
+  provider: "deepseek",
+  model: "deepseek-v4-pro",
+  reasoningEffort: "low",
+};
 
 export interface LLMProviderConfig {
   provider: string;

@@ -32,6 +32,6 @@ export async function GET(
   const ws = getStore().getWorkspace(id);
   if (!ws) return new Response("Workspace not found", { status: 404 });
   const inputs = buildWorkspacePromptInputs(ws.id, ws.dir);
-  const msg = buildSystemPrompt(ws.dir, buildPromptConfig(loadAgentConfig()), inputs);
+  const msg = buildSystemPrompt(ws.dir, buildPromptConfig(loadAgentConfig(ws.id)), inputs);
   return NextResponse.json({ prompt: systemPromptText(msg.content) });
 }

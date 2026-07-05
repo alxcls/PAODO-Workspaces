@@ -6,6 +6,7 @@
 // Type-only imports below: erased at compile time, so the apparent cycle with
 // workspaceStore.ts (which implements IWorkspaceStore) carries no runtime edge.
 import type { Workspace } from "../workspace/workspaceStore";
+import type { ReasoningEffort } from "../agent/interfaces";
 import type { DockerResult } from "./docker/dockerClient";
 
 export interface IWorkspaceStore {
@@ -16,6 +17,7 @@ export interface IWorkspaceStore {
   renameWorkspace(id: string, name: string): Promise<boolean>;
   deleteWorkspace(id: string): Promise<boolean>;
   setWorkspaceMaxIterations(id: string, n: number): boolean;
+  setWorkspaceLlm(id: string, sel: { provider: string; model: string; reasoningEffort: ReasoningEffort }): boolean;
 }
 
 export interface HistoryEntry {

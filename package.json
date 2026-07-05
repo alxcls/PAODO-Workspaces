@@ -10,6 +10,7 @@
     "build-graph": "tsx dev_tools/viz/generate-graph.ts",
     "graph": "tsx dev_tools/viz/generate-graph.ts && open dev_tools/viz/graph.html",
     "query-graph": "tsx dev_tools/query/query-graph.ts",
+    "update-pricing": "tsx scripts/update-pricing.ts",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",

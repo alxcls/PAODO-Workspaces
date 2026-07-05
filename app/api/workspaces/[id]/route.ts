@@ -11,6 +11,8 @@ import { WORKSPACES_ROOT } from "@/lib/infra/paths";
 import { checkRateLimit } from "@/lib/infra/security/rateLimit";
 import { getClientIp } from "@/lib/infra/realtime/clientIp";
 import { createLogger } from "@/lib/infra/logger";
+import { SUPPORTED_PROVIDERS, getProviderMetadata } from "@/lib/agent/buildModel";
+import { DEFAULT_LLM, type ReasoningEffort } from "@/lib/agent/interfaces";
 
 export async function GET(
   _req: Request,
@@ -19,7 +21,16 @@ export async function GET(
   const { id } = await params;
   const ws = getStore().getWorkspace(id);
   if (!ws) return NextResponse.json({ error: "not found" }, { status: 404 });
-  return NextResponse.json({ id: ws.id, name: ws.name, dir: ws.dir, createdAt: ws.createdAt, maxIterations: ws.maxIterations });
+  return NextResponse.json({
+    id: ws.id,
+    name: ws.name,
+    dir: ws.dir,
+    createdAt: ws.createdAt,
+    maxIterations: ws.maxIterations,
+    llmProvider: ws.llmProvider,
+    llmModel: ws.llmModel,
+    reasoningEffort: ws.reasoningEffort,
+  });
 }
 
 export async function PATCH(
@@ -35,7 +46,40 @@ export async function PATCH(
   }
 
   const { id } = await params;
-  const body = (await req.json()) as { name?: string; maxIterations?: number };
+  const body = (await req.json()) as {
+    name?: string;
+    maxIterations?: number;
+    llmProvider?: string;
+    llmModel?: string;
+    reasoningEffort?: string;
+  };
+
+  // Per-workspace LLM selection. All three fields are set together (the UI always sends the full
+  // selection): provider is whitelisted against the supported set, model is a non-empty string (kept
+  // free-form so a model not yet in the pricing catalog can still be used), and effort is checked
+  // against THIS provider's accepted levels — they differ (OpenAI none…xhigh, Anthropic low…max). A
+  // provider with no effort dial (DeepSeek) ignores the field, so we store a valid placeholder rather
+  // than reject.
+  if (body.llmProvider !== undefined || body.llmModel !== undefined || body.reasoningEffort !== undefined) {
+    const provider = body.llmProvider;
+    const model = body.llmModel?.trim();
+    if (!provider || !SUPPORTED_PROVIDERS.includes(provider)) {
+      return NextResponse.json({ error: "invalid llmProvider" }, { status: 400 });
+    }
+    if (!model) {
+      return NextResponse.json({ error: "llmModel required" }, { status: 400 });
+    }
+    const efforts = getProviderMetadata(provider).reasoningEfforts;
+    let reasoningEffort = body.reasoningEffort;
+    if (efforts.length === 0) {
+      reasoningEffort = DEFAULT_LLM.reasoningEffort;
+    } else if (!reasoningEffort || !efforts.includes(reasoningEffort as ReasoningEffort)) {
+      return NextResponse.json({ error: "invalid reasoningEffort" }, { status: 400 });
+    }
+    const ok = getStore().setWorkspaceLlm(id, { provider, model, reasoningEffort: reasoningEffort as ReasoningEffort });
+    if (!ok) return NextResponse.json({ error: "not found" }, { status: 404 });
+    return NextResponse.json({ id, llmProvider: provider, llmModel: model, reasoningEffort });
+  }
 
   if (body.maxIterations !== undefined) {
     const n = Math.max(1, Math.floor(Number(body.maxIterations)));

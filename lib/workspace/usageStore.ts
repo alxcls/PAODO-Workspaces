@@ -50,6 +50,9 @@ export interface TurnRecord {
   timestamp: string;
   /** The user message that started this session — set only on the session's first turn. */
   userInput?: string;
+  /** The concrete model id this turn ran on (e.g. "deepseek-v4-pro"). Drives cost attribution on the
+   *  dashboard. Optional so records written before this field existed still parse. */
+  model?: string;
   inputTokens: number;
   outputTokens: number;
   reasoningTokens: number;
@@ -84,6 +87,7 @@ export interface LightTurnRecord {
   workspaceId: string;
   workspaceName: string;
   timestamp: string;
+  model?: string;
   inputTokens: number;
   outputTokens: number;
   reasoningTokens: number;
@@ -100,6 +104,7 @@ function toLight(r: TurnRecord): LightTurnRecord {
     workspaceId: r.workspaceId,
     workspaceName: r.workspaceName,
     timestamp: r.timestamp,
+    model: r.model,
     inputTokens: r.inputTokens,
     outputTokens: r.outputTokens,
     reasoningTokens: r.reasoningTokens,

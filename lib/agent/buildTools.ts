@@ -34,6 +34,7 @@ import { getVersioning } from "../infra/services";
 import { broadcastToWorkspace } from "../infra/realtime/wsHub";
 import type { IContainerManager, IWorkspaceStore, IWorkspaceVersioning } from "../infra/interfaces";
 import type { AgentConfig, PrivilegedRunner, StreamingExecFn } from "./interfaces";
+import { DEFAULT_LLM } from "./interfaces";
 
 function makeContainerRunner(workspaceId: string, workspaceDir: string, containers: IContainerManager): PrivilegedRunner {
   return {
@@ -46,17 +47,28 @@ function makeStreamingExecFn(workspaceId: string, workspaceDir: string, containe
   return (cmd, opts) => containers.execStreaming(workspaceId, workspaceDir, cmd, opts);
 }
 
-export function loadAgentConfig(): AgentConfig {
+// Resolves the LLM config for a run. Provider / model / reasoning effort come from the workspace's
+// stored selection (chosen in the UI), falling back to DEFAULT_LLM when the workspace hasn't picked.
+// .env supplies ONLY the provider API keys (+ the anthropic cache flag) — never the model choice.
+// Called with no workspaceId in a few provider-agnostic spots (e.g. building a system prompt), where
+// the defaults are fine.
+export function loadAgentConfig(workspaceId?: string): AgentConfig {
+  const ws = workspaceId ? defaultWorkspaceStore.getWorkspace(workspaceId) : undefined;
+  const provider        = ws?.llmProvider ?? DEFAULT_LLM.provider;
+  const model           = ws?.llmModel ?? DEFAULT_LLM.model;
+  const reasoningEffort = ws?.reasoningEffort ?? DEFAULT_LLM.reasoningEffort;
+  // The chosen model applies to whichever provider is selected; the other providers' model fields are
+  // left undefined (buildModel only reads the selected provider's field).
   return {
-    provider:             process.env.LLM_PROVIDER ?? "openai",
-    reasoningEffort:      (process.env.REASONING_EFFORT ?? "low") as AgentConfig["reasoningEffort"],
+    provider,
+    reasoningEffort,
     graphEnabled:         process.env.GRAPH_ENABLED !== "false",
-    anthropicModel:       process.env.ANTHROPIC_MODEL,
+    anthropicModel:       provider === "anthropic" ? model : undefined,
     anthropicApiKey:      process.env.ANTHROPIC_API_KEY,
     anthropicCacheTtl1h:  process.env.ANTHROPIC_CACHE_TTL_1H === "true",
-    openaiModel:          process.env.OPENAI_MODEL,
+    openaiModel:          provider === "openai" ? model : undefined,
     openaiApiKey:         process.env.OPENAI_API_KEY,
-    deepseekModel:        process.env.DEEPSEEK_MODEL,
+    deepseekModel:        provider === "deepseek" ? model : undefined,
     deepseekApiKey:       process.env.DEEPSEEK_API_KEY,
     silenceTimeoutMs: parseInt(process.env.EXEC_SILENCE_TIMEOUT_MS ?? "", 10) || 60_000,
     maxTimeoutMs:     parseInt(process.env.EXEC_MAX_TIMEOUT_MS ?? "", 10) || 30 * 60_000,

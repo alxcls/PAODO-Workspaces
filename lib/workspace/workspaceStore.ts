@@ -14,6 +14,7 @@ import { defaultWorkspaceVersioning } from "../infra/git";
 import { WORKSPACES_ROOT } from "../infra/paths";
 import { deleteWorkspaceConversations } from "./conversationStore";
 import type { IWorkspaceStore } from "../infra/interfaces";
+import type { ReasoningEffort } from "../agent/interfaces";
 import { deleteAllForWorkspace } from "../infra/security/workspaceSecretStore";
 import { getCredentialProxy } from "../infra/proxy";
 export { WORKSPACES_ROOT };
@@ -27,6 +28,11 @@ export interface WorkspaceMetadata {
   dir: string;
   createdAt: Date;
   maxIterations: number;
+  // Per-workspace LLM selection (chosen in the UI). Undefined when the workspace has never picked —
+  // the agent then falls back to DEFAULT_LLM. .env holds only the provider API keys, not the choice.
+  llmProvider?: string;
+  llmModel?: string;
+  reasoningEffort?: ReasoningEffort;
 }
 
 export type Workspace = WorkspaceMetadata;
@@ -37,6 +43,9 @@ interface WorkspaceRecord {
   dir?: string;
   createdAt: string;
   maxIterations?: number;
+  llmProvider?: string;
+  llmModel?: string;
+  reasoningEffort?: ReasoningEffort;
 }
 
 const REGISTRY_FILE = path.join(WORKSPACES_ROOT, ".workspaces.json");
@@ -95,6 +104,9 @@ export class WorkspaceStore implements IWorkspaceStore {
         dir,
         createdAt: new Date(r.createdAt),
         maxIterations: r.maxIterations ?? 30,
+        llmProvider: r.llmProvider,
+        llmModel: r.llmModel,
+        reasoningEffort: r.reasoningEffort,
       });
     }
   }
@@ -105,6 +117,9 @@ export class WorkspaceStore implements IWorkspaceStore {
       name: w.name,
       createdAt: w.createdAt.toISOString(),
       maxIterations: w.maxIterations,
+      llmProvider: w.llmProvider,
+      llmModel: w.llmModel,
+      reasoningEffort: w.reasoningEffort,
     }));
     this.persistFn(records);
   }
@@ -200,6 +215,16 @@ export class WorkspaceStore implements IWorkspaceStore {
     return true;
   }
 
+  setWorkspaceLlm(id: string, sel: { provider: string; model: string; reasoningEffort: ReasoningEffort }): boolean {
+    const ws = this.workspaces.get(id);
+    if (!ws) return false;
+    ws.llmProvider = sel.provider;
+    ws.llmModel = sel.model;
+    ws.reasoningEffort = sel.reasoningEffort;
+    this.save();
+    return true;
+  }
+
 }
 
 // ---- Default production singleton ----
@@ -238,3 +263,4 @@ export const listWorkspaces = () => defaultWorkspaceStore.listWorkspaces();
 export const renameWorkspace = (id: string, name: string) => defaultWorkspaceStore.renameWorkspace(id, name);
 export const deleteWorkspace = (id: string) => defaultWorkspaceStore.deleteWorkspace(id);
 export const setWorkspaceMaxIterations = (id: string, n: number) => defaultWorkspaceStore.setWorkspaceMaxIterations(id, n);
+export const setWorkspaceLlm = (id: string, sel: { provider: string; model: string; reasoningEffort: ReasoningEffort }) => defaultWorkspaceStore.setWorkspaceLlm(id, sel);

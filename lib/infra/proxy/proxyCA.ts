@@ -3,11 +3,12 @@
 // Per-domain certs are signed by the CA on first use and cached in memory.
 // Containers trust the CA via NODE_EXTRA_CA_CERTS / CURL_CA_BUNDLE / REQUESTS_CA_BUNDLE mounts.
 import forge from "node-forge";
-import { createHmac, randomBytes, timingSafeEqual } from "crypto";
+import { createHmac, timingSafeEqual } from "crypto";
 import { mkdirSync, existsSync, readFileSync, writeFileSync, chmodSync } from "fs";
 import path from "path";
 import { createLogger } from "../logger";
 import { WORKSPACES_ROOT } from "../paths";
+import { createKeyFile } from "../security/keyFile";
 
 const log = createLogger("proxyCA");
 
@@ -119,9 +120,7 @@ function ensureProxyHmacKey(caDir: string): void {
       log.warn({ err }, "failed to load proxy HMAC key — regenerating");
     }
   }
-  gKey._proxyHmacKey = randomBytes(32);
-  writeFileSync(keyFile, gKey._proxyHmacKey, { mode: 0o600 });
-  chmodSync(keyFile, 0o600);
+  gKey._proxyHmacKey = createKeyFile(keyFile);
   log.info("generated proxy HMAC key");
 }
 

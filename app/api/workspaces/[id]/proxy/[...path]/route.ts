@@ -1,5 +1,6 @@
 // Reverse-proxies HTTP requests from the browser to the workspace container's dev server, forwarding all methods and bodies.
-import { getStore, getContainers } from "@/lib/infra/services";
+import { getContainers } from "@/lib/infra/services";
+import { requireWorkspace } from "@/lib/api/guards";
 import { NextRequest, NextResponse } from "next/server";
 
 type Params = { id: string; path: string[] };
@@ -20,10 +21,8 @@ export async function OPTIONS(): Promise<NextResponse> {
 
 async function handle(req: NextRequest, { params }: { params: Promise<Params> }): Promise<NextResponse> {
   const { id, path } = await params;
-  const workspace = getStore().getWorkspace(id);
-  if (!workspace) {
-    return NextResponse.json({ error: "Workspace not found" }, { status: 404 });
-  }
+  const workspace = requireWorkspace(id);
+  if (workspace instanceof NextResponse) return workspace;
 
   const port = await getContainers().getServerPort(id);
   if (!port) {

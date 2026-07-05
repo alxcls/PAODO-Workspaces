@@ -7,6 +7,7 @@ import { StructuredTool } from "@langchain/core/tools";
 import { z } from "zod";
 import fs from "fs/promises";
 import { resolveDrivePath } from "../driveAccess";
+import { toolError } from "../toolUtils";
 
 const schema = z.object({
   drive_name: z.string().describe("Drive to delete from, by name or id"),
@@ -33,7 +34,7 @@ export class DriveDeleteTool extends StructuredTool<typeof schema> {
     } catch (err: unknown) {
       const e = err as NodeJS.ErrnoException;
       if (e.code === "ENOENT") return `Error: path not found in drive "${drive_name}"`;
-      return `Error: ${e.message}`;
+      return toolError(e);
     }
   }
 }

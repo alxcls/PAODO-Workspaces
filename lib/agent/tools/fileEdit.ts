@@ -7,8 +7,9 @@
 
 import { StructuredTool } from "@langchain/core/tools";
 import { z } from "zod";
-import path from "path";
 import { normalizeRelpath } from "../pathUtils";
+import { toolError } from "../toolUtils";
+import { writeContainerFile } from "./containerWrite";
 import type { ExecRunner } from "../interfaces";
 
 const schema = z.object({
@@ -37,19 +38,9 @@ export class FileEditTool extends StructuredTool<typeof schema> {
     if (relpath === null) return "Error: path is outside the workspace";
 
     if (old_string === "") {
-      // Create new file branch
-      try {
-        const dirRelpath = path.posix.dirname(relpath);
-        if (dirRelpath && dirRelpath !== ".") {
-          const mkdirR = await this.runner.exec(["mkdir", "-p", `/workspace/${dirRelpath}`]);
-          if (mkdirR.code !== 0) return `Error: could not create directory: ${mkdirR.stderr}`;
-        }
-        const writeR = await this.runner.exec(["tee", `/workspace/${relpath}`], { stdin: new_string });
-        if (writeR.code !== 0) return `Error: ${writeR.stderr || "write failed"}`;
-        return `Created ${file_path}`;
-      } catch (err: unknown) {
-        return `Error: ${err instanceof Error ? err.message : String(err)}`;
-      }
+      // Create new file branch — same mkdir + write as file_write.
+      const err = await writeContainerFile(this.runner, relpath, new_string);
+      return err ?? `Created ${file_path}`;
     }
 
     // Edit existing file branch
@@ -74,7 +65,7 @@ export class FileEditTool extends StructuredTool<typeof schema> {
       if (writeR.code !== 0) return `Error: ${writeR.stderr || "write failed"}`;
       return `Updated ${file_path}`;
     } catch (err: unknown) {
-      return `Error: ${err instanceof Error ? err.message : String(err)}`;
+      return toolError(err);
     }
   }
 }

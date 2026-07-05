@@ -10,6 +10,7 @@ import path from "path";
 import fs from "fs/promises";
 import { normalizeRelpath } from "../pathUtils";
 import { resolveDrivePath } from "../driveAccess";
+import { toolError } from "../toolUtils";
 
 const schema = z.object({
   source_path: z.string().describe("Path of the workspace file to upload (relative to workspace root)"),
@@ -43,7 +44,7 @@ If a file already exists at the destination it is overwritten (newest wins) and 
       const e = err as NodeJS.ErrnoException;
       if (e.code === "ENOENT") return `Error: workspace file not found: ${source_path}`;
       if (e.code === "EISDIR") return `Error: "${source_path}" is a directory, not a file`;
-      return `Error: ${e.message}`;
+      return toolError(e);
     }
 
     const existed = await fs
@@ -55,7 +56,7 @@ If a file already exists at the destination it is overwritten (newest wins) and 
       await fs.mkdir(path.dirname(resolved.absPath), { recursive: true });
       await fs.writeFile(resolved.absPath, content);
     } catch (err: unknown) {
-      return `Error: ${err instanceof Error ? err.message : String(err)}`;
+      return toolError(err);
     }
 
     const where = `${resolved.relPath} in drive "${drive_name}"`;

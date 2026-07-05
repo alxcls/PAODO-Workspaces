@@ -8,6 +8,7 @@ import { z } from "zod";
 import fs from "fs/promises";
 import { getDrivesForWorkspace, formatDriveLine } from "../../workspace/driveStore";
 import { resolveDrivePath } from "../driveAccess";
+import { toolError } from "../toolUtils";
 
 const schema = z.object({
   drive_name: z.string().optional().describe("Drive to browse, by name or id. Omit to list the drives connected to this workspace."),
@@ -49,7 +50,7 @@ Call with drive_name (and optional path) to list a directory inside that drive.`
       const e = err as NodeJS.ErrnoException;
       if (e.code === "ENOENT") return `Error: path not found in drive "${drive_name}"`;
       if (e.code === "ENOTDIR") return `Error: "${dirPath}" is a file, not a directory`;
-      return `Error: ${e.message}`;
+      return toolError(e);
     }
   }
 }

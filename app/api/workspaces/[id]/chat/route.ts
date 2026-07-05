@@ -4,8 +4,8 @@
 //   - attach: body has an empty/absent `message` → re-attach to a conversation's in-flight run
 // In both modes the run is owned by the run broker (not this request), so closing the tab only
 // detaches this viewer — the agent keeps going until it finishes or is explicitly stopped.
-import type { NextRequest } from "next/server";
-import { getStore } from "@/lib/infra/services";
+import { type NextRequest, NextResponse } from "next/server";
+import { requireWorkspace, rateLimited } from "@/lib/api/guards";
 import type { AgentEvent } from "@/lib/agent/runner";
 import { buildSystemPrompt, buildPromptConfig } from "@/lib/agent/systemPrompt";
 import { buildWorkspacePromptInputs } from "@/lib/agent/promptContext";
@@ -14,8 +14,6 @@ import { setSystemPrompt } from "@/lib/agent/messageSerialization";
 import * as conversations from "@/lib/workspace/conversationStore";
 import * as broker from "@/lib/agent/runBroker";
 import { createLogger } from "@/lib/infra/logger";
-import { checkRateLimit } from "@/lib/infra/security/rateLimit";
-import { getClientIp } from "@/lib/infra/realtime/clientIp";
 
 export async function POST(
   req: NextRequest,
@@ -23,18 +21,11 @@ export async function POST(
 ) {
   const { id } = await params;
   const log = createLogger("api").child({ workspaceId: id, route: "chat" });
-  const ws = getStore().getWorkspace(id);
-  if (!ws) return new Response("Workspace not found", { status: 404 });
+  const ws = requireWorkspace(id);
+  if (ws instanceof NextResponse) return ws;
 
-  const ip = getClientIp(req);
-  const rl = checkRateLimit(ip);
-  if (!rl.ok) {
-    log.warn({ ip }, "rate limit exceeded");
-    return new Response("Too Many Requests", {
-      status: 429,
-      headers: { "Retry-After": String(rl.retryAfter) },
-    });
-  }
+  const limited = rateLimited(req, { logContext: { workspaceId: id, route: "chat" } });
+  if (limited) return limited;
 
   const body = (await req.json()) as { message?: string; conversationId?: string };
   const conversationId = body.conversationId ?? conversations.getActiveId(ws.id);

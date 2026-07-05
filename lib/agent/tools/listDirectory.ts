@@ -8,6 +8,7 @@
 import { StructuredTool } from "@langchain/core/tools";
 import { z } from "zod";
 import { normalizeDirPath } from "../pathUtils";
+import { toolError } from "../toolUtils";
 import type { ExecRunner } from "../interfaces";
 
 const schema = z.object({
@@ -141,7 +142,7 @@ Use this instead of ls. For recursive or pattern-based search use glob instead.`
       // appended to the tool-call label, which would offset it from the rest.
       return `\n${lines.join("\n")}`;
     } catch (err: unknown) {
-      return `Error: ${err instanceof Error ? err.message : String(err)}`;
+      return toolError(err);
     }
   }
 }

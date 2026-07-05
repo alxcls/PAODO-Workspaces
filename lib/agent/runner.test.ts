@@ -123,6 +123,32 @@ describe("runAgent — history stays consistent across aborts", () => {
     expect(messages.some((m) => m instanceof ToolMessage && m.tool_call_id === "call_1")).toBe(true);
     expect(events.at(-1)).toEqual({ type: "done" });
   });
+
+  it("persists a reasoning-model tool turn as coalesced text, not raw streamed blocks", async () => {
+    const messages: BaseMessage[] = [];
+    // A Claude/OpenAI extended-thinking chunk: content is an array of provider blocks (a signed
+    // `thinking` block + a text block) alongside the tool call. Persisting this raw array froze
+    // streaming-only blocks (`thinking`, `input_json_delta`) into history, which a later request
+    // rejected with `unknown variant 'thinking', expected 'text'`. The tool turn must instead be
+    // saved as the coalesced text string.
+    const reasoningToolChunk = new AIMessageChunk({
+      content: [
+        { index: 0, type: "thinking", thinking: "I should list the files.", signature: "sig" },
+        { index: 1, type: "text", text: "Let me list the files." },
+      ] as never,
+      tool_call_chunks: [{ index: 2, id: "call_1", name: "execute_command", args: '{"cmd":"ls"}', type: "tool_call_chunk" }],
+    });
+    const buildAgentTools = makeBuildTools([[reasoningToolChunk], [new AIMessageChunk({ content: "done" })]]);
+
+    for await (const _ of runAgent(messages, "list files", "/tmp/ws", "ws-1", { ...noopDeps, buildAgentTools })) { /* drain */ }
+
+    const toolTurn = messages.find((m): m is AIMessage => m instanceof AIMessage && (m.tool_calls?.length ?? 0) > 0);
+    expect(toolTurn).toBeDefined();
+    expect(typeof toolTurn!.content).toBe("string");
+    expect(toolTurn!.content).toBe("Let me list the files.");
+    // No streaming-only artifact survives into persisted history.
+    expect(JSON.stringify(messages)).not.toMatch(/thinking|input_json_delta/);
+  });
 });
 
 // Records every versioning call so tests can assert the run is bracketed by exactly one baseline

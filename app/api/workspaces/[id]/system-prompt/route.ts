@@ -7,7 +7,7 @@
 export const runtime = "nodejs";
 
 import { type NextRequest, NextResponse } from "next/server";
-import { getStore } from "@/lib/infra/services";
+import { requireWorkspace } from "@/lib/api/guards";
 import { buildSystemPrompt, buildPromptConfig } from "@/lib/agent/systemPrompt";
 import { buildWorkspacePromptInputs } from "@/lib/agent/promptContext";
 import { loadAgentConfig } from "@/lib/agent/buildTools";
@@ -29,8 +29,8 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
-  const ws = getStore().getWorkspace(id);
-  if (!ws) return new Response("Workspace not found", { status: 404 });
+  const ws = requireWorkspace(id);
+  if (ws instanceof NextResponse) return ws;
   const inputs = buildWorkspacePromptInputs(ws.id, ws.dir);
   const msg = buildSystemPrompt(ws.dir, buildPromptConfig(loadAgentConfig(ws.id)), inputs);
   return NextResponse.json({ prompt: systemPromptText(msg.content) });

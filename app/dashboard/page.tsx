@@ -43,10 +43,10 @@ function formatTokens(n: number): string {
   return String(n);
 }
 
-// USD cost per session. `hasCost` is false when no turn's model was found in the pricing catalog, in
+// USD cost per session. `cost` is undefined when no turn's model was found in the pricing catalog, in
 // which case we show "—" rather than a misleading $0. Sub-cent totals get more precision.
-function formatCost(cost: number, hasCost: boolean): string {
-  if (!hasCost) return "—";
+function formatCost(cost: number | undefined): string {
+  if (cost === undefined) return "—";
   if (cost === 0) return "$0";
   if (cost < 0.01) return "$" + cost.toFixed(4);
   return "$" + cost.toFixed(cost < 1 ? 3 : 2);
@@ -75,8 +75,8 @@ interface LightSession {
   outputTokens: number;
   cachedInputTokens: number;
   toolTotal: number;
-  cost: number;
-  hasCost: boolean;
+  // undefined until a priced turn contributes; stays undefined if no turn's model is in the catalog.
+  cost: number | undefined;
 }
 
 function groupBySessions(records: LightTurnRecord[]): LightSession[] {
@@ -95,8 +95,7 @@ function groupBySessions(records: LightTurnRecord[]): LightSession[] {
         outputTokens: 0,
         cachedInputTokens: 0,
         toolTotal: 0,
-        cost: 0,
-        hasCost: false,
+        cost: undefined,
       };
       map.set(r.sessionId, s);
     }
@@ -108,7 +107,7 @@ function groupBySessions(records: LightTurnRecord[]): LightSession[] {
     // Cost is per-turn: each turn may run on a different model, so sum computeCost across turns.
     // A turn whose model isn't in the catalog contributes nothing but doesn't invalidate the total.
     const c = computeCost(r, r.model);
-    if (c !== undefined) { s.cost += c; s.hasCost = true; }
+    if (c !== undefined) s.cost = (s.cost ?? 0) + c;
     if (r.timestamp < s.timestamp) s.timestamp = r.timestamp;
   }
   // Order by when each session STARTED (newest first) — see the agent-to-agent note: a caller's
@@ -425,7 +424,7 @@ export default function DashboardPage() {
                     <td className="px-6 py-2.5 text-right font-mono text-text-1">{formatTokens(s.inputTokens)}</td>
                     <td className="px-6 py-2.5 text-right font-mono text-text-3">{formatTokens(s.cachedInputTokens)}</td>
                     <td className="px-6 py-2.5 text-right font-mono text-text-1">{formatTokens(s.outputTokens)}</td>
-                    <td className="px-6 py-2.5 text-right font-mono text-text-1" title={s.hasCost ? `$${s.cost.toFixed(6)}` : "No pricing for this session's model(s)"}>{formatCost(s.cost, s.hasCost)}</td>
+                    <td className="px-6 py-2.5 text-right font-mono text-text-1" title={s.cost !== undefined ? `$${s.cost.toFixed(6)}` : "No pricing for this session's model(s)"}>{formatCost(s.cost)}</td>
                     {/* Static dim chevron hints the row opens a detail drawer; the row's bg tint is the hover cue. */}
                     <td className="px-4 py-2.5 align-middle text-right text-text-3 text-[15px] leading-none opacity-40">›</td>
                   </tr>

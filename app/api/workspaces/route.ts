@@ -3,8 +3,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getStore } from "@/lib/infra/services";
 import { createLogger } from "@/lib/infra/logger";
-import { checkRateLimit } from "@/lib/infra/security/rateLimit";
-import { getClientIp } from "@/lib/infra/realtime/clientIp";
+import { rateLimited } from "@/lib/api/guards";
 
 export async function GET() {
   const list = getStore().listWorkspaces().map(({ id, name, createdAt }) => ({ id, name, createdAt }));
@@ -13,15 +12,8 @@ export async function GET() {
 
 export async function POST(req: NextRequest) {
   const log = createLogger("api").child({ route: "workspaces" });
-  const ip = getClientIp(req);
-  const rl = checkRateLimit(ip);
-  if (!rl.ok) {
-    log.warn({ ip }, "rate limit exceeded");
-    return new Response("Too Many Requests", {
-      status: 429,
-      headers: { "Retry-After": String(rl.retryAfter) },
-    });
-  }
+  const limited = rateLimited(req, { logContext: { route: "workspaces" } });
+  if (limited) return limited;
 
   const body = await req.json() as { name?: string };
   if (!body.name?.trim()) {

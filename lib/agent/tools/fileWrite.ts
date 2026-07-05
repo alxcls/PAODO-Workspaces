@@ -5,8 +5,8 @@
 
 import { StructuredTool } from "@langchain/core/tools";
 import { z } from "zod";
-import path from "path";
 import { normalizeRelpath } from "../pathUtils";
+import { writeContainerFile } from "./containerWrite";
 import type { ExecRunner } from "../interfaces";
 
 const schema = z.object({
@@ -29,19 +29,7 @@ If the file already exists and you need to preserve or merge its content, read i
   protected async _call({ file_path, content }: z.infer<typeof schema>): Promise<string> {
     const relpath = normalizeRelpath(file_path);
     if (relpath === null) return "Error: path is outside the workspace";
-    try {
-      const dirRelpath = path.posix.dirname(relpath);
-      if (dirRelpath && dirRelpath !== ".") {
-        const mkdirR = await this.runner.exec(["mkdir", "-p", `/workspace/${dirRelpath}`]);
-        if (mkdirR.code !== 0) return `Error: could not create directory: ${mkdirR.stderr}`;
-      }
-
-      const writeR = await this.runner.exec(["tee", `/workspace/${relpath}`], { stdin: content });
-      if (writeR.code !== 0) return `Error: ${writeR.stderr || "write failed"}`;
-
-      return `Written ${file_path} (${content.length} chars)`;
-    } catch (err: unknown) {
-      return `Error: ${err instanceof Error ? err.message : String(err)}`;
-    }
+    const err = await writeContainerFile(this.runner, relpath, content);
+    return err ?? `Written ${file_path} (${content.length} chars)`;
   }
 }

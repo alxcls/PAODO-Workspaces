@@ -6,6 +6,7 @@
 import { StructuredTool } from "@langchain/core/tools";
 import { z } from "zod";
 import { normalizeRelpath } from "../pathUtils";
+import { toolError } from "../toolUtils";
 import type { ExecRunner } from "../interfaces";
 
 const schema = z.object({
@@ -52,7 +53,7 @@ Use this instead of cat, head, or tail.
         return header + lines.map((line, i) => `${start + i + 1}\t${line}`).join("\n");
       }
     } catch (err: unknown) {
-      return `Error: ${err instanceof Error ? err.message : String(err)}`;
+      return toolError(err);
     }
   }
 }

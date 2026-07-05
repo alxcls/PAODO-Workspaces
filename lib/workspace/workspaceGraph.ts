@@ -2,9 +2,9 @@
 // Edges flow from caller (source) → callee (target), enforcing a DAG where only
 // connected workspaces can invoke each other via the call_agent tool.
 import path from "path";
-import fs from "fs";
 import { WORKSPACES_ROOT } from "../infra/paths";
-import { atomicSaveJson } from "../infra/jsonPersist";
+import { atomicSaveJson, readJson } from "../infra/jsonPersist";
+import { globalSingleton } from "../infra/globalSingleton";
 import { createLogger } from "../infra/logger";
 
 const log = createLogger("workspaceGraph");
@@ -22,20 +22,15 @@ interface GraphFile {
 
 const GRAPH_FILE = path.join(WORKSPACES_ROOT, ".workspace-graph.json");
 
-let cache: GraphFile = { edges: [], positions: {} };
-
-function load(): void {
-  try {
-    cache = JSON.parse(fs.readFileSync(GRAPH_FILE, "utf-8")) as GraphFile;
-  } catch {
-    // File doesn't exist yet — start with empty graph
-  }
-}
-
-load();
+// Held on a shared global holder (not a module-level `let`) so every Next.js module instance reads
+// and writes the same cache — otherwise an edge added via the API would be invisible to the agent's
+// call-gating until restart. Reassign `state.graph` on writes; the holder object is the stable ref.
+const state = globalSingleton("workspaceGraph", () => ({
+  graph: readJson<GraphFile>(GRAPH_FILE, { edges: [], positions: {} }),
+}));
 
 export function getGraph(): GraphFile {
-  return cache;
+  return state.graph;
 }
 
 function hasCycle(edges: GraphEdge[]): boolean {
@@ -65,36 +60,37 @@ export function saveGraph(
     log.warn({ edgeCount: edges.length }, "saveGraph rejected — cycle detected");
     throw new Error("Graph contains a cycle — only DAGs are allowed.");
   }
-  cache = { edges, positions };
-  atomicSaveJson(GRAPH_FILE, cache);
+  state.graph = { edges, positions };
+  atomicSaveJson(GRAPH_FILE, state.graph);
 }
 
 export function canCall(fromId: string, toId: string): boolean {
-  return cache.edges.some((e) => e.source === fromId && e.target === toId);
+  return state.graph.edges.some((e) => e.source === fromId && e.target === toId);
 }
 
 export function getCallees(fromId: string): string[] {
-  return cache.edges.filter((e) => e.source === fromId).map((e) => e.target);
+  return state.graph.edges.filter((e) => e.source === fromId).map((e) => e.target);
 }
 
 // True when some workspace can call this one — i.e. it is the target of an edge.
 // Drives the callee-only skills scaffold and the callee guidance block in the system prompt.
 export function isCallee(workspaceId: string): boolean {
-  return cache.edges.some((e) => e.target === workspaceId);
+  return state.graph.edges.some((e) => e.target === workspaceId);
 }
 
 // True when this workspace can call another — i.e. it is the source of an edge.
 // Gates the agent_call/list_agents tools so a pure callee never receives them.
 export function isCaller(workspaceId: string): boolean {
-  return cache.edges.some((e) => e.source === workspaceId);
+  return state.graph.edges.some((e) => e.source === workspaceId);
 }
 
 /** Remove all edges and the position node for a deleted workspace. */
 export function removeWorkspaceFromGraph(workspaceId: string): void {
-  const edges = cache.edges.filter((e) => e.source !== workspaceId && e.target !== workspaceId);
-  const positions = { ...cache.positions };
+  const { graph } = state;
+  const edges = graph.edges.filter((e) => e.source !== workspaceId && e.target !== workspaceId);
+  const positions = { ...graph.positions };
   delete positions[workspaceId];
-  if (edges.length === cache.edges.length && !(workspaceId in cache.positions)) return;
-  cache = { edges, positions };
-  atomicSaveJson(GRAPH_FILE, cache);
+  if (edges.length === graph.edges.length && !(workspaceId in graph.positions)) return;
+  state.graph = { edges, positions };
+  atomicSaveJson(GRAPH_FILE, state.graph);
 }

@@ -3,8 +3,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { listDrives, createDrive } from "@/lib/workspace/driveStore";
 import { createLogger } from "@/lib/infra/logger";
-import { checkRateLimit } from "@/lib/infra/security/rateLimit";
-import { getClientIp } from "@/lib/infra/realtime/clientIp";
+import { rateLimited } from "@/lib/api/guards";
 
 export function GET() {
   return NextResponse.json(listDrives());
@@ -12,12 +11,8 @@ export function GET() {
 
 export async function POST(req: NextRequest) {
   const log = createLogger("api").child({ route: "drives" });
-  const ip = getClientIp(req);
-  const rl = checkRateLimit(ip);
-  if (!rl.ok) {
-    log.warn({ ip }, "rate limit exceeded");
-    return new Response("Too Many Requests", { status: 429, headers: { "Retry-After": String(rl.retryAfter) } });
-  }
+  const limited = rateLimited(req, { logContext: { route: "drives" } });
+  if (limited) return limited;
 
   const body = (await req.json()) as { name?: string; description?: string };
   if (!body.name?.trim()) {

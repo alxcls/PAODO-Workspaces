@@ -4,16 +4,16 @@
 //          page load can render chat content without a second round-trip (see ChatPanel). Plain
 //          GETs (the running-dot poll) skip this so they stay cheap.
 //   POST → create a new conversation and make it active
-import type { NextRequest } from "next/server";
-import { getStore } from "@/lib/infra/services";
+import { type NextRequest, NextResponse } from "next/server";
+import { requireWorkspace } from "@/lib/api/guards";
 import * as conversations from "@/lib/workspace/conversationStore";
 import * as broker from "@/lib/agent/runBroker";
 import { messagesToTranscript } from "@/lib/agent/messageSerialization";
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const ws = getStore().getWorkspace(id);
-  if (!ws) return new Response("Workspace not found", { status: 404 });
+  const ws = requireWorkspace(id);
+  if (ws instanceof NextResponse) return ws;
 
   const running = new Set(broker.runningConversationIds(id));
   const list = conversations.listConversations(id).map((m) => ({ ...m, running: running.has(m.id) }));
@@ -41,8 +41,8 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 
 export async function POST(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const ws = getStore().getWorkspace(id);
-  if (!ws) return new Response("Workspace not found", { status: 404 });
+  const ws = requireWorkspace(id);
+  if (ws instanceof NextResponse) return ws;
 
   const meta = conversations.createConversation(id);
   return Response.json({ conversation: { ...meta, running: false } }, { status: 201 });

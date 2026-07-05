@@ -9,6 +9,7 @@
 import { StructuredTool } from "@langchain/core/tools";
 import { z } from "zod";
 import { normalizeRelpath } from "../pathUtils";
+import { toolError } from "../toolUtils";
 import type { IWorkspaceVersioning, VersionStat } from "../../infra/interfaces";
 
 const SHA = /^[0-9a-fA-F]{4,40}$/;
@@ -151,7 +152,7 @@ This is read-only: it never changes workspace files.`;
       }
       return formatDetail(raw, offset, limit);
     } catch (err: unknown) {
-      return `Error: ${err instanceof Error ? err.message : String(err)}`;
+      return toolError(err);
     }
   }
 }

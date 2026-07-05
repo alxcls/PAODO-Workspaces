@@ -4,7 +4,8 @@
 // lib/infra/security/previewToken.ts.
 export const runtime = "nodejs";
 
-import { getStore } from "@/lib/infra/services";
+import { NextResponse } from "next/server";
+import { requireWorkspace } from "@/lib/api/guards";
 import { getPreviewToken } from "@/lib/infra/security/previewToken";
 
 export async function GET(
@@ -12,6 +13,7 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  if (!getStore().getWorkspace(id)) return new Response("not found", { status: 404 });
+  const ws = requireWorkspace(id);
+  if (ws instanceof NextResponse) return ws;
   return Response.json({ token: getPreviewToken(id) });
 }

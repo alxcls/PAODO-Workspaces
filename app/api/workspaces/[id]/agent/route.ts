@@ -3,10 +3,10 @@
 // streaming only tool_start events during execution and delivering the final response as a single payload.
 export const runtime = "nodejs";
 
-import { type NextRequest } from "next/server";
+import { type NextRequest, NextResponse } from "next/server";
 import { getStore, getContainers } from "@/lib/infra/services";
+import { requireWorkspace, rateLimited } from "@/lib/api/guards";
 import { validateKey } from "@/lib/infra/security/apiKeyStore";
-import { checkRateLimit } from "@/lib/infra/security/rateLimit";
 import { getClientIp } from "@/lib/infra/realtime/clientIp";
 import { createLogger } from "@/lib/infra/logger";
 import { makeAgentStream } from "@/lib/agent/agentStream";
@@ -15,28 +15,20 @@ export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const ip = getClientIp(req);
-  const rl = checkRateLimit(ip);
-  if (!rl.ok) {
-    const { id } = await params;
-    createLogger("api").warn({ workspaceId: id, ip }, "rate limit exceeded");
-    return new Response("Too Many Requests", {
-      status: 429,
-      headers: { "Retry-After": String(rl.retryAfter) },
-    });
-  }
+  const { id } = await params;
+  const limited = rateLimited(req, { logContext: { workspaceId: id } });
+  if (limited) return limited;
 
   const plain = req.headers.get("authorization")?.replace(/^Bearer /, "") ?? "";
-  const { id } = await params;
   const log = createLogger("api").child({ workspaceId: id, route: "agent" });
 
   if (!plain || !validateKey(id, plain)) {
-    log.warn({ ip }, "unauthorized request");
+    log.warn({ ip: getClientIp(req) }, "unauthorized request");
     return new Response("Unauthorized", { status: 401 });
   }
 
-  const ws = getStore().getWorkspace(id);
-  if (!ws) return new Response("Not Found", { status: 404 });
+  const ws = requireWorkspace(id);
+  if (ws instanceof NextResponse) return ws;
 
   const body = (await req.json()) as { message?: string };
   if (!body.message?.trim()) return new Response("message is required", { status: 400 });

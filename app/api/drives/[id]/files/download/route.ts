@@ -5,14 +5,15 @@ export const runtime = "nodejs";
 import { NextResponse } from "next/server";
 import path from "path";
 import JSZip from "jszip";
-import { getDrive, driveContentDir } from "@/lib/workspace/driveStore";
+import { driveContentDir } from "@/lib/workspace/driveStore";
+import { requireDrive } from "@/lib/api/guards";
 import { createLogger } from "@/lib/infra/logger";
 import { addSelectedToZip, zipToStreamResponse } from "@/lib/workspace/zipDownload";
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const drive = getDrive(id);
-  if (!drive) return NextResponse.json({ error: "not found" }, { status: 404 });
+  const drive = requireDrive(id);
+  if (drive instanceof NextResponse) return drive;
 
   const body = (await req.json()) as { paths?: string[] };
   if (!Array.isArray(body.paths) || body.paths.length === 0) {

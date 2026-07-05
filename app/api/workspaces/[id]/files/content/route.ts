@@ -1,154 +1,52 @@
 // CRUD endpoint for individual file content within a workspace.
 // GET classifies and returns the file as text, image, or binary; PUT saves edited text content;
-// DELETE removes the file. All paths are validated to stay within the workspace directory.
+// DELETE removes the file. The shared file-content core (lib/workspace/fileContent.ts) does the work;
+// the workspace backend adds a container write-fallback for legacy root-owned files and a git snapshot.
 export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
-import { getStore, getContainers, getVersioning } from "@/lib/infra/services";
-import fs from "fs/promises";
 import path from "path";
-import { createLogger } from "@/lib/infra/logger";
-import { assertInsideWorkspace } from "@/lib/infra/workspaceContainment";
+import { getContainers, getVersioning } from "@/lib/infra/services";
+import { requireWorkspace } from "@/lib/api/guards";
 import { snapshotWorkspace } from "@/lib/infra/git/snapshotWorkspace";
+import { getFileContent, putFileContent, deleteFileContent, type FileBackend } from "@/lib/workspace/fileContent";
+import type { Workspace } from "@/lib/workspace/workspaceStore";
 
-type FileClass =
-  | { type: "image"; mimeType: string }
-  | { type: "text"; content: string }
-  | { type: "binary" };
-
-async function classifyBuffer(buf: Buffer): Promise<FileClass> {
-  const { fileTypeFromBuffer } = await import("file-type");
-  const result = await fileTypeFromBuffer(buf);
-
-  if (result) {
-    if (result.mime.startsWith("image/")) return { type: "image", mimeType: result.mime };
-    return { type: "binary" };
-  }
-
-  // No magic bytes detected — try UTF-8 decode
-  try {
-    const content = new TextDecoder("utf-8", { fatal: true }).decode(buf);
-    // SVG is text-based XML — classify as image so the viewer can render it
-    const trimmed = content.trimStart();
-    if (trimmed.startsWith("<svg") || (trimmed.startsWith("<?xml") && content.includes("<svg")))
-      return { type: "image", mimeType: "image/svg+xml" };
-    return { type: "text", content };
-  } catch {
-    return { type: "binary" };
-  }
+function backend(ws: Workspace): FileBackend {
+  return {
+    dir: ws.dir,
+    logContext: { workspaceId: ws.id, route: "files/content" },
+    // Fallback for legacy root-owned files (created before the non-root migration, not yet swept):
+    // write through the container. New agent writes are uid-1000-owned so the direct fs.writeFile
+    // succeeds and this path is not hit.
+    writeFallback: async (resolved, content) => {
+      const relPath = path.relative(ws.dir, resolved);
+      const r = await getContainers().exec(ws.id, ws.dir, ["tee", `/workspace/${relPath}`], { stdin: content });
+      if (r.code !== 0) throw new Error(r.stderr || "docker write failed");
+    },
+    afterWrite: async (message) => {
+      await snapshotWorkspace(getVersioning(), ws, message);
+    },
+  };
 }
 
-export async function GET(
-  req: Request,
-  { params }: { params: Promise<{ id: string }> }
-) {
+export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const ws = getStore().getWorkspace(id);
-  if (!ws) return NextResponse.json({ error: "not found" }, { status: 404 });
-
-  const { searchParams } = new URL(req.url);
-  const filePath = searchParams.get("path");
-  if (!filePath) return NextResponse.json({ error: "path required" }, { status: 400 });
-
-  const log = createLogger("api").child({ workspaceId: id, route: "files/content" });
-  try {
-    const resolved = await assertInsideWorkspace(ws.dir, filePath);
-    const buf = await fs.readFile(resolved);
-    const classified = await classifyBuffer(buf);
-
-    // ?raw=1 — serve raw bytes for <img src> and download links
-    if (searchParams.get("raw") === "1") {
-      const mime = classified.type === "image" ? classified.mimeType : "application/octet-stream";
-      const isDownload = searchParams.get("download") === "1";
-      return new Response(buf, {
-        headers: {
-          "Content-Type": mime,
-          ...(isDownload ? { "Content-Disposition": `attachment; filename="${path.basename(resolved)}"` } : {}),
-        },
-      });
-    }
-
-    if (classified.type === "text") return NextResponse.json({ type: "text", content: classified.content });
-    if (classified.type === "image") return NextResponse.json({ type: "image" });
-    return NextResponse.json({ type: "binary" });
-  } catch (err) {
-    log.warn({ err, filePath }, "GET file failed");
-    const msg = err instanceof Error ? err.message : "Unknown error";
-    return NextResponse.json({ error: msg }, { status: 400 });
-  }
+  const ws = requireWorkspace(id);
+  if (ws instanceof NextResponse) return ws;
+  return getFileContent(req, backend(ws));
 }
 
-export async function PUT(
-  req: Request,
-  { params }: { params: Promise<{ id: string }> }
-) {
+export async function PUT(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const ws = getStore().getWorkspace(id);
-  if (!ws) return NextResponse.json({ error: "not found" }, { status: 404 });
-
-  const body = await req.json() as { path?: string; content?: string };
-  if (!body.path || body.content === undefined) {
-    return NextResponse.json({ error: "path and content required" }, { status: 400 });
-  }
-
-  const log = createLogger("api").child({ workspaceId: id, route: "files/content" });
-  try {
-    const filePath = path.isAbsolute(body.path) ? body.path : path.join(ws.dir, body.path);
-    const resolved = await assertInsideWorkspace(ws.dir, filePath);
-    await fs.mkdir(path.dirname(resolved), { recursive: true });
-    try {
-      await fs.writeFile(resolved, body.content, "utf-8");
-    } catch (writeErr) {
-      const code = (writeErr as NodeJS.ErrnoException).code;
-      if (code === "EACCES" || code === "EPERM") {
-        // Fallback for legacy root-owned files (created before the non-root migration, not yet
-        // swept): write through the container. New agent writes are uid-1000-owned so the direct
-        // fs.writeFile above succeeds and this path is not hit.
-        const relPath = path.relative(ws.dir, resolved);
-        const r = await getContainers().exec(ws.id, ws.dir, ["tee", `/workspace/${relPath}`], { stdin: body.content });
-        if (r.code !== 0) throw new Error(r.stderr || "docker write failed");
-      } else {
-        throw writeErr;
-      }
-    }
-    await snapshotWorkspace(getVersioning(), ws, `saved ${path.basename(resolved)}`);
-    return NextResponse.json({ ok: true });
-  } catch (err) {
-    log.warn({ err, path: body.path }, "PUT file failed");
-    const msg = err instanceof Error ? err.message : "Unknown error";
-    return NextResponse.json({ error: msg }, { status: 400 });
-  }
+  const ws = requireWorkspace(id);
+  if (ws instanceof NextResponse) return ws;
+  return putFileContent(req, backend(ws));
 }
 
-export async function DELETE(
-  req: Request,
-  { params }: { params: Promise<{ id: string }> }
-) {
+export async function DELETE(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const ws = getStore().getWorkspace(id);
-  if (!ws) return NextResponse.json({ error: "not found" }, { status: 404 });
-
-  const { searchParams } = new URL(req.url);
-  const filePath = searchParams.get("path");
-  if (!filePath) return NextResponse.json({ error: "path required" }, { status: 400 });
-
-  const log = createLogger("api").child({ workspaceId: id, route: "files/content" });
-  try {
-    const resolved = await assertInsideWorkspace(ws.dir, filePath);
-    await fs.access(path.dirname(resolved), fs.constants.W_OK).catch(() => {
-      throw new Error("Directory is not writable");
-    });
-    const stat = await fs.stat(resolved);
-    if (stat.isDirectory()) {
-      await fs.rm(resolved, { recursive: true });
-    } else {
-      await fs.unlink(resolved);
-    }
-    await snapshotWorkspace(getVersioning(), ws, `deleted ${path.basename(resolved)}`);
-    return NextResponse.json({ ok: true });
-  } catch (err) {
-    log.warn({ err, filePath }, "DELETE file failed");
-    const msg = err instanceof Error ? err.message : "Unknown error";
-    return NextResponse.json({ error: msg }, { status: 400 });
-  }
+  const ws = requireWorkspace(id);
+  if (ws instanceof NextResponse) return ws;
+  return deleteFileContent(req, backend(ws));
 }

@@ -3,7 +3,8 @@
 // resolve ../banner.png etc. against the actual file-system location.
 export const runtime = "nodejs";
 
-import { getStore } from "@/lib/infra/services";
+import { NextResponse } from "next/server";
+import { requireWorkspace } from "@/lib/api/guards";
 import fs from "fs/promises";
 import path from "path";
 import { createLogger } from "@/lib/infra/logger";
@@ -58,8 +59,8 @@ export async function GET(
   { params }: { params: Promise<{ id: string; filepath: string[] }> }
 ) {
   const { id, filepath } = await params;
-  const ws = getStore().getWorkspace(id);
-  if (!ws) return new Response("not found", { status: 404 });
+  const ws = requireWorkspace(id);
+  if (ws instanceof NextResponse) return ws;
 
   // First segment is the per-workspace preview token (already validated in server.ts); the rest are
   // the file's path. Carrying the token in the path lets module scripts and their nested relative

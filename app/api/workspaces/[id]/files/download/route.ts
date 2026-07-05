@@ -3,7 +3,7 @@
 export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
-import { getStore } from "@/lib/infra/services";
+import { requireWorkspace } from "@/lib/api/guards";
 import path from "path";
 import JSZip from "jszip";
 import { createLogger } from "@/lib/infra/logger";
@@ -14,8 +14,8 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const ws = getStore().getWorkspace(id);
-  if (!ws) return NextResponse.json({ error: "not found" }, { status: 404 });
+  const ws = requireWorkspace(id);
+  if (ws instanceof NextResponse) return ws;
 
   const body = await req.json() as { paths?: string[] };
   if (!Array.isArray(body.paths) || body.paths.length === 0) {

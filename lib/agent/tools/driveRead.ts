@@ -8,6 +8,7 @@ import { StructuredTool } from "@langchain/core/tools";
 import { z } from "zod";
 import fs from "fs/promises";
 import { resolveDrivePath } from "../driveAccess";
+import { toolError } from "../toolUtils";
 
 const schema = z.object({
   drive_name: z.string().describe("Drive to read from, by name or id"),
@@ -39,7 +40,7 @@ Use this for a quick look. To get an editable copy in your workspace, use drive_
       const e = err as NodeJS.ErrnoException;
       if (e.code === "ENOENT") return `Error: file not found in drive "${drive_name}"`;
       if (e.code === "EISDIR") return `Error: "${filePath}" is a directory, not a file`;
-      return `Error: ${e.message}`;
+      return toolError(e);
     }
   }
 }

@@ -5,6 +5,7 @@
 import { StructuredTool } from "@langchain/core/tools";
 import { z } from "zod";
 import { assertPublicUrl } from "../ssrfGuard";
+import { toolError } from "../toolUtils";
 
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 const MAX_REDIRECTS = 5;
@@ -75,7 +76,7 @@ For GitHub repos/PRs/issues, prefer gh CLI via execute_command instead.`;
         ? `Fetched: ${finalUrl}\nPrompt: ${prompt}\n\n${capped}`
         : `Fetched: ${finalUrl}\n\n${capped}`;
     } catch (err: unknown) {
-      return `Error: ${err instanceof Error ? err.message : String(err)}`;
+      return toolError(err);
     }
   }
 }

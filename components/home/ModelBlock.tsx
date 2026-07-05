@@ -1,14 +1,14 @@
 "use client";
 
 import { useState, useEffect } from "react";
+// DEFAULT_LLM is a plain const in a type-only module (no runtime imports), so it's safe in a client
+// component and keeps the picker's fallback in lockstep with the server's actual default.
+import { DEFAULT_LLM as DEFAULT } from "@/lib/agent/interfaces";
 
 // Per-workspace LLM picker: provider + model + reasoning effort, persisted on the workspace via
 // PATCH /api/workspaces/:id. Provider and model lists come from /api/models (the code-owned model
 // catalog), so the models offered here are the ones the app maintains — to add or retire one, edit
 // lib/workspace/models.ts. A model still stored on a workspace after being retired stays selectable.
-
-// Mirror of the server default (DEFAULT_LLM) — what an as-yet-unconfigured workspace runs.
-const DEFAULT = { provider: "deepseek", model: "deepseek-v4-pro", reasoningEffort: "low" as const };
 
 export default function ModelBlock({ wsId }: { wsId: string }) {
   const [provider, setProvider] = useState<string>(DEFAULT.provider);

@@ -2,16 +2,16 @@
 // `transcript` is the persisted history only. If `running` is true, the in-flight run is NOT in
 // the transcript (conversations persist at run end); the client appends `userInput` and then
 // re-attaches to the live stream to watch the rest (see chat/route.ts attach mode).
-import type { NextRequest } from "next/server";
-import { getStore } from "@/lib/infra/services";
+import { type NextRequest, NextResponse } from "next/server";
+import { requireWorkspace } from "@/lib/api/guards";
 import * as conversations from "@/lib/workspace/conversationStore";
 import * as broker from "@/lib/agent/runBroker";
 import { messagesToTranscript } from "@/lib/agent/messageSerialization";
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string; convId: string }> }) {
   const { id, convId } = await params;
-  const ws = getStore().getWorkspace(id);
-  if (!ws) return new Response("Workspace not found", { status: 404 });
+  const ws = requireWorkspace(id);
+  if (ws instanceof NextResponse) return ws;
 
   const meta = conversations.getMeta(id, convId);
   if (!meta) return new Response("Conversation not found", { status: 404 });

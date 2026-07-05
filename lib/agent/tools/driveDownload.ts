@@ -10,6 +10,7 @@ import { z } from "zod";
 import path from "path";
 import fs from "fs/promises";
 import { resolveDrivePath } from "../driveAccess";
+import { toolError } from "../toolUtils";
 import type { ExecRunner } from "../interfaces";
 
 const schema = z.object({
@@ -39,7 +40,7 @@ Use this when you need an editable local copy. For a quick read without a copy, 
       const e = err as NodeJS.ErrnoException;
       if (e.code === "ENOENT") return `Error: file not found in drive "${drive_name}"`;
       if (e.code === "EISDIR") return `Error: "${filePath}" is a directory, not a file`;
-      return `Error: ${e.message}`;
+      return toolError(e);
     }
 
     const dest = path.posix.join("downloads", resolved.drive.name, resolved.relPath);
@@ -56,7 +57,7 @@ Use this when you need an editable local copy. For a quick read without a copy, 
       );
       if (write.code !== 0) return `Error: ${write.stderr || "write failed"}`;
     } catch (err: unknown) {
-      return `Error: ${err instanceof Error ? err.message : String(err)}`;
+      return toolError(err);
     }
     return `Downloaded ${filePath} from drive "${drive_name}" to ${dest} (${content.length} bytes)`;
   }

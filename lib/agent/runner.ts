@@ -407,8 +407,16 @@ export async function* runAgent(
       toolCalls.forEach((tc, i) => seen.set(`${tc.name}:${JSON.stringify(tc.args)}`, i));
       const activeCalls = toolCalls.filter((tc, i) => seen.get(`${tc.name}:${JSON.stringify(tc.args)}`) === i);
 
+      // Persist the coalesced text, NOT accumulatedChunk.content. The raw streamed content array
+      // carries provider-specific, streaming-only blocks — extended-thinking `thinking` blocks
+      // (with signatures) and partial `input_json_delta` tool-input deltas — that are not valid
+      // *input* content. Replaying them breaks the next request (a text-only provider rejects them
+      // with `unknown variant 'thinking', expected 'text'`) and they don't survive a per-workspace
+      // model switch. The tool calls are carried separately via tool_calls (re-encoded per provider
+      // on send); reasoning is intentionally omitted from replay (see messageSerialization.ts).
+      // This mirrors the terminal-turn push above, which already persists fullText.
       const assistantTurn = new AIMessage({
-        content: accumulatedChunk?.content ?? fullText,
+        content: fullText,
         tool_calls: activeCalls.map((tc) => ({ id: tc.id, name: tc.name, args: tc.args })),
       });
 

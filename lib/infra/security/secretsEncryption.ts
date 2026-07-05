@@ -9,10 +9,11 @@
 // (separate module instances) share one key. Unlike the HMAC key it is generated ON DEMAND rather
 // than from ensureCA(): the secret store loads synchronously at module import, which happens
 // before server startup runs ensureCA() — and route bundles have no startup hook at all.
-import { readFileSync, writeFileSync, mkdirSync, chmodSync } from "fs";
+import { readFileSync } from "fs";
 import path from "path";
 import { randomBytes, createCipheriv, createDecipheriv } from "crypto";
 import { WORKSPACES_ROOT } from "../paths";
+import { createKeyFile } from "./keyFile";
 
 const KEY_FILE = path.join(WORKSPACES_ROOT, ".proxy-ca", "secrets-enc.key");
 
@@ -46,12 +47,9 @@ export function getSecretsEncKey(): Buffer {
   try {
     key = readFileSync(KEY_FILE);
   } catch {
-    // First use (or key file unreadable and absent): self-provision. mkdir because .proxy-ca/
-    // may not exist yet — ensureCA() has not necessarily run when the store imports us.
-    mkdirSync(path.dirname(KEY_FILE), { recursive: true });
-    key = randomBytes(32);
-    writeFileSync(KEY_FILE, key, { mode: 0o600 });
-    chmodSync(KEY_FILE, 0o600);
+    // First use (or key file unreadable and absent): self-provision. createKeyFile mkdirs because
+    // .proxy-ca/ may not exist yet — ensureCA() has not necessarily run when the store imports us.
+    key = createKeyFile(KEY_FILE);
   }
   if (key.length !== 32) throw new Error("secrets encryption key is corrupt (expected 32 bytes)");
   g._secretsEncKey = key;

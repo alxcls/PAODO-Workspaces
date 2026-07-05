@@ -4,6 +4,7 @@
 
 import { StructuredTool } from "@langchain/core/tools";
 import { z } from "zod";
+import { toolError } from "../toolUtils";
 import type { ExecRunner } from "../interfaces";
 
 const schema = z.object({
@@ -84,7 +85,7 @@ Dot-files and dot-directories are excluded automatically.`;
 
       return matched.join("\n");
     } catch (err: unknown) {
-      return `Error: ${err instanceof Error ? err.message : String(err)}`;
+      return toolError(err);
     }
   }
 }

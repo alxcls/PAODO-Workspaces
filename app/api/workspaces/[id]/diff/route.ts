@@ -1,6 +1,7 @@
 // Unified diff between two versioning commits of a workspace.
 import { type NextRequest, NextResponse } from "next/server";
-import { getStore, getVersioning } from "@/lib/infra/services";
+import { getVersioning } from "@/lib/infra/services";
+import { requireWorkspace } from "@/lib/api/guards";
 
 // Defense-in-depth: args are passed to git as an argv array (no shell), but constraining shas to
 // hex / HEAD-relative refs keeps anything weird out of the diff command.
@@ -11,8 +12,8 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const ws = getStore().getWorkspace(id);
-  if (!ws) return NextResponse.json({ error: "not found" }, { status: 404 });
+  const ws = requireWorkspace(id);
+  if (ws instanceof NextResponse) return ws;
 
   const url = new URL(req.url);
   const from = url.searchParams.get("from");

@@ -1,5 +1,5 @@
 import { type NextRequest, NextResponse } from "next/server";
-import { getStore } from "@/lib/infra/services";
+import { requireWorkspace } from "@/lib/api/guards";
 import { listSecretMeta, setSecret, getWorkspaceRules, normalizeDomain } from "@/lib/infra/security/workspaceSecretStore";
 import { getCredentialProxy } from "@/lib/infra/proxy";
 
@@ -12,7 +12,8 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
-  if (!getStore().getWorkspace(id)) return NextResponse.json({ error: "not found" }, { status: 404 });
+  const ws = requireWorkspace(id);
+  if (ws instanceof NextResponse) return ws;
   return NextResponse.json(listSecretMeta(id));
 }
 
@@ -21,7 +22,8 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
-  if (!getStore().getWorkspace(id)) return NextResponse.json({ error: "not found" }, { status: 404 });
+  const ws = requireWorkspace(id);
+  if (ws instanceof NextResponse) return ws;
 
   const body = (await req.json()) as { name?: string; value?: string; domain?: string };
   const { name, value } = body;

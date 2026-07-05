@@ -5,10 +5,9 @@
 // NOTE — conversation history lives in conversationStore.ts, persisted to disk per workspace and
 // surviving across restarts/disconnects. A workspace no longer carries any message history.
 import path from "path";
-import { readFileSync } from "fs";
 import fsAsync from "fs/promises";
 import { createLogger } from "../infra/logger";
-import { atomicSaveJson } from "../infra/jsonPersist";
+import { atomicSaveJson, readJson } from "../infra/jsonPersist";
 import { scaffoldWorkspaceDir } from "./workspaceScaffold";
 import { defaultWorkspaceVersioning } from "../infra/git";
 import { WORKSPACES_ROOT } from "../infra/paths";
@@ -239,12 +238,9 @@ function defaultLoad(): WorkspaceRecord[] | null {
   // Only read the registry when this module instance owns a fresh map; otherwise an earlier
   // instance already populated it and re-reading would duplicate/overwrite live workspace state.
   if (!freshMap) return null;
-  try {
-    return JSON.parse(readFileSync(REGISTRY_FILE, "utf-8"));
-  } catch {
-    log.debug("workspace registry not found — starting fresh");
-    return null;
-  }
+  const records = readJson<WorkspaceRecord[] | null>(REGISTRY_FILE, null);
+  if (!records) log.debug("workspace registry not found — starting fresh");
+  return records;
 }
 
 export const defaultWorkspaceStore = new WorkspaceStore({

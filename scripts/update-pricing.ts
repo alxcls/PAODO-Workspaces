@@ -49,12 +49,13 @@ async function main() {
     };
   }
 
-  const keys = Object.keys(out).sort();
-  const sorted: Record<string, VendoredEntry> = {};
-  for (const k of keys) sorted[k] = out[k];
+  // Sort by id for a stable, diff-friendly file.
+  const sorted = Object.fromEntries(
+    Object.entries(out).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)),
+  );
 
   writeFileSync(OUT, JSON.stringify(sorted, null, 2) + "\n");
-  console.log(`wrote ${keys.length} models to ${path.relative(process.cwd(), OUT)}`);
+  console.log(`wrote ${Object.keys(sorted).length} models to ${path.relative(process.cwd(), OUT)}`);
 }
 
 main().catch((err) => {

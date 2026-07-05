@@ -11,6 +11,7 @@ import "@xyflow/react/dist/style.css";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
 import TopBar from "@/components/layout/TopBar";
+import { loadDesc } from "@/components/home/DescriptionBlock";
 import { FloatingEdge, FloatingConnectionLine } from "./FloatingEdge";
 
 const WORKSPACE_TOP_HANDLE = "workspace-target-top";
@@ -20,10 +21,6 @@ const WORKSPACE_INCOMING_HANDLES = new Set([WORKSPACE_TOP_HANDLE, WORKSPACE_BOTT
 function normalizeWorkspaceIncomingHandle(handle?: string | null): string {
   if (handle === "workspace-target-bottom") return WORKSPACE_BOTTOM_HANDLE;
   return handle && WORKSPACE_INCOMING_HANDLES.has(handle) ? handle : WORKSPACE_TOP_HANDLE;
-}
-
-function loadDesc(id: string): string {
-  try { return localStorage.getItem(`ws-desc-${id}`) ?? ""; } catch { return ""; }
 }
 
 // Shared card body for graph nodes so workspace and drive nodes look identical

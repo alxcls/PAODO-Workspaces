@@ -188,7 +188,7 @@ export async function executeSkill(
   // real conversation in the CALLEE's workspace so the caller's UI can deep-link to it and the
   // operator can review the full session (reasoning, tool calls, messages) in the callee's tab.
   const { loadAgentConfig } = await import("../buildTools");
-  const config = loadAgentConfig();
+  const config = loadAgentConfig(callee.id);
   const run = opts.runAgentFn ?? (await import("../runner")).runAgent;
   const inputs = buildWorkspacePromptInputs(callee.id, callee.dir);
   const caller = opts.store?.getWorkspace(callerId);

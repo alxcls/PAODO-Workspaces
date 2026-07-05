@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import DescriptionBlock, { loadDesc } from "@/components/home/DescriptionBlock";
 import ApiAccessBlock from "@/components/home/ApiAccessBlock";
 import AgentLoopBlock from "@/components/home/AgentLoopBlock";
+import ModelBlock from "@/components/home/ModelBlock";
 import EnvVarsBlock from "@/components/home/EnvVarsBlock";
 import TopBar from "@/components/layout/TopBar";
 
@@ -250,6 +251,7 @@ export default function HomePage() {
               <DescriptionBlock wsId={selected.id} value={description} onChange={setDescription} />
               <ApiAccessBlock key={selected.id} wsId={selected.id} />
               <AgentLoopBlock key={`loop-${selected.id}`} wsId={selected.id} />
+              <ModelBlock key={`model-${selected.id}`} wsId={selected.id} />
               <EnvVarsBlock key={`env-${selected.id}`} wsId={selected.id} />
             </div>
           ) : (

@@ -7,6 +7,7 @@ import { HumanMessage, ToolMessage, AIMessage } from "@langchain/core/messages";
 import type { AIMessageChunk, BaseMessage } from "@langchain/core/messages";
 import type { Logger } from "pino";
 import { buildTools, loadAgentConfig } from "./buildTools";
+import { selectedModelId } from "./buildModel";
 import { classifyToolStatus } from "./toolUtils";
 import type { AgentConfig, PostDispatchContext, PostDispatchFn } from "./interfaces";
 import { getContainers } from "../infra/services";
@@ -30,7 +31,7 @@ export type AgentEvent =
   | { type: "error"; message: string }
   | { type: "limit_reached" }
   | { type: "done" }
-  | { type: "turn_usage"; inputTokens: number; outputTokens: number; reasoningTokens: number; cachedInputTokens: number; cacheCreationTokens: number; userInput?: string; reasoningText?: string; outputText?: string; toolCalls: Array<{ name: string; args: Record<string, unknown>; output: string; status: ToolStatus }> };
+  | { type: "turn_usage"; model?: string; inputTokens: number; outputTokens: number; reasoningTokens: number; cachedInputTokens: number; cacheCreationTokens: number; userInput?: string; reasoningText?: string; outputText?: string; toolCalls: Array<{ name: string; args: Record<string, unknown>; output: string; status: ToolStatus }> };
 
 export type RunAgentOptions = {
   signal?: AbortSignal;
@@ -40,7 +41,7 @@ export type RunAgentOptions = {
   /** Override container warm-up — defaults to ensureContainer. Inject for testing. */
   warmContainer?: () => void;
   /** Override config loading — defaults to loadAgentConfig. Inject for testing. */
-  loadConfig?: () => AgentConfig;
+  loadConfig?: (workspaceId?: string) => AgentConfig;
   /** Override tool/model construction — defaults to buildTools. Inject for testing. */
   buildAgentTools?: typeof buildTools;
   /** Container lifecycle manager — defaults to the production singleton. Inject for testing. */
@@ -310,7 +311,8 @@ export async function* runAgent(
   { signal, maxIterations = 30, notify, warmContainer, loadConfig, buildAgentTools, containers, store, versioning, signalHandlers: injectedHandlers }: RunAgentOptions = {},
 ): AsyncGenerator<AgentEvent> {
   const wlog = log.child({ workspaceId });
-  const config = (loadConfig ?? loadAgentConfig)();
+  const config = (loadConfig ?? loadAgentConfig)(workspaceId);
+  const modelId = selectedModelId(config);
   const resolvedContainers = containers ?? getContainers();
   const { modelWithTools, model, toolMap, signalHandlers: builtHandlers } = (buildAgentTools ?? buildTools)(workspaceId, workspaceDir, config, { containers: resolvedContainers, store });
   const signalHandlers: Record<string, PostDispatchFn> = injectedHandlers ?? builtHandlers ?? {};
@@ -380,6 +382,7 @@ export async function* runAgent(
       // the no-tool final turn emits it here with no tool calls.
       const usageBase = {
         ...usageTokens(accumulatedChunk),
+        ...(modelId ? { model: modelId } : {}),
         ...(iterations === 1 ? { userInput } : {}),
         ...(reasoningText ? { reasoningText } : {}),
         ...(fullText ? { outputText: fullText } : {}),

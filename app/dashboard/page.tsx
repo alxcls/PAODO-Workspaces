@@ -8,6 +8,7 @@ import remarkGfm from "remark-gfm";
 import TopBar from "@/components/layout/TopBar";
 import { toolLabel, toolArgSummary } from "@/lib/client/agentTranscript";
 import type { LightTurnRecord, TurnRecord, ToolStatus } from "@/lib/workspace/usageStore";
+import { computeCost } from "@/lib/workspace/modelPricing";
 
 // Tool-outcome dot: green success / red failure. From the caller's view a NEEDS_INPUT call
 // didn't return a usable result, so it reads red too (the corrected re-call is the green row).
@@ -42,6 +43,15 @@ function formatTokens(n: number): string {
   return String(n);
 }
 
+// USD cost per session. `hasCost` is false when no turn's model was found in the pricing catalog, in
+// which case we show "—" rather than a misleading $0. Sub-cent totals get more precision.
+function formatCost(cost: number, hasCost: boolean): string {
+  if (!hasCost) return "—";
+  if (cost === 0) return "$0";
+  if (cost < 0.01) return "$" + cost.toFixed(4);
+  return "$" + cost.toFixed(cost < 1 ? 3 : 2);
+}
+
 function pad(n: number): string { return String(n).padStart(2, "0"); }
 
 function formatDateTime(iso: string): string {
@@ -49,17 +59,24 @@ function formatDateTime(iso: string): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-// One user message ("turn line") = one sessionId, aggregated from the light per-turn records.
+// One user message ("turn line") = one run = one sessionId, aggregated from the light per-turn
+// records. The row shows both IDs: the session id (the per-run identifier) and the conversation
+// id (linked to its conversation tab).
 interface LightSession {
   sessionId: string;
   conversationId?: string;
   workspaceId: string;
   workspaceName: string;
   timestamp: string;
+  // Distinct model ids used across the run's turns, in first-seen order. Usually one; a run that
+  // switches models mid-flight lists each once.
+  models: string[];
   inputTokens: number;
   outputTokens: number;
   cachedInputTokens: number;
   toolTotal: number;
+  cost: number;
+  hasCost: boolean;
 }
 
 function groupBySessions(records: LightTurnRecord[]): LightSession[] {
@@ -73,17 +90,25 @@ function groupBySessions(records: LightTurnRecord[]): LightSession[] {
         workspaceId: r.workspaceId,
         workspaceName: r.workspaceName,
         timestamp: r.timestamp,
+        models: [],
         inputTokens: 0,
         outputTokens: 0,
         cachedInputTokens: 0,
         toolTotal: 0,
+        cost: 0,
+        hasCost: false,
       };
       map.set(r.sessionId, s);
     }
+    if (r.model && !s.models.includes(r.model)) s.models.push(r.model);
     s.inputTokens += r.inputTokens;
     s.outputTokens += r.outputTokens;
     s.cachedInputTokens += r.cachedInputTokens;
     s.toolTotal += r.toolCalls.length;
+    // Cost is per-turn: each turn may run on a different model, so sum computeCost across turns.
+    // A turn whose model isn't in the catalog contributes nothing but doesn't invalidate the total.
+    const c = computeCost(r, r.model);
+    if (c !== undefined) { s.cost += c; s.hasCost = true; }
     if (r.timestamp < s.timestamp) s.timestamp = r.timestamp;
   }
   // Order by when each session STARTED (newest first) — see the agent-to-agent note: a caller's
@@ -341,21 +366,27 @@ export default function DashboardPage() {
             <table className="w-full text-ms border-separate border-spacing-0 whitespace-nowrap">
               <colgroup>
                 <col className="w-[140px]" />
+                <col className="w-[140px]" />
                 <col />
-                <col className="w-[18%]" />
-                <col className="w-[14%]" />
-                <col className="w-[14%]" />
-                <col className="w-[14%]" />
+                <col className="w-[16%]" />
+                <col className="w-[16%]" />
+                <col className="w-[12%]" />
+                <col className="w-[12%]" />
+                <col className="w-[12%]" />
+                <col className="w-[12%]" />
                 <col className="w-[40px]" />
               </colgroup>
               <thead>
                 <tr className="border-b border-border text-2xs font-semibold text-text-3 tracking-[.06em] uppercase h-[45px]">
+                  <th className="text-left px-6 font-semibold align-middle">Conversation</th>
                   <th className="text-left px-6 font-semibold align-middle">Session</th>
                   <th className="text-left px-6 font-semibold align-middle">Workspace</th>
+                  <th className="text-left px-6 font-semibold align-middle">Model</th>
                   <th className="text-left px-6 font-semibold align-middle">Time</th>
                   <th className="text-right px-6 font-semibold align-middle">In ↑</th>
                   <th className="text-right px-6 font-semibold align-middle">Cached ↑</th>
                   <th className="text-right px-6 font-semibold align-middle">Out ↓</th>
+                  <th className="text-right px-6 font-semibold align-middle">Cost</th>
                   <th className="w-[40px]" />
                 </tr>
               </thead>
@@ -366,28 +397,35 @@ export default function DashboardPage() {
                     onClick={() => setOpenSession(s)}
                     className={`border-b border-border cursor-pointer transition-colors hover:bg-bg-deep ${openSession?.sessionId === s.sessionId ? "bg-bg-tint" : ""}`}
                   >
-                    {/* Session id deep-links to its conversation tab in the callee/UI workspace,
-                        matching the call_agent "View conversation" link. stopPropagation so the
-                        link navigates instead of opening the detail drawer (the row's click). */}
+                    {/* Conversation id deep-links to its conversation tab in the callee/UI workspace,
+                        matching the call_agent "View conversation" link. The visible id is the
+                        conversation id so it matches the link target. stopPropagation so the link
+                        navigates instead of opening the detail drawer (the row's click). */}
                     <td className="px-6 py-2.5 font-mono">
                       {s.conversationId ? (
                         <a
                           href={`/workspace/${s.workspaceId}?conversation=${s.conversationId}`}
                           onClick={(e) => e.stopPropagation()}
                           className="text-primary hover:underline"
-                          title="Open this session's conversation"
+                          title="Open this conversation"
                         >
-                          {s.sessionId.slice(0, 8)} ↗
+                          {s.conversationId.slice(0, 8)} ↗
                         </a>
                       ) : (
-                        <span className="text-text-3" title="No conversation to link (external agent run)">{s.sessionId.slice(0, 8)}</span>
+                        <span className="text-text-3" title="No conversation (external agent run)">—</span>
                       )}
                     </td>
+                    {/* Session id = the per-run identifier (plain text). */}
+                    <td className="px-6 py-2.5 font-mono text-text-1">{s.sessionId.slice(0, 8)}</td>
                     <td className="px-6 py-2.5 text-text-1 font-medium">{s.workspaceName}</td>
+                    {/* Model(s) the run's turns used. Usually one; multiple are joined. "—" when no
+                        turn carried a model (records written before the field existed). */}
+                    <td className="px-6 py-2.5 font-mono text-text-2 truncate" title={s.models.join(", ")}>{s.models.length ? s.models.join(", ") : "—"}</td>
                     <td className="px-6 py-2.5 text-text-3">{formatDateTime(s.timestamp)}</td>
                     <td className="px-6 py-2.5 text-right font-mono text-text-1">{formatTokens(s.inputTokens)}</td>
                     <td className="px-6 py-2.5 text-right font-mono text-text-3">{formatTokens(s.cachedInputTokens)}</td>
                     <td className="px-6 py-2.5 text-right font-mono text-text-1">{formatTokens(s.outputTokens)}</td>
+                    <td className="px-6 py-2.5 text-right font-mono text-text-1" title={s.hasCost ? `$${s.cost.toFixed(6)}` : "No pricing for this session's model(s)"}>{formatCost(s.cost, s.hasCost)}</td>
                     {/* Static dim chevron hints the row opens a detail drawer; the row's bg tint is the hover cue. */}
                     <td className="px-4 py-2.5 align-middle text-right text-text-3 text-[15px] leading-none opacity-40">›</td>
                   </tr>

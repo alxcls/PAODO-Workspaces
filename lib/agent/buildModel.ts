@@ -40,7 +40,7 @@ type ModelBuilder = (config: LLMProviderConfig) => ChatOpenAI | ChatAnthropic;
 
 const MODEL_BUILDERS: Record<string, ModelBuilder> = {
   anthropic: (config) => {
-    if (!config.anthropicModel) throw new Error("ANTHROPIC_MODEL is not set in .env");
+    if (!config.anthropicModel) throw new Error("no anthropic model selected for this workspace");
     return new ChatAnthropic({
       model: config.anthropicModel,
       apiKey: config.anthropicApiKey,
@@ -53,7 +53,7 @@ const MODEL_BUILDERS: Record<string, ModelBuilder> = {
     });
   },
   deepseek: (config) => {
-    if (!config.deepseekModel) throw new Error("DEEPSEEK_MODEL is not set in .env");
+    if (!config.deepseekModel) throw new Error("no deepseek model selected for this workspace");
     return new ChatOpenAI({
       model: config.deepseekModel,
       configuration: {
@@ -63,7 +63,7 @@ const MODEL_BUILDERS: Record<string, ModelBuilder> = {
     });
   },
   openai: (config) => {
-    if (!config.openaiModel) throw new Error("OPENAI_MODEL is not set in .env");
+    if (!config.openaiModel) throw new Error("no openai model selected for this workspace");
     // OpenAI accepts none|minimal|low|medium|high|xhigh (never "max" — validation keeps it out).
     // "none" disables reasoning, so we omit the summary request (nothing would be produced to
     // summarize); every other level pairs with an auto summary.

@@ -1,5 +1,6 @@
 // Assembles the full agent tool set and binds it to the configured LLM.
-// Provider is selected via LLM_PROVIDER env var ("openai" default, "anthropic", "deepseek").
+// Provider/model/effort come from the workspace's stored selection (see loadAgentConfig below),
+// falling back to DEFAULT_LLM; .env supplies only the provider API keys.
 // Concrete infra dependencies are wired here and injected into tool constructors — tools
 // themselves only depend on the ContainerRunner interface defined in interfaces.ts.
 

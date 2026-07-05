@@ -53,10 +53,6 @@ next-env.d.ts
 # generated codebase graph
 graph.html
 
-# docs
-/docs
-
-
 # Claude Code skills (local tooling, not for version control)
 /.claude/skills/
 

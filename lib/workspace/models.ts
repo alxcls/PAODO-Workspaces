@@ -22,9 +22,6 @@ export const AVAILABLE_MODELS: Record<string, readonly string[]> = {
   ],
   deepseek: [
     "deepseek-v4-pro",
-    "deepseek-v4-flash",
-    "deepseek-reasoner",
-    "deepseek-chat",
   ],
 };
 

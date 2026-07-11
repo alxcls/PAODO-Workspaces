@@ -2,6 +2,9 @@
   "name": "workspace-agent",
   "version": "0.1.0",
   "private": true,
+  "engines": {
+    "npm": "11.6.2"
+  },
   "scripts": {
     "dev": "tsx server.ts",
     "start": "NODE_ENV=production tsx server.ts",

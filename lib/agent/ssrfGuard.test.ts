@@ -53,16 +53,28 @@ describe("isPrivateIP — address classifier", () => {
 });
 
 describe("assertPublicUrl — http_get chokepoint", () => {
-  it("allows a public HTTPS URL and returns it unchanged", async () => {
+  it("allows a public HTTPS URL and returns it with the validated IP", async () => {
     const pub: HostnameResolver = async () => ({ address: "8.8.8.8" });
-    await expect(assertPublicUrl("https://example.com/path", pub)).resolves.toBe(
-      "https://example.com/path",
-    );
+    await expect(assertPublicUrl("https://example.com/path", pub)).resolves.toEqual({
+      url: "https://example.com/path",
+      ip: "8.8.8.8",
+    });
   });
 
   it("upgrades http to https", async () => {
     const pub: HostnameResolver = async () => ({ address: "8.8.8.8" });
-    await expect(assertPublicUrl("http://example.com", pub)).resolves.toBe("https://example.com");
+    await expect(assertPublicUrl("http://example.com", pub)).resolves.toEqual({
+      url: "https://example.com",
+      ip: "8.8.8.8",
+    });
+  });
+
+  it("pins the exact resolved IP so the caller cannot be rebound to another address", async () => {
+    // The anti-rebinding guarantee: whatever the resolver returned is handed back verbatim for the
+    // caller to dial. If this drifts from the address that was validated, the window reopens.
+    const pub: HostnameResolver = async () => ({ address: "93.184.216.34" });
+    const { ip } = await assertPublicUrl("https://example.com", pub);
+    expect(ip).toBe("93.184.216.34");
   });
 
   it("rejects non-http(s) schemes", async () => {
@@ -92,10 +104,11 @@ describe("assertPublicUrl — http_get chokepoint", () => {
     );
   });
 
-  it("allows public IP literals without consulting DNS", async () => {
-    await expect(assertPublicUrl("https://8.8.8.8", failingResolver)).resolves.toBe(
-      "https://8.8.8.8",
-    );
+  it("allows public IP literals without consulting DNS and pins the literal", async () => {
+    await expect(assertPublicUrl("https://8.8.8.8", failingResolver)).resolves.toEqual({
+      url: "https://8.8.8.8",
+      ip: "8.8.8.8",
+    });
   });
 
   it("blocks a hostname that resolves to a private IP", async () => {
@@ -108,7 +121,10 @@ describe("assertPublicUrl — http_get chokepoint", () => {
 
   it("allows a hostname that resolves to a public IP", async () => {
     const good: HostnameResolver = async () => ({ address: "93.184.216.34" });
-    await expect(assertPublicUrl("https://example.com", good)).resolves.toBe("https://example.com");
+    await expect(assertPublicUrl("https://example.com", good)).resolves.toEqual({
+      url: "https://example.com",
+      ip: "93.184.216.34",
+    });
   });
 
   it("rejects when the hostname cannot be resolved", async () => {

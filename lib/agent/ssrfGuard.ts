@@ -45,17 +45,29 @@ export function isPrivateIP(ip: string): boolean {
   return true;
 }
 
-// Validates that rawUrl points at a public HTTPS endpoint and returns the
-// final (https-upgraded) URL. Throws on any URL the agent must not reach.
+// The validated target: the final (https-upgraded) URL plus the exact IP the guard
+// resolved and approved. Callers MUST connect to `ip` (not re-resolve the hostname)
+// so the address that was validated is the address that is dialed — see the
+// DNS-rebinding note below.
+export interface GuardedTarget {
+  url: string;
+  ip: string;
+}
+
+// Validates that rawUrl points at a public HTTPS endpoint and returns the final
+// (https-upgraded) URL together with the single public IP it approved. Throws on
+// any URL the agent must not reach.
 //
-// NOTE (DNS-rebinding TOCTOU): when given a hostname we resolve it once here and
-// validate that IP, but the subsequent fetch() resolves independently — a
-// hostile resolver could return a public IP here and a private one to fetch.
-// This guard does not close that window; it blocks the common cases.
+// DNS-rebinding (TOCTOU): resolving here and letting the HTTP client re-resolve
+// independently would leave a window where a hostile resolver returns a public IP
+// to this guard and a private one to the socket. We close that window by returning
+// the validated `ip` and having the caller PIN the connection to it (see
+// webFetch.ts) — the address validated is the address dialed. TLS SNI/cert
+// validation still run against the hostname, so pinning does not weaken TLS.
 export async function assertPublicUrl(
   rawUrl: string,
   resolve: HostnameResolver = lookup,
-): Promise<string> {
+): Promise<GuardedTarget> {
   const finalUrl = rawUrl.startsWith("http://") ? rawUrl.replace("http://", "https://") : rawUrl;
   let parsed: URL;
   try {
@@ -72,7 +84,8 @@ export async function assertPublicUrl(
 
   if (isIPv4(hostname) || isIPv6(hostname)) {
     if (isPrivateIP(hostname)) throw new Error("Blocked internal address");
-    return finalUrl;
+    // The literal IS the address dialed — pin to the bare (unbracketed) form.
+    return { url: finalUrl, ip: hostname };
   }
 
   // Resolve hostname → IP so alternate encodings (decimal, hex) and IPv6 are caught
@@ -84,5 +97,5 @@ export async function assertPublicUrl(
   }
   if (isPrivateIP(resolvedIp)) throw new Error("Blocked internal address");
 
-  return finalUrl;
+  return { url: finalUrl, ip: resolvedIp };
 }

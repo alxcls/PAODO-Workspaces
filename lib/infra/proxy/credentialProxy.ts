@@ -45,7 +45,7 @@ function parseProxyAuth(authHeader: string | undefined): { wsId: string; secret:
 // are intentionally NOT matched: a key scoped to "api.openai.com" must never be injected into some
 // other "*.openai.com" host an attacker might influence.
 export function hostMatches(hostname: string, domain: string): boolean {
-  return hostname.toLowerCase() === domain;
+  return hostname.toLowerCase() === domain.toLowerCase();
 }
 
 // Merge the token maps of every rule whose domain covers this host. If none match, the

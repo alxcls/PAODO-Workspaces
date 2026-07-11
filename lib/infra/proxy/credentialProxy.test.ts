@@ -61,6 +61,10 @@ describe("hostMatches (exact-host scoping)", () => {
     expect(hostMatches("API.OpenAI.com", "api.openai.com")).toBe(true);
   });
 
+  it("is case-insensitive on the scoped domain too", () => {
+    expect(hostMatches("api.openai.com", "API.OpenAI.com")).toBe(true);
+  });
+
   it("does NOT match a subdomain of the scoped host", () => {
     expect(hostMatches("evil.api.openai.com", "api.openai.com")).toBe(false);
   });

@@ -162,6 +162,17 @@ describe("selectGithubTokenSecret", () => {
     expect(selectGithubTokenSecret([plain])).toBe("MY_PAT");
   });
 
+  it("does not treat an incidental GH/GITHUB substring as a token-name match on ties", async () => {
+    const { selectGithubTokenSecret } = await freshStore();
+    // HIGH_SCORE contains "GH" but is not a github token name; with two non-special candidates the
+    // GH/GITHUB tiebreak must skip it and fall through to the first candidate.
+    const high = { name: "HIGH_SCORE", domains: ["github.com"] };
+    const plain = { name: "MY_PAT", domains: ["github.com"] };
+    expect(selectGithubTokenSecret([high, plain])).toBe("HIGH_SCORE"); // falls through to first
+    // But a real token-style name still wins the tiebreak over a plain one.
+    expect(selectGithubTokenSecret([high, { name: "MY_GITHUB_PAT", domains: ["github.com"] }])).toBe("MY_GITHUB_PAT");
+  });
+
   it("requires an exact github.com host — subdomains like api.github.com do not qualify", async () => {
     const { selectGithubTokenSecret } = await freshStore();
     expect(selectGithubTokenSecret([{ name: "API_ONLY", domains: ["api.github.com"] }])).toBeNull();

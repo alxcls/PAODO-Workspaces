@@ -14,6 +14,33 @@ RUN apt-get update && apt-get install -y \
     rm -rf /var/lib/apt/lists/* && \
     ln -sf /usr/bin/python3 /usr/bin/python
 
+# GitHub CLI, from GitHub's official apt repo (the Ubuntu universe package lags). The agent reaches
+# for `gh` for repo/PR/issue operations (GitHub API), which plain git cannot do. gh is a Go binary
+# that already honors HTTPS_PROXY and SSL_CERT_FILE — both set by the container runtime — so it
+# routes through the credential proxy and trusts its MITM cert with no extra config.
+RUN mkdir -p -m 755 /etc/apt/keyrings && \
+    curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /etc/apt/keyrings/githubcli-archive-keyring.gpg && \
+    chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg && \
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list && \
+    apt-get update && apt-get install -y gh && \
+    rm -rf /var/lib/apt/lists/*
+
+# Static, name-agnostic git credential helper for github.com only. It emits x-access-token:$GH_TOKEN
+# at runtime — where GH_TOKEN is the opaque proxy token the app injects for the github.com-scoped
+# secret — so `git clone/push/pull https://github.com/...` authenticates with no token in the URL,
+# exactly like a `gh auth login`'d dev machine. Scoped to github.com so it never fires for other
+# hosts, and emits nothing when GH_TOKEN is unset (git then falls back to its normal behaviour).
+RUN git config --system credential.https://github.com.helper \
+    '!f() { test "$1" = get && test -n "$GH_TOKEN" && printf "username=x-access-token\npassword=%s\n" "$GH_TOKEN"; }; f'
+
+# Generic default commit identity so a fresh clone's first commit never fails with "Author identity
+# unknown". Set at --system level, so it is only a fallback: any repo-level `git config user.name/
+# user.email` (which the agent or user can set to their real GitHub account) overrides it. Kept
+# account-agnostic on purpose — the image is shared across workspaces and doesn't know which GitHub
+# account a given workspace authenticates as.
+RUN git config --system user.name "PAODO Agent" && \
+    git config --system user.email "agent@paodo.local"
+
 # Single non-root runtime identity: `dev` at UID 1000 — the SAME uid as the app server's `node`
 # user, so files created by the agent on the shared workspace volume are owned 1000:1000 and the
 # app can read/write/delete them with no chown. The agent runs as this user for everything; it

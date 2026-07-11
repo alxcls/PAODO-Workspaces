@@ -36,7 +36,7 @@ afterAll(() => fs.rmSync(ROOT, { recursive: true, force: true }));
 describe("encryption at rest", () => {
   it("writes an envelope — the raw file never contains the secret value", async () => {
     const store = await freshStore();
-    store.setSecret("ws1", "OPENAI_API_KEY", "sk-live-abc123", "api.openai.com");
+    store.setSecret("ws1", "OPENAI_API_KEY", "sk-live-abc123", ["api.openai.com"]);
 
     const raw = fs.readFileSync(FILE, "utf-8");
     expect(raw).not.toContain("sk-live-abc123");
@@ -50,6 +50,18 @@ describe("encryption at rest", () => {
     expect(rules).toHaveLength(1);
     expect(rules[0].domain).toBe("api.openai.com");
     expect([...rules[0].tokenMap.values()]).toEqual(["sk-live-abc123"]);
+  });
+
+  it("supports multiple allowed hosts per secret", async () => {
+    const store = await freshStore();
+    store.setSecret("ws1", "GITHUB_PAT", "ghp_secret", ["github.com", "api.GitHub.com", " https://api.github.com/path "]);
+
+    const meta = store.listSecretMeta("ws1");
+    expect(meta[0].domains).toEqual(["api.github.com", "github.com"]);
+
+    const rules = store.getWorkspaceRules("ws1").sort((a, b) => a.domain.localeCompare(b.domain));
+    expect(rules.map((r) => r.domain)).toEqual(["api.github.com", "github.com"]);
+    expect(rules[0].tokenMap.size + rules[1].tokenMap.size).toBe(2);
   });
 
   it("migrates a legacy plaintext file to the envelope on first load", async () => {
@@ -70,7 +82,7 @@ describe("encryption at rest", () => {
 
   it("fails closed on a tampered envelope: empty store, no crash", async () => {
     const store = await freshStore();
-    store.setSecret("ws1", "KEY", "value-1", "api.example.com");
+    store.setSecret("ws1", "KEY", "value-1", ["api.example.com"]);
 
     // Corrupt one ciphertext byte on disk.
     const env = JSON.parse(fs.readFileSync(FILE, "utf-8"));
@@ -96,11 +108,11 @@ describe("reloadSecretStore (credential-proxy sidecar reader)", () => {
     // instance sharing the same file) mutates secrets on disk. Only reloadSecretStore() makes the
     // reader see them.
     const reader = await freshStore();
-    reader.setSecret("ws1", "K1", "v1", "api.openai.com");
+    reader.setSecret("ws1", "K1", "v1", ["api.openai.com"]); 
     expect(reader.listSecretWorkspaceIds()).toEqual(["ws1"]);
 
     const app = await freshStore(); // fresh in-memory instance, same FILE on disk
-    app.setSecret("ws2", "K2", "v2", "api.example.com");
+    app.setSecret("ws2", "K2", "v2", ["api.example.com"]);
 
     // Reader is stale until it reloads.
     expect(reader.listSecretWorkspaceIds()).toEqual(["ws1"]);
@@ -114,14 +126,44 @@ describe("reloadSecretStore (credential-proxy sidecar reader)", () => {
 
   it("drops a workspace whose secrets were all removed on disk after reload", async () => {
     const reader = await freshStore();
-    reader.setSecret("ws1", "K1", "v1", "api.openai.com");
+    reader.setSecret("ws1", "K1", "v1", ["api.openai.com"]);
     expect(reader.listSecretWorkspaceIds()).toEqual(["ws1"]);
 
     const app = await freshStore();
-    app.setSecret("ws1", "K1", "v1", "api.openai.com"); // load current state
+    app.setSecret("ws1", "K1", "v1", ["api.openai.com"]); // load current state
     app.deleteAllForWorkspace("ws1");
 
     reader.reloadSecretStore();
     expect(reader.listSecretWorkspaceIds()).toEqual([]);
+  });
+});
+
+describe("selectGithubTokenSecret", () => {
+  it("returns null when no secret is scoped to github.com", async () => {
+    const { selectGithubTokenSecret } = await freshStore();
+    expect(selectGithubTokenSecret([])).toBeNull();
+    expect(selectGithubTokenSecret([{ name: "OPENAI_KEY", domains: ["api.openai.com"] }])).toBeNull();
+  });
+
+  it("picks the github.com-scoped secret regardless of its name", async () => {
+    const { selectGithubTokenSecret } = await freshStore();
+    expect(selectGithubTokenSecret([{ name: "MY_PAT", domains: ["github.com"] }])).toBe("MY_PAT");
+  });
+
+  it("prefers GITHUB_TOKEN, then GH_TOKEN, then a GITHUB/GH-ish name on ties", async () => {
+    const { selectGithubTokenSecret } = await freshStore();
+    const gh = { name: "GH_TOKEN", domains: ["github.com"] };
+    const ghToken = { name: "GITHUB_TOKEN", domains: ["github.com"] };
+    const ish = { name: "MY_GH_PAT", domains: ["github.com"] };
+    const plain = { name: "MY_PAT", domains: ["github.com"] };
+    expect(selectGithubTokenSecret([plain, gh, ghToken])).toBe("GITHUB_TOKEN");
+    expect(selectGithubTokenSecret([plain, gh])).toBe("GH_TOKEN");
+    expect(selectGithubTokenSecret([plain, ish])).toBe("MY_GH_PAT");
+    expect(selectGithubTokenSecret([plain])).toBe("MY_PAT");
+  });
+
+  it("requires an exact github.com host — subdomains like api.github.com do not qualify", async () => {
+    const { selectGithubTokenSecret } = await freshStore();
+    expect(selectGithubTokenSecret([{ name: "API_ONLY", domains: ["api.github.com"] }])).toBeNull();
   });
 });

@@ -153,6 +153,13 @@ git pull && docker compose up --build -d
 docker compose up -d
 ```
 
+> **Always rebuild _all_ services — never `docker compose up -d --build app`.** The
+> `credproxy` sidecar runs the **same `paodo_ws_app` image but as a separate long-lived
+> container**. Scoping the deploy to `app` rebuilds the image and recreates only the app,
+> leaving `credproxy` running stale code indefinitely. That silently breaks per-workspace
+> secret injection (e.g. `gh`/GitHub auth) whenever the proxy code changes. `docker compose
+> up --build -d` with no service filter recreates the sidecar from the fresh image too.
+
 ---
 
 ## Operations

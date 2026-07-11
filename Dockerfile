@@ -1,6 +1,11 @@
 # Stage 1: build the Next.js app
 FROM node:20-alpine AS builder
 WORKDIR /app
+# Pin npm to match the version used locally to generate package-lock.json. node:20-alpine's bundled
+# npm drifts from the maintainer's local npm, and different npm majors lay out nested optional deps
+# (e.g. Tailwind's oxide-wasm @emnapi packages) differently — so an npm-11 lock fails `npm ci` under
+# npm 10 with "EUSAGE ... Missing from lock file". Same pin here + in the runner keeps builds stable.
+RUN npm install -g npm@11.6.2
 COPY package*.json ./
 RUN npm ci
 COPY . .
@@ -18,6 +23,8 @@ ENV NODE_ENV=production
 RUN apk add --no-cache docker-cli git
 
 # Production dependencies + tsx (needed to run TypeScript server at runtime)
+# Same npm pin as the builder stage (see note above) so `npm ci` reads the lock identically.
+RUN npm install -g npm@11.6.2
 COPY package*.json ./
 RUN npm ci --omit=dev && npm install tsx
 

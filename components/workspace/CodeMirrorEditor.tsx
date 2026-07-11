@@ -111,17 +111,24 @@ const editorTheme = EditorView.theme({
 
 // GitHub-light syntax colours (mirrors GitHub's light code theme) to fit the app's light palette.
 const githubLight = HighlightStyle.define([
-  { tag: [t.keyword, t.moduleKeyword, t.controlKeyword, t.operatorKeyword], color: "#d73a49" },
-  { tag: [t.string, t.special(t.string), t.regexp], color: "#032f62" },
+  // Keywords and the literal constants true/false/null share GitHub's red.
+  { tag: [t.keyword, t.moduleKeyword, t.controlKeyword, t.operatorKeyword, t.bool, t.null], color: "#d73a49" },
+  { tag: [t.string, t.special(t.string), t.character, t.regexp], color: "#032f62" },
+  { tag: t.escape, color: "#22863a" },
   { tag: [t.comment, t.lineComment, t.blockComment], color: "#6a737d", fontStyle: "italic" },
-  { tag: [t.number, t.bool, t.null, t.atom], color: "#005cc5" },
-  { tag: [t.propertyName], color: "#005cc5" },
-  { tag: [t.function(t.variableName), t.function(t.propertyName)], color: "#6f42c1" },
-  { tag: [t.typeName, t.className, t.namespace], color: "#6f42c1" },
-  { tag: [t.tagName], color: "#22863a" },
-  { tag: [t.attributeName], color: "#6f42c1" },
+  // Numbers plus named/builtin constants (e.g. None, NaN, PI).
+  { tag: [t.number, t.atom, t.constant(t.variableName), t.standard(t.name)], color: "#005cc5" },
+  // Object keys / property names in purple so JSON keys stand out from their (navy) string values.
+  { tag: [t.propertyName, t.function(t.propertyName)], color: "#6f42c1" },
+  // Function and method names.
+  { tag: [t.function(t.variableName), t.macroName], color: "#6f42c1" },
+  // Types, classes and namespaces get their own orange so they don't blur into functions/keys.
+  { tag: [t.typeName, t.className, t.namespace, t.definition(t.typeName)], color: "#e36209" },
+  { tag: t.tagName, color: "#22863a" },
+  // HTML/JSX attributes and decorators/annotations.
+  { tag: [t.attributeName, t.annotation], color: "#6f42c1" },
   { tag: [t.operator, t.punctuation, t.separator, t.bracket], color: "#24292e" },
-  { tag: [t.variableName, t.definition(t.variableName)], color: "#24292e" },
+  { tag: [t.variableName, t.definition(t.variableName), t.labelName], color: "#24292e" },
   { tag: [t.meta, t.documentMeta], color: "#6a737d" },
   { tag: [t.link, t.url], color: "#032f62", textDecoration: "underline" },
   { tag: t.heading, color: "#005cc5", fontWeight: "bold" },

@@ -21,9 +21,10 @@ import * as tls from "tls";
 import * as http from "http";
 import * as https from "https";
 import { Transform } from "stream";
-import { signDomainCert, verifyProxySecret } from "./proxyCA";
+import { signDomainCert } from "./proxyCA";
 import { isBlockedAddress, makeGuardedLookup } from "./destinationGuard";
 import { createLogger } from "../logger";
+import { WorkspaceRuleStore } from "./workspaceRuleStore";
 import type { DomainRule } from "../security/workspaceSecretStore";
 
 const log = createLogger("credentialProxy");
@@ -339,7 +340,7 @@ export function buildResponseHead(res: http.IncomingMessage, redactMap?: TokenMa
 }
 
 export class CredentialProxy {
-  private rules = new Map<string, DomainRule[]>();
+  private ruleStore = new WorkspaceRuleStore();
   private server: net.Server;
   // Predicate deciding whether a resolved destination IP is off-limits (SSRF guard), plus a
   // hostname lookup built from it. Injectable so tests can point the proxy at a loopback stub.
@@ -369,12 +370,11 @@ export class CredentialProxy {
   }
 
   setRules(wsId: string, rules: DomainRule[]): void {
-    if (rules.length === 0) this.rules.delete(wsId);
-    else this.rules.set(wsId, rules);
+    this.ruleStore.setRules(wsId, rules);
   }
 
   clearRules(wsId: string): void {
-    this.rules.delete(wsId);
+    this.ruleStore.clearRules(wsId);
   }
 
   private async handleConnection(socket: net.Socket): Promise<void> {
@@ -382,16 +382,9 @@ export class CredentialProxy {
 
     const { statusLine, headers, remaining } = await readHttpHeaders(socket);
     const auth = parseProxyAuth(headers["proxy-authorization"]);
-    // Only apply a workspace's injection rules when the presented secret matches the one derived
-    // from its id. A caller that knows another workspace's id but not its secret gets an empty rule
-    // set — the connection still tunnels/forwards, but no real value is ever substituted (fail closed).
-    const wsId = auth?.wsId ?? "";
-    let rules: DomainRule[] = [];
-    if (auth && verifyProxySecret(auth.wsId, auth.secret)) {
-      rules = this.rules.get(auth.wsId) ?? [];
-    } else if (this.rules.has(wsId)) {
-      log.debug({ wsId }, "proxy secret mismatch — refusing credential injection");
-    }
+    // Resolve which injection rules this connection may use — empty (fail closed) unless the
+    // presented secret matches the id's derived secret. See WorkspaceRuleStore.resolve.
+    const rules = this.ruleStore.resolve(auth);
 
     if (statusLine.startsWith("CONNECT ")) {
       const target = statusLine.split(" ")[1] ?? "";

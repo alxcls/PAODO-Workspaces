@@ -1,5 +1,4 @@
 @import "tailwindcss";
-@import 'highlight.js/styles/github.css';
 
 @theme {
   --color-bg:           #ffffff;
@@ -312,33 +311,10 @@
 }
 
 /* ============================================================
-   Code editor — layered textarea + highlight overlay
+   Code editor — flex container for the CodeMirror editor
    ============================================================ */
 
 .code-editor-wrap  { flex: 1; display: flex; overflow: hidden; background: var(--color-bg-tint); }
-.code-editor-gutter {
-  flex-shrink: 0; padding: 12px 8px 12px 16px;
-  font: 11px/18px var(--font-mono); color: var(--color-text-3);
-  text-align: right; overflow: hidden; user-select: none; pointer-events: none;
-}
-.code-editor-ln   { display: block; }
-.code-editor-body { flex: 1; position: relative; overflow: hidden; }
-.code-editor-hl {
-  position: absolute; top: 0; left: 0; right: 0; bottom: 0;
-  margin: 0; padding: 12px 16px;
-  font: 11px/18px var(--font-mono); color: var(--color-text);
-  white-space: pre; overflow: hidden; pointer-events: none;
-  word-break: normal; box-sizing: border-box;
-}
-.code-editor-input {
-  position: absolute; top: 0; left: 0; right: 0; bottom: 0;
-  margin: 0; padding: 12px 16px;
-  font: 11px/18px var(--font-mono); color: transparent;
-  caret-color: var(--color-text); background: transparent;
-  border: none; outline: none; resize: none; overflow: auto;
-  white-space: pre; word-break: normal;
-  -webkit-appearance: none; appearance: none; box-sizing: border-box;
-}
 
 /* ============================================================
    File previews

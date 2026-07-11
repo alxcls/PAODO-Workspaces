@@ -3,29 +3,16 @@
 // workspace page which owns the shared WebSocket. Data operations are handled by useFileContent.
 "use client";
 
-import { useState, useEffect, useRef, useMemo, forwardRef, useImperativeHandle } from "react";
-import hljs from "@/lib/client/highlighter";
+import { useState, useEffect, forwardRef, useImperativeHandle } from "react";
+import dynamic from "next/dynamic";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { useFileContent } from "@/lib/client/hooks/useFileContent";
 import HtmlLivePreview from "./HtmlLivePreview";
 import HtmlStaticPreview from "./HtmlStaticPreview";
 
-function detectLang(filePath: string): string {
-  const ext = filePath.split(".").pop()?.toLowerCase() ?? "";
-  const map: Record<string, string> = {
-    ts: "typescript", tsx: "typescript",
-    js: "javascript", jsx: "javascript",
-    py: "python", rb: "ruby", rs: "rust",
-    cs: "csharp", kt: "kotlin", kts: "kotlin",
-    sh: "bash", zsh: "bash",
-    html: "xml", htm: "xml", svg: "xml",
-    yml: "yaml", tf: "hcl", toml: "ini",
-    gql: "graphql", proto: "protobuf", ps1: "powershell",
-    md: "markdown", json: "json", txt: "txt",
-  };
-  return map[ext] ?? "";
-}
+// CodeMirror touches the DOM on import, so load it client-side only (no SSR).
+const CodeMirrorEditor = dynamic(() => import("./CodeMirrorEditor"), { ssr: false });
 
 const CloseIcon = () => (
   <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round">
@@ -63,45 +50,22 @@ const FileViewer = forwardRef<FileViewerHandle, Props>(function FileViewer(
     notifyFilesChanged, notifyFilesDeleted,
   } = useFileContent(workspaceId, filePath, { onClose, onSelfWrite, apiBase: base });
 
-  const lang = filePath ? detectLang(filePath) : "txt";
+  // Markdown and HTML files can toggle a rendered preview; everything else is source-only.
+  const isMarkdown = /\.(md|markdown)$/i.test(filePath ?? "");
   // HTML files render as a preview (live or static) unless preview is turned off entirely.
   const isHtml = /\.(html?|htm)$/i.test(filePath ?? "") && htmlPreview !== "off";
 
   const [showPreview, setShowPreview] = useState(false);
   useEffect(() => {
-    setShowPreview(lang === "markdown" || isHtml);
-  }, [lang, isHtml]);
-
-  const preRef = useRef<HTMLPreElement>(null);
-  const taRef = useRef<HTMLTextAreaElement>(null);
-  const gutterRef = useRef<HTMLDivElement>(null);
+    setShowPreview(isMarkdown || isHtml);
+  }, [isMarkdown, isHtml]);
 
   useImperativeHandle(ref, () => ({ notifyFilesChanged, notifyFilesDeleted }), [notifyFilesChanged, notifyFilesDeleted]);
-
-  function syncScroll() {
-    if (preRef.current && taRef.current) {
-      preRef.current.scrollTop = taRef.current.scrollTop;
-      preRef.current.scrollLeft = taRef.current.scrollLeft;
-    }
-    if (gutterRef.current && taRef.current) {
-      gutterRef.current.scrollTop = taRef.current.scrollTop;
-    }
-  }
 
   async function handleDelete() {
     if (!filePath || !confirm(`Delete ${filePath.split("/").pop()}?`)) return;
     deleteFile();
   }
-
-  const highlightedHtml = useMemo(() => {
-    if (!draft || fileType !== "text") return draft ?? "";
-    if (lang === "txt") return draft.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-    try {
-      return (lang ? hljs.highlight(draft, { language: lang }) : hljs.highlightAuto(draft)).value;
-    } catch {
-      return hljs.highlightAuto(draft).value;
-    }
-  }, [draft, lang, fileType]);
 
   const displayPath = filePath ? filePath.split("/").slice(-3).join("/") : "";
   const rawUrl = filePath
@@ -136,7 +100,7 @@ const FileViewer = forwardRef<FileViewerHandle, Props>(function FileViewer(
         </span>
         {!loading && !error && fileType !== null && (
           <>
-            {fileType === "text" && (lang === "markdown" || isHtml) && (
+            {fileType === "text" && (isMarkdown || isHtml) && (
               <button className="btn btn-sm" onClick={() => setShowPreview(v => !v)}
                 title={showPreview ? "Switch to editor" : "Switch to preview"}>
                 {showPreview ? "Code" : "Preview"}
@@ -194,20 +158,7 @@ const FileViewer = forwardRef<FileViewerHandle, Props>(function FileViewer(
               </div>
             )
           ) : (
-            <>
-              <div className="code-editor-gutter" ref={gutterRef} aria-hidden="true">
-                {draft.split("\n").map((_, i) => (
-                  <div key={i} className="code-editor-ln">{i + 1}</div>
-                ))}
-              </div>
-              <div className="code-editor-body">
-                <pre className="code-editor-hl" ref={preRef} aria-hidden="true"
-                  dangerouslySetInnerHTML={{ __html: highlightedHtml + "\n" }} />
-                <textarea ref={taRef} className="code-editor-input" value={draft}
-                  onChange={e => setDraft(e.target.value)} onScroll={syncScroll}
-                  spellCheck={false} wrap="off" />
-              </div>
-            </>
+            <CodeMirrorEditor value={draft} onChange={setDraft} filePath={filePath} />
           )}
         </div>
       )}

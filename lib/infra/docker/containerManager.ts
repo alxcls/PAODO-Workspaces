@@ -16,7 +16,7 @@ import { createLogger } from "../logger";
 import { DockerClient, IDockerClient } from "./dockerClient";
 import { ImageManager, HASH_LABEL } from "./imageManager";
 import type { IContainerManager } from "../interfaces";
-import { existsSync } from "fs";
+import { existsSync, readFileSync } from "fs";
 import { listSecretMeta, proxyToken, selectGithubTokenSecret } from "../security/workspaceSecretStore";
 import { deriveProxySecret } from "../proxy/proxyCA";
 import { WORKSPACES_ROOT } from "../paths";
@@ -245,7 +245,11 @@ export class ContainerManager implements IContainerManager {
       // this, git rejects the proxy's MITM cert on secret-scoped hosts (github.com) with an
       // "unable to get local issuer certificate" TLS error before auth substitution is reached.
       "-e", `GIT_SSL_CAINFO=${COMBINED_CA_BUNDLE}`,
-      "-v", `${caCertPath}:/etc/proxy-ca.crt:ro`,
+      // The CA is NOT bind-mounted here: the Docker daemon resolves -v sources as HOST paths, but
+      // caCertPath (/app/data/…) is the app CONTAINER's volume mount — a -v of it would make Docker
+      // create an empty dir on the host and mount that, so /etc/proxy-ca.crt would be an unreadable
+      // directory and no MITM cert would ever verify. Instead the bootstrap exec below writes the
+      // PEM into the container over stdin (same host-vs-container-path reason as buildVolumeArg).
     ] : [];
 
     const r = await this.docker.cmd(
@@ -305,17 +309,21 @@ export class ContainerManager implements IContainerManager {
     // workspace, gets no injection rules, and its HTTPS is tunneled untouched — the opaque token
     // then reaches the host and is rejected ("Invalid username or token"). "basic" makes git send
     // the credentials up front like curl does, so the proxy can MITM and substitute.
-    if (existsSync(path.join(WORKSPACES_ROOT, ".proxy-ca", "ca.crt"))) {
-      const caBundle = await this.docker.exec(
+    if (existsSync(caCertPath)) {
+      // Write the proxy CA into the container over stdin (it cannot be bind-mounted — see the note
+      // in proxyEnvArgs), then build the combined trust bundle the replacement-style vars point at.
+      const caPem = readFileSync(caCertPath, "utf-8");
+      const caSetup = await this.docker.exec(
         this.containerName(workspaceId),
         ["sh", "-c",
+          `cat > /etc/proxy-ca.crt && chmod 644 /etc/proxy-ca.crt && ` +
           `(cat /etc/ssl/certs/ca-certificates.crt /etc/proxy-ca.crt > ${COMBINED_CA_BUNDLE} 2>/dev/null || ` +
           `cp /etc/proxy-ca.crt ${COMBINED_CA_BUNDLE}); ` +
           `git config --system http.proxyAuthMethod basic`],
-        { asRoot: true, trimStdout: true },
+        { asRoot: true, stdin: caPem, trimStdout: true },
       );
-      if (caBundle.code !== 0)
-        log.debug({ workspaceId, stderr: caBundle.stderr }, "combined CA bundle / git proxy-auth setup failed (non-fatal)");
+      if (caSetup.code !== 0)
+        log.debug({ workspaceId, stderr: caSetup.stderr }, "proxy CA install / bundle / git proxy-auth setup failed (non-fatal)");
     }
   }
 

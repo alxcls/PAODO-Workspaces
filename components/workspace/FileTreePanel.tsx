@@ -1,8 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useFileTreeSelection } from "@/lib/client/hooks/useFileTreeSelection";
 import { useFileOperations, TreeNode } from "@/lib/client/hooks/useFileOperations";
+import { useFileUpload } from "@/lib/client/hooks/useFileUpload";
+import { readDroppedEntries } from "@/lib/client/dropEntries";
 
 type CheckState = "none" | "some" | "all";
 
@@ -144,74 +146,9 @@ const TreeNodeList = ({
 };
 
 // ---- Upload button ----
-const UploadMenu = ({ apiBase, onUploaded }: { apiBase: string; onUploaded: () => void }) => {
-  const [status, setStatus] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  // Single files: send individually (small count, no need to archive)
-  const uploadFiles = async (files: File[]) => {
-    if (files.length === 0) return;
-    setError(null);
-    setStatus("Uploading…");
-    try {
-      const CONCURRENCY = 5;
-      const queue = [...files];
-      const worker = async () => {
-        while (queue.length > 0) {
-          const file = queue.shift()!;
-          const res = await fetch(
-            `${apiBase}/files/upload?path=${encodeURIComponent(file.name)}`,
-            { method: "POST", body: file }
-          );
-          if (!res.ok) throw new Error(`Failed to upload ${file.name}`);
-        }
-      };
-      await Promise.all(Array.from({ length: Math.min(CONCURRENCY, files.length) }, worker));
-      onUploaded();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Upload failed");
-    } finally {
-      setStatus(null);
-    }
-  };
-
-  // Folder: pack everything into a single ZIP then POST once — avoids per-file request
-  // storms that exhaust the rate limit and file-descriptor pool for 10k+ file trees.
-  const uploadFolder = async (files: File[]) => {
-    if (files.length === 0) return;
-    setError(null);
-    try {
-      // Loaded on demand — jszip is only needed for folder uploads, so keep it out of the
-      // initial workspace bundle (see the lazy FileViewer note in the workspace page).
-      const { default: JSZip } = await import("jszip");
-      const zip = new JSZip();
-      for (const file of files) {
-        const entryPath = file.webkitRelativePath || file.name;
-        zip.file(entryPath, file);
-      }
-      setStatus("Compressing 0%");
-      const blob = await zip.generateAsync(
-        { type: "blob", compression: "DEFLATE", compressionOptions: { level: 1 } },
-        (meta) => setStatus(`Compressing ${Math.round(meta.percent)}%`)
-      );
-      setStatus("Uploading archive…");
-      const res = await fetch(`${apiBase}/files/upload`, {
-        method: "POST",
-        headers: { "Content-Type": "application/zip" },
-        body: blob,
-      });
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        throw new Error((body as { error?: string }).error ?? `Upload failed (${res.status})`);
-      }
-      onUploaded();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Upload failed");
-    } finally {
-      setStatus(null);
-    }
-  };
-
+const UploadMenu = ({
+  status, error, uploadFiles, uploadFolder,
+}: Pick<ReturnType<typeof useFileUpload>, "status" | "error" | "uploadFiles" | "uploadFolder">) => {
   const handleFiles = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files ?? []);
     e.target.value = "";
@@ -287,11 +224,58 @@ export default function FileTreePanel({
     workspaceId, workspaceName, selected, clearSelection, onDeletedPaths, refreshKey, apiBase: base,
   });
 
+  const upload = useFileUpload(base, fetchTree);
+
+  // Drag-and-drop of files/folders onto the panel. dragCounter tracks enter/leave across child
+  // elements so the highlight only clears when the cursor truly leaves the panel.
+  const [dragging, setDragging] = useState(false);
+  const dragCounter = useRef(0);
+  const busy = upload.status !== null;
+
+  const onDragOver = (e: React.DragEvent) => {
+    if (!Array.from(e.dataTransfer.types).includes("Files")) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "copy";
+  };
+  const onDragEnter = (e: React.DragEvent) => {
+    if (!Array.from(e.dataTransfer.types).includes("Files")) return;
+    e.preventDefault();
+    dragCounter.current += 1;
+    setDragging(true);
+  };
+  const onDragLeave = (e: React.DragEvent) => {
+    if (!Array.from(e.dataTransfer.types).includes("Files")) return;
+    dragCounter.current -= 1;
+    if (dragCounter.current <= 0) {
+      dragCounter.current = 0;
+      setDragging(false);
+    }
+  };
+  const onDrop = async (e: React.DragEvent) => {
+    if (!Array.from(e.dataTransfer.types).includes("Files")) return;
+    e.preventDefault();
+    dragCounter.current = 0;
+    setDragging(false);
+    if (busy) return;
+    const { files, hasDirectory } = await readDroppedEntries(e.dataTransfer);
+    if (files.length === 0) return;
+    // Individual uploads keep names simple; anything with folder structure is zipped once.
+    if (hasDirectory) upload.uploadPathedFiles(files);
+    else upload.uploadFiles(files.map((f) => f.file));
+  };
+
   const toggleExpanded = (path: string) =>
     setExpanded((e) => ({ ...e, [path]: !e[path] }));
 
   return (
-    <aside className="flex flex-col bg-bg-tint overflow-hidden" style={style}>
+    <aside
+      className="relative flex flex-col bg-bg-tint overflow-hidden"
+      style={style}
+      onDragOver={onDragOver}
+      onDragEnter={onDragEnter}
+      onDragLeave={onDragLeave}
+      onDrop={onDrop}
+    >
       <div className="flex items-center gap-2 p-[14px_14px_8px]">
         <span className="font-semibold text-[15px] tracking-[-0.01em] whitespace-nowrap overflow-hidden text-ellipsis flex-1" title={workspaceName}>
           {workspaceName}
@@ -299,7 +283,10 @@ export default function FileTreePanel({
       </div>
 
       <div className="flex gap-1.5 px-3 pb-2.5 border-b border-border">
-        <UploadMenu apiBase={base} onUploaded={fetchTree} />
+        <UploadMenu
+          status={upload.status} error={upload.error}
+          uploadFiles={upload.uploadFiles} uploadFolder={upload.uploadFolder}
+        />
       </div>
 
       <div className="flex-1 overflow-auto py-2">
@@ -309,6 +296,15 @@ export default function FileTreePanel({
           onPick={onFileSelect}
         />
       </div>
+
+      {dragging && (
+        <div className={`absolute inset-0 z-10 flex items-center justify-center pointer-events-none border-2 border-dashed ${busy ? "border-border bg-bg/80" : "border-primary bg-primary-tint/80"}`}>
+          <div className={`flex flex-col items-center gap-2 text-[13.5px] font-medium ${busy ? "text-text-3" : "text-primary"}`}>
+            <UploadIcon />
+            <span>{busy ? "Upload in progress — please wait" : "Drop files or folders to upload"}</span>
+          </div>
+        </div>
+      )}
 
       {(selected.size > 0 || deleteError) && (
         <div className="border-t border-border p-[10px_12px] bg-bg">

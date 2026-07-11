@@ -17,7 +17,7 @@ import { DockerClient, IDockerClient } from "./dockerClient";
 import { ImageManager, HASH_LABEL } from "./imageManager";
 import type { IContainerManager } from "../interfaces";
 import { existsSync } from "fs";
-import { listSecretMeta, proxyToken } from "../security/workspaceSecretStore";
+import { listSecretMeta, proxyToken, selectGithubTokenSecret } from "../security/workspaceSecretStore";
 import { deriveProxySecret } from "../proxy/proxyCA";
 import { WORKSPACES_ROOT } from "../paths";
 
@@ -197,6 +197,11 @@ export class ContainerManager implements IContainerManager {
     // Build per-workspace secret token env vars (tokens only — real values stay in the proxy).
     const secrets = listSecretMeta(workspaceId);
     const secretEnvArgs = secrets.flatMap((s) => ["-e", `${s.name}=${proxyToken(workspaceId, s.name)}`]);
+    // Alias the github.com-scoped secret to GH_TOKEN so git (via the static credential helper in the
+    // image) and gh both authenticate transparently, regardless of what the user named the secret.
+    // Only the opaque token is exposed; the proxy swaps it for the real value on github.com traffic.
+    const ghSecretName = selectGithubTokenSecret(secrets);
+    const ghEnvArgs = ghSecretName ? ["-e", `GH_TOKEN=${proxyToken(workspaceId, ghSecretName)}`] : [];
     // Path is deterministic — avoids module-isolation issues with getCACertPath() across Next.js bundles.
     const caCertPath = path.join(WORKSPACES_ROOT, ".proxy-ca", "ca.crt");
     // The proxy is only wired up when its CA exists. deriveProxySecret needs the HMAC key that
@@ -221,9 +226,13 @@ export class ContainerManager implements IContainerManager {
       "--add-host=host.docker.internal:host-gateway",
       "-e", `HTTP_PROXY=${proxyUrl}`,
       "-e", `HTTPS_PROXY=${proxyUrl}`,
+      // Some CLI tools (notably git-remote-https/libcurl) only honor lowercase proxy env vars.
+      // Set both cases so every runtime routes through the credential proxy.
+      "-e", `http_proxy=${proxyUrl}`,
+      "-e", `https_proxy=${proxyUrl}`,
       // NODE_EXTRA_CA_CERTS is additive (appended to Node's built-in roots), so it can point
-      // at the proxy CA alone. REQUESTS_CA_BUNDLE / CURL_CA_BUNDLE / SSL_CERT_FILE are
-      // *replacement* trust stores — pointing them at the proxy CA alone drops the public
+      // at the proxy CA alone. REQUESTS_CA_BUNDLE / CURL_CA_BUNDLE / SSL_CERT_FILE / GIT_SSL_CAINFO
+      // are *replacement* trust stores — pointing them at the proxy CA alone drops the public
       // roots, so TLS to tunneled (non-MITM'd) hosts like pypi.org fails with "unable to get
       // local issuer certificate". They instead point at a combined bundle (system roots +
       // proxy CA) that the bootstrap exec builds below.
@@ -231,6 +240,11 @@ export class ContainerManager implements IContainerManager {
       "-e", `REQUESTS_CA_BUNDLE=${COMBINED_CA_BUNDLE}`,
       "-e", `CURL_CA_BUNDLE=${COMBINED_CA_BUNDLE}`,
       "-e", `SSL_CERT_FILE=${COMBINED_CA_BUNDLE}`,
+      // git's HTTPS transport (git-remote-https → libcurl) verifies against libcurl's compiled-in
+      // CA path only; it ignores CURL_CA_BUNDLE (that's the curl CLI) and SSL_CERT_FILE. Without
+      // this, git rejects the proxy's MITM cert on secret-scoped hosts (github.com) with an
+      // "unable to get local issuer certificate" TLS error before auth substitution is reached.
+      "-e", `GIT_SSL_CAINFO=${COMBINED_CA_BUNDLE}`,
       "-v", `${caCertPath}:/etc/proxy-ca.crt:ro`,
     ] : [];
 
@@ -250,6 +264,7 @@ export class ContainerManager implements IContainerManager {
       "--label", `${SECRETS_LABEL}=${secretsHash}`,
       ...proxyEnvArgs,
       ...secretEnvArgs,
+      ...ghEnvArgs,
       // Drop all Linux capabilities, then add back only the minimal set dpkg/apt and the chown sweep
       // need when run as root via `docker exec -u 0` (apt_install tool, ownership sweep). The agent's
       // shell is non-root with no setuid path, so it cannot use these caps — they are reachable only
@@ -284,16 +299,23 @@ export class ContainerManager implements IContainerManager {
     // system roots concatenated with the mounted proxy CA. Without the system roots, TLS to
     // tunneled (non-MITM'd) hosts like pypi.org fails to verify. If the system bundle is missing,
     // fall back to the proxy CA alone (MITM hosts still verify; tunneled ones degrade as before).
+    // Also force git to send proxy Basic auth preemptively: git defaults to http.proxyAuthMethod
+    // "anyauth", which withholds Proxy-Authorization on the CONNECT until the proxy issues a 407.
+    // Our proxy never challenges (missing auth just tunnels), so an anyauth git never identifies its
+    // workspace, gets no injection rules, and its HTTPS is tunneled untouched — the opaque token
+    // then reaches the host and is rejected ("Invalid username or token"). "basic" makes git send
+    // the credentials up front like curl does, so the proxy can MITM and substitute.
     if (existsSync(path.join(WORKSPACES_ROOT, ".proxy-ca", "ca.crt"))) {
       const caBundle = await this.docker.exec(
         this.containerName(workspaceId),
         ["sh", "-c",
-          `cat /etc/ssl/certs/ca-certificates.crt /etc/proxy-ca.crt > ${COMBINED_CA_BUNDLE} 2>/dev/null || ` +
-          `cp /etc/proxy-ca.crt ${COMBINED_CA_BUNDLE}`],
+          `(cat /etc/ssl/certs/ca-certificates.crt /etc/proxy-ca.crt > ${COMBINED_CA_BUNDLE} 2>/dev/null || ` +
+          `cp /etc/proxy-ca.crt ${COMBINED_CA_BUNDLE}); ` +
+          `git config --system http.proxyAuthMethod basic`],
         { asRoot: true, trimStdout: true },
       );
       if (caBundle.code !== 0)
-        log.debug({ workspaceId, stderr: caBundle.stderr }, "combined CA bundle build failed (non-fatal)");
+        log.debug({ workspaceId, stderr: caBundle.stderr }, "combined CA bundle / git proxy-auth setup failed (non-fatal)");
     }
   }
 

@@ -5,14 +5,14 @@ import { useState, useEffect } from "react";
 interface SecretMeta {
   name: string;
   createdAt: string;
-  domain: string;
+  domains: string[];
 }
 
 export default function EnvVarsBlock({ wsId }: { wsId: string }) {
   const [secrets, setSecrets] = useState<SecretMeta[]>([]);
   const [name, setName] = useState("");
   const [value, setValue] = useState("");
-  const [domain, setDomain] = useState("");
+  const [domains, setDomains] = useState<string[]>([""]);
   const [showForm, setShowForm] = useState(false);
   const [adding, setAdding] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -26,8 +26,20 @@ export default function EnvVarsBlock({ wsId }: { wsId: string }) {
   }, [wsId]);
 
   const resetForm = () => {
-    setName(""); setValue(""); setDomain(""); setError(null);
+    setName(""); setValue(""); setDomains([""]); setError(null);
   };
+
+  const setDomainValue = (idx: number, val: string) => {
+    setDomains((prev) => prev.map((d, i) => (i === idx ? val : d)));
+  };
+
+  const addDomainField = () => setDomains((prev) => [...prev, ""]);
+
+  const removeDomainField = (idx: number) => {
+    setDomains((prev) => (prev.length === 1 ? [""] : prev.filter((_, i) => i !== idx)));
+  };
+
+  const trimmedDomains = domains.map((d) => d.trim()).filter((d) => d.length > 0);
 
   const add = async () => {
     setError(null);
@@ -36,7 +48,7 @@ export default function EnvVarsBlock({ wsId }: { wsId: string }) {
       const res = await fetch(`/api/workspaces/${wsId}/env-vars`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: name.trim(), value: value.trim(), domain: domain.trim() }),
+        body: JSON.stringify({ name: name.trim(), value: value.trim(), domains: trimmedDomains }),
       });
       if (!res.ok) {
         const d = (await res.json()) as { error?: string };
@@ -71,7 +83,9 @@ export default function EnvVarsBlock({ wsId }: { wsId: string }) {
             <div key={s.name} className="flex items-center justify-between gap-2 text-ms bg-white border border-border rounded-ctrl px-2.5 py-1.5">
               <div className="flex items-center gap-2 min-w-0">
                 <code className="font-mono text-xs text-text shrink-0">{s.name}</code>
-                {s.domain && <span className="text-xs text-text-muted truncate">→ {s.domain}</span>}
+                {s.domains?.length ? (
+                  <span className="text-xs text-text-muted truncate">→ {s.domains.join(", ")}</span>
+                ) : null}
               </div>
               {confirmDelete === s.name ? (
                 <div className="flex items-center gap-2 shrink-0">
@@ -114,14 +128,33 @@ export default function EnvVarsBlock({ wsId }: { wsId: string }) {
             />
           </label>
 
-          <label className="flex flex-col gap-1">
-            <span className="text-xs font-medium text-text">Allowed host</span>
-            <input
-              className="input input-sm font-mono"
-              value={domain}
-              onChange={(e) => setDomain(e.target.value)}
-            />
-          </label>
+          <div className="flex flex-col gap-1">
+            <span className="text-xs font-medium text-text">Allowed hosts</span>
+            <div className="flex flex-col gap-2">
+              {domains.map((host, idx) => (
+                <div className="flex items-center gap-2" key={idx}>
+                  <input
+                    className="input input-sm font-mono flex-1"
+                    value={host}
+                    onChange={(e) => setDomainValue(idx, e.target.value)}
+                  />
+                  {domains.length > 1 && (
+                    <button
+                      type="button"
+                      className="btn btn-ghost btn-sm px-2 text-text-3"
+                      aria-label="Remove host"
+                      onClick={() => removeDomainField(idx)}
+                    >
+                      ×
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+            <button type="button" className="linkbtn text-primary mt-1 self-start" onClick={addDomainField}>
+              + Add host
+            </button>
+          </div>
 
           {error && <p className="text-xs text-danger m-0">{error}</p>}
 
@@ -129,7 +162,7 @@ export default function EnvVarsBlock({ wsId }: { wsId: string }) {
             <button
               className="btn btn-sm"
               onClick={add}
-              disabled={adding || !name || !value || !domain}
+              disabled={adding || !name || !value || trimmedDomains.length === 0}
             >
               {adding ? "Saving…" : "Save secret"}
             </button>

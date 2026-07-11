@@ -25,7 +25,7 @@ export async function POST(
   const ws = requireWorkspace(id);
   if (ws instanceof NextResponse) return ws;
 
-  const body = (await req.json()) as { name?: string; value?: string; domain?: string };
+  const body = (await req.json()) as { name?: string; value?: string; domains?: string[] };
   const { name, value } = body;
 
   if (!name || !NAME_RE.test(name)) {
@@ -33,12 +33,19 @@ export async function POST(
   }
   if (!value?.trim()) return NextResponse.json({ error: "value required" }, { status: 400 });
 
-  const domain = normalizeDomain(body.domain ?? "");
-  if (!domain || !DOMAIN_RE.test(domain)) {
-    return NextResponse.json({ error: "domain must be a hostname the key is sent to (e.g. api.openai.com)" }, { status: 400 });
+  if (!Array.isArray(body.domains) || body.domains.length === 0) {
+    return NextResponse.json({ error: "add at least one allowed host" }, { status: 400 });
+  }
+  const normalizedDomains: string[] = [];
+  for (const raw of body.domains) {
+    const domain = normalizeDomain(raw ?? "");
+    if (!domain || !DOMAIN_RE.test(domain)) {
+      return NextResponse.json({ error: "each allowed host must be a hostname the key is sent to (e.g. api.openai.com)" }, { status: 400 });
+    }
+    if (!normalizedDomains.includes(domain)) normalizedDomains.push(domain);
   }
 
-  setSecret(id, name, value, domain);
+  setSecret(id, name, value, normalizedDomains);
   getCredentialProxy().setRules(id, getWorkspaceRules(id));
 
   return NextResponse.json(listSecretMeta(id).find((s) => s.name === name));

@@ -2,7 +2,7 @@
 // they are stored reversibly — but encrypted at rest (AES-256-GCM, secretsEncryption.ts) so
 // backups/snapshots of data/ don't expose plaintext. Legacy plaintext files are migrated to the
 // encrypted envelope on first load.
-// The values are never exposed through the API — only metadata (name, domain) is returned.
+// The values are never exposed through the API — only metadata (name, allowed hosts) is returned.
 // Each secret gets a stable opaque proxy token (e.g. __pxy_wsId_NAME__) injected into the
 // container environment instead of the real value. The credential proxy swaps the token for
 // the real value in outbound HTTPS headers.
@@ -22,10 +22,11 @@ export const SECRET_STORE_FILE = FILE;
 interface SecretEntry {
   value: string;
   createdAt: string;
-  // Host the value may be injected into (e.g. "api.openai.com"). The proxy only swaps
-  // the token for the real value on requests to this host; every other host is a plain
-  // tunnel. A secret with no domain is never injected (nothing to intercept).
-  domain: string;
+  // Hosts the value may be injected into (e.g. ["api.openai.com", "github.com"]). The proxy only
+  // swaps the token for the real value on requests to these hosts; every other host is a plain
+  // tunnel. A secret with no hosts configured is never injected (nothing to intercept).
+  domains?: string[]; // present on new entries; legacy entries used singular `domain` below
+  domain?: string;
 }
 
 type Store = Record<string, Record<string, SecretEntry>>;
@@ -72,6 +73,38 @@ if (!g._workspaceSecrets) {
 }
 const store = g._workspaceSecrets;
 
+function sanitizeDomains(domains: string[]): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of domains) {
+    const normalized = normalizeDomain(raw ?? "");
+    if (!normalized || seen.has(normalized)) continue;
+    seen.add(normalized);
+    out.push(normalized);
+  }
+  return out.sort();
+}
+
+function coerceEntryDomains(entry: SecretEntry): string[] {
+  if (entry.domains?.length) {
+    entry.domains = sanitizeDomains(entry.domains);
+    if (entry.domains.length) return entry.domains;
+  }
+  const legacy = entry.domain ? [entry.domain] : [];
+  const sanitized = sanitizeDomains(legacy);
+  entry.domains = sanitized;
+  delete entry.domain;
+  return sanitized;
+}
+
+function upgradeStoreDomains(target: Store): void {
+  for (const ws of Object.values(target)) {
+    for (const entry of Object.values(ws)) {
+      coerceEntryDomains(entry);
+    }
+  }
+}
+
 function save() {
   try {
     atomicSaveJson(FILE, encryptToEnvelope(JSON.stringify(store)));
@@ -83,20 +116,23 @@ function save() {
 
 if (migrateLegacy) {
   try {
+    upgradeStoreDomains(store);
     save();
     log.info("migrated plaintext secret store to encrypted format");
   } catch (err) {
     log.error({ err }, "failed to re-save secret store encrypted");
   }
 }
+upgradeStoreDomains(store);
 
 export function proxyToken(wsId: string, name: string): string {
   return `__pxy_${wsId}_${name}__`;
 }
 
-export function setSecret(wsId: string, name: string, value: string, domain: string): void {
+export function setSecret(wsId: string, name: string, value: string, domains: string[]): void {
   if (!store[wsId]) store[wsId] = {};
-  store[wsId][name] = { value, createdAt: new Date().toISOString(), domain: normalizeDomain(domain) };
+  const sanitized = sanitizeDomains(domains);
+  store[wsId][name] = { value, createdAt: new Date().toISOString(), domains: sanitized };
   save();
   log.info({ wsId, name }, "secret set");
 }
@@ -110,9 +146,25 @@ export function deleteSecret(wsId: string, name: string): boolean {
   return true;
 }
 
-export function listSecretMeta(wsId: string): { name: string; createdAt: string; domain: string }[] {
+export function listSecretMeta(wsId: string): { name: string; createdAt: string; domains: string[] }[] {
   const ws = store[wsId] ?? {};
-  return Object.entries(ws).map(([name, e]) => ({ name, createdAt: e.createdAt, domain: e.domain ?? "" }));
+  return Object.entries(ws).map(([name, e]) => ({ name, createdAt: e.createdAt, domains: coerceEntryDomains(e) }));
+}
+
+// Pick which secret should back git/gh auth for github.com. Selection is keyed off the scoped
+// DOMAIN, not the secret's name, so a user may name their token anything. Its opaque proxy token is
+// injected as GH_TOKEN into the container, where a static git credential helper and gh both consume
+// it. Tiebreak when several secrets are scoped to github.com: exact GITHUB_TOKEN, then GH_TOKEN,
+// then any name mentioning GITHUB/GH, else the first such secret. Returns null when none qualify.
+export function selectGithubTokenSecret(metas: { name: string; domains: string[] }[]): string | null {
+  const candidates = metas.filter((m) => m.domains.includes("github.com")).map((m) => m.name);
+  if (candidates.length === 0) return null;
+  return (
+    candidates.find((n) => n === "GITHUB_TOKEN") ??
+    candidates.find((n) => n === "GH_TOKEN") ??
+    candidates.find((n) => /GITHUB|GH/.test(n)) ??
+    candidates[0]
+  );
 }
 
 // Returns the proxy rules for a workspace, grouped by domain. Secrets without a domain are
@@ -121,13 +173,15 @@ export function getWorkspaceRules(wsId: string): DomainRule[] {
   const ws = store[wsId] ?? {};
   const byDomain = new Map<string, Map<string, string>>();
   for (const [name, entry] of Object.entries(ws)) {
-    if (!entry.domain) continue;
-    let tokenMap = byDomain.get(entry.domain);
-    if (!tokenMap) {
-      tokenMap = new Map();
-      byDomain.set(entry.domain, tokenMap);
+    for (const domain of coerceEntryDomains(entry)) {
+      if (!domain) continue;
+      let tokenMap = byDomain.get(domain);
+      if (!tokenMap) {
+        tokenMap = new Map();
+        byDomain.set(domain, tokenMap);
+      }
+      tokenMap.set(proxyToken(wsId, name), entry.value);
     }
-    tokenMap.set(proxyToken(wsId, name), entry.value);
   }
   return [...byDomain].map(([domain, tokenMap]) => ({ domain, tokenMap }));
 }
@@ -159,6 +213,7 @@ export function reloadSecretStore(): void {
       log.error({ err, event: "secret_store_reload_failed" }, "failed to reload secret store");
     }
   }
+  upgradeStoreDomains(next);
   for (const k of Object.keys(store)) delete store[k];
   Object.assign(store, next);
 }

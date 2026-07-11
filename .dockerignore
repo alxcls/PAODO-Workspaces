@@ -3,3 +3,8 @@ dist
 .git
 .env
 Dockerfile
+# Test code never runs in the production image (runner installs --omit=dev, nothing imports it).
+# Keep it out of the build context and the shipped image.
+**/*.test.ts
+**/*.integration.test.ts
+e2e

@@ -33,19 +33,19 @@ export async function POST(
   }
   if (!value?.trim()) return NextResponse.json({ error: "value required" }, { status: 400 });
 
+  // Validate shape only — reject an empty list or a host that isn't a bare hostname. Canonicalization
+  // (normalize + dedup + sort) is owned by setSecret's sanitizeDomains, so we pass the raw hosts
+  // through rather than duplicate that logic here.
   if (!Array.isArray(body.domains) || body.domains.length === 0) {
     return NextResponse.json({ error: "add at least one allowed host" }, { status: 400 });
   }
-  const normalizedDomains: string[] = [];
   for (const raw of body.domains) {
-    const domain = normalizeDomain(raw ?? "");
-    if (!domain || !DOMAIN_RE.test(domain)) {
+    if (!DOMAIN_RE.test(normalizeDomain(raw ?? ""))) {
       return NextResponse.json({ error: "each allowed host must be a hostname the key is sent to (e.g. api.openai.com)" }, { status: 400 });
     }
-    if (!normalizedDomains.includes(domain)) normalizedDomains.push(domain);
   }
 
-  setSecret(id, name, value, normalizedDomains);
+  setSecret(id, name, value, body.domains);
   getCredentialProxy().setRules(id, getWorkspaceRules(id));
 
   return NextResponse.json(listSecretMeta(id).find((s) => s.name === name));

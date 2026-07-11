@@ -148,7 +148,9 @@ export function deleteSecret(wsId: string, name: string): boolean {
 
 export function listSecretMeta(wsId: string): { name: string; createdAt: string; domains: string[] }[] {
   const ws = store[wsId] ?? {};
-  return Object.entries(ws).map(([name, e]) => ({ name, createdAt: e.createdAt, domains: coerceEntryDomains(e) }));
+  // Entries are already normalized to `domains` by upgradeStoreDomains at load/reload/migrate, so
+  // read the field directly rather than re-coercing on every read.
+  return Object.entries(ws).map(([name, e]) => ({ name, createdAt: e.createdAt, domains: e.domains ?? [] }));
 }
 
 // Pick which secret should back git/gh auth for github.com. Selection is keyed off the scoped
@@ -162,7 +164,8 @@ export function selectGithubTokenSecret(metas: { name: string; domains: string[]
   return (
     candidates.find((n) => n === "GITHUB_TOKEN") ??
     candidates.find((n) => n === "GH_TOKEN") ??
-    candidates.find((n) => /GITHUB|GH/.test(n)) ??
+    // Token-style boundary match (GH_TOKEN, MY_GITHUB_PAT) — not incidental substrings (HIGH_SCORE).
+    candidates.find((n) => /(^|_)(GITHUB|GH)(_|$)/.test(n)) ??
     candidates[0]
   );
 }
@@ -173,7 +176,7 @@ export function getWorkspaceRules(wsId: string): DomainRule[] {
   const ws = store[wsId] ?? {};
   const byDomain = new Map<string, Map<string, string>>();
   for (const [name, entry] of Object.entries(ws)) {
-    for (const domain of coerceEntryDomains(entry)) {
+    for (const domain of entry.domains ?? []) {
       if (!domain) continue;
       let tokenMap = byDomain.get(domain);
       if (!tokenMap) {

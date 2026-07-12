@@ -130,7 +130,7 @@ async function runCalleeTurn(
     if (event.type === "token") text += event.content;
     if (event.type === "error") return { error: event.message };
     if (event.type === "turn_usage") {
-      recordTurnUsage({ sessionId, conversationId, workspaceId: callee.id, workspaceName: callee.name }, event, recordUsage);
+      recordTurnUsage({ sessionId, conversationId, workspaceId: callee.id, workspaceName: callee.name, origin: "manual" }, event, recordUsage);
     }
   }
   return { text };

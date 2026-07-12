@@ -78,10 +78,17 @@ export function startRun(params: StartRunParams): { alreadyRunning: boolean } {
 
   const run = params.run ?? runAgent;
   const sessionId = crypto.randomUUID();
+  const origin = conversations.getMeta(params.workspaceId, params.conversationId)?.kind === "scheduled" ? "scheduled" : "manual";
   const recordUsage =
     params.onTurnUsage ??
     ((sid, event) =>
-      recordTurnUsage({ sessionId: sid, conversationId: params.conversationId, workspaceId: params.workspaceId, workspaceName: params.workspaceName }, event));
+      recordTurnUsage({
+        sessionId: sid,
+        conversationId: params.conversationId,
+        workspaceId: params.workspaceId,
+        workspaceName: params.workspaceName,
+        origin,
+      }, event));
   const persist = params.onPersist ?? (() => conversations.persist(params.workspaceId, params.conversationId));
 
   const runOptions: RunAgentOptions = {

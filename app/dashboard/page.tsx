@@ -67,6 +67,7 @@ interface LightSession {
   conversationId?: string;
   workspaceId: string;
   workspaceName: string;
+  origin: "manual" | "scheduled";
   timestamp: string;
   // Distinct model ids used across the run's turns, in first-seen order. Usually one; a run that
   // switches models mid-flight lists each once.
@@ -89,6 +90,7 @@ function groupBySessions(records: LightTurnRecord[]): LightSession[] {
         conversationId: r.conversationId,
         workspaceId: r.workspaceId,
         workspaceName: r.workspaceName,
+        origin: r.origin ?? "manual",
         timestamp: r.timestamp,
         models: [],
         inputTokens: 0,
@@ -367,6 +369,7 @@ export default function DashboardPage() {
                 <col className="w-[140px]" />
                 <col className="w-[140px]" />
                 <col />
+                <col className="w-[120px]" />
                 <col className="w-[16%]" />
                 <col className="w-[16%]" />
                 <col className="w-[12%]" />
@@ -380,6 +383,7 @@ export default function DashboardPage() {
                   <th className="text-left px-6 font-semibold align-middle">Conversation</th>
                   <th className="text-left px-6 font-semibold align-middle">Session</th>
                   <th className="text-left px-6 font-semibold align-middle">Workspace</th>
+                  <th className="text-left px-6 font-semibold align-middle">Type</th>
                   <th className="text-left px-6 font-semibold align-middle">Model</th>
                   <th className="text-left px-6 font-semibold align-middle">Time</th>
                   <th className="text-right px-6 font-semibold align-middle">In ↑</th>
@@ -417,6 +421,7 @@ export default function DashboardPage() {
                     {/* Session id = the per-run identifier (plain text). */}
                     <td className="px-6 py-2.5 font-mono text-text-1">{s.sessionId.slice(0, 8)}</td>
                     <td className="px-6 py-2.5 text-text-1 font-medium">{s.workspaceName}</td>
+                    <td className="px-6 py-2.5 text-text-2">{s.origin === "scheduled" ? "Scheduled" : "Manual"}</td>
                     {/* Model(s) the run's turns used. Usually one; multiple are joined. "—" when no
                         turn carried a model (records written before the field existed). */}
                     <td className="px-6 py-2.5 font-mono text-text-2 truncate" title={s.models.join(", ")}>{s.models.length ? s.models.join(", ") : "—"}</td>

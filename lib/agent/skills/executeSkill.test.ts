@@ -244,7 +244,7 @@ describe("executeSkill — callee run and output contract", () => {
   });
 
   it("persists the callee run as a skill-call conversation in the callee workspace and returns its id", async () => {
-    const createConversationFn = vi.fn((_wsId: string, o?: { title?: string; kind?: "user" | "skill-call" }) =>
+    const createConversationFn = vi.fn((_wsId: string, o?: { title?: string; kind?: "user" | "skill-call" | "scheduled" }) =>
       ({ id: "conv-1", title: o?.title ?? "", kind: o?.kind, createdAt: "", updatedAt: "", lastMessageAt: "" }));
     const persistFn = vi.fn();
 

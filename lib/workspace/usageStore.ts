@@ -30,6 +30,7 @@ const COMPACT_AT = MAX_RECORDS * 1.5;
 // Outcome of a tool call, decided at the source (the runner) and persisted so the dashboard
 // can render it without re-parsing output. "needs_input" is the A2A non-terminal retry state.
 export type ToolStatus = "ok" | "error" | "needs_input";
+export type SessionOrigin = "manual" | "scheduled";
 
 export interface ToolCallRecord {
   name: string;
@@ -47,6 +48,8 @@ export interface TurnRecord {
   conversationId?: string;
   workspaceId: string;
   workspaceName: string;
+  /** Session origin shown in the dashboard list: scheduled automation vs manual/user-initiated. */
+  origin?: SessionOrigin;
   timestamp: string;
   /** The user message that started this session — set only on the session's first turn. */
   userInput?: string;
@@ -76,6 +79,7 @@ export interface UsageContext {
   conversationId?: string;
   workspaceId: string;
   workspaceName: string;
+  origin?: SessionOrigin;
 }
 
 // Light projection for the dashboard list: token counts + tool names only. The heavy content
@@ -86,6 +90,7 @@ export interface LightTurnRecord {
   conversationId?: string;
   workspaceId: string;
   workspaceName: string;
+  origin?: SessionOrigin;
   timestamp: string;
   model?: string;
   inputTokens: number;
@@ -103,6 +108,7 @@ function toLight(r: TurnRecord): LightTurnRecord {
     conversationId: r.conversationId,
     workspaceId: r.workspaceId,
     workspaceName: r.workspaceName,
+    origin: r.origin,
     timestamp: r.timestamp,
     model: r.model,
     inputTokens: r.inputTokens,

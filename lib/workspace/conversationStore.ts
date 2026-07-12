@@ -19,15 +19,17 @@ import { atomicSaveJson } from "../infra/jsonPersist";
 import { WORKSPACES_ROOT } from "../infra/paths";
 import { createLogger } from "../infra/logger";
 import { serializeMessages, deserializeMessages } from "../agent/messageSerialization";
+import { broadcastToWorkspace } from "../infra/realtime/wsHub";
 
 const log = createLogger("conversations");
 
 export interface ConversationMeta {
   id: string;
   title: string;
-  /** "skill-call" marks a conversation created by an agent-to-agent call_agent invocation
-   *  (vs the default user-initiated chat); lets the switcher label/filter them distinctly. */
-  kind?: "user" | "skill-call";
+  /** "skill-call" marks a conversation created by an agent-to-agent call_agent invocation;
+   *  "scheduled" marks one started automatically by a workspace schedule (vs the default
+   *  user-initiated chat). Stored as provenance metadata for API/UI consumers. */
+  kind?: "user" | "skill-call" | "scheduled";
   createdAt: string;
   updatedAt: string;
   lastMessageAt: string;
@@ -91,6 +93,14 @@ function saveIndex(workspaceId: string, s: WorkspaceConversations): void {
   atomicSaveJson(indexPath(workspaceId), s.metas);
 }
 
+function notifyConversationsChanged(workspaceId: string): void {
+  try {
+    broadcastToWorkspace(workspaceId, JSON.stringify({ type: "conversations_changed" }));
+  } catch {
+    // Best-effort UI hint only: failures must never affect conversation persistence.
+  }
+}
+
 
 /** Called on first WebSocket connect so a returning user immediately sees prior conversations. */
 export function loadIndex(workspaceId: string): ConversationMeta[] {
@@ -137,6 +147,7 @@ export function createConversation(
   saveIndex(workspaceId, s);
   atomicSaveJson(filePath(workspaceId, meta.id), { id: meta.id, meta, messages: [] } as ConversationFile);
   log.info({ workspaceId, conversationId: meta.id }, "conversation created");
+  notifyConversationsChanged(workspaceId);
   return meta;
 }
 
@@ -207,6 +218,7 @@ export function persist(workspaceId: string, convId: string): void {
       messages: serializeMessages(msgs),
     } as ConversationFile);
     saveIndex(workspaceId, s);
+    notifyConversationsChanged(workspaceId);
   } catch (err) {
     log.error({ err, workspaceId, convId }, "failed to persist conversation");
   }

@@ -52,7 +52,7 @@ export function makeAgentStream(ws: Workspace, message: string, log: Logger, dep
           if (event.type === "turn_usage") {
             if (deps.sessionId && deps.workspaceId && deps.workspaceName) {
               recordTurnUsage(
-                { sessionId: deps.sessionId, workspaceId: deps.workspaceId, workspaceName: deps.workspaceName },
+                { sessionId: deps.sessionId, workspaceId: deps.workspaceId, workspaceName: deps.workspaceName, origin: "manual" },
                 event,
               );
             }

@@ -110,6 +110,20 @@ describe("buildCredentialEnv — proxy wiring gated on the CA", () => {
     expect(envValue(envArgs, "HTTPS_PROXY")).toBe(envValue(envArgs, "HTTP_PROXY"));
   });
 
+  it("exempts ONLY loopback from the proxy (own-server curls bypass it; real hosts still proxied)", () => {
+    existsSync.mockReturnValue(true);
+    const { envArgs } = buildCredentialEnv("ws1");
+    const loopbacks = "localhost,127.0.0.1,0.0.0.0,::1";
+    // Both cases set, matching the http_proxy/HTTP_PROXY pattern (tools vary on which they honor).
+    expect(envValue(envArgs, "no_proxy")).toBe(loopbacks);
+    expect(envValue(envArgs, "NO_PROXY")).toBe(loopbacks);
+    // Security invariant: the exemption is loopback-only — no external host is exempted, so secret
+    // injection to configured domains is untouched (real values still flow through the proxy).
+    for (const host of ["github.com", "api.openai.com", "example.com"]) {
+      expect(envValue(envArgs, "no_proxy")).not.toContain(host);
+    }
+  });
+
   it("with a proxy CA: points the replacement-style trust vars at the combined bundle", () => {
     existsSync.mockReturnValue(true);
     const { envArgs } = buildCredentialEnv("ws1");

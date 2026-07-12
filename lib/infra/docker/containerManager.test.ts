@@ -8,8 +8,12 @@ import type { IDockerClient, DockerResult } from "./dockerClient";
 const OK: DockerResult = { stdout: "", stderr: "", code: 0 };
 
 // Records every exec() invocation and answers the pidfile poll with a canned pgid, so we can assert
-// on the exact in-container commands startBackground/stopBackground issue.
-function makeDocker(pgid = "4242"): { docker: IDockerClient; execCalls: string[][] } {
+// on the exact in-container commands startBackground/stopBackground issue. `scanOut` answers the
+// rehydration scan (the exec whose script does the `kill -0` liveness check over the pidfiles).
+function makeDocker(
+  opts: { pgid?: string; scanOut?: string } = {},
+): { docker: IDockerClient; execCalls: string[][] } {
+  const { pgid = "4242", scanOut } = opts;
   const execCalls: string[][] = [];
   const docker: IDockerClient = {
     cmd: async () => OK,
@@ -19,18 +23,31 @@ function makeDocker(pgid = "4242"): { docker: IDockerClient; execCalls: string[]
       const script = cmdArgs.join(" ");
       // The pidfile poll is the only exec whose stdout matters — return the session-leader pgid.
       if (script.includes("seq 1 20")) return { stdout: pgid, stderr: "", code: 0 };
+      // The rehydration scan: return the canned "taskId\tpgid\tbase64(cmd)" lines.
+      if (script.includes("kill -0")) return { stdout: scanOut ?? "", stderr: "", code: 0 };
       return OK;
     },
   };
   return { docker, execCalls };
 }
 
-function makeManager(pgid = "4242") {
-  const { docker, execCalls } = makeDocker(pgid);
+// Encode a command the way the container's scan does, so rehydration tests decode it back.
+function b64(s: string): string {
+  return Buffer.from(s, "utf8").toString("base64");
+}
+
+function makeManager(opts: { pgid?: string; scanOut?: string } = {}) {
+  const { docker, execCalls } = makeDocker(opts);
   const mgr = new ContainerManager(docker);
   // ensure() spins up a real container; the background logic under test doesn't need that.
   mgr.ensure = async () => {};
   return { mgr, execCalls };
+}
+
+// rehydrateBackgroundTasks is private (invoked from the reattach path in _ensureContainer); call it
+// directly so these unit tests don't have to stand up the whole container-status state machine.
+function rehydrate(mgr: ContainerManager, workspaceId: string): Promise<void> {
+  return (mgr as unknown as { rehydrateBackgroundTasks(id: string): Promise<void> }).rehydrateBackgroundTasks(workspaceId);
 }
 
 describe("ContainerManager background tasks", () => {
@@ -78,7 +95,7 @@ describe("ContainerManager background tasks", () => {
   });
 
   it("does not track a task when the pid was never captured", async () => {
-    const { mgr: m } = makeManager("");                 // poll returns empty → no pgid
+    const { mgr: m } = makeManager({ pgid: "" });       // poll returns empty → no pgid
     await m.startBackground("ws1", "/w", "false");
     expect(m.listBackground("ws1")).toHaveLength(0);
   });
@@ -99,5 +116,93 @@ describe("ContainerManager background tasks", () => {
     expect(mgr.listBackground("ws1")).toHaveLength(1);
     expect(mgr.listBackground("ws2")).toHaveLength(1);
     expect(mgr.listBackground("ws1")[0].command).toBe("server A");
+  });
+
+  it("records the command to a .cmd file so it survives an app restart", async () => {
+    const { taskId } = await mgr.startBackground("ws1", "/w", "npm run dev");
+    const launch = execCalls.find((c) => c.join(" ").includes("setsid"))!;
+    // printf '%s' "$1" writes the command (argv, no injection) to <taskId>.cmd.
+    expect(launch[2]).toContain(`printf '%s' "$1" > /tmp/paodo-tasks/${taskId}.cmd`);
+  });
+
+  it("stopBackground removes both the .pid and .cmd files", async () => {
+    const { taskId } = await mgr.startBackground("ws1", "/w", "npm run dev");
+    await mgr.stopBackground("ws1", taskId);
+    const kill = execCalls.find((c) => c.join(" ").includes("kill -KILL"))!;
+    expect(kill[2]).toContain(`${taskId}.pid`);
+    expect(kill[2]).toContain(`${taskId}.cmd`);
+  });
+
+  it("stopBackground still succeeds and clears the entry when the kill exec fails (dead pgid)", async () => {
+    const { docker } = makeDocker();
+    docker.exec = async (_n, args) => {
+      const script = args.join(" ");
+      if (script.includes("seq 1 20")) return { stdout: "4242", stderr: "", code: 0 };
+      if (script.includes("kill -KILL")) throw new Error("no such process group");
+      return OK;
+    };
+    const m = new ContainerManager(docker);
+    m.ensure = async () => {};
+    const { taskId } = await m.startBackground("ws1", "/w", "npm run dev");
+    expect(await m.stopBackground("ws1", taskId)).toBe(true);
+    expect(m.listBackground("ws1")).toHaveLength(0);
+  });
+});
+
+// Rehydration: after an app restart the in-memory map is empty but the workspace container and its
+// servers keep running. Rebuilding from the container's pidfiles makes a survivor server visible
+// again — surfaced in the agent's context and stoppable — instead of colliding invisibly.
+describe("ContainerManager background-task rehydration", () => {
+  it("rebuilds the map from the container's live pidfiles (decoding the base64 command)", async () => {
+    const scanOut = `task-aaa\t7001\t${b64("npm run dev")}\ntask-bbb\t7002\t${b64("python3 -m http.server 8080")}`;
+    const { mgr } = makeManager({ scanOut });
+
+    expect(mgr.listBackground("ws1")).toHaveLength(0); // map starts empty (as after a restart)
+    await rehydrate(mgr, "ws1");
+
+    const tasks = mgr.listBackground("ws1");
+    expect(tasks).toHaveLength(2);
+    expect(tasks.find((t) => t.taskId === "task-aaa")).toMatchObject({
+      pgid: 7001,
+      command: "npm run dev",
+      logFile: "/tmp/paodo-tasks/task-aaa.output",
+    });
+    expect(tasks.find((t) => t.taskId === "task-bbb")?.command).toBe("python3 -m http.server 8080");
+  });
+
+  it("makes a rehydrated task stoppable via stopBackground", async () => {
+    const { mgr } = makeManager({ scanOut: `task-aaa\t7001\t${b64("npm run dev")}` });
+    await rehydrate(mgr, "ws1");
+    expect(await mgr.stopBackground("ws1", "task-aaa")).toBe(true);
+    expect(mgr.listBackground("ws1")).toHaveLength(0);
+  });
+
+  it("falls back to a placeholder command when the .cmd file is missing", async () => {
+    const { mgr } = makeManager({ scanOut: "task-aaa\t7001\t" }); // empty base64 field
+    await rehydrate(mgr, "ws1");
+    expect(mgr.listBackground("ws1")[0].command).toContain("unknown");
+  });
+
+  it("scans only once per workspace per process-lifetime", async () => {
+    const { mgr, execCalls } = makeManager({ scanOut: `task-aaa\t7001\t${b64("npm run dev")}` });
+    await rehydrate(mgr, "ws1");
+    await rehydrate(mgr, "ws1");
+    const scans = execCalls.filter((c) => c.join(" ").includes("kill -0"));
+    expect(scans).toHaveLength(1);
+  });
+
+  it("re-scans after stop() clears the once-guard", async () => {
+    const { mgr, execCalls } = makeManager({ scanOut: `task-aaa\t7001\t${b64("npm run dev")}` });
+    await rehydrate(mgr, "ws1");
+    await mgr.stop("ws1");
+    await rehydrate(mgr, "ws1");
+    const scans = execCalls.filter((c) => c.join(" ").includes("kill -0"));
+    expect(scans).toHaveLength(2);
+  });
+
+  it("leaves the map empty when no live pidfiles are found", async () => {
+    const { mgr } = makeManager({ scanOut: "" });
+    await rehydrate(mgr, "ws1");
+    expect(mgr.listBackground("ws1")).toHaveLength(0);
   });
 });

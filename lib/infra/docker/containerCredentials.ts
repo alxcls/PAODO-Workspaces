@@ -79,6 +79,14 @@ export function buildCredentialEnv(workspaceId: string): CredentialEnv {
     // Set both cases so every runtime routes through the credential proxy.
     "-e", `http_proxy=${proxyUrl}`,
     "-e", `https_proxy=${proxyUrl}`,
+    // Exempt loopback so the workspace reaches its OWN server (e.g. a dev server on
+    // 0.0.0.0:8080) directly instead of routing `curl http://localhost:8080` through the
+    // proxy — which returns an empty reply and makes the agent flail. This never weakens
+    // secret injection: real values are only substituted for HTTPS to an exact configured
+    // external domain (see credentialProxy.ts), never for loopback. Both cases, since tools
+    // vary on which they honor.
+    "-e", "no_proxy=localhost,127.0.0.1,0.0.0.0,::1",
+    "-e", "NO_PROXY=localhost,127.0.0.1,0.0.0.0,::1",
     // NODE_EXTRA_CA_CERTS is additive (appended to Node's built-in roots), so it can point
     // at the proxy CA alone. REQUESTS_CA_BUNDLE / CURL_CA_BUNDLE / SSL_CERT_FILE / GIT_SSL_CAINFO
     // are *replacement* trust stores — pointing them at the proxy CA alone drops the public

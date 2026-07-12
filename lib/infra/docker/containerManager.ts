@@ -99,6 +99,11 @@ export class ContainerManager implements IContainerManager {
   // persist across turns (so a preview server stays up) and are reaped when the container
   // stops/idles. Cleared in stop()/remove() — the processes themselves die with the container.
   private backgroundTasks = new Map<string, Map<string, BackgroundTask>>();
+  // Workspaces whose background-task map has been rebuilt from the container's pidfiles this
+  // process-lifetime. The in-memory map above is lost on app restart while the workspace container
+  // (and its servers) keep running; we rebuild it ONCE on the first reattach so a survivor server
+  // is visible/stoppable again. Reset in stop()/remove() so a post-restart reattach re-scans.
+  private backgroundRehydrated = new Set<string>();
 
   private containerName(workspaceId: string): string {
     return `ws_${workspaceId}`;
@@ -172,7 +177,13 @@ export class ContainerManager implements IContainerManager {
       const secretsMatch = containerSecretsHash === secretsHash;
       if (imageMatches && secretsMatch) {
         if (!portMissing) {
-          if (status === "running") return;
+          if (status === "running") {
+            // Reattaching to a still-running container (e.g. after an app restart wiped our
+            // in-memory task map). Rebuild it from the container's pidfiles so a survivor
+            // background server is surfaced and stoppable rather than colliding invisibly.
+            await this.rehydrateBackgroundTasks(workspaceId);
+            return;
+          }
           // stopped, image unchanged, secrets unchanged, port mapped — just restart it
           log.debug({ workspaceId }, "starting stopped container");
           await this.ensureNetwork(workspaceId);
@@ -374,13 +385,17 @@ export class ContainerManager implements IContainerManager {
     const taskId = randomUUID();
     const logFile = `${TASK_DIR}/${taskId}.output`;
     const pidFile = `${TASK_DIR}/${taskId}.pid`;
+    const cmdFile = `${TASK_DIR}/${taskId}.cmd`;
 
     // setsid makes the inner bash a new session/process-group leader; it self-reports that pid
     // (== pgid) to the pidfile, then execs the user command in place so the recorded pid IS the
     // server. The trailing `&` frees the launching `docker exec` at once; tini (--init) reaps the
     // detached tree on container stop. Same `echo $$ > pid; exec "$0" "$@"` idiom as execStreaming.
+    // The command is also recorded verbatim to a .cmd file (via `printf '%s' "$1"` — argv, no
+    // injection) so rehydrateBackgroundTasks can recover it if the in-memory map is lost.
     const launcher =
       `mkdir -p ${TASK_DIR}; ` +
+      `printf '%s' "$1" > ${cmdFile}; ` +
       `setsid /bin/bash -c 'echo $$ > ${pidFile}; exec "$0" "$@"' ` +
       `/bin/bash -c "$1" > ${logFile} 2>&1 & `;
     const launch = await this.docker.exec(name, ["/bin/bash", "-c", launcher, "bash", command]);
@@ -405,7 +420,8 @@ export class ContainerManager implements IContainerManager {
   }
 
   // Kill a tracked background process by taskId (negative-pgid group kill, so children die too).
-  // Returns false if no such task is tracked for the workspace.
+  // Returns false if no such task is tracked for the workspace. An already-dead group is still a
+  // success — the kill is best-effort and we always clear the bookkeeping + pid/cmd files.
   async stopBackground(workspaceId: string, taskId: string): Promise<boolean> {
     const task = this.backgroundTasks.get(workspaceId)?.get(taskId);
     if (!task) return false;
@@ -413,7 +429,7 @@ export class ContainerManager implements IContainerManager {
       .exec(this.containerName(workspaceId), [
         "/bin/bash",
         "-c",
-        `kill -KILL -${task.pgid} 2>/dev/null; rm -f ${TASK_DIR}/${taskId}.pid`,
+        `kill -KILL -${task.pgid} 2>/dev/null; rm -f ${TASK_DIR}/${taskId}.pid ${TASK_DIR}/${taskId}.cmd`,
       ])
       .catch(() => {});
     this.backgroundTasks.get(workspaceId)?.delete(taskId);
@@ -424,6 +440,44 @@ export class ContainerManager implements IContainerManager {
   // later run (which has no memory of a prior run's taskIds) can read their logs or stop them.
   listBackground(workspaceId: string): BackgroundTask[] {
     return [...(this.backgroundTasks.get(workspaceId)?.values() ?? [])];
+  }
+
+  // Rebuild a workspace's in-memory background-task map from the container's pidfiles — the durable
+  // source of truth that survives an app restart (which wipes the map while the workspace container
+  // and its servers keep running). Runs at most once per workspace per process-lifetime, on the
+  // first reattach to an already-running container. A pidfile whose process group is dead
+  // (`kill -0 -<pgid>` fails) is skipped, so this doubles as a stale-task prune. Best-effort: any
+  // failure leaves the map empty (the pre-existing behavior), never throws.
+  private async rehydrateBackgroundTasks(workspaceId: string): Promise<void> {
+    if (this.backgroundRehydrated.has(workspaceId)) return;
+    this.backgroundRehydrated.add(workspaceId);
+    // For each live pidfile, emit "taskId<TAB>pgid<TAB>base64(command)". The command is base64'd so
+    // arbitrary shell text can't break the line/field framing; decoded back in JS.
+    const scan =
+      `shopt -s nullglob; for p in ${TASK_DIR}/*.pid; do ` +
+      `pgid=$(cat "$p" 2>/dev/null); [ -n "$pgid" ] || continue; ` +
+      `kill -0 -"$pgid" 2>/dev/null || continue; ` +
+      `id=$(basename "$p" .pid); ` +
+      `cmd=$(cat "${TASK_DIR}/$id.cmd" 2>/dev/null | base64 | tr -d "\\n"); ` +
+      `printf '%s\\t%s\\t%s\\n' "$id" "$pgid" "$cmd"; done`;
+    const res = await this.docker
+      .exec(this.containerName(workspaceId), ["/bin/bash", "-c", scan], { trimStdout: true })
+      .catch(() => null);
+    if (!res || res.code !== 0 || !res.stdout) return;
+    const tasks = new Map<string, BackgroundTask>();
+    for (const line of res.stdout.split("\n")) {
+      const [taskId, pgidStr, cmdB64] = line.split("\t");
+      const pgid = parseInt(pgidStr, 10);
+      if (!taskId || !Number.isInteger(pgid)) continue;
+      const command = cmdB64
+        ? Buffer.from(cmdB64, "base64").toString("utf8")
+        : "(unknown — recovered after restart)";
+      tasks.set(taskId, { taskId, pgid, logFile: `${TASK_DIR}/${taskId}.output`, command });
+    }
+    if (tasks.size) {
+      this.backgroundTasks.set(workspaceId, tasks);
+      log.debug({ workspaceId, count: tasks.size }, "rehydrated background tasks from container");
+    }
   }
 
   // Attach the credential-proxy sidecar (never the app itself) to a workspace's isolated network so
@@ -465,6 +519,7 @@ export class ContainerManager implements IContainerManager {
     if (t) { clearTimeout(t); this.idleTimers.delete(workspaceId); }
     // Background processes die with the container (tini reaps the tree) — just drop the bookkeeping.
     this.backgroundTasks.delete(workspaceId);
+    this.backgroundRehydrated.delete(workspaceId);
     const r = await this.docker.cmd("stop", this.containerName(workspaceId));
     if (r.code !== 0) log.warn({ workspaceId, stderr: r.stderr }, "docker stop failed");
     await this.docker.cmd("network", "disconnect", this.networkName(workspaceId), this.containerName(workspaceId));
@@ -478,6 +533,7 @@ export class ContainerManager implements IContainerManager {
     if (t) { clearTimeout(t); this.idleTimers.delete(workspaceId); }
     this.startLocks.delete(workspaceId);
     this.backgroundTasks.delete(workspaceId);
+    this.backgroundRehydrated.delete(workspaceId);
     invalidatePort(workspaceId);
     // Non-zero exit codes are expected if the container/network was never created.
     const stop = await this.docker.cmd("stop", this.containerName(workspaceId));

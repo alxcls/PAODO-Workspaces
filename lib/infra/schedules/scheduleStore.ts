@@ -69,13 +69,6 @@ export function setSchedule(entry: ScheduleEntry): void {
   log.info({ workspaceId: entry.workspaceId, scheduleId: entry.id }, "schedule set");
 }
 
-export function deleteSchedule(workspaceId: string): void {
-  if (!(workspaceId in store)) return;
-  delete store[workspaceId];
-  save();
-  log.info({ workspaceId }, "schedule deleted");
-}
-
 /** Update a schedule's next-run pointer (called on boot and after each firing). */
 export function setNextRunAt(workspaceId: string, nextRunAt: string | null): void {
   const entry = store[workspaceId];

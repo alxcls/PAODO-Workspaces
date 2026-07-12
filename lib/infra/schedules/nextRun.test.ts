@@ -38,6 +38,14 @@ describe("computeNextRun", () => {
     expect(next?.toISOString()).toBe("2026-07-13T10:30:00.000Z");
   });
 
+  it("keeps interval phase when startAt is far in the past", () => {
+    const next = computeNextRun(
+      entry({ startAt: "2020-01-01T09:17", intervalUnit: "hour", intervalValue: 2, timezone: "UTC" }),
+      iso("2026-07-13T10:12:00Z"),
+    );
+    expect(next?.toISOString()).toBe("2026-07-13T11:17:00.000Z");
+  });
+
   it("never returns a time equal to `after` (strictly after)", () => {
     const next = computeNextRun(
       entry({ startAt: "2020-01-01T00:00", intervalUnit: "hour", intervalValue: 1, timezone: "UTC" }),

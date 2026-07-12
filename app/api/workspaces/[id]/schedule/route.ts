@@ -1,5 +1,5 @@
 // REST endpoint for a workspace's single agent schedule.
-// GET returns the schedule (or null); PUT creates/replaces it; DELETE removes it.
+// GET returns the schedule (or null); PUT creates/replaces it.
 // The scheduler (started in server.ts) reads the same store and fires runs on the recurrence.
 export const runtime = "nodejs";
 
@@ -9,7 +9,6 @@ import { requireWorkspace } from "@/lib/api/guards";
 import {
   getSchedule,
   setSchedule,
-  deleteSchedule,
   type IntervalUnit,
   type ScheduleEntry,
 } from "@/lib/infra/schedules/scheduleStore";
@@ -92,12 +91,4 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
 
   setSchedule(entry);
   return NextResponse.json(entry);
-}
-
-export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const { id } = await params;
-  const ws = requireWorkspace(id);
-  if (ws instanceof NextResponse) return ws;
-  deleteSchedule(id);
-  return NextResponse.json({ ok: true });
 }

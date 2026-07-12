@@ -1,4 +1,4 @@
-// The schedule store is a JSON-backed, one-per-workspace registry. What matters: CRUD round-trips,
+// The schedule store is a JSON-backed, one-per-workspace registry. What matters: read/write round-trips,
 // recordRun updates the run-status fields + next-run pointer atomically, and everything survives a
 // reload from disk (a fresh module instance reads the persisted file).
 import { describe, it, expect, beforeEach, afterAll, vi } from "vitest";
@@ -65,12 +65,6 @@ describe("scheduleStore", () => {
     store.setSchedule(entry(store, { prompt: "second" }));
     expect(store.getSchedule("w1")?.prompt).toBe("second");
     expect(store.listAll()).toHaveLength(1);
-  });
-
-  it("deletes a schedule", () => {
-    store.setSchedule(entry(store));
-    store.deleteSchedule("w1");
-    expect(store.getSchedule("w1")).toBeNull();
   });
 
   it("recordRun updates status, snippet, timestamps and next-run atomically", () => {

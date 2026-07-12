@@ -46,7 +46,7 @@ export default function ConversationBar({
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
-        className="flex items-center gap-1.5 min-w-0 flex-1 text-left px-1.5 py-1 rounded-md hover:bg-bg-2 cursor-pointer text-[12.5px] text-text-2"
+        className="flex items-center gap-1.5 min-w-0 max-w-full text-left px-1.5 py-1 rounded-md hover:bg-bg-2 cursor-pointer text-[12.5px] text-text-2"
         title="Switch conversation"
       >
         {active?.running && <RunningDot />}

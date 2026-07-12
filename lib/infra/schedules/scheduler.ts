@@ -53,8 +53,9 @@ function fire(entry: ScheduleEntry, now: Date): void {
 
   let conversationId: string;
   try {
-    const label = now.toLocaleString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
-    const conv = conversations.createConversation(ws.id, { title: `Scheduled — ${label}`, kind: "scheduled" });
+    // Keep scheduled sessions named the same way as user-created ones (short conversation id),
+    // so each run has an immediately visible, stable identifier in the switcher.
+    const conv = conversations.createConversation(ws.id, { kind: "scheduled" });
     conversationId = conv.id;
     const messages = conversations.getMessages(ws.id, conversationId) ?? [];
     const inputs = buildWorkspacePromptInputs(ws.id, ws.dir);

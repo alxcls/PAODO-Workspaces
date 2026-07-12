@@ -3,9 +3,14 @@
 // Schedule button for the TopBar's right slot (sibling of HistoryPanel). The calendar icon opens an
 // overlay modal to configure this workspace's single recurring agent run: a prompt fired "every N
 // minutes/hours/days/weeks" in a chosen IANA timezone, bounded by a start and optional end date.
-// Backed by GET/PUT/DELETE /api/workspaces/:id/schedule.
+// Backed by GET/PUT /api/workspaces/:id/schedule.
+//
+// Structure: SchedulePanel is just the trigger button + open state. ScheduleModal owns all of the
+// data/loading/saving logic and renders while mounted (i.e. only while open). Form state is a single
+// object edited through `set(key, value)`; Field/LiveToggle keep the markup declarative.
 
-import { useState, useEffect, useCallback } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { timezoneOffsetMinutes, timezoneOptionLabel } from "@/lib/client/timezoneLabel";
 
 type IntervalUnit = "minute" | "hour" | "day" | "week";
 
@@ -24,14 +29,21 @@ interface Schedule {
   lastRunSnippet?: string;
 }
 
-const CalendarIcon = () => (
-  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-    <rect x="3" y="4" width="18" height="18" rx="2" /><line x1="3" y1="9" x2="21" y2="9" />
-    <line x1="8" y1="2" x2="8" y2="6" /><line x1="16" y1="2" x2="16" y2="6" />
-  </svg>
-);
+interface FormState {
+  prompt: string;
+  intervalValue: string;
+  intervalUnit: IntervalUnit;
+  startAt: string;
+  endAt: string;
+  timezone: string;
+  enabled: boolean;
+}
 
-const browserTz = () => {
+// ---------------------------------------------------------------------------
+// Pure helpers
+// ---------------------------------------------------------------------------
+
+const browserTz = (): string => {
   try { return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC"; } catch { return "UTC"; }
 };
 
@@ -49,12 +61,269 @@ function nowLocalInput(): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-function formatTime(iso?: string | null): string {
-  if (!iso) return "—";
-  const d = new Date(iso);
-  if (isNaN(d.getTime())) return "—";
-  return d.toLocaleString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+const emptyForm = (): FormState => ({
+  prompt: "",
+  intervalValue: "1",
+  intervalUnit: "day",
+  startAt: nowLocalInput(),
+  endAt: "",
+  timezone: browserTz(),
+  enabled: true,
+});
+
+const toForm = (s: Schedule): FormState => ({
+  prompt: s.prompt,
+  intervalValue: String(s.intervalValue),
+  intervalUnit: s.intervalUnit,
+  startAt: s.startAt.slice(0, 16),
+  endAt: s.endAt ? s.endAt.slice(0, 10) : "",
+  timezone: s.timezone,
+  enabled: s.enabled,
+});
+
+const toPayload = (f: FormState) => ({
+  prompt: f.prompt,
+  intervalValue: parseInt(f.intervalValue, 10),
+  intervalUnit: f.intervalUnit,
+  startAt: f.startAt,
+  endAt: f.endAt || null,
+  timezone: f.timezone,
+  enabled: f.enabled,
+});
+
+// ---------------------------------------------------------------------------
+// Presentational pieces
+// ---------------------------------------------------------------------------
+
+const CalendarIcon = () => (
+  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <rect x="3" y="4" width="18" height="18" rx="2" /><line x1="3" y1="9" x2="21" y2="9" />
+    <line x1="8" y1="2" x2="8" y2="6" /><line x1="16" y1="2" x2="16" y2="6" />
+  </svg>
+);
+
+function Field({ label, hint, grow, children }: { label: string; hint?: string; grow?: boolean; children: React.ReactNode }) {
+  return (
+    <label className={`flex flex-col gap-1.5 min-w-0 ${grow ? "flex-1 min-h-0" : ""}`}>
+      <span className="flex items-baseline justify-between gap-2">
+        <span className="text-xs font-semibold uppercase tracking-wide text-text-2">{label}</span>
+        {hint && <span className="text-2xs text-text-3 normal-case tracking-normal">{hint}</span>}
+      </span>
+      {children}
+    </label>
+  );
 }
+
+function LiveToggle({ enabled, onToggle }: { enabled: boolean; onToggle: () => void }) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={enabled}
+      aria-label={enabled ? "Live — pause schedule" : "Paused — resume schedule"}
+      onClick={onToggle}
+      className="shrink-0 flex items-center gap-2.5 h-9 px-1 transition-colors outline-none focus-visible:ring-2 focus-visible:ring-primary-soft"
+    >
+      <span className={`text-ms font-semibold ${enabled ? "text-primary" : "text-text-2"}`}>
+        {enabled ? "Live" : "Paused"}
+      </span>
+      <span className={`relative w-9 h-5 rounded-full transition-colors ${enabled ? "bg-primary" : "bg-border"}`}>
+        <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow-sm transition-all ${enabled ? "left-[18px]" : "left-0.5"}`} />
+      </span>
+    </button>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Modal
+// ---------------------------------------------------------------------------
+
+interface ModalProps {
+  workspaceId: string;
+  onClose: () => void;
+  onStatus: (enabled: boolean) => void;
+}
+
+function ScheduleModal({ workspaceId, onClose, onStatus }: ModalProps) {
+  const url = `/api/workspaces/${workspaceId}/schedule`;
+  const timezoneOptions = useMemo(() => {
+    return allTimezones()
+      .map((tz) => ({ value: tz, label: timezoneOptionLabel(tz), offset: timezoneOffsetMinutes(tz) }))
+      .sort((a, b) => {
+        const ao = a.offset ?? Number.POSITIVE_INFINITY;
+        const bo = b.offset ?? Number.POSITIVE_INFINITY;
+        if (ao !== bo) return ao - bo;
+        return a.value.localeCompare(b.value);
+      });
+  }, []);
+
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [form, setForm] = useState<FormState>(emptyForm);
+
+  const set = useCallback(<K extends keyof FormState>(key: K, value: FormState[K]) => {
+    setForm((f) => ({ ...f, [key]: value }));
+  }, []);
+
+  // Load the current schedule on open.
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        const res = await fetch(url);
+        if (!res.ok) throw new Error(`Failed to load schedule (${res.status})`);
+        const s = (await res.json()) as Schedule | null;
+        if (!alive) return;
+        if (s) { setForm(toForm(s)); onStatus(s.enabled); }
+      } catch (err) {
+        if (alive) setError(err instanceof Error ? err.message : "Failed to load schedule");
+      } finally {
+        if (alive) setLoading(false);
+      }
+    })();
+    return () => { alive = false; };
+  }, [url, onStatus]);
+
+  // Dismiss on Escape.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  const save = async () => {
+    setSaving(true);
+    setError(null);
+    try {
+      const res = await fetch(url, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(toPayload(form)),
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(body.error ?? `Save failed (${res.status})`);
+      }
+      const saved = (await res.json()) as Schedule;
+      onStatus(saved.enabled);
+      onClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Save failed");
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div
+      className="fixed inset-0 bg-[rgba(15,10,30,0.55)] flex items-center justify-center z-[1000] p-4 sm:p-6"
+      onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <form
+        onSubmit={(e) => { e.preventDefault(); void save(); }}
+        className="bg-bg rounded-2xl shadow-[0_24px_60px_rgba(15,10,30,0.35)] border border-border flex flex-col overflow-hidden w-[min(1120px,94vw)] h-[min(700px,90vh)]"
+      >
+        {/* Header */}
+        <header className="flex items-center justify-between gap-4 px-7 py-[18px] border-b border-border-soft shrink-0">
+          <div className="flex items-center gap-3.5 min-w-0">
+            <span className="grid place-items-center w-10 h-10 rounded-[11px] bg-primary-tint text-primary shrink-0">
+              <CalendarIcon />
+            </span>
+            <div className="min-w-0">
+              <h2 className="font-semibold text-lg leading-tight text-text m-0">Scheduled run</h2>
+              <p className="text-ms text-text-2 m-0 mt-0.5 truncate">
+                Send a prompt to this workspace&apos;s agent on a repeating schedule.
+              </p>
+            </div>
+          </div>
+          <LiveToggle enabled={form.enabled} onToggle={() => set("enabled", !form.enabled)} />
+        </header>
+
+        {/* Body */}
+        {loading ? (
+          <div className="py-20 grid place-items-center text-sm text-text-3">Loading…</div>
+        ) : (
+          <div className="flex-1 min-h-0 overflow-auto p-7 flex flex-col gap-6">
+            {error && (
+              <div className="text-ms text-danger bg-danger-soft border border-danger/20 rounded-md px-3 py-2">{error}</div>
+            )}
+
+            {/* Prompt — primary writing surface */}
+            <Field label="Prompt" hint="Sent to the agent on every run" grow>
+              <textarea
+                className="input resize-none leading-[1.55] flex-1 min-h-[160px] text-[15px]"
+                placeholder="e.g. Check the RSS feed and summarise any new items into digest.md"
+                value={form.prompt}
+                onChange={(e) => set("prompt", e.target.value)}
+              />
+            </Field>
+
+            {/* Parameters — grouped schedule controls */}
+            <div className="rounded-xl border border-border-soft bg-bg-tint p-5">
+              <div className="text-xs font-semibold uppercase tracking-wide text-text-2 mb-4">Parameters</div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-5 gap-y-4">
+                <Field label="Repeat every">
+                  <div className="flex gap-2.5">
+                    <input
+                      type="number" min={1} className="input input-sm basis-[84px] grow-0 shrink-0 text-center"
+                      value={form.intervalValue}
+                      onChange={(e) => set("intervalValue", e.target.value)}
+                    />
+                    <select
+                      className="input input-sm flex-1 min-w-0"
+                      value={form.intervalUnit}
+                      onChange={(e) => set("intervalUnit", e.target.value as IntervalUnit)}
+                    >
+                      <option value="minute">minutes</option>
+                      <option value="hour">hours</option>
+                      <option value="day">days</option>
+                      <option value="week">weeks</option>
+                    </select>
+                  </div>
+                </Field>
+
+                <Field label="Timezone">
+                  <select className="input input-sm" value={form.timezone} onChange={(e) => set("timezone", e.target.value)}>
+                    {timezoneOptions.map((tz) => <option key={tz.value} value={tz.value}>{tz.label}</option>)}
+                  </select>
+                </Field>
+
+                <Field label="Start">
+                  <input
+                    type="datetime-local" className="input input-sm"
+                    value={form.startAt}
+                    onChange={(e) => set("startAt", e.target.value)}
+                  />
+                </Field>
+
+                <Field label="End" hint="optional">
+                  <input
+                    type="date" className="input input-sm"
+                    value={form.endAt}
+                    onChange={(e) => set("endAt", e.target.value)}
+                  />
+                </Field>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Footer */}
+        <footer className="flex items-center gap-3 px-7 py-4 border-t border-border-soft shrink-0">
+          <button type="submit" className="btn btn-primary ml-auto" disabled={saving || loading}>
+            {saving ? "Saving…" : "Save"}
+          </button>
+        </footer>
+      </form>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Trigger
+// ---------------------------------------------------------------------------
 
 interface Props {
   workspaceId: string;
@@ -62,96 +331,8 @@ interface Props {
 
 export default function SchedulePanel({ workspaceId }: Props) {
   const [open, setOpen] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [existing, setExisting] = useState<Schedule | null>(null);
-
-  const [prompt, setPrompt] = useState("");
-  const [intervalValue, setIntervalValue] = useState("1");
-  const [intervalUnit, setIntervalUnit] = useState<IntervalUnit>("day");
-  const [startAt, setStartAt] = useState(nowLocalInput());
-  const [endAt, setEndAt] = useState("");
-  const [timezone, setTimezone] = useState(browserTz());
-  const [enabled, setEnabled] = useState(true);
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await fetch(`/api/workspaces/${workspaceId}/schedule`);
-      if (!res.ok) throw new Error(`Failed to load schedule (${res.status})`);
-      const s = (await res.json()) as Schedule | null;
-      setExisting(s);
-      if (s) {
-        setPrompt(s.prompt);
-        setIntervalValue(String(s.intervalValue));
-        setIntervalUnit(s.intervalUnit);
-        setStartAt(s.startAt.slice(0, 16));
-        setEndAt(s.endAt ? s.endAt.slice(0, 10) : "");
-        setTimezone(s.timezone);
-        setEnabled(s.enabled);
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load schedule");
-    } finally {
-      setLoading(false);
-    }
-  }, [workspaceId]);
-
-  useEffect(() => { if (open) load(); }, [open, load]);
-
-  // Dismiss on Escape.
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [open]);
-
-  const save = async () => {
-    setSaving(true);
-    setError(null);
-    try {
-      const res = await fetch(`/api/workspaces/${workspaceId}/schedule`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          prompt,
-          intervalValue: parseInt(intervalValue, 10),
-          intervalUnit,
-          startAt,
-          endAt: endAt || null,
-          timezone,
-          enabled,
-        }),
-      });
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        throw new Error((body as { error?: string }).error ?? `Save failed (${res.status})`);
-      }
-      setExisting(await res.json());
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Save failed");
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const remove = async () => {
-    setSaving(true);
-    setError(null);
-    try {
-      const res = await fetch(`/api/workspaces/${workspaceId}/schedule`, { method: "DELETE" });
-      if (!res.ok) throw new Error(`Delete failed (${res.status})`);
-      setExisting(null);
-      setOpen(false);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Delete failed");
-    } finally {
-      setSaving(false);
-    }
-  };
+  const [active, setActive] = useState(false);
+  const close = useCallback(() => setOpen(false), []);
 
   return (
     <>
@@ -161,115 +342,12 @@ export default function SchedulePanel({ workspaceId }: Props) {
         aria-label="Scheduled run"
         aria-expanded={open}
         onClick={() => setOpen(true)}
-        className={`btn btn-ghost btn-sm ${existing?.enabled ? "text-primary" : ""}`}
+        className={`btn btn-ghost btn-sm ${active ? "text-primary" : ""}`}
       >
         <CalendarIcon /><span>Schedule</span>
       </button>
 
-      {open && (
-        <div
-          className="fixed inset-0 bg-[rgba(15,10,30,0.55)] flex items-center justify-center z-[1000] p-4"
-          onMouseDown={(e) => { if (e.target === e.currentTarget) setOpen(false); }}
-        >
-          <div className="bg-bg rounded-2xl shadow-[0_18px_40px_rgba(15,10,30,0.25)] w-[min(520px,calc(100vw-32px))] max-h-[calc(100vh-48px)] overflow-auto border border-border p-6">
-            <div className="font-semibold text-[19px] mb-1 text-text">Scheduled run</div>
-            <p className="text-sm text-text-2 m-0 mb-5 leading-[1.5]">
-              Automatically send a prompt to this workspace&apos;s agent on a recurring schedule.
-            </p>
-
-            {error && <div className="text-xs text-danger mb-3">{error}</div>}
-            {loading ? (
-              <div className="text-sm text-text-3 py-6 text-center">Loading…</div>
-            ) : (
-              <div className="flex flex-col gap-4">
-                <label className="flex flex-col gap-1.5">
-                  <span className="text-xs font-medium text-text-2">Prompt</span>
-                  <textarea
-                    className="input resize-none" rows={3}
-                    placeholder="e.g. Check the RSS feed and summarise new items"
-                    value={prompt} onChange={(e) => setPrompt(e.target.value)}
-                  />
-                </label>
-
-                <div className="flex items-end gap-2">
-                  <label className="flex flex-col gap-1.5">
-                    <span className="text-xs font-medium text-text-2">Repeat every</span>
-                    <input
-                      type="number" min={1} className="input input-sm w-[80px]"
-                      value={intervalValue} onChange={(e) => setIntervalValue(e.target.value)}
-                    />
-                  </label>
-                  <label className="flex flex-col gap-1.5 flex-1">
-                    <span className="text-xs font-medium text-text-2">&nbsp;</span>
-                    <select
-                      className="input input-sm" value={intervalUnit}
-                      onChange={(e) => setIntervalUnit(e.target.value as IntervalUnit)}
-                    >
-                      <option value="minute">minutes</option>
-                      <option value="hour">hours</option>
-                      <option value="day">days</option>
-                      <option value="week">weeks</option>
-                    </select>
-                  </label>
-                </div>
-
-                <div className="flex gap-2">
-                  <label className="flex flex-col gap-1.5 flex-1">
-                    <span className="text-xs font-medium text-text-2">Start</span>
-                    <input
-                      type="datetime-local" className="input input-sm"
-                      value={startAt} onChange={(e) => setStartAt(e.target.value)}
-                    />
-                  </label>
-                  <label className="flex flex-col gap-1.5 flex-1">
-                    <span className="text-xs font-medium text-text-2">End (optional)</span>
-                    <input
-                      type="date" className="input input-sm"
-                      value={endAt} onChange={(e) => setEndAt(e.target.value)}
-                    />
-                  </label>
-                </div>
-
-                <label className="flex flex-col gap-1.5">
-                  <span className="text-xs font-medium text-text-2">Timezone</span>
-                  <select className="input input-sm" value={timezone} onChange={(e) => setTimezone(e.target.value)}>
-                    {allTimezones().map((tz) => <option key={tz} value={tz}>{tz}</option>)}
-                  </select>
-                </label>
-
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
-                  <span className="text-sm text-text">Enabled</span>
-                </label>
-
-                {existing && (
-                  <div className="text-xs text-text-3 border-t border-border pt-3 flex flex-col gap-1">
-                    <div>Next run: <span className="text-text-2">{formatTime(existing.nextRunAt)}</span></div>
-                    <div>
-                      Last run: <span className="text-text-2">{formatTime(existing.lastRunAt)}</span>
-                      {existing.lastRunStatus && (
-                        <span className={existing.lastRunStatus === "ok" ? "text-primary ml-1" : "text-danger ml-1"}>
-                          ({existing.lastRunStatus})
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-
-            <div className="flex gap-2.5 items-center mt-6">
-              <button className="btn btn-primary" onClick={save} disabled={saving || loading}>
-                {saving ? "Saving…" : "Save"}
-              </button>
-              {existing && (
-                <button className="btn btn-danger" onClick={remove} disabled={saving}>Delete</button>
-              )}
-              <button className="linkbtn ml-auto" onClick={() => setOpen(false)}>Close</button>
-            </div>
-          </div>
-        </div>
-      )}
+      {open && <ScheduleModal workspaceId={workspaceId} onClose={close} onStatus={setActive} />}
     </>
   );
 }

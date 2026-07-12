@@ -13,6 +13,7 @@ afterAll(() => fs.rmSync(ROOT, { recursive: true, force: true }));
 
 const h = vi.hoisted(() => ({
   startRun: vi.fn(),
+  createConversation: vi.fn(),
   subCb: null as null | ((e: { type: string; content?: string; message?: string }) => void),
   unsubscribe: vi.fn(),
   subStatus: "running" as "running" | "done",
@@ -31,7 +32,10 @@ vi.mock("../../agent/runBroker", () => ({
   },
 }));
 vi.mock("../../workspace/conversationStore", () => ({
-  createConversation: () => ({ id: "conv-1" }),
+  createConversation: (workspaceId: string, opts?: { title?: string; kind?: "user" | "skill-call" | "scheduled" }) => {
+    h.createConversation(workspaceId, opts);
+    return { id: "conv-1" };
+  },
   getMessages: () => [],
 }));
 vi.mock("../../agent/systemPrompt", () => ({ buildSystemPrompt: () => ({}), buildPromptConfig: () => ({}) }));
@@ -73,6 +77,7 @@ beforeEach(async () => {
   fs.mkdirSync(ROOT, { recursive: true });
   process.env.WORKSPACES_ROOT = ROOT;
   h.startRun.mockClear();
+  h.createConversation.mockClear();
   h.unsubscribe.mockClear();
   h.subCb = null;
   h.subStatus = "running";
@@ -86,6 +91,7 @@ describe("scheduler tick", () => {
   it("fires a due enabled schedule exactly once and does not re-fire while in flight", () => {
     seed();
     scheduler._tick();
+    expect(h.createConversation).toHaveBeenCalledWith("w1", { kind: "scheduled" });
     expect(h.startRun).toHaveBeenCalledTimes(1);
     expect(h.startRun.mock.calls[0][0]).toMatchObject({ workspaceId: "w1", userInput: "do the thing" });
 

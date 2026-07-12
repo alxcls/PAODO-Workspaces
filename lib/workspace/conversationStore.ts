@@ -25,9 +25,10 @@ const log = createLogger("conversations");
 export interface ConversationMeta {
   id: string;
   title: string;
-  /** "skill-call" marks a conversation created by an agent-to-agent call_agent invocation
-   *  (vs the default user-initiated chat); lets the switcher label/filter them distinctly. */
-  kind?: "user" | "skill-call";
+  /** "skill-call" marks a conversation created by an agent-to-agent call_agent invocation;
+   *  "scheduled" marks one started automatically by a workspace schedule (vs the default
+   *  user-initiated chat). Lets the switcher label/filter them distinctly. */
+  kind?: "user" | "skill-call" | "scheduled";
   createdAt: string;
   updatedAt: string;
   lastMessageAt: string;

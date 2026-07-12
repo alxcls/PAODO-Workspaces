@@ -17,6 +17,7 @@ import ChatPanel from "@/components/workspace/ChatPanel";
 import ConversationBar from "@/components/workspace/ConversationBar";
 import ConsolePanel from "@/components/workspace/ConsolePanel";
 import HistoryPanel from "@/components/workspace/HistoryPanel";
+import SchedulePanel from "@/components/workspace/SchedulePanel";
 import TopBar from "@/components/layout/TopBar";
 import { useWorkspaceSocket } from "@/lib/client/hooks/useWorkspaceSocket";
 import { useWorkspaceMeta } from "@/lib/client/hooks/useWorkspaceMeta";
@@ -126,14 +127,17 @@ function WorkspacePageInner({ params }: { params: Promise<{ id: string }> }) {
           </div>
         }
         right={
-          <HistoryPanel
-            workspaceId={id}
-            refreshKey={treeRefreshKey}
-            onRestored={() => {
-              setTreeRefreshKey((k) => k + 1);
-              if (selectedFile) viewerRef.current?.notifyFilesChanged([selectedFile]);
-            }}
-          />
+          <div className="flex items-center gap-2">
+            <SchedulePanel workspaceId={id} />
+            <HistoryPanel
+              workspaceId={id}
+              refreshKey={treeRefreshKey}
+              onRestored={() => {
+                setTreeRefreshKey((k) => k + 1);
+                if (selectedFile) viewerRef.current?.notifyFilesChanged([selectedFile]);
+              }}
+            />
+          </div>
         }
       />
 

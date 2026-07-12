@@ -32,6 +32,7 @@ import {
   type AuthResult,
 } from "./lib/infra/security/httpAuth";
 import { buildSecurityHeaders } from "./lib/infra/security/securityHeaders";
+import { startScheduler, stopScheduler } from "./lib/infra/schedules/scheduler";
 
 const dev = process.env.NODE_ENV !== "production";
 const port = parseInt(process.env.PORT ?? "3000", 10);
@@ -246,10 +247,14 @@ assertGitAvailable()
     httpServer.listen(port, () => {
       log.info(`Ready on http://localhost:${port}`);
     });
+    // Fire workspace schedules on their recurrence (in-process tick loop). Started after boot so
+    // the store/services are ready; missed slots from any downtime are skipped, not replayed.
+    startScheduler();
   });
 
 function shutdown() {
   wss.close();
+  stopScheduler();
   stopAllWatchers();
   app.close().finally(() => process.exit(0));
 }

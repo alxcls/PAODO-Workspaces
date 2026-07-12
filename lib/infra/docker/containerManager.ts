@@ -33,6 +33,19 @@ function hashSecretNames(secrets: { name: string }[]): string {
   return createHash("sha256").update(sorted.join(",")).digest("hex");
 }
 
+// In-container directory holding background-task log/pid files. Under /tmp so it never
+// clutters /workspace (which is bind-mounted and watched for file-change events).
+const TASK_DIR = "/tmp/paodo-tasks";
+
+// One agent-launched background process (dev server etc.). pgid == the pid of the setsid
+// session leader, so `kill -KILL -<pgid>` takes down the process and every child it spawned.
+export interface BackgroundTask {
+  taskId: string;
+  pgid: number;
+  logFile: string;
+  command: string;
+}
+
 const CONTAINER_IMAGE = process.env.CONTAINER_IMAGE ?? "paodo-workspace";
 const CONTAINER_MEMORY = process.env.CONTAINER_MEMORY ?? "1g";
 const CONTAINER_CPUS = process.env.CONTAINER_CPUS ?? "1.0";
@@ -81,6 +94,11 @@ export class ContainerManager implements IContainerManager {
   private idleTimers = new Map<string, ReturnType<typeof setTimeout>>();
   // Prevents concurrent docker run/start calls for the same workspace.
   private startLocks = new Map<string, Promise<void>>();
+  // Long-lived background processes the agent launched (dev servers etc.), keyed
+  // workspaceId → taskId. These are deliberately NOT tied to a single agent run: they
+  // persist across turns (so a preview server stays up) and are reaped when the container
+  // stops/idles. Cleared in stop()/remove() — the processes themselves die with the container.
+  private backgroundTasks = new Map<string, Map<string, BackgroundTask>>();
 
   private containerName(workspaceId: string): string {
     return `ws_${workspaceId}`;
@@ -340,6 +358,74 @@ export class ContainerManager implements IContainerManager {
     });
   }
 
+  // Launch a long-running command DETACHED from the exec kill path (dev servers etc.). Unlike
+  // execStreaming — whose `setsid --wait` session is group-killed the moment a silence/max timeout
+  // or user-escape aborts — this starts the command in its OWN session (setsid, no --wait), redirects
+  // its output to a log file, and returns immediately. The process is therefore immune to the
+  // foreground exec timeout and lives until stopBackground(), a new run, or container stop/idle.
+  // The user command enters only as an argv positional ($1), never string-interpolated — no injection.
+  async startBackground(
+    workspaceId: string,
+    workspaceDir: string,
+    command: string,
+  ): Promise<{ taskId: string; logFile: string }> {
+    await this.ensure(workspaceId, workspaceDir);
+    const name = this.containerName(workspaceId);
+    const taskId = randomUUID();
+    const logFile = `${TASK_DIR}/${taskId}.output`;
+    const pidFile = `${TASK_DIR}/${taskId}.pid`;
+
+    // setsid makes the inner bash a new session/process-group leader; it self-reports that pid
+    // (== pgid) to the pidfile, then execs the user command in place so the recorded pid IS the
+    // server. The trailing `&` frees the launching `docker exec` at once; tini (--init) reaps the
+    // detached tree on container stop. Same `echo $$ > pid; exec "$0" "$@"` idiom as execStreaming.
+    const launcher =
+      `mkdir -p ${TASK_DIR}; ` +
+      `setsid /bin/bash -c 'echo $$ > ${pidFile}; exec "$0" "$@"' ` +
+      `/bin/bash -c "$1" > ${logFile} 2>&1 & `;
+    const launch = await this.docker.exec(name, ["/bin/bash", "-c", launcher, "bash", command]);
+    if (launch.code !== 0) throw new Error(`background launch failed: ${launch.stderr}`);
+
+    // Poll (in-container) up to ~2s for the self-reported pgid so a command that crashes on the
+    // very first line still yields a pid we can report/track.
+    const read = await this.docker.exec(name, [
+      "/bin/bash",
+      "-c",
+      `for i in $(seq 1 20); do if [ -s ${pidFile} ]; then cat ${pidFile}; exit 0; fi; sleep 0.1; done; exit 1`,
+    ], { trimStdout: true });
+    const pgid = parseInt(read.stdout, 10);
+    if (!read.code && Number.isInteger(pgid)) {
+      let tasks = this.backgroundTasks.get(workspaceId);
+      if (!tasks) this.backgroundTasks.set(workspaceId, (tasks = new Map()));
+      tasks.set(taskId, { taskId, pgid, logFile, command });
+    } else {
+      log.warn({ workspaceId, taskId }, "background task started but pid was not captured (not tracked)");
+    }
+    return { taskId, logFile };
+  }
+
+  // Kill a tracked background process by taskId (negative-pgid group kill, so children die too).
+  // Returns false if no such task is tracked for the workspace.
+  async stopBackground(workspaceId: string, taskId: string): Promise<boolean> {
+    const task = this.backgroundTasks.get(workspaceId)?.get(taskId);
+    if (!task) return false;
+    await this.docker
+      .exec(this.containerName(workspaceId), [
+        "/bin/bash",
+        "-c",
+        `kill -KILL -${task.pgid} 2>/dev/null; rm -f ${TASK_DIR}/${taskId}.pid`,
+      ])
+      .catch(() => {});
+    this.backgroundTasks.get(workspaceId)?.delete(taskId);
+    return true;
+  }
+
+  // Running background tasks for a workspace — surfaced into the agent's context each turn so a
+  // later run (which has no memory of a prior run's taskIds) can read their logs or stop them.
+  listBackground(workspaceId: string): BackgroundTask[] {
+    return [...(this.backgroundTasks.get(workspaceId)?.values() ?? [])];
+  }
+
   // Attach the credential-proxy sidecar (never the app itself) to a workspace's isolated network so
   // the workspace resolves `${CREDENTIAL_PROXY_ALIAS}` to the proxy and can reach nothing else the
   // app hosts. Idempotent: a repeat connect ("already exists") is not an error.
@@ -377,6 +463,8 @@ export class ContainerManager implements IContainerManager {
   async stop(workspaceId: string): Promise<void> {
     const t = this.idleTimers.get(workspaceId);
     if (t) { clearTimeout(t); this.idleTimers.delete(workspaceId); }
+    // Background processes die with the container (tini reaps the tree) — just drop the bookkeeping.
+    this.backgroundTasks.delete(workspaceId);
     const r = await this.docker.cmd("stop", this.containerName(workspaceId));
     if (r.code !== 0) log.warn({ workspaceId, stderr: r.stderr }, "docker stop failed");
     await this.docker.cmd("network", "disconnect", this.networkName(workspaceId), this.containerName(workspaceId));
@@ -389,6 +477,7 @@ export class ContainerManager implements IContainerManager {
     const t = this.idleTimers.get(workspaceId);
     if (t) { clearTimeout(t); this.idleTimers.delete(workspaceId); }
     this.startLocks.delete(workspaceId);
+    this.backgroundTasks.delete(workspaceId);
     invalidatePort(workspaceId);
     // Non-zero exit codes are expected if the container/network was never created.
     const stop = await this.docker.cmd("stop", this.containerName(workspaceId));

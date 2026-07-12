@@ -9,6 +9,7 @@ import { createLogger } from "../infra/logger";
 import { getDrivesForWorkspace, formatDriveLine } from "../workspace/driveStore";
 import { isCallee } from "../workspace/workspaceGraph";
 import { listSecretMeta } from "../infra/security/workspaceSecretStore";
+import { getContainers } from "../infra/services";
 
 const log = createLogger("promptContext");
 
@@ -17,6 +18,7 @@ export interface WorkspacePromptInputs {
   drivesInfo?: string;
   calleeInfo?: string;
   secretsInfo?: string;
+  backgroundTasksInfo?: string;
 }
 
 // Injected into the system prompt only when this workspace is a callee (another workspace
@@ -67,6 +69,18 @@ ${lines}
 Make requests through a client that honours the standard proxy environment variables`;
 }
 
+// Running background processes (dev servers etc.) started in an earlier turn. Surfaced so a later
+// run — which has no memory of a prior run's taskIds — can read their logs or stop them, and knows
+// port 8080 is already taken before starting another server.
+function buildBackgroundTasksInfo(workspaceId: string): string | undefined {
+  const tasks = getContainers().listBackground(workspaceId);
+  if (!tasks.length) return undefined;
+  const lines = tasks.map((t) => `- ${t.taskId}: \`${t.command}\` → log: ${t.logFile}`).join("\n");
+  return `# Running background tasks
+Started earlier with execute_command(run_in_background: true) and still running. Read a task's output by tailing its log file, or stop it with the stop_task tool (e.g. to free port 8080 before restarting a server):
+${lines}`;
+}
+
 // Gathers everything per-workspace the system prompt needs. Pure read I/O; safe to call per request.
 export function buildWorkspacePromptInputs(workspaceId: string, workspaceDir: string): WorkspacePromptInputs {
   const calleeWorkspace = isCallee(workspaceId);
@@ -75,5 +89,6 @@ export function buildWorkspacePromptInputs(workspaceId: string, workspaceDir: st
     drivesInfo: buildDrivesInfo(workspaceId, calleeWorkspace),
     calleeInfo: calleeWorkspace ? CALLEE_GUIDANCE : undefined,
     secretsInfo: buildSecretsInfo(workspaceId),
+    backgroundTasksInfo: buildBackgroundTasksInfo(workspaceId),
   };
 }

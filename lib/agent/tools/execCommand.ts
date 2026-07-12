@@ -6,10 +6,19 @@ import { StructuredTool } from "@langchain/core/tools";
 import type { RunnableConfig } from "@langchain/core/runnables";
 import { z } from "zod";
 import { createLogger } from "../../infra/logger";
-import type { StreamingExecFn, ExecConfig } from "../interfaces";
+import type { StreamingExecFn, BackgroundExecFn, ExecConfig } from "../interfaces";
 
 const schema = z.object({
   command: z.string().describe("The bash command to execute"),
+  run_in_background: z
+    .boolean()
+    .optional()
+    .describe(
+      "Set true to run the command in the background: it returns immediately and keeps running " +
+        "(you do NOT need a trailing '&'). This is how you start a server — run it on 0.0.0.0:8080, " +
+        "the only port the browser/preview can reach. Output is written to a log file whose path is " +
+        "returned; read it later with execute_command (e.g. tail -n 200 <path>). Stop it with stop_task.",
+    ),
 });
 
 // Maps known stderr signatures to actionable user guidance appended to the tool result.
@@ -52,6 +61,7 @@ You run as a NON-ROOT user, confined to the workspace. apt-get/sudo are NOT avai
 
   constructor(
     private readonly streamExec: StreamingExecFn,
+    private readonly backgroundExec: BackgroundExecFn,
     private readonly broadcast: (msg: string) => void,
     private readonly execConfig: ExecConfig,
   ) {
@@ -59,10 +69,26 @@ You run as a NON-ROOT user, confined to the workspace. apt-get/sudo are NOT avai
   }
 
   protected async _call(
-    { command }: z.infer<typeof schema>,
+    { command, run_in_background }: z.infer<typeof schema>,
     _runManager?: unknown,
     config?: RunnableConfig,
   ): Promise<string> {
+    // Background path: launch detached and return immediately. Deliberately skips the
+    // heartbeat/AbortController machinery below — a background process is fire-and-forget, so no
+    // silence/max timeout kill can ever reach it (that kill is exactly what broke servers before).
+    if (run_in_background) {
+      try {
+        const { taskId, logFile } = await this.backgroundExec(command);
+        this.broadcast(JSON.stringify({ type: "stdout", data: `\n[background] started task ${taskId} → ${logFile}\n` }));
+        return (
+          `Command running in background with task ID: ${taskId}\n` +
+          `Output is being written to: ${logFile}\n` +
+          `Read it with: execute_command "tail -n 200 ${logFile}". Stop it with stop_task.`
+        );
+      } catch (err) {
+        return `Error: failed to start background command\n${String(err)}`;
+      }
+    }
     // The user's escape signal (threaded by the runner) and our own timeout/silence guards all
     // converge on one AbortController. Aborting it triggers the real in-container process-group
     // kill inside streamExec — there is no longer any "discard output but keep running" path.

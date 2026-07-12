@@ -29,7 +29,7 @@ const STATIC_INSTRUCTIONS = `# Environment
 - Internet access: you have a tool that performs real server-side HTTP requests to public URLs.
 
 # Server
-Run the user-facing server on \`0.0.0.0:8080\` — it is the only port the browser/preview can reach.
+To run a server or any long-running process, call \`execute_command\` with \`run_in_background: true\` — it runs on \`0.0.0.0:8080\` (the only port the browser/preview can reach), returns immediately, and keeps running. Read its output later by tailing the reported log file; stop it with \`stop_task\`.
 
 # Doing Tasks
 - At the start of every session, call \`list_directory\` to orient yourself.
@@ -81,7 +81,7 @@ If the args are insufficient or unresolvable (e.g. an id that does not exist in 
 // bag rather than positional optionals means no call site can silently drop a piece, and any new
 // field added to WorkspacePromptInputs flows here automatically. Does no filesystem I/O of its own.
 export function buildSystemPrompt(workspaceDir: string, promptConfig: PromptConfig, inputs: WorkspacePromptInputs = {}): SystemMessage {
-  const { agentsContent, drivesInfo, calleeInfo, secretsInfo } = inputs;
+  const { agentsContent, drivesInfo, calleeInfo, secretsInfo, backgroundTasksInfo } = inputs;
   const date = new Date().toDateString();
 
   const agentsSection = agentsContent?.trim() ?? "";
@@ -95,7 +95,7 @@ ${agentsSection}
     : "";
 
   // Platform guidance (callee, drives, secrets) leads; the user's AGENTS.md follows and is authoritative.
-  const dynamicContext = `${calleeInfo ? calleeInfo + "\n\n" : ""}${drivesInfo ? drivesInfo + "\n\n" : ""}${secretsInfo ? secretsInfo + "\n\n" : ""}${agentsBlock}Workspace name: ${path.basename(workspaceDir)} — your working directory inside the container is /workspace
+  const dynamicContext = `${calleeInfo ? calleeInfo + "\n\n" : ""}${drivesInfo ? drivesInfo + "\n\n" : ""}${secretsInfo ? secretsInfo + "\n\n" : ""}${backgroundTasksInfo ? backgroundTasksInfo + "\n\n" : ""}${agentsBlock}Workspace name: ${path.basename(workspaceDir)} — your working directory inside the container is /workspace
 Today's date: ${date}`;
 
   return new SystemMessage({

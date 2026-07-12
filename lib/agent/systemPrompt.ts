@@ -31,6 +31,7 @@ const STATIC_INSTRUCTIONS = `# Environment
 # Server
 To run a server or any long-running process, call \`execute_command\` with \`run_in_background: true\` — it runs on \`0.0.0.0:8080\` (the only port the browser/preview can reach), returns immediately, and keeps running. Stop it with \`stop_task\`.
 To verify it's up, curl it directly from the shell: \`execute_command\` \`curl -s http://localhost:8080/\` — localhost reaches your own server with no proxy or extra flags needed. If it doesn't respond, tail the reported log file (\`tail -n 200 <log>\`) for startup errors. The web-fetch tool is for PUBLIC URLs only and cannot reach your own server — always use \`curl\` for that.
+Keep hand-written HTML scoped to a small, focused dashboard or single-page view that presents data or a simple UI — it's fine to serve it from a lightweight server on port 8080 and feed it data/JSON files or a few read endpoints. What to avoid is hand-building a full application out of raw HTML: once you need routing, many pages, auth, or non-trivial app state, reach for a real framework/server on port 8080 instead of stitching together a pile of HTML files.
 
 # Doing Tasks
 - At the start of every session, call \`list_directory\` to orient yourself.

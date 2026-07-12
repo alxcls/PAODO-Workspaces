@@ -1,9 +1,10 @@
 // Loads and manages the content of the single file open in the viewer. Fetches type + content
 // from the files/content route, tracks an editable draft with a dirty flag, and exposes save and
-// delete actions. notifyFilesDeleted lets the parent (driven by the workspace socket) close the
-// viewer when the open file is deleted. The HTML preview is intentionally NOT auto-reloaded on
-// file-system changes — it reflects the current editor draft and otherwise refreshes only when the
-// user reopens the file (the removed dependency-tracking auto-refresh proved unreliable; see git).
+// delete actions. notifyFilesChanged silently reloads the open file when it changes on disk (so the
+// code editor and Markdown preview reflect agent-side edits live), and notifyFilesDeleted closes
+// the viewer when the open file is deleted. HTML previews are the one exception: their iframe is
+// NOT auto-reloaded on file-system changes (the dependency-tracking auto-refresh proved unreliable
+// and flickery — see git), so an open .html refreshes only when the user reopens it.
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
@@ -111,6 +112,18 @@ export function useFileContent(
     finally { setDeleting(false); }
   }, [base]);
 
+  // The open file changed on disk (e.g. the agent edited it). Silently reload its content so the
+  // code editor and Markdown preview stay live — unless the user has unsaved edits. HTML files are
+  // skipped on purpose: reloading their content would reload the live-preview iframe, which is the
+  // flickery auto-refresh we removed. Open .html previews refresh only on manual reopen instead.
+  const notifyFilesChanged = useCallback((paths: string[]) => {
+    if (isDirtyRef.current) return;
+    const currentPath = filePathRef.current ?? "";
+    if (!paths.includes(currentPath)) return;
+    if (/\.(html?|htm)$/i.test(currentPath)) return;
+    fetchContent(currentPath, true);
+  }, [fetchContent]);
+
   const notifyFilesDeleted = useCallback((paths: string[]) => {
     if (paths.includes(filePathRef.current ?? "")) onCloseRef.current();
   }, []);
@@ -120,6 +133,6 @@ export function useFileContent(
     loading, error, saving, deleting,
     isDirty,
     handleSave, deleteFile,
-    notifyFilesDeleted,
+    notifyFilesChanged, notifyFilesDeleted,
   };
 }

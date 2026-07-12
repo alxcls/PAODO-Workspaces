@@ -21,6 +21,7 @@ const CloseIcon = () => (
 );
 
 export interface FileViewerHandle {
+  notifyFilesChanged: (paths: string[]) => void;
   notifyFilesDeleted: (paths: string[]) => void;
 }
 
@@ -46,7 +47,7 @@ const FileViewer = forwardRef<FileViewerHandle, Props>(function FileViewer(
     loading, error, saving, deleting,
     isDirty,
     handleSave, deleteFile,
-    notifyFilesDeleted,
+    notifyFilesChanged, notifyFilesDeleted,
   } = useFileContent(workspaceId, filePath, { onClose, onSelfWrite, apiBase: base });
 
   // Markdown and HTML files can toggle a rendered preview; everything else is source-only.
@@ -59,7 +60,7 @@ const FileViewer = forwardRef<FileViewerHandle, Props>(function FileViewer(
     setShowPreview(isMarkdown || isHtml);
   }, [isMarkdown, isHtml]);
 
-  useImperativeHandle(ref, () => ({ notifyFilesDeleted }), [notifyFilesDeleted]);
+  useImperativeHandle(ref, () => ({ notifyFilesChanged, notifyFilesDeleted }), [notifyFilesChanged, notifyFilesDeleted]);
 
   async function handleDelete() {
     if (!filePath || !confirm(`Delete ${filePath.split("/").pop()}?`)) return;

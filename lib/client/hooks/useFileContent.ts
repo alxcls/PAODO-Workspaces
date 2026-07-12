@@ -1,10 +1,10 @@
 // Loads and manages the content of the single file open in the viewer. Fetches type + content
 // from the files/content route, tracks an editable draft with a dirty flag, and exposes save and
 // delete actions. notifyFilesChanged silently reloads the open file when it changes on disk (so the
-// code editor and Markdown preview reflect agent-side edits live), and notifyFilesDeleted closes
-// the viewer when the open file is deleted. HTML previews are the one exception: their iframe is
-// NOT auto-reloaded on file-system changes (the dependency-tracking auto-refresh proved unreliable
-// and flickery — see git), so an open .html refreshes only when the user reopens it.
+// code editor, Markdown preview, and HTML live-preview all reflect agent-side edits live), and
+// notifyFilesDeleted closes the viewer when the open file is deleted. Only the file actually open
+// is reloaded — the cross-file dependency-tracking auto-refresh (reload the preview when some other
+// file it references changes) proved unreliable and flickery, so it was removed (see git).
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
@@ -113,15 +113,14 @@ export function useFileContent(
   }, [base]);
 
   // The open file changed on disk (e.g. the agent edited it). Silently reload its content so the
-  // code editor and Markdown preview stay live — unless the user has unsaved edits. HTML files are
-  // skipped on purpose: reloading their content would reload the live-preview iframe, which is the
-  // flickery auto-refresh we removed. Open .html previews refresh only on manual reopen instead.
+  // code editor, Markdown preview, and HTML live-preview all reflect the change — unless the user
+  // has unsaved edits. Simple rule: reload only the file actually open. What we deliberately do NOT
+  // do is reload the preview when some *other* file changes (sibling assets, fetched data) — that
+  // cross-file dependency tracking was the flickery, unreliable auto-refresh we removed.
   const notifyFilesChanged = useCallback((paths: string[]) => {
     if (isDirtyRef.current) return;
     const currentPath = filePathRef.current ?? "";
-    if (!paths.includes(currentPath)) return;
-    if (/\.(html?|htm)$/i.test(currentPath)) return;
-    fetchContent(currentPath, true);
+    if (paths.includes(currentPath)) fetchContent(currentPath, true);
   }, [fetchContent]);
 
   const notifyFilesDeleted = useCallback((paths: string[]) => {

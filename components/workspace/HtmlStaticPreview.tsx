@@ -13,27 +13,25 @@ const STATIC_PREVIEW_CSP =
 
 /**
  * Wrap raw HTML for the scriptless preview: inject the locked-down CSP <meta> (after <head> if one
- * exists, else prepend) and a `<!--v:KEY-->` cache-buster so the iframe reloads on save. No <base>,
- * no token, no fetch-shim — the static preview never talks to any backend.
+ * exists, else prepend). No <base>, no token, no fetch-shim — the static preview never talks to any
+ * backend. The iframe re-renders whenever the editor draft changes.
  */
-export function buildStaticPreviewHtml(draft: string, previewKey: number): string {
+export function buildStaticPreviewHtml(draft: string): string {
   const meta = `<meta http-equiv="Content-Security-Policy" content="${STATIC_PREVIEW_CSP}">`;
   const html = /<head(\s[^>]*)?>/.test(draft)
     ? draft.replace(/<head(\s[^>]*)?>/, `$&${meta}`)
     : meta + draft;
-  return `<!--v:${previewKey}-->${html}`;
+  return html;
 }
 
 interface Props {
   /** Current editor content to render. */
   draft: string;
-  /** Bumps to force the iframe to reload on save/external change. */
-  previewKey: number;
 }
 
-export default function HtmlStaticPreview({ draft, previewKey }: Props) {
+export default function HtmlStaticPreview({ draft }: Props) {
   return (
-    <iframe key={previewKey} className="html-preview" srcDoc={buildStaticPreviewHtml(draft, previewKey)}
+    <iframe className="html-preview" srcDoc={buildStaticPreviewHtml(draft)}
       sandbox="" title="HTML preview" />
   );
 }

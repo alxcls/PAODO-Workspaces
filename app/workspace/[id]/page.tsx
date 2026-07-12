@@ -63,9 +63,8 @@ function WorkspacePageInner({ params }: { params: Promise<{ id: string }> }) {
   }, []);
 
   const { sendMessage } = useWorkspaceSocket(id, {
-    files_changed: (msg) => {
+    files_changed: () => {
       setTreeRefreshKey((k) => k + 1);
-      viewerRef.current?.notifyFilesChanged(msg.paths ?? []);
     },
     files_deleted: (msg) => {
       setTreeRefreshKey((k) => k + 1);
@@ -151,7 +150,6 @@ function WorkspacePageInner({ params }: { params: Promise<{ id: string }> }) {
               refreshKey={treeRefreshKey}
               onRestored={() => {
                 setTreeRefreshKey((k) => k + 1);
-                if (selectedFile) viewerRef.current?.notifyFilesChanged([selectedFile]);
               }}
             />
           </div>

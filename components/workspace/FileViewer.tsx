@@ -21,7 +21,6 @@ const CloseIcon = () => (
 );
 
 export interface FileViewerHandle {
-  notifyFilesChanged: (paths: string[]) => void;
   notifyFilesDeleted: (paths: string[]) => void;
 }
 
@@ -45,10 +44,9 @@ const FileViewer = forwardRef<FileViewerHandle, Props>(function FileViewer(
   const {
     fileType, content, draft, setDraft,
     loading, error, saving, deleting,
-    isDirty, previewKey,
+    isDirty,
     handleSave, deleteFile,
-    notifyFilesChanged, notifyFilesDeleted,
-    registerPreviewDependency,
+    notifyFilesDeleted,
   } = useFileContent(workspaceId, filePath, { onClose, onSelfWrite, apiBase: base });
 
   // Markdown and HTML files can toggle a rendered preview; everything else is source-only.
@@ -61,7 +59,7 @@ const FileViewer = forwardRef<FileViewerHandle, Props>(function FileViewer(
     setShowPreview(isMarkdown || isHtml);
   }, [isMarkdown, isHtml]);
 
-  useImperativeHandle(ref, () => ({ notifyFilesChanged, notifyFilesDeleted }), [notifyFilesChanged, notifyFilesDeleted]);
+  useImperativeHandle(ref, () => ({ notifyFilesDeleted }), [notifyFilesDeleted]);
 
   async function handleDelete() {
     if (!filePath || !confirm(`Delete ${filePath.split("/").pop()}?`)) return;
@@ -148,10 +146,10 @@ const FileViewer = forwardRef<FileViewerHandle, Props>(function FileViewer(
           {showPreview ? (
             isHtml ? (
               htmlPreview === "static" ? (
-                <HtmlStaticPreview draft={draft} previewKey={previewKey} />
+                <HtmlStaticPreview draft={draft} />
               ) : (
                 <HtmlLivePreview workspaceId={workspaceId} base={base} draft={draft}
-                  filePath={filePath} previewKey={previewKey} onDependency={registerPreviewDependency} />
+                  filePath={filePath} />
               )
             ) : (
               <div className="md-preview md-prose">

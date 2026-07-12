@@ -3,7 +3,7 @@
 // the combined stdout/stderr alone hides exit status. Code 0 stays plain output.
 import { describe, it, expect } from "vitest";
 import { ExecCommandTool } from "./execCommand";
-import type { StreamingExecFn } from "../interfaces";
+import type { StreamingExecFn, BackgroundExecFn } from "../interfaces";
 
 // A streamExec stub that emits the given stdout/stderr then resolves with the given exit code.
 function fakeExec(out: { stdout?: string; stderr?: string; code: number | null }): StreamingExecFn {
@@ -27,8 +27,18 @@ function hangingExec(): { exec: StreamingExecFn; sawAbort: () => boolean } {
   return { exec, sawAbort: () => !!signal?.aborted };
 }
 
-function makeTool(exec: StreamingExecFn) {
-  return new ExecCommandTool(exec, () => {}, { silenceTimeoutMs: 60_000, maxTimeoutMs: 60_000 });
+// A background-exec stub that records the command it was asked to launch.
+function fakeBackground(): { fn: BackgroundExecFn; calls: string[] } {
+  const calls: string[] = [];
+  const fn: BackgroundExecFn = async (command) => {
+    calls.push(command);
+    return { taskId: "task-123", logFile: "/tmp/paodo-tasks/task-123.output" };
+  };
+  return { fn, calls };
+}
+
+function makeTool(exec: StreamingExecFn, background: BackgroundExecFn = fakeBackground().fn) {
+  return new ExecCommandTool(exec, background, () => {}, { silenceTimeoutMs: 60_000, maxTimeoutMs: 60_000 });
 }
 
 describe("ExecCommandTool exit-code surfacing", () => {
@@ -62,6 +72,46 @@ describe("ExecCommandTool exit-code surfacing", () => {
     const result = await tool.invoke({ command: "ls" });
     expect(result).toMatch(/^Error:/);
     expect(result).toContain("docker not running");
+  });
+});
+
+describe("ExecCommandTool run_in_background", () => {
+  // Background commands route to backgroundExec and NEVER touch the abortable streamExec path —
+  // that separation is what keeps a server alive past the silence/max timeout.
+  it("routes to backgroundExec (not streamExec) and returns the task ID + log path", async () => {
+    const { fn, calls } = fakeBackground();
+    let streamExecCalled = false;
+    const exec: StreamingExecFn = async () => { streamExecCalled = true; return { code: 0 }; };
+    const tool = makeTool(exec, fn);
+
+    const result = await tool.invoke({ command: "python3 -m http.server 8080", run_in_background: true });
+
+    expect(calls).toEqual(["python3 -m http.server 8080"]);
+    expect(streamExecCalled).toBe(false);
+    expect(result).toContain("task ID: task-123");
+    expect(result).toContain("/tmp/paodo-tasks/task-123.output");
+  });
+
+  // Even if the signal is already aborted, a background launch is unaffected — no kill path applies.
+  it("ignores an aborted signal (background is fire-and-forget)", async () => {
+    const { exec, sawAbort } = hangingExec();
+    const tool = makeTool(exec);
+    const controller = new AbortController();
+    controller.abort();
+
+    const result = await tool.invoke({ command: "npm run dev", run_in_background: true }, { signal: controller.signal });
+
+    expect(sawAbort()).toBe(false);           // background path never wires the abort signal
+    expect(result).toContain("task ID: task-123");
+  });
+
+  // A launch failure surfaces as an Error line, not a crash.
+  it("surfaces a background launch failure as an Error line", async () => {
+    const failing: BackgroundExecFn = async () => { throw new Error("background launch failed"); };
+    const tool = makeTool(fakeExec({ code: 0 }), failing);
+    const result = await tool.invoke({ command: "npm run dev", run_in_background: true });
+    expect(result).toMatch(/^Error:/);
+    expect(result).toContain("background launch failed");
   });
 });
 

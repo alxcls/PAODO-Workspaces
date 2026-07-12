@@ -8,6 +8,7 @@
 import type { Workspace } from "../workspace/workspaceStore";
 import type { ReasoningEffort } from "../agent/interfaces";
 import type { DockerResult } from "./docker/dockerClient";
+import type { BackgroundTask } from "./docker/containerManager";
 
 export interface IWorkspaceStore {
   getWorkspace(id: string): Workspace | undefined;
@@ -89,6 +90,12 @@ export interface IContainerManager {
     opts: { onStdout: (chunk: string) => void; onStderr: (chunk: string) => void; signal?: AbortSignal },
   ): Promise<{ code: number | null }>;
   execAsRoot(workspaceId: string, workspaceDir: string, cmdArgs: string[]): Promise<DockerResult>;
+  /** Launch a command detached from the exec kill path (dev servers etc.); returns its taskId + log path. */
+  startBackground(workspaceId: string, workspaceDir: string, command: string): Promise<{ taskId: string; logFile: string }>;
+  /** Kill a tracked background process by taskId; false if none tracked for the workspace. */
+  stopBackground(workspaceId: string, taskId: string): Promise<boolean>;
+  /** Running background tasks for a workspace (for context surfacing / management across turns). */
+  listBackground(workspaceId: string): BackgroundTask[];
   stop(workspaceId: string): Promise<void>;
   remove(workspaceId: string): Promise<void>;
   reattachProxyNetworks(): Promise<void>;

@@ -9,6 +9,7 @@ import { applyCompaction, type CompactLevel } from "./compact";
 import { classifyToolStatus } from "./toolUtils";
 import type { PostDispatchFn } from "./interfaces";
 import { ExecCommandTool } from "./tools/execCommand";
+import { StopTaskTool } from "./tools/stopTask";
 import { AptInstallTool } from "./tools/aptInstall";
 import { FileReadTool } from "./tools/fileRead";
 import { FileEditTool } from "./tools/fileEdit";
@@ -34,7 +35,7 @@ import { defaultWorkspaceStore } from "../workspace/workspaceStore";
 import { getVersioning } from "../infra/services";
 import { broadcastToWorkspace } from "../infra/realtime/wsHub";
 import type { IContainerManager, IWorkspaceStore, IWorkspaceVersioning } from "../infra/interfaces";
-import type { AgentConfig, PrivilegedRunner, StreamingExecFn } from "./interfaces";
+import type { AgentConfig, PrivilegedRunner, StreamingExecFn, BackgroundExecFn } from "./interfaces";
 import { DEFAULT_LLM } from "./interfaces";
 
 function makeContainerRunner(workspaceId: string, workspaceDir: string, containers: IContainerManager): PrivilegedRunner {
@@ -46,6 +47,10 @@ function makeContainerRunner(workspaceId: string, workspaceDir: string, containe
 
 function makeStreamingExecFn(workspaceId: string, workspaceDir: string, containers: IContainerManager): StreamingExecFn {
   return (cmd, opts) => containers.execStreaming(workspaceId, workspaceDir, cmd, opts);
+}
+
+function makeBackgroundExecFn(workspaceId: string, workspaceDir: string, containers: IContainerManager): BackgroundExecFn {
+  return (command) => containers.startBackground(workspaceId, workspaceDir, command);
 }
 
 // Resolves the LLM config for a run. Provider / model / reasoning effort come from the workspace's
@@ -91,10 +96,12 @@ export function buildTools(
   const model = buildModel(config);
   const runner = makeContainerRunner(workspaceId, workspaceDir, containers);
   const streamExec = makeStreamingExecFn(workspaceId, workspaceDir, containers);
+  const backgroundExec = makeBackgroundExecFn(workspaceId, workspaceDir, containers);
   const broadcast = (msg: string) => broadcastToWorkspace(workspaceId, msg);
 
   const tools = [
-    new ExecCommandTool(streamExec, broadcast, config),
+    new ExecCommandTool(streamExec, backgroundExec, broadcast, config),
+    new StopTaskTool(workspaceId, containers),
     new AptInstallTool(runner),
     new FileReadTool(runner),
     new FileEditTool(runner),

@@ -29,6 +29,11 @@ export type StreamingExecFn = (
   opts: { onStdout: (chunk: string) => void; onStderr: (chunk: string) => void; signal?: AbortSignal },
 ) => Promise<{ code: number | null }>;
 
+// Launches a shell command detached from the exec kill path (dev servers etc.) and returns at once
+// with a taskId + the in-container log path. Used by execute_command's run_in_background branch.
+// Kept separate from StreamingExecFn so the streaming/timeout machinery never touches this path.
+export type BackgroundExecFn = (command: string) => Promise<{ taskId: string; logFile: string }>;
+
 // The full set of reasoning-effort levels across all providers, quietest first. Each provider accepts
 // only a SUBSET (see PROVIDER_METADATA in buildModel.ts): OpenAI takes none…xhigh, Anthropic low…max,
 // DeepSeek none. A stored/selected value is validated against the chosen provider's subset, not this

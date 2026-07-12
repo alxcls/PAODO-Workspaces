@@ -48,6 +48,7 @@ const FileViewer = forwardRef<FileViewerHandle, Props>(function FileViewer(
     isDirty, previewKey,
     handleSave, deleteFile,
     notifyFilesChanged, notifyFilesDeleted,
+    registerPreviewDependency,
   } = useFileContent(workspaceId, filePath, { onClose, onSelfWrite, apiBase: base });
 
   // Markdown and HTML files can toggle a rendered preview; everything else is source-only.
@@ -150,7 +151,7 @@ const FileViewer = forwardRef<FileViewerHandle, Props>(function FileViewer(
                 <HtmlStaticPreview draft={draft} previewKey={previewKey} />
               ) : (
                 <HtmlLivePreview workspaceId={workspaceId} base={base} draft={draft}
-                  filePath={filePath} previewKey={previewKey} />
+                  filePath={filePath} previewKey={previewKey} onDependency={registerPreviewDependency} />
               )
             ) : (
               <div className="md-preview md-prose">

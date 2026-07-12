@@ -51,6 +51,16 @@ function WorkspacePageInner({ params }: { params: Promise<{ id: string }> }) {
   const colDragging = useRef<"left" | "right" | null>(null);
   const rowDragging = useRef(false);
   const viewerRef = useRef<FileViewerHandle>(null);
+  const conversationsRefreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (conversationsRefreshTimer.current) {
+        clearTimeout(conversationsRefreshTimer.current);
+        conversationsRefreshTimer.current = null;
+      }
+    };
+  }, []);
 
   const { sendMessage } = useWorkspaceSocket(id, {
     files_changed: (msg) => {
@@ -60,6 +70,13 @@ function WorkspacePageInner({ params }: { params: Promise<{ id: string }> }) {
     files_deleted: (msg) => {
       setTreeRefreshKey((k) => k + 1);
       viewerRef.current?.notifyFilesDeleted(msg.paths ?? []);
+    },
+    conversations_changed: () => {
+      if (conversationsRefreshTimer.current) return;
+      conversationsRefreshTimer.current = setTimeout(() => {
+        conversationsRefreshTimer.current = null;
+        void refresh();
+      }, 400);
     },
   });
 

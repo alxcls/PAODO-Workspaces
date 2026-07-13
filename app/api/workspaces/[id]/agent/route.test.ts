@@ -6,6 +6,12 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
+const h = vi.hoisted(() => ({
+  createConversation: vi.fn(() => ({ id: "conv-created" })),
+  getMessages: vi.fn(() => []),
+  startRun: vi.fn(() => ({ alreadyRunning: false })),
+}));
+
 const KEYS: Record<string, string> = { "ws-a": "key-a", "ws-b": "key-b", "ws-orphan": "key-orphan" };
 // Note: ws-orphan has a valid key but no workspace record — used to reach the 404 branch, which
 // sits AFTER the auth check.
@@ -19,14 +25,22 @@ vi.mock("@/lib/infra/security/apiKeyStore", () => ({
 }));
 vi.mock("@/lib/infra/services", () => ({
   getStore: () => ({ getWorkspace: (id: string) => WORKSPACES[id] }),
-  getContainers: () => ({}),
 }));
 vi.mock("@/lib/infra/realtime/clientIp", () => ({ getClientIp: () => "1.2.3.4" }));
 const rateLimit = { ok: true, retryAfter: 0 };
 vi.mock("@/lib/infra/security/rateLimit", () => ({ checkRateLimit: () => rateLimit }));
-vi.mock("@/lib/agent/agentStream", () => ({
-  makeAgentStream: () => new Response("stream", { status: 200, headers: { "x-agent-stream": "1" } }),
+vi.mock("@/lib/workspace/conversationStore", () => ({
+  createConversation: h.createConversation,
+  getMessages: h.getMessages,
 }));
+vi.mock("@/lib/agent/runBroker", () => ({
+  startRun: h.startRun,
+  subscribe: () => ({ replay: [{ type: "done" }], status: "done", unsubscribe: vi.fn() }),
+}));
+vi.mock("@/lib/agent/systemPrompt", () => ({ buildSystemPrompt: () => "system", buildPromptConfig: () => ({}) }));
+vi.mock("@/lib/agent/promptContext", () => ({ buildWorkspacePromptInputs: () => ({}) }));
+vi.mock("@/lib/agent/buildTools", () => ({ loadAgentConfig: () => ({}) }));
+vi.mock("@/lib/agent/messageSerialization", () => ({ setSystemPrompt: vi.fn() }));
 
 import { POST } from "./route";
 
@@ -41,10 +55,13 @@ function post(id: string, body: unknown, key?: string): Promise<Response> {
   );
 }
 
-const reachedAgent = (res: Response) => res.headers.get("x-agent-stream") === "1";
+const reachedAgent = (res: Response) => res.headers.get("x-conversation-id") !== null;
 
 beforeEach(() => {
   rateLimit.ok = true;
+  h.createConversation.mockClear();
+  h.getMessages.mockClear();
+  h.startRun.mockClear();
 });
 
 describe("POST /api/workspaces/[id]/agent — Bearer key auth & per-workspace scoping", () => {
@@ -52,6 +69,20 @@ describe("POST /api/workspaces/[id]/agent — Bearer key auth & per-workspace sc
     const res = await post("ws-a", { message: "hi" }, "key-a");
     expect(res.status).toBe(200);
     expect(reachedAgent(res)).toBe(true);
+    expect(res.headers.get("x-conversation-id")).toBe("conv-created");
+    expect(h.createConversation).toHaveBeenCalledWith("ws-a");
+    expect(h.startRun).toHaveBeenCalledWith(expect.objectContaining({
+      conversationId: "conv-created",
+      userInput: "hi",
+    }));
+  });
+
+  it("continues an explicitly supplied conversation instead of creating another", async () => {
+    const res = await post("ws-a", { message: "again", conversationId: "conv-existing" }, "key-a");
+    expect(res.status).toBe(200);
+    expect(res.headers.get("x-conversation-id")).toBe("conv-existing");
+    expect(h.createConversation).not.toHaveBeenCalled();
+    expect(h.startRun).toHaveBeenCalledWith(expect.objectContaining({ conversationId: "conv-existing" }));
   });
 
   it("401s when no Authorization header is present", async () => {

@@ -86,6 +86,14 @@ curl -X POST http://localhost:<port>/api/workspaces/<id>/agent \
 
 The response is a Server-Sent Events stream of progress events (`tool_start`, `tool_end`, …), ending in a single `response` event that carries the final answer, then `done`.
 
+Each API call creates a conversation visible in the workspace UI and returns its id in the
+`X-Conversation-Id` response header (also included in the terminal SSE events). To continue that
+same conversation on a later call, include it in the request body:
+
+```json
+{ "message": "Continue with the next step", "conversationId": "<conversation-id>" }
+```
+
 ## Project structure
 
 ```

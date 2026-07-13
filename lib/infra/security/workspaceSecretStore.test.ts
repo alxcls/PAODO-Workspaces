@@ -102,6 +102,25 @@ describe("encryption at rest", () => {
   });
 });
 
+describe("proxyToken", () => {
+  it("is stable and alphanumeric-only so common CLIs can accept it before the proxy substitutes it", async () => {
+    const { proxyToken } = await freshStore();
+    const token = proxyToken("3923f8e7-c383-4802-a270-66877ea0a940", "VERCEL_TOKEN");
+    expect(token).toMatch(/^p[a-f0-9]{64}$/);
+    expect(proxyToken("3923f8e7-c383-4802-a270-66877ea0a940", "VERCEL_TOKEN")).toBe(token);
+    expect(proxyToken("3923f8e7-c383-4802-a270-66877ea0a940", "OTHER_TOKEN")).not.toBe(token);
+  });
+
+  it("maps only its CLI-safe token to the real value", async () => {
+    const store = await freshStore();
+    store.setSecret("ws1", "API_KEY", "real-value", ["api.example.com"]);
+    const { proxyToken } = store;
+    const map = store.getWorkspaceRules("ws1")[0].tokenMap;
+    expect(map.get(proxyToken("ws1", "API_KEY"))).toBe("real-value");
+    expect(map.size).toBe(1);
+  });
+});
+
 describe("reloadSecretStore (credential-proxy sidecar reader)", () => {
   it("picks up secrets written by another process after reload", async () => {
     // `reader` models the sidecar: it loaded the store once, then the app (a separate in-memory

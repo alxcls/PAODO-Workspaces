@@ -16,7 +16,7 @@ import { createLogger } from "../logger";
 import { DockerClient, IDockerClient } from "./dockerClient";
 import { ImageManager, HASH_LABEL } from "./imageManager";
 import type { IContainerManager } from "../interfaces";
-import { listSecretMeta } from "../security/workspaceSecretStore";
+import { listSecretMeta, PROXY_TOKEN_FORMAT_VERSION } from "../security/workspaceSecretStore";
 import { buildCredentialEnv, installProxyCA } from "./containerCredentials";
 
 export type { DockerResult } from "./dockerClient";
@@ -24,13 +24,16 @@ export type { DockerResult } from "./dockerClient";
 const log = createLogger("container");
 
 // Label recording which secrets were baked into the container's env at creation time (as a
-// hash of their sorted names — token values are derived from name+workspaceId alone, so a name
-// hash is enough to detect additions/removals; domain-only changes don't affect env args).
+// hash of their sorted names plus the proxy-token format — token values are derived from
+// name+workspaceId alone, so this detects additions/removals and forces a safe recreation when the
+// opaque token format changes; domain-only changes don't affect env args).
 const SECRETS_LABEL = "paodo.workspace-secrets-hash";
 
 function hashSecretNames(secrets: { name: string }[]): string {
   const sorted = secrets.map((s) => s.name).sort();
-  return createHash("sha256").update(sorted.join(",")).digest("hex");
+  return createHash("sha256")
+    .update(`${PROXY_TOKEN_FORMAT_VERSION}\0${sorted.join(",")}`)
+    .digest("hex");
 }
 
 // In-container directory holding background-task log/pid files. Under /tmp so it never

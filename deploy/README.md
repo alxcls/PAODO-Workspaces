@@ -155,7 +155,15 @@ POST /api/workspaces/<workspace-id>/agent
 
 1. Create a DNS `A` (and, if applicable, `AAAA`) record for a hostname such as
    `api.example.com`, pointing to the VPS.
-2. Set `WORKSPACE_API_DOMAIN=api.example.com` in `.env`.
+2. Set the public hostname and the VPS's public IPv4 address in `.env`:
+
+   ```env
+   WORKSPACE_API_DOMAIN=api.example.com
+   WORKSPACE_API_BIND_IP=203.0.113.10
+   ```
+
+   The gateway binds only that public address. This lets Tailscale Serve keep
+   using HTTPS on the VPS's Tailscale address for the private UI.
 3. Allow ports 80 and 443 through the firewall so Caddy can obtain and renew
    the TLS certificate:
 

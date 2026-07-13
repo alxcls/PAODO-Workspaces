@@ -11,8 +11,10 @@ services:
     image: caddy:2.10-alpine
     restart: unless-stopped
     ports:
-      - "80:80"
-      - "443:443"
+      # Bind only the public address. Tailscale Serve can keep using 443 on the
+      # VPS's Tailscale address for the private UI.
+      - "${WORKSPACE_API_BIND_IP:?Set WORKSPACE_API_BIND_IP to the VPS public IPv4}:80:80"
+      - "${WORKSPACE_API_BIND_IP:?Set WORKSPACE_API_BIND_IP to the VPS public IPv4}:443:443"
     environment:
       - WORKSPACE_API_DOMAIN=${WORKSPACE_API_DOMAIN:?Set WORKSPACE_API_DOMAIN to the public API hostname}
       - APP_PORT=${PORT:-3000}

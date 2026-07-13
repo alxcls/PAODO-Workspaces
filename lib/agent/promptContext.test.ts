@@ -24,6 +24,11 @@ vi.mock("../workspace/workspaceGraph", () => ({
   isCallee: (id: string) => isCallee(id),
 }));
 
+const listSecretMeta = vi.fn();
+vi.mock("../infra/security/workspaceSecretStore", () => ({
+  listSecretMeta: (id: string) => listSecretMeta(id),
+}));
+
 import { buildWorkspacePromptInputs } from "./promptContext";
 
 function drive(name: string, description?: string, id = `${name}-id`): Drive {
@@ -38,6 +43,8 @@ beforeEach(() => {
   getDrivesForWorkspace.mockReturnValue([]);
   isCallee.mockReset();
   isCallee.mockReturnValue(false);
+  listSecretMeta.mockReset();
+  listSecretMeta.mockReturnValue([]);
 });
 
 afterEach(() => {
@@ -108,5 +115,13 @@ describe("buildWorkspacePromptInputs", () => {
     const inputs = buildWorkspacePromptInputs("ws1", dir);
     expect(inputs.agentsContent).toBe("rules");
     expect(inputs.drivesInfo).toContain("- d1");
+  });
+
+  it("lists each secret's allowed hosts and proxy-compatible usage guidance", () => {
+    listSecretMeta.mockReturnValue([{ name: "VERCEL_TOKEN", domains: ["api.vercel.com"], createdAt: "2026-01-01" }]);
+    const { secretsInfo } = buildWorkspacePromptInputs("ws1", dir);
+    expect(secretsInfo).toContain("VERCEL_TOKEN → api.vercel.com");
+    expect(secretsInfo).toContain("never print them");
+    expect(secretsInfo).toContain("before making a request");
   });
 });

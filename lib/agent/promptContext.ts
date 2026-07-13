@@ -62,11 +62,11 @@ After downloading a file from a drive, delete your local copy once you are done 
 function buildSecretsInfo(workspaceId: string): string | undefined {
   const secrets = listSecretMeta(workspaceId);
   if (!secrets.length) return undefined;
-  const lines = secrets.map((s) => `- ${s.name}`).join("\n");
+  const lines = secrets.map((s) => `- ${s.name} → ${s.domains.join(", ")}`).join("\n");
   return `# Available Secrets
-These are injected into your shell environment as opaque proxy tokens — use them directly. The credential proxy swaps in the real value on outgoing HTTPS requests, so just reference the variable normally:
+These are injected into your shell environment as opaque proxy tokens — use them directly and never print them. The credential proxy swaps in the real value only on outgoing HTTPS requests to the listed hosts, so reference the variable normally:
 ${lines}
-Make requests through a client that honours the standard proxy environment variables`;
+Use clients that honour the standard proxy environment variables. Do not validate a secret's format locally. If a CLI rejects it before making a request, use that service's HTTPS API or SDK instead; the proxy can substitute the token only after a request is sent.`;
 }
 
 // Running background processes (dev servers etc.) started in an earlier turn. Surfaced so a later

@@ -7,6 +7,7 @@
 // container environment instead of the real value. The credential proxy swaps the token for
 // the real value in outbound HTTPS headers.
 import { readFileSync } from "fs";
+import { createHash } from "crypto";
 import path from "path";
 import { WORKSPACES_ROOT } from "../paths";
 import { atomicSaveJson } from "../jsonPersist";
@@ -125,8 +126,21 @@ if (migrateLegacy) {
 }
 upgradeStoreDomains(store);
 
+// Versioned opaque values placed in the container instead of real secret values.  They must be
+// safe to pass to common CLIs as well as HTTP clients: a surprising number validate `--token`
+// locally and reject punctuation before the request reaches our proxy.  `p` + SHA-256 hex is
+// deliberately alphanumeric-only, stable, and long enough to be unambiguous in a request.
+//
+// This is not an authentication secret.  Credential injection is separately gated by the
+// container's Proxy-Authorization workspace credential, and a token only maps to a real value for
+// its exact allowlisted host.
+export const PROXY_TOKEN_FORMAT_VERSION = "v2";
+
 export function proxyToken(wsId: string, name: string): string {
-  return `__pxy_${wsId}_${name}__`;
+  const digest = createHash("sha256")
+    .update(`${PROXY_TOKEN_FORMAT_VERSION}\0${wsId}\0${name}`)
+    .digest("hex");
+  return `p${digest}`;
 }
 
 export function setSecret(wsId: string, name: string, value: string, domains: string[]): void {

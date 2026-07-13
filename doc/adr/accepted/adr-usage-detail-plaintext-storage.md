@@ -12,13 +12,15 @@ command output, and secrets the agent encountered; prompts can contain sensitive
 
 Neither route performs per-request authentication or authorization — consistent with the rest of
 the app (e.g. the chat route), which relies on network-level isolation rather than in-app auth.
-Per CLAUDE.md, the app runs single-user on a netcup VPS behind Tailscale, is never exposed to the
-public internet, and UFW blocks all public ingress except on `tailscale0`.
+The default deployment keeps the app behind Tailscale. An optional public HTTPS gateway may open
+ports 80 and 443, but it permits only the Bearer-authenticated workspace-agent endpoint; the usage
+routes remain private.
 
 Decision
 Store usage detail unredacted and rely on network isolation for confidentiality. We do not redact,
-encrypt, or auth-gate the usage data path. Confidentiality is provided by the deployment model
-(Tailscale-only, single-user, no public ingress), not by the application. Retention is bounded by
+encrypt, or auth-gate the usage data path. Confidentiality is provided by the private Tailscale
+deployment surface; when enabled, the public gateway exposes only the separate Bearer-authenticated
+workspace-agent endpoint. Retention is bounded by
 `MAX_RECORDS` (5000) in `lib/workspace/usageStore.ts`: the in-memory list keeps the newest 5000
 light records, and the JSONL file is compacted to its last `MAX_RECORDS` lines once it grows past
 `COMPACT_AT` (1.5×), so heavy content on disk is bounded too.

@@ -1,0 +1,36 @@
+# Optional public HTTPS gateway for external workspace-agent callers.
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.workspace-api.yml up -d
+#
+# The app service remains bound to 127.0.0.1 by docker-compose.yml. This is the
+# only public listener, and deploy/Caddyfile.workspace-api permits exactly one
+# route: POST /api/workspaces/<workspace-id>/agent.
+services:
+  workspace-api:
+    image: caddy:2.10-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      - WORKSPACE_API_DOMAIN=${WORKSPACE_API_DOMAIN:?Set WORKSPACE_API_DOMAIN to the public API hostname}
+      - APP_PORT=${PORT:-3000}
+    volumes:
+      - ./deploy/Caddyfile.workspace-api:/etc/caddy/Caddyfile:ro
+      - workspace_api_caddy_data:/data
+      - workspace_api_caddy_config:/config
+    depends_on:
+      - app
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - app_net
+
+volumes:
+  workspace_api_caddy_data:
+  workspace_api_caddy_config:

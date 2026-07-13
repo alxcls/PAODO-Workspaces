@@ -182,6 +182,9 @@ export class ContainerManager implements IContainerManager {
             // in-memory task map). Rebuild it from the container's pidfiles so a survivor
             // background server is surfaced and stoppable rather than colliding invisibly.
             await this.rehydrateBackgroundTasks(workspaceId);
+            // A redeploy can recreate the credproxy sidecar and drop its attachment to this
+            // still-running workspace's network, black-holing egress. Reattach idempotently.
+            if (WORKSPACES_VOLUME_NAME) await this.attachProxyToNetwork(workspaceId);
             return;
           }
           // stopped, image unchanged, secrets unchanged, port mapped — just restart it
@@ -196,6 +199,9 @@ export class ContainerManager implements IContainerManager {
           if (connect.code !== 0) throw new Error(`docker network connect failed: ${connect.stderr}`);
           const r = await this.docker.cmd("start", this.containerName(workspaceId));
           if (r.code !== 0) throw new Error(`docker start failed: ${r.stderr}`);
+          // Reattach the credproxy sidecar too: recreating it (redeploy) drops its per-network
+          // endpoint, so a resumed workspace would otherwise start with no egress. Idempotent.
+          if (WORKSPACES_VOLUME_NAME) await this.attachProxyToNetwork(workspaceId);
           return;
         }
         // Port mapping missing (container predates this feature) — recreate to add it.
@@ -279,7 +285,13 @@ export class ContainerManager implements IContainerManager {
     const inflight = this.startLocks.get(workspaceId);
     if (inflight) return inflight;
 
-    const p = this._ensureContainer(workspaceId, workspaceDir).finally(() => {
+    const p = (async () => {
+      await this._ensureContainer(workspaceId, workspaceDir);
+      // Enforce the egress invariant on every wake: the credproxy sidecar must be attached to this
+      // workspace's network. Self-heals a dropped attachment and fails loudly if it can't, rather
+      // than letting the agent black-hole on cryptic "could not resolve proxy" DNS errors.
+      await this.verifyProxyAttached(workspaceId);
+    })().finally(() => {
       this.startLocks.delete(workspaceId);
       this.resetIdleTimer(workspaceId);
     });
@@ -491,6 +503,34 @@ export class ContainerManager implements IContainerManager {
     if (r.code !== 0 && !/already (exists|connected)/i.test(r.stderr)) {
       log.warn({ workspaceId, stderr: r.stderr }, "failed to attach credential proxy to workspace network");
     }
+  }
+
+  // True when the credential-proxy sidecar is currently an endpoint on the workspace's network, so
+  // the alias resolves inside the container. Host-side check (docker network inspect) — deliberately
+  // avoids exec'ing into the container, whose image may lack getent/nslookup.
+  private async isProxyAttached(workspaceId: string): Promise<boolean> {
+    const r = await this.docker.cmd(
+      "network", "inspect", this.networkName(workspaceId),
+      "--format", "{{range .Containers}}{{.Name}} {{end}}",
+    );
+    if (r.code !== 0) return false;
+    return r.stdout.split(/\s+/).includes(CREDENTIAL_PROXY_CONTAINER);
+  }
+
+  // Guarantee the workspace can reach the credential proxy before the agent runs against it. If the
+  // sidecar isn't on the network (typically because a redeploy recreated it and dropped the
+  // attachment), reattach and re-check; if it still isn't reachable, fail loudly with an actionable
+  // message rather than letting egress silently black-hole. Prod-only (no sidecar in local dev).
+  private async verifyProxyAttached(workspaceId: string): Promise<void> {
+    if (!WORKSPACES_VOLUME_NAME) return;
+    if (await this.isProxyAttached(workspaceId)) return;
+    log.warn({ workspaceId }, "credential proxy not attached to workspace network — reattaching");
+    await this.attachProxyToNetwork(workspaceId);
+    if (await this.isProxyAttached(workspaceId)) return;
+    throw new Error(
+      `workspace egress proxy (${CREDENTIAL_PROXY_ALIAS}) is not attached to ${this.networkName(workspaceId)} — ` +
+        `check the ${CREDENTIAL_PROXY_CONTAINER} sidecar is running`,
+    );
   }
 
   // Detach the sidecar before removing a workspace network — `network rm` fails while an endpoint is

@@ -33,6 +33,7 @@ import {
 } from "./lib/infra/security/httpAuth";
 import { buildSecurityHeaders } from "./lib/infra/security/securityHeaders";
 import { startScheduler, stopScheduler } from "./lib/infra/schedules/scheduler";
+import { startProxyReconciler, stopProxyReconciler } from "./lib/infra/docker/proxyReconciler";
 
 const dev = process.env.NODE_ENV !== "production";
 const port = parseInt(process.env.PORT ?? "3000", 10);
@@ -240,6 +241,9 @@ assertGitAvailable()
       // network). A redeploy recreates the sidecar and drops its attachments — reconnect running
       // workspaces so their egress keeps working.
       await getContainers().reattachProxyNetworks();
+      // Boot-time reattach only heals sidecar recreations that coincide with an app restart. Keep a
+      // reconcile loop running so an independent sidecar restart self-heals within one interval.
+      startProxyReconciler();
     }
   })
   .then(() => app.prepare())
@@ -255,6 +259,7 @@ assertGitAvailable()
 function shutdown() {
   wss.close();
   stopScheduler();
+  stopProxyReconciler();
   stopAllWatchers();
   app.close().finally(() => process.exit(0));
 }

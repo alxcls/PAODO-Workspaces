@@ -3,12 +3,6 @@
 // for a genuine cross-site mutation. Tests lock down both directions.
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
-// Pin the preview-token secret before httpAuth (via previewToken → paths) reads it at import time,
-// so the preview-token bypass cases are deterministic.
-vi.hoisted(() => {
-  process.env.PREVIEW_TOKEN_SECRET = "test-secret-for-httpauth";
-});
-
 import {
   AuthFailureTracker,
   checkAuth,
@@ -18,7 +12,6 @@ import {
   getClientIp,
   type AuthRequest,
 } from "./httpAuth";
-import { getPreviewToken } from "./previewToken";
 
 const CREDS = { user: "admin", pass: "hunter2" };
 
@@ -117,34 +110,20 @@ describe("checkAuth", () => {
     expect(checkAuth("ip", req({ method: "POST", pathname: "/api/workspaces/ws1/agent/extra" }), CREDS, tracker)).toBe("challenge");
   });
 
-  describe("preview-token bypass", () => {
-    it("accepts a valid proxy Bearer token for the matching workspace", () => {
-      const token = getPreviewToken("wsA");
-      const r = req({ method: "GET", pathname: "/api/workspaces/wsA/proxy/foo", authorization: `Bearer ${token}` });
-      expect(checkAuth("ip", r, CREDS, tracker)).toBe("ok");
-    });
-
-    it("rejects a proxy token minted for a different workspace", () => {
-      const token = getPreviewToken("wsA");
-      const r = req({ method: "GET", pathname: "/api/workspaces/wsB/proxy/foo", authorization: `Bearer ${token}` });
-      expect(checkAuth("ip", r, CREDS, tracker)).toBe("challenge");
-    });
-
-    it("lets a proxy CORS preflight (OPTIONS) through", () => {
+  describe("Live Server proxy", () => {
+    it("lets a proxy CORS preflight (OPTIONS) through without credentials", () => {
       const r = req({ method: "OPTIONS", pathname: "/api/workspaces/wsA/proxy/foo" });
       expect(checkAuth("ip", r, CREDS, tracker)).toBe("ok");
     });
 
-    it("accepts a valid serve token embedded in the path", () => {
-      const token = getPreviewToken("wsA");
-      const r = req({ method: "GET", pathname: `/api/workspaces/wsA/serve/${token}/index.js` });
-      expect(checkAuth("ip", r, CREDS, tracker)).toBe("ok");
+    it("still requires Basic Auth for an actual proxied request", () => {
+      const r = req({ method: "GET", pathname: "/api/workspaces/wsA/proxy/foo" });
+      expect(checkAuth("ip", r, CREDS, tracker)).toBe("challenge");
     });
 
-    it("rejects a serve token for the wrong workspace", () => {
-      const token = getPreviewToken("wsA");
-      const r = req({ method: "GET", pathname: `/api/workspaces/wsB/serve/${token}/index.js` });
-      expect(checkAuth("ip", r, CREDS, tracker)).toBe("challenge");
+    it("accepts a proxied request that carries valid Basic Auth", () => {
+      const r = req({ method: "GET", pathname: "/api/workspaces/wsA/proxy/foo", authorization: basic("admin", "hunter2") });
+      expect(checkAuth("ip", r, CREDS, tracker)).toBe("ok");
     });
   });
 });
@@ -172,8 +151,8 @@ describe("isCsrf", () => {
     expect(isCsrf({ method: "POST", pathname: "/api/x", secFetchSite: undefined })).toBe(false);
   });
 
-  it("exempts token-gated proxy routes", () => {
-    expect(isCsrf({ method: "POST", pathname: "/api/workspaces/w/proxy/foo", secFetchSite: "cross-site" })).toBe(false);
+  it("blocks cross-site mutations to the Live Server proxy (no longer exempt)", () => {
+    expect(isCsrf({ method: "POST", pathname: "/api/workspaces/w/proxy/foo", secFetchSite: "cross-site" })).toBe(true);
   });
 });
 

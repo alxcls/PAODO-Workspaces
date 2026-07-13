@@ -145,6 +145,13 @@ function WorkspacePageInner({ params }: { params: Promise<{ id: string }> }) {
         }
         right={
           <div className="flex items-center gap-2">
+            <button
+              className="btn btn-sm"
+              title="Open this workspace's running server (port 8080) in a new tab"
+              onClick={() => window.open(`/api/workspaces/${id}/proxy/`, "_blank", "noopener")}
+            >
+              Live Server
+            </button>
             <SchedulePanel workspaceId={id} />
             <HistoryPanel
               workspaceId={id}

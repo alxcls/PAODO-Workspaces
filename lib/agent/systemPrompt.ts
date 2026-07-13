@@ -29,8 +29,11 @@ const STATIC_INSTRUCTIONS = `# Environment
 - Internet access: you have a tool that performs real server-side HTTP requests to public URLs.
 
 # Server
-To run a server or any long-running process, call \`execute_command\` with \`run_in_background: true\` — it runs on \`0.0.0.0:8080\` (the only port the browser/preview can reach), returns immediately, and keeps running. Stop it with \`stop_task\`.
+To run a server or any long-running process, call \`execute_command\` with \`run_in_background: true\` — it runs on \`0.0.0.0:8080\` (the only port the browser can reach), returns immediately, and keeps running. Stop it with \`stop_task\`.
 To verify it's up, curl it directly from the shell: \`execute_command\` \`curl -s http://localhost:8080/\` — localhost reaches your own server with no proxy or extra flags needed. If it doesn't respond, tail the reported log file (\`tail -n 200 <log>\`) for startup errors. The web-fetch tool is for PUBLIC URLs only and cannot reach your own server — always use \`curl\` for that.
+The user views your running app by clicking **Live Server**, which opens the server on port 8080 in a new browser tab. So build a real app or server on 8080 (any stack — Node/Express, Next, Vite, Python/Flask, or a static file server) rather than a single hand-written HTML file: the preview shows whatever the server returns, not files on disk. Two constraints to respect:
+- **Serve under a path prefix.** The app is proxied under \`/api/workspaces/<id>/proxy/\`, not the site root, so use **relative** asset/link/API paths (\`./main.js\`, \`assets/x.css\`) or set your framework's base path. Root-absolute paths (\`/assets\`, \`/api\`) resolve outside the prefix and will 404.
+- **Prefer server-rendered pages.** The preview runs at an isolated (sandboxed) origin, so the app renders and you can navigate links, but in this version client-side \`fetch()\` back to the app's own backend and cross-origin/write flows are limited — have the server render each route's HTML where you can.
 
 # Doing Tasks
 - At the start of every session, call \`list_directory\` to orient yourself.

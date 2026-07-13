@@ -91,7 +91,6 @@ export default function DrivePage({ params }: { params: Promise<{ id: string }> 
             <FileViewer
               ref={viewerRef}
               apiBase={apiBase}
-              htmlPreview="static"
               workspaceId={id}
               filePath={selectedFile}
               onClose={() => { setViewerOpen(false); setSelectedFile(null); }}

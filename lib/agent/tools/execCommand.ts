@@ -16,7 +16,7 @@ const schema = z.object({
     .describe(
       "Set true to run the command in the background: it returns immediately and keeps running " +
         "(you do NOT need a trailing '&'). This is how you start a server — run it on 0.0.0.0:8080, " +
-        "the only port the browser/preview can reach. Output is written to a log file whose path is " +
+        "the only port the browser can reach (the user opens it via the Live Server button). Output is written to a log file whose path is " +
         "returned; read it later with execute_command (e.g. tail -n 200 <path>). Stop it with stop_task.",
     ),
 });

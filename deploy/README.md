@@ -143,6 +143,50 @@ Open that URL on any device in your tailnet, enter your `USERNAME` and `PASSWORD
 
 ---
 
+## Optional — public HTTPS access for the workspace API
+
+The app UI and management routes remain private on Tailscale. To let an
+external system call a workspace, add the optional HTTPS gateway. It exposes
+only this route, protected by the workspace's existing Bearer API key:
+
+```text
+POST /api/workspaces/<workspace-id>/agent
+```
+
+1. Create a DNS `A` (and, if applicable, `AAAA`) record for a hostname such as
+   `api.example.com`, pointing to the VPS.
+2. Set `WORKSPACE_API_DOMAIN=api.example.com` in `.env`.
+3. Allow ports 80 and 443 through the firewall so Caddy can obtain and renew
+   the TLS certificate:
+
+   ```bash
+   ufw allow 80/tcp
+   ufw allow 443/tcp
+   ```
+
+4. Start the normal private stack plus the gateway:
+
+   ```bash
+   docker compose -f docker-compose.yml -f docker-compose.workspace-api.yml up -d
+   ```
+
+Generate and enable a key for the target workspace in PAODO, then call it:
+
+```bash
+curl --request POST https://api.example.com/api/workspaces/<workspace-id>/agent \
+  --header "Authorization: Bearer <workspace-api-key>" \
+  --header "Content-Type: application/json" \
+  --data '{"message":"Process this request"}'
+```
+
+The gateway returns `404` for the UI, WebSocket endpoint, and every other app
+route. It also replaces caller-supplied client-IP headers before forwarding, so
+the app's rate limiter and audit logs use the real caller IP. To disable public
+API access, stop the gateway and remove the two firewall rules; the Tailscale
+app remains available.
+
+---
+
 ## Keeping it up to date
 
 ```bash

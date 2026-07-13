@@ -50,10 +50,8 @@ function authenticate(ip: string, req: import("http").IncomingMessage): AuthResu
   return checkAuth(ip, authRequestFromIncoming(req), credentials, authFailures);
 }
 
-function setSecurityHeaders(req: import("http").IncomingMessage, res: import("http").ServerResponse): void {
+function setSecurityHeaders(res: import("http").ServerResponse): void {
   const headers = buildSecurityHeaders({
-    forwardedProto: req.headers["x-forwarded-proto"] as string | undefined,
-    host: req.headers["host"],
     isProduction: process.env.NODE_ENV === "production",
   });
   for (const [name, value] of Object.entries(headers)) res.setHeader(name, value);
@@ -83,7 +81,7 @@ httpServer.on("request", (req, res) => {
   res.once("finish", logRequest);
   res.once("close", logRequest);
 
-  setSecurityHeaders(req, res);
+  setSecurityHeaders(res);
 
   const ip = getClientIp(req);
   const authResult = authenticate(ip, req);

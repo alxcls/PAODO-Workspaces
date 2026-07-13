@@ -1,9 +1,9 @@
 // Loads and manages the content of the single file open in the viewer. Fetches type + content
 // from the files/content route, tracks an editable draft with a dirty flag, and exposes save and
 // delete actions. notifyFilesChanged silently reloads the open file when it changes on disk (so the
-// code editor, Markdown preview, and HTML live-preview all reflect agent-side edits live), and
+// code editor and Markdown preview both reflect agent-side edits live), and
 // notifyFilesDeleted closes the viewer when the open file is deleted. Only the file actually open
-// is reloaded — the cross-file dependency-tracking auto-refresh (reload the preview when some other
+// is reloaded — the cross-file dependency-tracking auto-refresh (reload the open file when another
 // file it references changes) proved unreliable and flickery, so it was removed (see git).
 "use client";
 
@@ -113,10 +113,10 @@ export function useFileContent(
   }, [base]);
 
   // The open file changed on disk (e.g. the agent edited it). Silently reload its content so the
-  // code editor, Markdown preview, and HTML live-preview all reflect the change — unless the user
+  // code editor and Markdown preview both reflect the change — unless the user
   // has unsaved edits. Simple rule: reload only the file actually open. What we deliberately do NOT
-  // do is reload the preview when some *other* file changes (sibling assets, fetched data) — that
-  // cross-file dependency tracking was the flickery, unreliable auto-refresh we removed.
+  // do is reload the editor when some *other* file changes — cross-file dependency tracking was
+  // flickery and unreliable.
   const notifyFilesChanged = useCallback((paths: string[]) => {
     if (isDirtyRef.current) return;
     const currentPath = filePathRef.current ?? "";

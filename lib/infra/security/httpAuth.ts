@@ -1,12 +1,11 @@
 // Request authentication and CSRF logic for the custom HTTP server (server.ts).
 //
 // Kept out of server.ts so the security-critical pieces — timing-safe Basic-Auth comparison,
-// failure-based blocking, the preview-token bypass, and the CSRF guard — are unit-testable in
+// failure-based blocking and the CSRF guard — are unit-testable in
 // isolation rather than welded to the process entry point. server.ts is a thin adapter that
 // extracts primitives off the Node request and calls these functions.
 import type { IncomingMessage } from "http";
 import { timingSafeEqual } from "crypto";
-import { validatePreviewToken } from "./previewToken";
 
 // Constant-time string comparison. Used for the Basic-Auth username/password so a byte-by-byte
 // timing difference can't be measured to recover the secret.
@@ -54,16 +53,6 @@ export class AuthFailureTracker {
 
 // The agent endpoint authenticates via Bearer API key, not Basic Auth — exempt POSTs to it.
 const PUBLIC_API_RE = /^\/api\/workspaces\/[^/]+\/agent$/;
-// The HTML-preview iframe runs at an opaque origin and reaches its OWN workspace's backend via the
-// proxy/serve routes, authenticating with a per-workspace preview token instead of the user's Basic
-// Auth. Proxy calls are fetch()-driven, so the token rides as a Bearer header (group 1 = the
-// workspace id it must match).
-const PROXY_AUTH_RE = /^\/api\/workspaces\/([^/]+)\/proxy\//;
-// Serve delivers the preview's static subresources (<link>, <script type=module> and its nested
-// relative imports), which the browser fetches itself — our fetch shim can't reach them and they
-// can't carry a header. So the token rides in the path as the first segment after /serve/, where it
-// survives relative-URL resolution. Group 1 = workspace id, group 2 = token.
-const SERVE_AUTH_RE = /^\/api\/workspaces\/([^/]+)\/serve\/([^/]+)/;
 const MUTATING_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
 export type AuthResult = "ok" | "challenge" | "unauthorized" | "blocked";
@@ -102,20 +91,6 @@ export function checkAuth(
   // The agent endpoint authenticates via Bearer API key — exempt it from basic auth.
   if (req.method === "POST" && PUBLIC_API_RE.test(req.pathname)) return "ok";
 
-  // Preview routes accept a valid per-workspace preview token as a Basic-Auth bypass for that
-  // workspace only. A token for workspace A presented on workspace B's URL fails the match.
-  // Proxy: token as a Bearer header; let the CORS preflight (no credentials, headers only) through.
-  const proxy = PROXY_AUTH_RE.exec(req.pathname);
-  if (proxy) {
-    if (req.method === "OPTIONS") return "ok";
-    const bearer = /^Bearer (.+)$/.exec(req.authorization);
-    if (bearer && validatePreviewToken(proxy[1], bearer[1])) return "ok";
-  }
-  // Serve: token is the first path segment. It's hex, so encodeURIComponent is identity and no
-  // decode is needed (avoids a throw on a malformed %-sequence in a hostile path).
-  const serve = SERVE_AUTH_RE.exec(req.pathname);
-  if (serve && validatePreviewToken(serve[1], serve[2])) return "ok";
-
   const auth = req.authorization;
   if (!auth.startsWith("Basic ")) {
     // No credentials sent — normal browser challenge-response handshake, not an attack
@@ -141,16 +116,12 @@ export function checkAuth(
   return "unauthorized";
 }
 
-// CSRF guard: the browser attaches cached Basic Auth to cross-origin requests too, so a malicious
-// opaque-origin preview could fire BLIND state-changing requests at other workspaces (it can't
-// read the reply, but the write still executes). Browsers always send Sec-Fetch-Site; reject
-// cross-site mutations. Requests without the header (non-browser clients, e.g. the external agent
-// API using Bearer) are allowed. The preview's own cross-origin calls hit the token-gated
-// proxy/serve routes, which are exempt.
+// CSRF guard: browsers attach cached Basic Auth to cross-origin requests too. Browsers always send
+// Sec-Fetch-Site; reject cross-site mutations. Requests without the header (non-browser clients,
+// e.g. the external agent API using Bearer) are allowed.
 export function isCsrf(req: { method: string; pathname: string; secFetchSite: string | undefined }): boolean {
   if (!MUTATING_METHODS.has(req.method)) return false;
   if (!req.pathname.startsWith("/api/")) return false;
-  if (PROXY_AUTH_RE.test(req.pathname)) return false; // token-gated; serve is GET-only so never mutating
   const site = req.secFetchSite;
   if (typeof site !== "string") return false; // non-browser client
   return site !== "same-origin" && site !== "none";

@@ -50,10 +50,21 @@ describe("proxyReconciler", () => {
   it("fires reattach on the configured interval, and stop halts it", async () => {
     vi.useFakeTimers();
     startProxyReconciler();
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(reattach).toHaveBeenCalledTimes(1); // boot retry
     await vi.advanceTimersByTimeAsync(60_000);
-    expect(reattach).toHaveBeenCalledTimes(1);
+    expect(reattach).toHaveBeenCalledTimes(2); // regular interval
     stopProxyReconciler();
     await vi.advanceTimersByTimeAsync(120_000);
-    expect(reattach).toHaveBeenCalledTimes(1); // no further ticks after stop
+    expect(reattach).toHaveBeenCalledTimes(2); // no further ticks after stop
+  });
+
+  it("uses the default interval when the configured value is invalid", () => {
+    vi.useFakeTimers();
+    const setSpy = vi.spyOn(global, "setInterval");
+    process.env.PROXY_RECONCILE_TICK_MS = "-1";
+    startProxyReconciler();
+    expect(setSpy).toHaveBeenCalledWith(expect.any(Function), 60_000);
+    delete process.env.PROXY_RECONCILE_TICK_MS;
   });
 });

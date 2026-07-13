@@ -18,9 +18,18 @@ import { globalSingleton } from "../globalSingleton";
 const log = createLogger("proxyReconciler");
 
 const DEFAULT_TICK_MS = 60_000;
+const BOOT_RETRY_MS = 5_000;
 
-type ReconcilerState = { timer: NodeJS.Timeout | null; running: boolean };
-const state = globalSingleton<ReconcilerState>("proxyReconcilerState", () => ({ timer: null, running: false }));
+type ReconcilerState = {
+  timer: NodeJS.Timeout | null;
+  bootRetryTimer: NodeJS.Timeout | null;
+  running: boolean;
+};
+const state = globalSingleton<ReconcilerState>("proxyReconcilerState", () => ({
+  timer: null,
+  bootRetryTimer: null,
+  running: false,
+}));
 
 async function tick(): Promise<void> {
   // Skip if a prior tick is still in flight (docker calls can be slow) so ticks never pile up.
@@ -38,16 +47,29 @@ async function tick(): Promise<void> {
 /** Start the reconcile loop. Idempotent. */
 export function startProxyReconciler(): void {
   if (state.timer) return;
-  const tickMs = parseInt(process.env.PROXY_RECONCILE_TICK_MS ?? String(DEFAULT_TICK_MS), 10) || DEFAULT_TICK_MS;
+  const configuredTickMs = Number(process.env.PROXY_RECONCILE_TICK_MS);
+  const tickMs = Number.isFinite(configuredTickMs) && configuredTickMs > 0
+    ? configuredTickMs
+    : DEFAULT_TICK_MS;
   state.timer = setInterval(tick, tickMs);
   state.timer.unref?.();
+  // Compose starts credproxy after the app, so the boot-time reattach in server.ts can run before
+  // the sidecar exists. Retry once shortly afterwards instead of leaving workspaces waiting for the
+  // regular interval.
+  state.bootRetryTimer = setTimeout(() => {
+    state.bootRetryTimer = null;
+    void tick();
+  }, Math.min(BOOT_RETRY_MS, tickMs));
+  state.bootRetryTimer.unref?.();
   log.info({ tickMs }, "proxy reconciler started");
 }
 
 export function stopProxyReconciler(): void {
-  if (!state.timer) return;
-  clearInterval(state.timer);
+  if (!state.timer && !state.bootRetryTimer) return;
+  if (state.timer) clearInterval(state.timer);
+  if (state.bootRetryTimer) clearTimeout(state.bootRetryTimer);
   state.timer = null;
+  state.bootRetryTimer = null;
   log.info("proxy reconciler stopped");
 }
 

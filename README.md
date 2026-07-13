@@ -57,7 +57,7 @@ For the full architecture, see [`doc/`](doc/).
 The agent runs a ReAct loop with the following tools:
 
 - **Files** — `file_read` · `file_write` · `file_edit` · `list_directory` · `glob`
-- **System** — `execute_command` · `apt_install` · `http_get`
+- **System** — `execute_command` · `stop_task` · `apt_install` · `http_get`
 - **Session** — `todo_write` · `compact_context` · `workspace_history` · `workspace_restore`
 - **Agent network** — `list_agents` · `call_agent`
 - **Shared drives** — `drive_ls` · `drive_read` · `drive_download` · `drive_upload` · `drive_delete`

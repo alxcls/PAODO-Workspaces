@@ -42,7 +42,6 @@ Benefit : build complex workflows by wiring together workspaces, each with a sin
 
 Benefit : plug your service into any existing tool, chatbot, or workflow without rebuilding enabling separation of concerns
 
-- **File visualization** — Some format such as Markdown, JSON, and HTML files open as clean readable documents so every output your service generates is immediately understandable by non-technical population
 
 ## The future of work
 
@@ -58,5 +57,4 @@ The metaphor is an organization, not a program:
 The citizen developer's job shifts from *doing the work* to *designing the organization*: defining intents, contracts, and who-talks-to-whom — then letting a fleet of grounded agents run it. You handle the intent and the structure. The agents handle the terminal, the data, and the handoffs.
 
 And because every agent is a real isolated environment you self-host — not a shared sandbox — this organization runs on infrastructure you control, with your data, your models, your rules.
-
 

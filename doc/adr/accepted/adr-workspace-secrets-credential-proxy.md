@@ -96,5 +96,5 @@ Notes
 - PRD: doc/prd/accepted/prd-workspace-third-party-api-keys.md (Shipped).
 - Impl: lib/infra/proxy/{credentialProxy,proxyCA,destinationGuard,index}.ts,
   lib/infra/security/{workspaceSecretStore,secretsEncryption}.ts, containerManager.ts, server.ts.
-- Related: adr-container-per-workspace-sandbox, adr-container-server-proxy,
+- Related: adr-container-per-workspace-sandbox,
   adr-metadata-storage-json-vs-db, adr-single-instance-in-process-state.

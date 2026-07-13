@@ -57,7 +57,7 @@ A drive is a plain live filesystem: one file per path, newest wins. Agents act f
 
 **Drive file browser (UI)**
 - Drives appear as folder-style nodes in the graph; clicking a drive node opens a file browser that reuses the workspace file tree + viewer (view, edit, upload, download).
-- Drives are passive storage — never mounted into a container — so all drive file operations run host-side. HTML live-preview (which needs a running container) is disabled in the drive view.
+- Drives are passive storage — never mounted into a container — so all drive file operations run host-side.
 
 **System prompt injection**
 - When a workspace has connected drives, inject their names, descriptions, and most recent file activity so the agent knows what to look for without exploring blindly.

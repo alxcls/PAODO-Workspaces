@@ -76,7 +76,7 @@ export class ContainerManager implements IContainerManager {
   private startLocks = new Map<string, Promise<void>>();
   // Long-lived background processes the agent launched (dev servers etc.), keyed
   // workspaceId → taskId. These are deliberately NOT tied to a single agent run: they
-  // persist across turns (so a preview server stays up) and are reaped when the container
+  // persist across turns (so a dev server stays up) and are reaped when the container
   // stops/idles. Cleared in stop()/remove() — the processes themselves die with the container.
   private backgroundTasks = new Map<string, Map<string, BackgroundTask>>();
   // Workspaces whose background-task map has been rebuilt from the container's pidfiles this

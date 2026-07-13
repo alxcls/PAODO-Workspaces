@@ -99,7 +99,6 @@ export interface IContainerManager {
   stop(workspaceId: string): Promise<void>;
   remove(workspaceId: string): Promise<void>;
   reattachProxyNetworks(): Promise<void>;
-  getServerPort(workspaceId: string): Promise<number | null>;
   deleteWorkspaceDir(workspaceDir: string): Promise<void>;
   assertDockerAvailable(): Promise<void>;
 }

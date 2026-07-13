@@ -4,7 +4,7 @@ Status: Accepted
 
 ## Context
 
-The browser UI needs to reflect filesystem changes made by the agent in real time — new files in the tree, updated content in the viewer, refreshed previews. The challenge is bridging the server-side filesystem to the browser without polling, and doing so per-workspace so events are not leaked across workspaces.
+The browser UI needs to reflect filesystem changes made by the agent in real time — new files in the tree and updated content in the viewer. The challenge is bridging the server-side filesystem to the browser without polling, and doing so per-workspace so events are not leaked across workspaces.
 
 Next.js API routes cannot push events to the browser on their own; they are stateless request handlers. A persistent server-to-client channel is needed.
 
@@ -22,14 +22,14 @@ When the first browser tab connects to a workspace, a chokidar watcher is starte
 The watcher is stopped (with a 5-second grace period) when the last client disconnects. The per-workspace connection registry lives in `wsHub.ts` on the Node.js `global` object so it survives hot-reloads (see [global-object-hot-reload-survival](global-object-hot-reload-survival.md)).
 
 On the client, the workspace page owns a single shared WebSocket and routes events to `FileViewer` via its imperative handle (`notifyFilesChanged` / `notifyFilesDeleted`). FileViewer itself holds no socket. On receipt:
-- `files_changed`: silently re-fetches the open file's content, unless the user has unsaved edits (`isDirtyRef`). Bumps a `previewKey` counter for HTML to force the preview iframe to remount.
+- `files_changed`: silently re-fetches the open file's content, unless the user has unsaved edits (`isDirtyRef`).
 - `files_deleted`: closes the viewer if the deleted path matches the open file.
 
 The file tree (`FileTreePanel`) does not consume WebSocket events directly; it re-fetches the tree via REST when the `refreshKey` prop is bumped — currently only at end of agent turn.
 
 ## Consequences
 
-- File viewer and previews update within ~250 ms of the agent completing a write, with no user action.
+- The open file viewer updates within ~250 ms of the agent completing a write, with no user action.
 - The 5-second grace period on watcher teardown means a workspace keeps watching briefly after the last tab closes, which is benign.
 - The file tree only refreshes at end of turn, not mid-turn — new files are not visible until the agent finishes its current step.
 - Each open `FileViewer` holds one WebSocket connection; two tabs open on the same workspace create two connections to the same broadcast group, which is harmless.

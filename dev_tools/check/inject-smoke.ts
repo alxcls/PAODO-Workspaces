@@ -40,7 +40,6 @@ const fakeContainers: IContainerManager = {
   stop: async () => {},
   remove: async () => {},
   reattachProxyNetworks: async () => {},
-  getServerPort: async () => null,
   deleteWorkspaceDir: async () => {},
   assertDockerAvailable: async () => {},
 };

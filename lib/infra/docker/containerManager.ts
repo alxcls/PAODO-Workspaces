@@ -9,8 +9,6 @@
 import { rm } from "fs/promises";
 import { spawn } from "child_process";
 import { randomUUID, createHash } from "crypto";
-import { lookup } from "dns/promises";
-import { getFreePort, cachePort, getCachedPort, invalidatePort, queryDockerPort } from "./portAllocator";
 import path from "path";
 import { createLogger } from "../logger";
 import { DockerClient, IDockerClient } from "./dockerClient";
@@ -66,27 +64,6 @@ const WORKSPACES_VOLUME_NAME = process.env.WORKSPACES_VOLUME_NAME ?? "";
 const CREDENTIAL_PROXY_ALIAS = process.env.CREDENTIAL_PROXY_ALIAS ?? "credproxy";
 const CREDENTIAL_PROXY_CONTAINER = process.env.CREDENTIAL_PROXY_CONTAINER ?? "paodo_ws_credproxy";
 
-// Host interface the workspace server port is published on. Binding to a specific interface
-// (rather than the default 0.0.0.0) keeps workspace dev servers off the public/tailnet interfaces
-// so only the app can reach them — realizing the "never reachable from outside the host" intent.
-//   - Local dev (app runs on the host): 127.0.0.1 — the proxy reaches it via localhost.
-//   - Production (app runs in a container): the Docker bridge gateway the app already uses via
-//     host.docker.internal, resolved once at runtime. If resolution fails we fall back to 0.0.0.0
-//     (today's behavior) so a publish never breaks — hardening, never a functional regression.
-let _bindHostCache: string | undefined;
-async function resolveBindHost(): Promise<string> {
-  if (process.env.WORKSPACE_BIND_HOST) return process.env.WORKSPACE_BIND_HOST;
-  if (!WORKSPACES_VOLUME_NAME) return "127.0.0.1";
-  if (_bindHostCache) return _bindHostCache;
-  try {
-    const { address } = await lookup("host.docker.internal");
-    return (_bindHostCache = address);
-  } catch {
-    log.warn("could not resolve host.docker.internal — publishing workspace port on 0.0.0.0 (unhardened fallback)");
-    return "0.0.0.0";
-  }
-}
-
 export class ContainerManager implements IContainerManager {
   private docker: IDockerClient;
   private imageManager: ImageManager;
@@ -99,7 +76,7 @@ export class ContainerManager implements IContainerManager {
   private startLocks = new Map<string, Promise<void>>();
   // Long-lived background processes the agent launched (dev servers etc.), keyed
   // workspaceId → taskId. These are deliberately NOT tied to a single agent run: they
-  // persist across turns (so a preview server stays up) and are reaped when the container
+  // persist across turns (so a dev server stays up) and are reaped when the container
   // stops/idles. Cleared in stop()/remove() — the processes themselves die with the container.
   private backgroundTasks = new Map<string, Map<string, BackgroundTask>>();
   // Workspaces whose background-task map has been rebuilt from the container's pidfiles this
@@ -175,40 +152,33 @@ export class ContainerManager implements IContainerManager {
     if (status === "running" || status === "stopped") {
       const containerHash = await this.imageManager.getContainerImageHash(this.containerName(workspaceId));
       const containerSecretsHash = await this.getContainerSecretsHash(this.containerName(workspaceId));
-      const portMissing = (await this.getServerPort(workspaceId)) === null;
       const imageMatches = !hash || containerHash === hash;
       const secretsMatch = containerSecretsHash === secretsHash;
       if (imageMatches && secretsMatch) {
-        if (!portMissing) {
-          if (status === "running") {
-            // Reattaching to a still-running container (e.g. after an app restart wiped our
-            // in-memory task map). Rebuild it from the container's pidfiles so a survivor
-            // background server is surfaced and stoppable rather than colliding invisibly.
-            await this.rehydrateBackgroundTasks(workspaceId);
-            // A redeploy can recreate the credproxy sidecar and drop its attachment to this
-            // still-running workspace's network, black-holing egress. Reattach idempotently.
-            if (WORKSPACES_VOLUME_NAME) await this.attachProxyToNetwork(workspaceId);
-            return;
-          }
-          // stopped, image unchanged, secrets unchanged, port mapped — just restart it
-          log.debug({ workspaceId }, "starting stopped container");
-          await this.ensureNetwork(workspaceId);
-          const connect = await this.docker.cmd(
-            "network",
-            "connect",
-            this.networkName(workspaceId),
-            this.containerName(workspaceId),
-          );
-          if (connect.code !== 0) throw new Error(`docker network connect failed: ${connect.stderr}`);
-          const r = await this.docker.cmd("start", this.containerName(workspaceId));
-          if (r.code !== 0) throw new Error(`docker start failed: ${r.stderr}`);
-          // Reattach the credproxy sidecar too: recreating it (redeploy) drops its per-network
-          // endpoint, so a resumed workspace would otherwise start with no egress. Idempotent.
+        if (status === "running") {
+          // Reattaching to a still-running container (e.g. after an app restart wiped our
+          // in-memory task map). Rebuild it from the container's pidfiles so a survivor
+          // background process is surfaced and stoppable rather than colliding invisibly.
+          await this.rehydrateBackgroundTasks(workspaceId);
+          // A redeploy can recreate the credproxy sidecar and drop its attachment to this
+          // still-running workspace's network, black-holing egress. Reattach idempotently.
           if (WORKSPACES_VOLUME_NAME) await this.attachProxyToNetwork(workspaceId);
           return;
         }
-        // Port mapping missing (container predates this feature) — recreate to add it.
-        log.debug({ workspaceId }, "container missing server port mapping — recreating");
+        // Stopped, image unchanged, secrets unchanged — just restart it.
+        log.debug({ workspaceId }, "starting stopped container");
+        await this.ensureNetwork(workspaceId);
+        const connect = await this.docker.cmd(
+          "network",
+          "connect",
+          this.networkName(workspaceId),
+          this.containerName(workspaceId),
+        );
+        if (connect.code !== 0) throw new Error(`docker network connect failed: ${connect.stderr}`);
+        const r = await this.docker.cmd("start", this.containerName(workspaceId));
+        if (r.code !== 0) throw new Error(`docker start failed: ${r.stderr}`);
+        if (WORKSPACES_VOLUME_NAME) await this.attachProxyToNetwork(workspaceId);
+        return;
       } else if (!secretsMatch) {
         // Workspace secrets were added/removed since this container was created (or it
         // predates the secrets-hash label) — recreate so env vars reflect the current set.
@@ -223,8 +193,6 @@ export class ContainerManager implements IContainerManager {
     // missing (or just removed) — create and start
     log.debug({ workspaceId }, "creating container");
     await this.ensureNetwork(workspaceId);
-    const serverPort = await getFreePort();
-    const bindHost = await resolveBindHost();
 
     // Build the credential-proxy + secret env args (tokens only — real values stay in the proxy).
     // See containerCredentials.ts for how tokens, the proxy URL, and the CA-trust vars are derived.
@@ -243,7 +211,6 @@ export class ContainerManager implements IContainerManager {
       "--network", this.networkName(workspaceId),
       `--memory=${CONTAINER_MEMORY}`,
       `--cpus=${CONTAINER_CPUS}`,
-      "-p", `${bindHost}:${serverPort}:8080`,
       ...this.buildVolumeArg(workspaceDir),
       ...(hash ? ["--label", `${HASH_LABEL}=${hash}`] : []),
       "--label", `${SECRETS_LABEL}=${secretsHash}`,
@@ -264,7 +231,6 @@ export class ContainerManager implements IContainerManager {
       "sleep", "infinity",
     );
     if (r.code !== 0) throw new Error(`docker run failed: ${r.stderr}`);
-    cachePort(workspaceId, serverPort);
 
     // One-time ownership sweep: legacy workspaces created when the agent ran as root hold root-owned
     // files the uid-1000 agent/app can no longer manage. Chown the tree to 1000:1000 so both can.
@@ -577,7 +543,6 @@ export class ContainerManager implements IContainerManager {
     this.startLocks.delete(workspaceId);
     this.backgroundTasks.delete(workspaceId);
     this.backgroundRehydrated.delete(workspaceId);
-    invalidatePort(workspaceId);
     // Non-zero exit codes are expected if the container/network was never created.
     const stop = await this.docker.cmd("stop", this.containerName(workspaceId));
     if (stop.code !== 0) log.debug({ workspaceId, stderr: stop.stderr }, "docker stop on remove (may not exist)");
@@ -586,15 +551,6 @@ export class ContainerManager implements IContainerManager {
     if (WORKSPACES_VOLUME_NAME) await this.detachProxyFromNetwork(workspaceId);
     const net = await this.docker.cmd("network", "rm", this.networkName(workspaceId));
     if (net.code !== 0) log.debug({ workspaceId, stderr: net.stderr }, "docker network rm on remove (may not exist)");
-  }
-
-  /** Returns the host port mapped to container port 8080, or null if no mapping exists. */
-  async getServerPort(workspaceId: string): Promise<number | null> {
-    const cached = getCachedPort(workspaceId);
-    if (cached !== undefined) return cached;
-    const port = await queryDockerPort(this.containerName(workspaceId), this.docker);
-    if (port !== null) cachePort(workspaceId, port);
-    return port;
   }
 
   // Deletes a workspace directory from the volume. In production (WORKSPACES_VOLUME_NAME set) it
@@ -640,6 +596,5 @@ export const dockerExecAsRoot       = (id: string, dir: string, cmd: string[])  
 export const dockerExecStreaming    = (id: string, dir: string, cmd: string[], opts: { onStdout: (chunk: string) => void; onStderr: (chunk: string) => void }) => _manager.execStreaming(id, dir, cmd, opts);
 export const stopContainer          = (id: string)                                                      => _manager.stop(id);
 export const removeContainer        = (id: string)                                                      => _manager.remove(id);
-export const getContainerServerPort = (id: string)                                                      => _manager.getServerPort(id);
 export const deleteWorkspaceDir     = (dir: string)                                                     => _manager.deleteWorkspaceDir(dir);
 export const assertDockerAvailable  = ()                                                                => _manager.assertDockerAvailable();

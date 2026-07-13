@@ -16,7 +16,7 @@ When the agent writes, edits, or deletes files, the browser UI has no way to kno
 
 - The file tree reflects new and deleted files without user intervention while the agent is running.
 - The open file in the viewer reloads automatically when the agent modifies it.
-- Rich previews (HTML, JSON, Markdown) refresh automatically so users see up-to-date output.
+- Markdown previews refresh automatically so users see up-to-date output.
 - User edits in progress are never silently overwritten by agent writes.
 
 ---
@@ -39,10 +39,7 @@ As a citizen developer with `report.md` open, when the agent appends a new secti
 **Story 3 — User edits while the agent writes**  
 As a citizen developer with unsaved local edits, incoming agent file changes do not overwrite my work — the reload is suppressed until I save or discard.
 
-**Story 4 — User views an HTML dashboard the agent refreshed**  
-As a citizen developer watching an agent-generated HTML page in preview mode, when the agent updates a linked asset, the preview refreshes without any user action.
-
-**Story 5 — Agent deletes the open file**  
+**Story 4 — Agent deletes the open file**
 As a citizen developer with a file open in the viewer, if the agent deletes it, the viewer closes automatically rather than showing a stale or errored state.
 
 ---
@@ -53,7 +50,7 @@ As a citizen developer with a file open in the viewer, if the agent deletes it, 
 
 - File tree updates after each agent turn completes.
 - Open file content reloads automatically when the agent modifies it, with no action required from the user.
-- Rich previews (HTML iframe, JSON graph, Markdown render) refresh when the underlying file or its assets change.
+- The Markdown preview refreshes when its open file changes.
 - Reloads are suppressed while the user has unsaved edits in the viewer.
 - If the open file is deleted by the agent, the viewer closes.
 

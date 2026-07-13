@@ -8,8 +8,6 @@ import dynamic from "next/dynamic";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { useFileContent } from "@/lib/client/hooks/useFileContent";
-import HtmlLivePreview from "./HtmlLivePreview";
-import HtmlStaticPreview from "./HtmlStaticPreview";
 
 // CodeMirror touches the DOM on import, so load it client-side only (no SSR).
 const CodeMirrorEditor = dynamic(() => import("./CodeMirrorEditor"), { ssr: false });
@@ -30,15 +28,10 @@ interface Props {
   onClose: () => void; onSelfWrite?: (path: string) => void;
   /** API base for file routes. Defaults to the workspace path; drives pass /api/drives/<id>. */
   apiBase?: string;
-  /**
-   * HTML preview mode. "live" = workspace token/proxy preview (scripts on); "static" = scriptless
-   * sandboxed render for shared drives (no container, no token); "off" = source only.
-   */
-  htmlPreview?: "live" | "static" | "off";
 }
 
 const FileViewer = forwardRef<FileViewerHandle, Props>(function FileViewer(
-  { workspaceId, filePath, onClose, onSelfWrite, apiBase, htmlPreview = "live" },
+  { workspaceId, filePath, onClose, onSelfWrite, apiBase },
   ref
 ) {
   const base = apiBase ?? `/api/workspaces/${workspaceId}`;
@@ -50,15 +43,13 @@ const FileViewer = forwardRef<FileViewerHandle, Props>(function FileViewer(
     notifyFilesChanged, notifyFilesDeleted,
   } = useFileContent(workspaceId, filePath, { onClose, onSelfWrite, apiBase: base });
 
-  // Markdown and HTML files can toggle a rendered preview; everything else is source-only.
+  // Markdown files can toggle a rendered preview; all other files are source-only.
   const isMarkdown = /\.(md|markdown)$/i.test(filePath ?? "");
-  // HTML files render as a preview (live or static) unless preview is turned off entirely.
-  const isHtml = /\.(html?|htm)$/i.test(filePath ?? "") && htmlPreview !== "off";
 
   const [showPreview, setShowPreview] = useState(false);
   useEffect(() => {
-    setShowPreview(isMarkdown || isHtml);
-  }, [isMarkdown, isHtml]);
+    setShowPreview(isMarkdown);
+  }, [isMarkdown]);
 
   useImperativeHandle(ref, () => ({ notifyFilesChanged, notifyFilesDeleted }), [notifyFilesChanged, notifyFilesDeleted]);
 
@@ -100,7 +91,7 @@ const FileViewer = forwardRef<FileViewerHandle, Props>(function FileViewer(
         </span>
         {!loading && !error && fileType !== null && (
           <>
-            {fileType === "text" && (isMarkdown || isHtml) && (
+            {fileType === "text" && isMarkdown && (
               <button className="btn btn-sm" onClick={() => setShowPreview(v => !v)}
                 title={showPreview ? "Switch to editor" : "Switch to preview"}>
                 {showPreview ? "Code" : "Preview"}
@@ -145,18 +136,9 @@ const FileViewer = forwardRef<FileViewerHandle, Props>(function FileViewer(
       {!loading && !error && fileType === "text" && content !== null && (
         <div className="code-editor-wrap">
           {showPreview ? (
-            isHtml ? (
-              htmlPreview === "static" ? (
-                <HtmlStaticPreview draft={draft} />
-              ) : (
-                <HtmlLivePreview workspaceId={workspaceId} base={base} draft={draft}
-                  filePath={filePath} />
-              )
-            ) : (
-              <div className="md-preview md-prose">
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>{draft ?? ""}</ReactMarkdown>
-              </div>
-            )
+            <div className="md-preview md-prose">
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>{draft ?? ""}</ReactMarkdown>
+            </div>
           ) : (
             <CodeMirrorEditor value={draft} onChange={setDraft} filePath={filePath} />
           )}

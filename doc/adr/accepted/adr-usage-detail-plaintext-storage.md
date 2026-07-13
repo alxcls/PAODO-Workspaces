@@ -12,8 +12,8 @@ command output, and secrets the agent encountered; prompts can contain sensitive
 
 Neither route performs per-request authentication or authorization — consistent with the rest of
 the app (e.g. the chat route), which relies on network-level isolation rather than in-app auth.
-Per CLAUDE.md, the app runs single-user on a netcup VPS behind Tailscale, is never exposed to the
-public internet, and UFW blocks all public ingress except on `tailscale0`.
+Per CLAUDE.md, the app runs single-user on a netcup VPS behind Tailscale, and UFW blocks all public
+ingress except on `tailscale0`.
 
 Decision
 Store usage detail unredacted and rely on network isolation for confidentiality. We do not redact,

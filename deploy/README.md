@@ -1,6 +1,6 @@
 # Self-Hosting on a VPS example
 
-Goal: a personal PAODO Workspace instance running on a VPS, accessible only over Tailscale VPN. The app is never exposed to the public internet. This example uses Debian 13 on a VPS with Tailscale VPN.
+Goal: a personal PAODO Workspace instance running on a VPS, accessible only over Tailscale VPN. This example uses Debian 13 on a VPS with Tailscale VPN.
 
 The only hard requirements are Docker + Docker Compose, an `.env`, and a network path you trust to reach the app — it ships no public-internet hardening of its own. This guide uses Tailscale for that path, but a reverse proxy with auth, another VPN, an SSH tunnel, or a LAN-only setup works the same way. Everything Debian- and Tailscale-specific below is one reference path; adapt it freely to your host.
 

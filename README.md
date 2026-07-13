@@ -1,6 +1,6 @@
 # PAODO Workspace
 
-**Self-hosted AI agents you run on your own infrastructure.**
+**PAODO turns coding agents into controlled, callable AI services.**
 
 Each *workspace* is an isolated Docker container running its own ReAct loop coding agent. Make it write scripts to run and instructions to follow, then call it through the workspace chat interface or an external API. Workspaces can be wired into a graph, so agents discover each other and delegate tasks. Think of it as multiple instances of VS Code + Claude Code, each in its own sandbox environment that can be wired together for collaboration.
 

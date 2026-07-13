@@ -16,13 +16,15 @@ Each *workspace* is an isolated Docker container running its own ReAct loop codi
 
 - **HTTP API** — call any workspace's agent externally with a per-workspace API key
 
+- **Scheduled triggers** — run a workspace agent on a recurring schedule
+
 - **Live console** — shell output and file changes stream to the UI in real time
 
 - **Per-workspace secrets** — give each workspace its own third-party API keys; a credential proxy injects the real values into outbound requests so the keys never reach the agent or its container
 
-- **Agent network** — connect workspaces in a graph; agents discover and call each other to build multi-agent workflows
+- **Agent network** — connect specialist workspaces so one agent can call another through defined, validated skills
 
-- **Shared drives** — shared storage space you connect to multiple workspaces from the graph user interface. Each agents can then download, or share files files through it for multi-agent collaboration requirement shared materials.
+- **Shared drives** — connect shared storage to selected workspaces so agents can exchange files and collaborate on the same materials.
 
 ## Quick start
 
@@ -42,7 +44,7 @@ For VPS deployment, see the [deploy guide](deploy/README.md).
 
 ## How it works
 
-The diagram shows the full picture: each workspace runs an isolated agent loop in its own Docker sandbox, reachable from the chat UI or an external app, with workspaces calling each other through typed contracts.
+Each workspace runs in its own Docker sandbox and can be used through the chat UI or external API. Connected workspaces can call each other through defined input/output contracts.
 
 ![Architectural representation of the main functionality](doc/images/loop.png)
 
@@ -50,7 +52,7 @@ The diagram shows the full picture: each workspace runs an isolated agent loop i
 
 Every sandboxed tool call — file ops, glob, shell, package installs — runs inside a per-workspace Docker container (`ws_<id>`) as a restricted non-root user, with only that workspace's directory mounted. Containers start on demand and stop after an idle timeout.
 
-Persistence is lightweight: workspace metadata and the network graph live as JSON under `data/`
+Workspace metadata and network configuration are stored as JSON files under `data/`.
 
 For the full architecture, see [`doc/`](doc/).
 
@@ -68,7 +70,7 @@ Workspaces can call each other. The network page connects them into a directed g
 
 Calls are **contract-first**: each workspace publishes typed *skills* (`skills/*.json`), and the platform validates the caller's input and the callee's output against the skill's schema. The callee runs in a fresh, isolated conversation. No graph edge, no call.
 
-*A newsroom fleet, the editor delegates to specialists who collaborate through one shared drive :*
+*Example: a newsroom editor agent delegates research and writing to specialist agents that share a common drive.*
 
 ![Agent Network](doc/images/NETWORK_EXAMPLE.png)
 
@@ -107,7 +109,7 @@ doc/                     Architecture docs, PRDs, ADRs
 
 ## Roadmap
 
-Automatic (size-triggered) compaction · budget monitoring · scheduled triggers · database storage and tools.
+Automatic (size-triggered) compaction · budget monitoring · database storage and tools.
 
 ## Contributing
 

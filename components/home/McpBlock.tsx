@@ -7,7 +7,6 @@ import { useState, useEffect } from "react";
 
 interface AvailableSkill {
   id: string;
-  name: string;
   description: string;
 }
 
@@ -26,12 +25,17 @@ export default function McpBlock({ wsId }: { wsId: string }) {
   const [skills, setSkills] = useState<AvailableSkill[]>([]);
   const [newSecret, setNewSecret] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [copied, setCopied] = useState(false);
   const [publicBaseUrl, setPublicBaseUrl] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     fetch(`/api/workspaces/${wsId}/mcp-config`)
-      .then((r) => r.json())
+      .then(async (r) => {
+        if (!r.ok) throw new Error("Could not load MCP settings.");
+        return r.json() as Promise<McpConfig>;
+      })
       .then((d: McpConfig) => {
         setEnabled(d.enabled);
         setHasSecret(d.hasSecret);
@@ -39,7 +43,7 @@ export default function McpBlock({ wsId }: { wsId: string }) {
         setSkills(d.availableSkills);
         setPublicBaseUrl(d.publicBaseUrl);
       })
-      .catch(() => {});
+      .catch((err: unknown) => setError(err instanceof Error ? err.message : "Could not load MCP settings."));
   }, [wsId]);
 
   const origin = publicBaseUrl ?? (typeof window !== "undefined" ? window.location.origin : "");
@@ -47,40 +51,72 @@ export default function McpBlock({ wsId }: { wsId: string }) {
 
   const toggle = async () => {
     const next = !enabled;
-    setEnabled(next);
-    await fetch(`/api/workspaces/${wsId}/mcp-config`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ enabled: next }),
-    });
+    setSaving(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/workspaces/${wsId}/mcp-config`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: next }),
+      });
+      if (!res.ok) throw new Error("Could not update MCP settings.");
+      setEnabled(next);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not update MCP settings.");
+    } finally {
+      setSaving(false);
+    }
   };
 
   const mint = async () => {
     setLoading(true);
+    setError(null);
     try {
       const res = await fetch(`/api/workspaces/${wsId}/mcp-config`, { method: "POST" });
-      const { plain } = (await res.json()) as { plain: string };
+      if (!res.ok) throw new Error("Could not generate an MCP secret.");
+      const { plain } = (await res.json()) as { plain?: unknown };
+      if (typeof plain !== "string" || !plain) throw new Error("The server returned an invalid MCP secret.");
       setNewSecret(plain);
       setHasSecret(true);
       setEnabled(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not generate an MCP secret.");
     } finally {
       setLoading(false);
     }
   };
 
   const revoke = async () => {
-    await fetch(`/api/workspaces/${wsId}/mcp-config`, { method: "DELETE" });
-    setHasSecret(false);
-    setNewSecret(null);
+    setSaving(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/workspaces/${wsId}/mcp-config`, { method: "DELETE" });
+      if (!res.ok) throw new Error("Could not revoke the MCP secret.");
+      setHasSecret(false);
+      setNewSecret(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not revoke the MCP secret.");
+    } finally {
+      setSaving(false);
+    }
   };
 
   const persistSelection = async (ids: string[]) => {
-    setSelected(ids);
-    await fetch(`/api/workspaces/${wsId}/mcp-config`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ selectedSkillIds: ids }),
-    });
+    setSaving(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/workspaces/${wsId}/mcp-config`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ selectedSkillIds: ids }),
+      });
+      if (!res.ok) throw new Error("Could not update published skills.");
+      setSelected(ids);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not update published skills.");
+    } finally {
+      setSaving(false);
+    }
   };
 
   const toggleSkill = (id: string) => {
@@ -106,6 +142,7 @@ export default function McpBlock({ wsId }: { wsId: string }) {
         <button
           className={`relative w-9 h-5 rounded-[10px] border-0 cursor-pointer transition-colors duration-200 p-0 flex-shrink-0 ${enabled ? "bg-primary" : "bg-border"}`}
           onClick={toggle}
+          disabled={saving || loading}
           aria-label={enabled ? "Disable Workspace MCP" : "Enable Workspace MCP"}
         >
           <span
@@ -113,6 +150,8 @@ export default function McpBlock({ wsId }: { wsId: string }) {
           />
         </button>
       </div>
+
+      {error && <p className="m-0 text-xs text-danger" role="alert">{error}</p>}
 
       {enabled && (
         <>
@@ -145,6 +184,7 @@ export default function McpBlock({ wsId }: { wsId: string }) {
                     className="mt-0.5"
                     checked={selected.includes(s.id)}
                     onChange={() => toggleSkill(s.id)}
+                    disabled={saving || loading}
                   />
                   <div className="flex flex-col min-w-0">
                     <code className="font-mono text-[12px] font-medium leading-[1.35] text-text break-all">{s.id}</code>
@@ -156,15 +196,15 @@ export default function McpBlock({ wsId }: { wsId: string }) {
           </div>
 
           {!hasSecret && !newSecret && (
-            <button className="btn btn-sm self-start" onClick={mint} disabled={loading}>
+            <button className="btn btn-sm self-start" onClick={mint} disabled={loading || saving}>
               {loading ? "Generating…" : "Generate secret"}
             </button>
           )}
 
           {hasSecret && !newSecret && (
             <div className="flex items-center gap-2.5">
-              <button className="linkbtn" onClick={mint} disabled={loading}>Rotate</button>
-              <button className="linkbtn text-danger" onClick={revoke}>Revoke</button>
+              <button className="linkbtn" onClick={mint} disabled={loading || saving}>Rotate</button>
+              <button className="linkbtn text-danger" onClick={revoke} disabled={saving || loading}>Revoke</button>
             </div>
           )}
 

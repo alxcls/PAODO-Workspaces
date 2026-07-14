@@ -17,6 +17,15 @@ async function guard(req: NextRequest, id: string): Promise<Workspace | Response
   return requireWorkspace(id);
 }
 
+async function jsonBody(req: NextRequest): Promise<Record<string, unknown> | null> {
+  try {
+    const body: unknown = await req.json();
+    return body && typeof body === "object" && !Array.isArray(body) ? body as Record<string, unknown> : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const ws = await guard(req, id);
@@ -38,7 +47,8 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   const ws = await guard(req, id);
   if (ws instanceof Response) return ws;
 
-  const { enabled } = (await req.json()) as { enabled?: unknown };
+  const body = await jsonBody(req);
+  const enabled = body?.enabled;
   if (typeof enabled !== "boolean") {
     return NextResponse.json({ error: "enabled must be a boolean" }, { status: 400 });
   }
@@ -69,7 +79,8 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
   const ws = await guard(req, id);
   if (ws instanceof Response) return ws;
 
-  const { selectedSkillIds } = (await req.json()) as { selectedSkillIds?: unknown };
+  const body = await jsonBody(req);
+  const selectedSkillIds = body?.selectedSkillIds;
   if (!Array.isArray(selectedSkillIds) || !selectedSkillIds.every((s) => typeof s === "string")) {
     return NextResponse.json({ error: "selectedSkillIds must be an array of strings" }, { status: 400 });
   }

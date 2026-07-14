@@ -46,6 +46,14 @@ When asked to do multiple things (e.g. "do these 4 tasks"):
 - Only stop and address the user when genuinely blocked: missing information, an ambiguous requirement, or a destructive action whose intent is unclear.
 - On long jobs, call \`compact_context\` to avoid context bloat, always passing the \`next_step\`. Pick the level by what has grown: \`light\` (lossless — drops bulky re-derivable tool output) as your default between units; \`medium\` when the discussion itself has grown long but you still need the recent turns; \`hard\` at a clean boundary where nothing earlier is needed.
 
+# Authoring Skills
+When creating or editing \`.skills/*.json\`, design practical JSON Schema contracts for agent-to-agent use.
+- Prefer domain-specific structured fields for information the caller already knows, such as identifiers, filters, actions, and limits. Use a free-text \`request\` or \`query\` only for genuinely open-ended intent; when structured fields cover normal calls, make the free-text field optional.
+- Express real, stable constraints with JSON Schema keywords: use \`enum\` for genuinely closed value sets, \`format\` for standard values such as email or URI, and length or numeric bounds only when they reflect a real rule.
+- Keep objects open by default. Do not add \`additionalProperties: false\` unless rejecting unknown fields is important for this skill's correctness, safety, or explicitly versioned contract.
+- Include input and output schemas, mark only truly required fields as required, keep descriptions concise, and include examples that validate. Prefer structured output records to prose blobs.
+- Do not invent constraints merely to make a schema look strict; the schema must match the skill's actual behaviour.
+
 # Executing Actions with Care
 Carefully consider the reversibility of actions:
 - Safe read-only actions (reading, searching, listing, git status): execute immediately.
@@ -73,8 +81,9 @@ export function buildStructuredResponderBlock(skill: SkillDefinition): string {
 You are answering a structured skill call ("${skill.id}"). Treat the args above as your task.
 Your FINAL message must be exactly one JSON object matching this output schema — no prose before or after, no markdown fences:
 ${JSON.stringify(skill.output, null, 2)}
-Every field declared in the schema must be present with the correct type. Extra fields are allowed.
-If the args are insufficient or unresolvable (e.g. an id that does not exist in your data), do NOT guess — reply instead with exactly {"${NEEDS_INPUT_KEY}": "<one specific question or correction the caller needs>"}. Investigate first: only ask after your own data could not resolve the args. If the schema itself can express the negative result (e.g. a not-found field), prefer answering with the schema.`;
+Every field listed in the output schema's \`required\` array must be present. Every field you include must have the correct type. Extra fields are allowed.
+If a required detail is missing or an entity cannot be resolved after checking available data, reply instead with exactly {"${NEEDS_INPUT_KEY}": "<one specific question or correction the caller needs>"}.
+Otherwise, return a normal response matching the output schema. Use the normal response for valid empty, no-match, or negative results when the schema can represent them.`;
 }
 
 // Pure prompt construction: callers gather the per-workspace pieces (AGENTS.md, drives, callee
@@ -82,7 +91,7 @@ If the args are insufficient or unresolvable (e.g. an id that does not exist in 
 // bag rather than positional optionals means no call site can silently drop a piece, and any new
 // field added to WorkspacePromptInputs flows here automatically. Does no filesystem I/O of its own.
 export function buildSystemPrompt(workspaceDir: string, promptConfig: PromptConfig, inputs: WorkspacePromptInputs = {}): SystemMessage {
-  const { agentsContent, drivesInfo, calleeInfo, secretsInfo, backgroundTasksInfo } = inputs;
+  const { agentsContent, drivesInfo, secretsInfo, backgroundTasksInfo } = inputs;
   const date = new Date().toDateString();
 
   const agentsSection = agentsContent?.trim() ?? "";
@@ -95,8 +104,8 @@ ${agentsSection}
 `
     : "";
 
-  // Platform guidance (callee, drives, secrets) leads; the user's AGENTS.md follows and is authoritative.
-  const dynamicContext = `${calleeInfo ? calleeInfo + "\n\n" : ""}${drivesInfo ? drivesInfo + "\n\n" : ""}${secretsInfo ? secretsInfo + "\n\n" : ""}${backgroundTasksInfo ? backgroundTasksInfo + "\n\n" : ""}${agentsBlock}Workspace name: ${path.basename(workspaceDir)} — your working directory inside the container is /workspace
+  // Platform guidance (drives, secrets) leads; the user's AGENTS.md follows and is authoritative.
+  const dynamicContext = `${drivesInfo ? drivesInfo + "\n\n" : ""}${secretsInfo ? secretsInfo + "\n\n" : ""}${backgroundTasksInfo ? backgroundTasksInfo + "\n\n" : ""}${agentsBlock}Workspace name: ${path.basename(workspaceDir)} — your working directory inside the container is /workspace
 Today's date: ${date}`;
 
   return new SystemMessage({

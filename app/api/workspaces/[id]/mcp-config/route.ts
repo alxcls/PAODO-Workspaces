@@ -25,7 +25,6 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   const { enabled, secretHash, selectedSkillIds } = getState(id);
   const availableSkills = (await loadSkills(ws.dir)).map((s) => ({
     id: s.id,
-    name: s.name,
     description: s.description,
   }));
   const publicBaseUrl = process.env.WORKSPACE_API_DOMAIN?.trim()

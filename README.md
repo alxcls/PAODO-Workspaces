@@ -68,7 +68,7 @@ The agent runs a ReAct loop with the following tools:
 
 Workspaces can call each other. The network page connects them into a directed graph; an edge **A → B** lets A's agent invoke B's. Agents find their neighbors with `list_agents` and call them with `call_agent`.
 
-Calls are **contract-first**: each workspace publishes typed *skills* (`skills/*.json`), and the platform validates the caller's input and the callee's output against the skill's schema. The callee runs in a fresh, isolated conversation. No graph edge, no call.
+Calls are **contract-first**: each workspace publishes typed *skills* (`.skills/*.json`), and the platform validates the caller's input and the callee's output against the skill's schema. The callee runs in a fresh, isolated conversation. No graph edge, no call.
 
 *Example: a newsroom editor agent delegates research and writing to specialist agents that share a common drive.*
 

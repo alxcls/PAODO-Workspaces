@@ -30,7 +30,8 @@ const COMPACT_AT = MAX_RECORDS * 1.5;
 // Outcome of a tool call, decided at the source (the runner) and persisted so the dashboard
 // can render it without re-parsing output. "needs_input" is the A2A non-terminal retry state.
 export type ToolStatus = "ok" | "error" | "needs_input";
-export type SessionOrigin = "manual" | "scheduled";
+/** How this agent run was initiated. `manual` is retained to render historical records. */
+export type SessionOrigin = "chat" | "api" | "mcp" | "scheduled" | "agent" | "manual";
 
 export interface ToolCallRecord {
   name: string;
@@ -48,7 +49,7 @@ export interface TurnRecord {
   conversationId?: string;
   workspaceId: string;
   workspaceName: string;
-  /** Session origin shown in the dashboard list: scheduled automation vs manual/user-initiated. */
+  /** Session origin shown in the dashboard list. */
   origin?: SessionOrigin;
   timestamp: string;
   /** The user message that started this session — set only on the session's first turn. */

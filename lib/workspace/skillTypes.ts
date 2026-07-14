@@ -1,6 +1,6 @@
 // Types for a workspace skill definition — one JSON file per skill under
-// data/<workspace-name>/skills/. A skill is a named action with a typed input
-// (`parameters`) and a typed output (`output`), both expressed as JSON Schema.
+// data/<workspace-name>/.skills/. A skill is a named action with a typed input
+// (`input`) and a typed output (`output`), both expressed as JSON Schema.
 // The platform enforces both sides of the contract in executeSkill.
 
 /** Loose JSON Schema shape — we validate with ajv at runtime, not at the type level. */
@@ -8,6 +8,8 @@ export interface SkillSchema {
   type?: string;
   properties?: Record<string, SkillSchemaProperty>;
   required?: string[];
+  /** JSON Schema annotation: representative valid values, shown during skill discovery. */
+  examples?: unknown[];
   [key: string]: unknown;
 }
 
@@ -19,13 +21,11 @@ export interface SkillSchemaProperty {
 }
 
 export interface SkillDefinition {
-  /** Stable machine key referenced as `action` in call_agent. */
+  /** Stable, human-readable key referenced as `action` in call_agent and as the MCP tool name. */
   id: string;
-  /** Human label. */
-  name: string;
   description: string;
   /** JSON Schema for the input args — validated before the callee runs. */
-  parameters: SkillSchema;
+  input: SkillSchema;
   /** JSON Schema for the response — validated before the caller sees the result. */
   output: SkillSchema;
 }

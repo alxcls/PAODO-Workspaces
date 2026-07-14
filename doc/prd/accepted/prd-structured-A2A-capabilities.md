@@ -76,7 +76,7 @@ is wired correctly.
 ### Must have
 
 - **Skills as workspace files** — each skill is one file in the workspace's
-  `skills/` folder, stating its name, a description, the inputs it needs
+  `.skills/` folder, stating its id, a description, the inputs it needs
   (required vs optional), and the answer format it promises. New workspaces are
   created with an example template to copy from.
 - **Discovery** — the calling agent's list of connected agents shows each

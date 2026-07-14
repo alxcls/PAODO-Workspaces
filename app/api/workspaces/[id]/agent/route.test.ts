@@ -74,6 +74,7 @@ describe("POST /api/workspaces/[id]/agent — Bearer key auth & per-workspace sc
     expect(h.startRun).toHaveBeenCalledWith(expect.objectContaining({
       conversationId: "conv-created",
       userInput: "hi",
+      origin: "api",
     }));
   });
 

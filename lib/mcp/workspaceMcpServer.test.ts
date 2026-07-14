@@ -3,21 +3,20 @@
 // skills are invisible and uncallable) and the completed/failed → MCP-result mapping.
 
 import { describe, it, expect, vi } from "vitest";
-import { listWorkspaceMcpTools, callWorkspaceMcpTool, type WorkspaceMcpDeps } from "./workspaceMcpServer";
+import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
+import { buildWorkspaceMcpServer, listWorkspaceMcpTools, callWorkspaceMcpTool, type WorkspaceMcpDeps } from "./workspaceMcpServer";
 import type { SkillDefinition } from "../workspace/skillTypes";
 
 const CHECK_STOCK: SkillDefinition = {
   id: "check_stock",
-  name: "Check Stock",
   description: "Returns inventory level",
-  parameters: { type: "object", properties: { sku: { type: "string" } }, required: ["sku"] },
+  input: { type: "object", properties: { sku: { type: "string" } }, required: ["sku"] },
   output: { type: "object", properties: { in_stock: { type: "boolean" } } },
 };
 const PLACE_ORDER: SkillDefinition = {
   id: "place_order",
-  name: "Place Order",
   description: "",
-  parameters: { type: "object", properties: { sku: { type: "string" } } },
+  input: { type: "object", properties: { sku: { type: "string" } } },
   output: { type: "object", properties: { ok: { type: "boolean" } } },
 };
 
@@ -31,15 +30,14 @@ function deps(selected: string[], over: Partial<WorkspaceMcpDeps> = {}): Workspa
 }
 
 describe("listWorkspaceMcpTools", () => {
-  it("lists only selected skills, mapping id→name, name→title, and both schemas", async () => {
+  it("lists only selected skills, mapping id to the MCP tool name and preserving both schemas", async () => {
     const tools = await listWorkspaceMcpTools("ws1", deps(["check_stock"]));
     expect(tools).toHaveLength(1);
     expect(tools[0]).toMatchObject({
       name: "check_stock",
-      title: "Check Stock",
       description: "Returns inventory level",
     });
-    expect(tools[0].inputSchema).toEqual(CHECK_STOCK.parameters);
+    expect(tools[0].inputSchema).toEqual(CHECK_STOCK.input);
     expect(tools[0].outputSchema).toEqual(CHECK_STOCK.output);
   });
 
@@ -71,6 +69,9 @@ describe("callWorkspaceMcpTool", () => {
     expect(res.isError).toBeFalsy();
     expect(res.structuredContent).toEqual({ in_stock: true });
     expect(res.content[0]).toEqual({ type: "text", text: JSON.stringify({ in_stock: true }) });
+    expect(executeSkillFn).toHaveBeenCalledWith(
+      "ws1", "mcp:ws1", "check_stock", { sku: "x" }, expect.objectContaining({ origin: "mcp" }),
+    );
   });
 
   it("surfaces a failed skill result (incl. NEEDS_INPUT) as an MCP tool error with the code", async () => {
@@ -78,5 +79,35 @@ describe("callWorkspaceMcpTool", () => {
     const res = await callWorkspaceMcpTool("ws1", "check_stock", { sku: "x" }, deps(["check_stock"], { executeSkillFn: executeSkillFn as never }));
     expect(res.isError).toBe(true);
     expect(res.content[0]).toMatchObject({ type: "text", text: "[NEEDS_INPUT] which warehouse?" });
+  });
+
+  it("returns a tool error when skill execution throws instead of dropping the MCP response", async () => {
+    const executeSkillFn = vi.fn(async () => { throw new Error("directory lookup failed"); });
+    const res = await callWorkspaceMcpTool("ws1", "check_stock", { sku: "x" }, deps(["check_stock"], { executeSkillFn: executeSkillFn as never }));
+    expect(res).toEqual({ isError: true, content: [{ type: "text", text: "[EXECUTION_ERROR] The skill could not be completed." }] });
+  });
+
+  it("serializes an execution exception as a JSON-RPC tool result", async () => {
+    const server = buildWorkspaceMcpServer("ws1", deps(["check_stock"], {
+      executeSkillFn: (async () => { throw new Error("directory lookup failed"); }) as never,
+    }));
+    const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
+    await server.connect(transport);
+    try {
+      const response = await transport.handleRequest(new Request("http://localhost/mcp", {
+        method: "POST",
+        headers: { "content-type": "application/json", accept: "application/json, text/event-stream" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 42, method: "tools/call", params: { name: "check_stock", arguments: { sku: "x" } } }),
+      }));
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({
+        jsonrpc: "2.0",
+        id: 42,
+        result: { isError: true, content: [{ type: "text", text: "[EXECUTION_ERROR] The skill could not be completed." }] },
+      });
+    } finally {
+      await transport.close();
+      await server.close();
+    }
   });
 });

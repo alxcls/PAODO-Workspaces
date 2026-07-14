@@ -32,5 +32,5 @@ export async function POST(req: NextRequest) {
     return new Response("Unauthorized", { status: 401 });
   }
 
-  return makeAgentStream(ws, body.message!.trim(), log, { store: getStore(), containers: getContainers() });
+  return makeAgentStream(ws, body.message!.trim(), log, { store: getStore(), containers: getContainers(), origin: "api" });
 }

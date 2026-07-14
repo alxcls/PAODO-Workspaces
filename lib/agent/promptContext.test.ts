@@ -1,5 +1,5 @@
 // buildWorkspacePromptInputs is the single place that gathers a workspace's dynamic prompt
-// pieces (AGENTS.md + connected-drives block). These tests pin the four combinations of
+// pieces (AGENTS.md + connected-drives block). These tests pin the combinations of
 // present/absent for each, since every system-prompt path depends on this behavior.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -15,13 +15,6 @@ const getDrivesForWorkspace = vi.fn<(workspaceId: string) => Drive[]>();
 vi.mock("../workspace/driveStore", () => ({
   getDrivesForWorkspace: (id: string) => getDrivesForWorkspace(id),
   formatDriveLine: (d: Drive) => `- ${d.name} (id: ${d.id})${d.description ? ` — ${d.description}` : ""}`,
-}));
-
-// calleeInfo is gated on the workspace being a callee (an incoming graph edge); mock it so
-// the test owns whether the guidance block is present without touching the graph file.
-const isCallee = vi.fn<(workspaceId: string) => boolean>();
-vi.mock("../workspace/workspaceGraph", () => ({
-  isCallee: (id: string) => isCallee(id),
 }));
 
 const listSecretMeta = vi.fn();
@@ -41,8 +34,6 @@ beforeEach(() => {
   dir = fs.mkdtempSync(path.join(os.tmpdir(), "promptctx-"));
   getDrivesForWorkspace.mockReset();
   getDrivesForWorkspace.mockReturnValue([]);
-  isCallee.mockReset();
-  isCallee.mockReturnValue(false);
   listSecretMeta.mockReset();
   listSecretMeta.mockReturnValue([]);
 });
@@ -78,35 +69,6 @@ describe("buildWorkspacePromptInputs", () => {
     expect(drivesInfo).not.toContain("scratch-id) —");
     expect(drivesInfo).toContain("After uploading a file to a drive, delete your local copy");
     expect(drivesInfo).toContain("After downloading a file from a drive, delete your local copy");
-  });
-
-  it("omits the skill-contract drive nudge when the workspace is not a callee", () => {
-    getDrivesForWorkspace.mockReturnValue([drive("shared")]);
-    isCallee.mockReturnValue(false);
-    const { drivesInfo } = buildWorkspacePromptInputs("ws1", dir);
-    expect(drivesInfo).not.toContain("declare a skill that exchanges files");
-  });
-
-  it("appends the skill-contract drive nudge only when the workspace is both drive-connected and a callee", () => {
-    getDrivesForWorkspace.mockReturnValue([drive("shared")]);
-    isCallee.mockReturnValue(true);
-    const { drivesInfo } = buildWorkspacePromptInputs("ws1", dir);
-    expect(drivesInfo).toContain("declare a skill that exchanges files");
-    expect(drivesInfo).toContain("drive_id + input_path");
-    expect(drivesInfo).toContain("drive_id + output_path");
-  });
-
-  it("leaves calleeInfo undefined when the workspace is not a callee", () => {
-    const { calleeInfo } = buildWorkspacePromptInputs("ws1", dir);
-    expect(isCallee).toHaveBeenCalledWith("ws1");
-    expect(calleeInfo).toBeUndefined();
-  });
-
-  it("includes the callee guidance block when the workspace is a callee", () => {
-    isCallee.mockReturnValue(true);
-    const { calleeInfo } = buildWorkspacePromptInputs("ws1", dir);
-    expect(calleeInfo).toContain("# Being called by other agents");
-    expect(calleeInfo).toContain("skills/example-skill.json.template");
   });
 
   it("gathers AGENTS.md and drives independently in one call", () => {

@@ -93,7 +93,7 @@ describe("scheduler tick", () => {
     scheduler._tick();
     expect(h.createConversation).toHaveBeenCalledWith("w1", { kind: "scheduled" });
     expect(h.startRun).toHaveBeenCalledTimes(1);
-    expect(h.startRun.mock.calls[0][0]).toMatchObject({ workspaceId: "w1", userInput: "do the thing" });
+    expect(h.startRun.mock.calls[0][0]).toMatchObject({ workspaceId: "w1", userInput: "do the thing", origin: "scheduled" });
 
     // Run still in flight -> a second tick must be a no-op (reentrancy guard).
     scheduler._tick();

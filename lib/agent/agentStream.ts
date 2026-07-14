@@ -9,6 +9,7 @@ import { runAgent } from "./runner";
 import type { AgentEvent, AgentRuntimeDeps } from "./runner";
 import type { Workspace } from "../workspace/workspaceStore";
 import { recordTurnUsage } from "../workspace/usageStore";
+import type { SessionOrigin } from "../workspace/usageStore";
 
 const SSE_HEADERS = {
   "Content-Type": "text/event-stream",
@@ -23,6 +24,7 @@ type AgentStreamDeps = AgentRuntimeDeps & {
   sessionId?: string;
   workspaceId?: string;
   workspaceName?: string;
+  origin?: SessionOrigin;
 };
 
 // Maps an AgentEvent to an SSE payload object, or null if the event only updates state.
@@ -39,6 +41,9 @@ function toSsePayload(event: AgentEvent, state: SseState): object | null {
 }
 
 export function makeAgentStream(ws: Workspace, message: string, log: Logger, deps: AgentStreamDeps = {}): Response {
+  // The legacy /api/agent endpoint has no persisted conversation but must still be visible in
+  // usage. Allocate its run identity here; callers can override it for tests or integrations.
+  const sessionId = deps.sessionId ?? crypto.randomUUID();
   const encoder = new TextEncoder();
   const stream = new ReadableStream({
     async start(controller) {
@@ -50,12 +55,15 @@ export function makeAgentStream(ws: Workspace, message: string, log: Logger, dep
         const isolatedMessages = [buildSystemPrompt(ws.dir, buildPromptConfig(loadAgentConfig(ws.id)), inputs)];
         for await (const event of runAgent(isolatedMessages, message, ws.dir, ws.id, { maxIterations: ws.maxIterations, ...deps })) {
           if (event.type === "turn_usage") {
-            if (deps.sessionId && deps.workspaceId && deps.workspaceName) {
-              recordTurnUsage(
-                { sessionId: deps.sessionId, workspaceId: deps.workspaceId, workspaceName: deps.workspaceName, origin: "manual" },
-                event,
-              );
-            }
+            recordTurnUsage(
+              {
+                sessionId,
+                workspaceId: deps.workspaceId ?? ws.id,
+                workspaceName: deps.workspaceName ?? ws.name,
+                origin: deps.origin ?? "api",
+              },
+              event,
+            );
             continue;
           }
           if (event.type === "done") {

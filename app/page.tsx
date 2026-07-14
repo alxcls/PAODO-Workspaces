@@ -166,16 +166,16 @@ export default function HomePage() {
 
       <div className="flex flex-1 min-h-0 bg-bg">
         {/* Sidebar */}
-        <aside className="w-[260px] flex-none bg-bg-tint border-r border-border p-[20px_16px_24px] flex flex-col gap-3">
+        <aside className="w-[260px] flex-none min-h-0 h-full overflow-hidden bg-bg-tint border-r border-border p-[20px_16px_24px] flex flex-col gap-3">
           <button
-            className={"btn btn-primary btn-block" + (showCreateForm ? " is-active" : "")}
+            className={"btn btn-primary btn-block flex-none" + (showCreateForm ? " is-active" : "")}
             onClick={() => setShowCreateForm(true)}
           >
             <span className="font-semibold">+</span> New workspace
           </button>
 
           {showCreateForm && (
-            <div className="bg-white border border-border rounded-card p-2.5 flex flex-col gap-2 shadow-sm" onClick={(e) => e.stopPropagation()}>
+            <div className="flex-none bg-white border border-border rounded-card p-2.5 flex flex-col gap-2 shadow-sm" onClick={(e) => e.stopPropagation()}>
               <input
                 autoFocus className="input" placeholder="Workspace name"
                 value={newName} onChange={(e) => setNewName(e.target.value)}
@@ -193,15 +193,15 @@ export default function HomePage() {
             </div>
           )}
 
-          <div className="mt-2 text-2xs font-semibold text-text-3 tracking-[.08em] px-1.5 uppercase">Workspaces</div>
-          <div className="flex flex-col gap-0.5">
+          <div className="flex-none mt-2 text-2xs font-semibold text-text-3 tracking-[.08em] px-1.5 uppercase">Workspaces</div>
+          <div className="workspace-list h-0 flex-1 min-h-0 overflow-y-scroll overscroll-contain flex flex-col gap-1 mr-[-16px] pr-2">
             {workspaces.length === 0 && (
-              <div className="text-text-3 text-ms p-[8px_6px]">No workspaces yet</div>
+              <div className="flex-none text-text-3 text-ms p-[8px_6px]">No workspaces yet</div>
             )}
             {workspaces.map((w) => (
               <button
                 key={w.id}
-                className={`flex items-center justify-between px-2.5 py-[7px] border-0 border-l-[3px] bg-transparent rounded-[4px] cursor-pointer text-left text-sm w-full transition-[background,border-color,color] duration-[120ms] overflow-hidden
+                className={`flex-none flex items-center justify-between min-h-[34px] px-2.5 py-[7px] border-0 border-l-[3px] bg-transparent rounded-[4px] cursor-pointer text-left text-sm w-full transition-[background,border-color,color] duration-[120ms] overflow-hidden
                   ${w.id === selectedId
                     ? "bg-primary-tint border-l-primary text-primary font-medium"
                     : "border-l-transparent text-text hover:bg-black/[.04]"

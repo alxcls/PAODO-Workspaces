@@ -3,8 +3,8 @@
 //
 // Order on every call (a rejection at any pre-run step returns `failed` without running):
 //   1. authorize      — workspaceGraph.canCall(callerId, calleeId)        → NOT_CONNECTED
-//   2. skill lookup   — `skillId` must match a skill id in skills/        → SKILL_NOT_FOUND
-//   3. input check    — args validated against `parameters` (ajv)         → INPUT_VALIDATION_ERROR
+//   2. skill lookup   — `skillId` must match a skill id in .skills/       → SKILL_NOT_FOUND
+//   3. input check    — args validated against `input` (ajv)              → INPUT_VALIDATION_ERROR
 //   4. run callee     — fresh isolated runner with the structured-responder instruction
 //   5. output check   — final message parsed + validated against `output`; on failure the
 //      validation error is fed back into the SAME callee conversation and re-run, up to
@@ -18,7 +18,7 @@ import { canCall } from "../../workspace/workspaceGraph";
 import { loadSkills } from "../../workspace/skillStore";
 import { createConversation, getMessages, persist } from "../../workspace/conversationStore";
 import { setSystemPrompt } from "../messageSerialization";
-import { appendUsage, recordTurnUsage } from "../../workspace/usageStore";
+import { appendUsage, recordTurnUsage, type SessionOrigin } from "../../workspace/usageStore";
 import { NEEDS_INPUT_KEY, type SkillCallResult, type SkillSchema } from "../../workspace/skillTypes";
 import type { IWorkspaceStore, IContainerManager } from "../../infra/interfaces";
 import { buildSystemPrompt, buildPromptConfig, buildStructuredResponderBlock } from "../systemPrompt";
@@ -33,6 +33,8 @@ const log = createLogger("executeSkill");
 
 export interface ExecuteSkillOptions {
   signal?: AbortSignal;
+  /** Provenance for the callee's usage session. Direct agent calls default to `agent`. */
+  origin?: SessionOrigin;
   store?: IWorkspaceStore;
   containers?: IContainerManager;
   /** Test seams — production uses the real graph, skill store, runner, and conversation store. */
@@ -71,16 +73,6 @@ function compileSchema(schema: SkillSchema): ValidateFunction | { compileError: 
   } catch (err) {
     return { compileError: err instanceof Error ? err.message : String(err) };
   }
-}
-
-// Non-strict contract, both sides: extra fields pass, declared fields must be present and
-// correctly typed. For `parameters` the author's `required` array is respected as written
-// (the skill template marks optionality explicitly, e.g. `format?`). For `output`, a schema
-// with no `required` treats every declared property as required — "missing declared fields
-// fail" — since the declared shape IS the response contract.
-function withDerivedRequired(schema: SkillSchema): SkillSchema {
-  if (schema.required || !schema.properties || (schema.type ?? "object") !== "object") return schema;
-  return { ...schema, required: Object.keys(schema.properties) };
 }
 
 // Strips an accidental ```json fence and parses the callee's final message.
@@ -130,7 +122,7 @@ async function runCalleeTurn(
     if (event.type === "token") text += event.content;
     if (event.type === "error") return { error: event.message };
     if (event.type === "turn_usage") {
-      recordTurnUsage({ sessionId, conversationId, workspaceId: callee.id, workspaceName: callee.name, origin: "manual" }, event, recordUsage);
+      recordTurnUsage({ sessionId, conversationId, workspaceId: callee.id, workspaceName: callee.name, origin: opts.origin ?? "agent" }, event, recordUsage);
     }
   }
   return { text };
@@ -159,7 +151,7 @@ export async function executeSkill(
     return { state: "failed", code: "EXECUTION_ERROR", message: `workspace "${calleeId}" not found.` };
   }
 
-  // 2. Skill lookup — read from skills/ at call time; a workspace with no skills/ is not callable.
+  // 2. Skill lookup — read from .skills/ at call time; a workspace with no .skills/ is not callable.
   const skills = await (opts.loadSkillsFn ?? loadSkills)(callee.dir);
   const skill = skills.find((s) => s.id === skillId);
   if (!skill) {
@@ -170,15 +162,18 @@ export async function executeSkill(
   // 3. Input validation. A schema that fails to COMPILE is the callee author's bug, not the
   // caller's — report it as EXECUTION_ERROR so the caller isn't blamed (INPUT_VALIDATION_ERROR
   // counts as an input-failure strike in AgentCallTool, and retrying can't fix a broken file).
-  const validateInput = compileSchema(skill.parameters);
+  const validateInput = compileSchema(skill.input);
   if ("compileError" in validateInput) {
-    return { state: "failed", code: "EXECUTION_ERROR", message: `skill "${skillId}" has a broken parameters schema (the skill file needs fixing): ${validateInput.compileError}` };
+    return { state: "failed", code: "EXECUTION_ERROR", message: `skill "${skillId}" has a broken input schema (the skill file needs fixing): ${validateInput.compileError}` };
   }
   if (!validateInput(args)) {
     return { state: "failed", code: "INPUT_VALIDATION_ERROR", message: `Invalid args for ${skillId}: ${formatAjvErrors(validateInput.errors)}.` };
   }
 
-  const validateOutput = compileSchema(withDerivedRequired(skill.output));
+  // Use the author's JSON Schema unchanged. In particular, output properties are optional
+  // unless the schema explicitly lists them in `required`, just as they are for inputs and
+  // as MCP clients discover them.
+  const validateOutput = compileSchema(skill.output);
   if ("compileError" in validateOutput) {
     return { state: "failed", code: "EXECUTION_ERROR", message: `skill "${skillId}" has a broken output schema (the skill file needs fixing): ${validateOutput.compileError}` };
   }
@@ -204,9 +199,16 @@ export async function executeSkill(
   const messages = (opts.getMessagesFn ?? getMessages)(callee.id, conv.id) ?? ([] as BaseMessage[]);
   setSystemPrompt(messages, buildSystemPrompt(callee.dir, buildPromptConfig(config), inputs));
 
-  const firstInput = `${caller ? `[From: ${caller.name}] ` : ""}Skill call: ${skill.id}${skill.name !== skill.id ? ` (${skill.name})` : ""}
-Args:
-${JSON.stringify(args, null, 2)}
+  // Keep the call metadata and arguments in one machine-readable envelope. This is a normal
+  // user message to the callee agent, but JSON makes the protocol boundary clear when reviewing
+  // a skill-call conversation and avoids mixing routing metadata into prose.
+  const callEnvelope = {
+    ...(caller ? { caller: { workspaceId: caller.id, workspaceName: caller.name } } : {}),
+    skill: { id: skill.id },
+    args,
+  };
+  const firstInput = `# Skill call
+${JSON.stringify(callEnvelope, null, 2)}
 
 ${buildStructuredResponderBlock(skill)}`;
 

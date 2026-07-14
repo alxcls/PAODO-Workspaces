@@ -1,7 +1,7 @@
-// Reads skill definitions from a workspace's skills/ directory.
+// Reads skill definitions from a workspace's .skills/ directory.
 // The skill list is never a stored artifact — it is read from disk at call time
 // by list_agents and executeSkill, so agent-written files (via file_write into the
-// bind-mounted /workspace/skills/) are picked up with no extra plumbing.
+// bind-mounted /workspace/.skills/) are picked up with no extra plumbing.
 import fsAsync from "fs/promises";
 import path from "path";
 import { createLogger } from "../infra/logger";
@@ -9,12 +9,13 @@ import type { SkillDefinition } from "./skillTypes";
 
 const log = createLogger("skillStore");
 
-export const SKILLS_DIR = "skills";
+/** Hidden workspace metadata directory holding the workspace's public A2A/MCP contracts. */
+export const SKILLS_DIR = ".skills";
 
 // A skill `id` doubles as the tool name when the workspace is exposed over MCP, where tool names
 // must match `^[a-zA-Z0-9_-]+$`. We enforce that charset (and a sane length cap) uniformly here so
-// an id that is illegal as an MCP tool name is illegal as a skill id everywhere — the human-facing
-// label lives in `name`, which is unconstrained.
+// an id that is illegal as an MCP tool name is illegal as a skill id everywhere. It is deliberately
+// the skill's only name, so authors should make it concise and human-readable too.
 export const SKILL_ID_RE = /^[a-zA-Z0-9_-]{1,64}$/;
 
 function isRecord(v: unknown): v is Record<string, unknown> {
@@ -26,36 +27,35 @@ function isRecord(v: unknown): v is Record<string, unknown> {
 // failing the whole listing, so one malformed file can't break a workspace.
 function parseSkill(raw: unknown, file: string): SkillDefinition | null {
   if (!isRecord(raw)) return null;
-  const { id, name, description, parameters, output } = raw;
+  const { id, description, input, output } = raw;
   if (typeof id !== "string" || !id) {
     log.warn({ file }, "skill file missing string 'id' — skipped");
     return null;
   }
   if (!SKILL_ID_RE.test(id)) {
-    log.warn({ file, id }, "skill 'id' must match ^[a-zA-Z0-9_-]{1,64}$ (use 'name' for a human label) — skipped");
+    log.warn({ file, id }, "skill 'id' must match ^[a-zA-Z0-9_-]{1,64}$ and be concise and human-readable — skipped");
     return null;
   }
-  if (!isRecord(parameters) || !isRecord(output)) {
-    log.warn({ file, id }, "skill file missing 'parameters' or 'output' object — skipped");
+  if (!isRecord(input) || !isRecord(output)) {
+    log.warn({ file, id }, "skill file missing 'input' or 'output' object — skipped");
     return null;
   }
   return {
     id,
-    name: typeof name === "string" && name ? name : id,
     description: typeof description === "string" ? description : "",
-    parameters,
+    input,
     output,
   };
 }
 
-/** Reads and parses all skills/*.json in a workspace dir. Missing dir → empty list. */
+/** Reads and parses all .skills/*.json in a workspace dir. Missing dir → empty list. */
 export async function loadSkills(workspaceDir: string): Promise<SkillDefinition[]> {
   const dir = path.join(workspaceDir, SKILLS_DIR);
   let entries: string[];
   try {
     entries = await fsAsync.readdir(dir);
   } catch {
-    return []; // no skills/ directory — workspace declares no skills
+    return []; // no .skills/ directory — workspace declares no skills
   }
 
   const skills: SkillDefinition[] = [];
@@ -71,4 +71,3 @@ export async function loadSkills(workspaceDir: string): Promise<SkillDefinition[
   }
   return skills;
 }
-

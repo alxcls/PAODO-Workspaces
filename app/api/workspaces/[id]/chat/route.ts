@@ -45,6 +45,7 @@ export async function POST(
       messages,
       userInput: userMessage,
       maxIterations: ws.maxIterations,
+      origin: "chat",
     });
     if (alreadyRunning) return new Response("A run is already in progress", { status: 409 });
     conversations.setActiveId(ws.id, conversationId);

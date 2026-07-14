@@ -21,6 +21,19 @@ const methodNotAllowed = () =>
     { status: 405 },
   );
 
+async function requestId(req: Request): Promise<string | number | null> {
+  try {
+    const body: unknown = await req.json();
+    if (body && typeof body === "object" && !Array.isArray(body) && "id" in body) {
+      const id = (body as { id: unknown }).id;
+      if (typeof id === "string" || typeof id === "number" || id === null) return id;
+    }
+  } catch {
+    // An invalid or unreadable body has no usable JSON-RPC id.
+  }
+  return null;
+}
+
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
 
@@ -31,20 +44,31 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     return new Response("Unauthorized", { status: 401 });
   }
 
+  // Preserve a clone before the transport consumes the original request. If setup or transport
+  // handling itself throws, the fallback still returns a JSON-RPC error with the caller's id.
+  const requestForErrorId = req.clone();
+
   // Stateless: a fresh server+transport per request, no session id, buffered JSON response.
-  const server = buildWorkspaceMcpServer(id);
-  const transport = new WebStandardStreamableHTTPServerTransport({
-    sessionIdGenerator: undefined,
-    enableJsonResponse: true,
-  });
+  let server: ReturnType<typeof buildWorkspaceMcpServer> | undefined;
+  let transport: WebStandardStreamableHTTPServerTransport | undefined;
   try {
+    server = buildWorkspaceMcpServer(id);
+    transport = new WebStandardStreamableHTTPServerTransport({
+      sessionIdGenerator: undefined,
+      enableJsonResponse: true,
+    });
     await server.connect(transport);
     // enableJsonResponse buffers the full response before this resolves, so the exchange is
     // complete and it is safe to tear the per-request server/transport down afterward.
     return await transport.handleRequest(req);
+  } catch {
+    return Response.json(
+      { jsonrpc: "2.0", error: { code: -32603, message: "Internal error" }, id: await requestId(requestForErrorId) },
+      { status: 500 },
+    );
   } finally {
-    await transport.close().catch(() => {});
-    await server.close().catch(() => {});
+    await transport?.close().catch(() => {});
+    await server?.close().catch(() => {});
   }
 }
 

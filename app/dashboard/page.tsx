@@ -7,7 +7,7 @@ import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import TopBar from "@/components/layout/TopBar";
 import { toolLabel, toolArgSummary } from "@/lib/client/agentTranscript";
-import type { LightTurnRecord, TurnRecord, ToolStatus } from "@/lib/workspace/usageStore";
+import type { LightTurnRecord, TurnRecord, ToolStatus, SessionOrigin } from "@/lib/workspace/usageStore";
 import { computeCost } from "@/lib/workspace/modelPricing";
 
 // Tool-outcome dot: green success / red failure. From the caller's view a NEEDS_INPUT call
@@ -59,6 +59,18 @@ function formatDateTime(iso: string): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
+function originLabel(origin: SessionOrigin): string {
+  switch (origin) {
+    case "chat": return "Workspace chat";
+    case "api": return "API";
+    case "mcp": return "Workspace MCP";
+    case "scheduled": return "Scheduled";
+    case "agent": return "Agent network";
+    // Records created before explicit source tracking used `manual`.
+    case "manual": return "Workspace chat";
+  }
+}
+
 // One user message ("turn line") = one run = one sessionId, aggregated from the light per-turn
 // records. The row shows both IDs: the session id (the per-run identifier) and the conversation
 // id (linked to its conversation tab).
@@ -67,7 +79,7 @@ interface LightSession {
   conversationId?: string;
   workspaceId: string;
   workspaceName: string;
-  origin: "manual" | "scheduled";
+  origin: SessionOrigin;
   timestamp: string;
   // Distinct model ids used across the run's turns, in first-seen order. Usually one; a run that
   // switches models mid-flight lists each once.
@@ -383,7 +395,7 @@ export default function DashboardPage() {
                   <th className="text-left px-6 font-semibold align-middle">Conversation</th>
                   <th className="text-left px-6 font-semibold align-middle">Session</th>
                   <th className="text-left px-6 font-semibold align-middle">Workspace</th>
-                  <th className="text-left px-6 font-semibold align-middle">Type</th>
+                  <th className="text-left px-6 font-semibold align-middle">Channel</th>
                   <th className="text-left px-6 font-semibold align-middle">Model</th>
                   <th className="text-left px-6 font-semibold align-middle">Time</th>
                   <th className="text-right px-6 font-semibold align-middle">In ↑</th>
@@ -421,7 +433,7 @@ export default function DashboardPage() {
                     {/* Session id = the per-run identifier (plain text). */}
                     <td className="px-6 py-2.5 font-mono text-text-1">{s.sessionId.slice(0, 8)}</td>
                     <td className="px-6 py-2.5 text-text-1 font-medium">{s.workspaceName}</td>
-                    <td className="px-6 py-2.5 text-text-2">{s.origin === "scheduled" ? "Scheduled" : "Manual"}</td>
+                    <td className="px-6 py-2.5 text-text-2">{originLabel(s.origin)}</td>
                     {/* Model(s) the run's turns used. Usually one; multiple are joined. "—" when no
                         turn carried a model (records written before the field existed). */}
                     <td className="px-6 py-2.5 font-mono text-text-2 truncate" title={s.models.join(", ")}>{s.models.length ? s.models.join(", ") : "—"}</td>

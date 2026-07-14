@@ -109,6 +109,7 @@ export async function POST(
     messages,
     userInput: body.message.trim(),
     maxIterations: ws.maxIterations,
+    origin: "api",
   });
   if (alreadyRunning) return new Response("A run is already in progress", { status: 409 });
 

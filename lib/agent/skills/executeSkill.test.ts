@@ -24,15 +24,14 @@ import * as broker from "../runBroker";
 
 const SKILL: SkillDefinition = {
   id: "check-stock",
-  name: "Check Stock",
   description: "Returns inventory level",
-  parameters: {
+  input: {
     type: "object",
     properties: { sku: { type: "string" }, format: { type: "string" } },
     required: ["sku"],
   },
-  // No `required` — the declared shape IS the contract, so both fields must come back.
-  output: { type: "object", properties: { in_stock: { type: "boolean" }, quantity: { type: "number" } } },
+  // `quantity` is deliberately optional, exercising normal JSON Schema output semantics.
+  output: { type: "object", properties: { in_stock: { type: "boolean" }, quantity: { type: "number" } }, required: ["in_stock"] },
 };
 
 const CALLEE = { id: "callee-1", name: "stock-agent", dir: "/tmp/nowhere", maxIterations: 5 };
@@ -123,14 +122,14 @@ describe("executeSkill — pre-run rejections (callee must never run)", () => {
     expect(extra.state).toBe("completed");
   });
 
-  it("reports an uncompilable parameters schema as EXECUTION_ERROR, not the caller's fault", async () => {
+  it("reports an uncompilable input schema as EXECUTION_ERROR, not the caller's fault", async () => {
     // INPUT_VALIDATION_ERROR would make AgentCallTool count a strike against the caller and
     // tell it to re-read the schema — useless when the skill FILE is what's broken.
-    const broken: SkillDefinition = { ...SKILL, parameters: { type: "object", properties: { sku: { type: "not-a-type" } } } };
+    const broken: SkillDefinition = { ...SKILL, input: { type: "object", properties: { sku: { type: "not-a-type" } } } };
     const runner = fakeRunner([GOOD_OUTPUT]);
     const res = await executeSkill(CALLEE.id, CALLER.id, "check-stock", { sku: "A1" }, opts(runner, { loadSkillsFn: async () => [broken] }));
     expect(res).toMatchObject({ state: "failed", code: "EXECUTION_ERROR" });
-    expect((res as { message: string }).message).toContain("broken parameters schema");
+    expect((res as { message: string }).message).toContain("broken input schema");
     expect(runner.inputs).toHaveLength(0);
   });
 });
@@ -141,9 +140,10 @@ describe("executeSkill — callee run and output contract", () => {
     const res = await executeSkill(CALLEE.id, CALLER.id, "check-stock", { sku: "A1" }, opts(runner));
     expect(res).toEqual({ state: "completed", output: { in_stock: true, quantity: 3 }, conversationId: FAKE_CONV_ID });
     expect(runner.inputs).toHaveLength(1);
-    expect(runner.inputs[0]).toContain("[From: shop-agent]");
-    expect(runner.inputs[0]).toContain("Skill call: check-stock");
-    expect(runner.inputs[0]).toContain('"sku": "A1"');
+    expect(runner.inputs[0]).toContain("# Skill call");
+    expect(runner.inputs[0]).toContain('"workspaceName": "shop-agent"');
+    expect(runner.inputs[0]).toContain('"id": "check-stock"');
+    expect(runner.inputs[0]).toContain('"args": {\n    "sku": "A1"\n  }');
     expect(runner.inputs[0]).toContain("Structured response required");
     expect(runner.inputs[0]).toContain('"in_stock"'); // output schema is in the instruction
   });
@@ -154,15 +154,19 @@ describe("executeSkill — callee run and output contract", () => {
     expect(res.state).toBe("completed");
   });
 
-  it("allows extra output fields but fails on a missing declared field (derived required)", async () => {
+  it("allows extra output fields and omitted optional output fields", async () => {
     const extra = await executeSkill(CALLEE.id, CALLER.id, "check-stock", { sku: "A1" },
       opts(fakeRunner([JSON.stringify({ in_stock: true, quantity: 3, warehouse: "B" })])));
     expect(extra.state).toBe("completed");
 
-    const missing = await executeSkill(CALLEE.id, CALLER.id, "check-stock", { sku: "A1" },
+    const optionalOmitted = await executeSkill(CALLEE.id, CALLER.id, "check-stock", { sku: "A1" },
       opts(fakeRunner([JSON.stringify({ in_stock: true })]), { outputMaxRetries: 0 }));
-    expect(missing).toMatchObject({ state: "failed", code: "OUTPUT_VALIDATION_ERROR" });
-    expect((missing as { message: string }).message).toContain("'quantity' is required");
+    expect(optionalOmitted).toMatchObject({ state: "completed", output: { in_stock: true } });
+
+    const requiredMissing = await executeSkill(CALLEE.id, CALLER.id, "check-stock", { sku: "A1" },
+      opts(fakeRunner([JSON.stringify({ quantity: 3 })]), { outputMaxRetries: 0 }));
+    expect(requiredMissing).toMatchObject({ state: "failed", code: "OUTPUT_VALIDATION_ERROR" });
+    expect((requiredMissing as { message: string }).message).toContain("'in_stock' is required");
   });
 
   it("feeds the validation error back into the same conversation and succeeds on retry", async () => {
@@ -222,7 +226,8 @@ describe("executeSkill — callee run and output contract", () => {
     const runner = fakeRunner([GOOD_OUTPUT]);
     await executeSkill(CALLEE.id, CALLER.id, "check-stock", { sku: "A1" }, opts(runner));
     expect(runner.inputs[0]).toContain('"_needs_input"');
-    expect(runner.inputs[0]).toContain("do NOT guess");
+    expect(runner.inputs[0]).toContain("after checking available data");
+    expect(runner.inputs[0]).toContain("valid empty, no-match, or negative results");
   });
 
   it("treats a non-string or empty _needs_input as an invalid output, not a question", async () => {
@@ -260,7 +265,7 @@ describe("executeSkill — callee run and output contract", () => {
   it("persists and returns the conversation id even when output validation fails", async () => {
     const persistFn = vi.fn();
     const res = await executeSkill(CALLEE.id, CALLER.id, "check-stock", { sku: "A1" },
-      opts(fakeRunner([JSON.stringify({ in_stock: true })]), {
+      opts(fakeRunner([JSON.stringify({ quantity: 3 })]), {
         outputMaxRetries: 0,
         createConversationFn: () => ({ id: "conv-9", title: "", createdAt: "", updatedAt: "", lastMessageAt: "" }),
         getMessagesFn: () => [],

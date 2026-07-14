@@ -120,6 +120,22 @@
   }
 }
 
+/* The home sidebar owns its scrolling: fixed actions stay visible while a long
+   workspace list remains easy to browse without expanding the page. */
+.workspace-list {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border) transparent;
+}
+.workspace-list::-webkit-scrollbar { width: 8px; }
+.workspace-list::-webkit-scrollbar-track { background: transparent; }
+.workspace-list::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+  border-radius: 999px;
+}
+.workspace-list::-webkit-scrollbar-thumb:hover { background-color: var(--color-text-3); }
+
 /* ============================================================
    Resizable dividers
    ============================================================ */

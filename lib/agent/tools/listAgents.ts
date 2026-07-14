@@ -1,5 +1,5 @@
 // Tool that lists the agents reachable from this workspace via call_agent, with each
-// workspace's declared skills (read live from its skills/ directory) so the calling agent
+// workspace's declared skills (read live from its .skills/ directory) so the calling agent
 // can fill in call_agent's skill + args without guessing. A reachable workspace with no
 // skills is shown explicitly so the caller knows it exists but is not callable.
 
@@ -13,9 +13,9 @@ import type { SkillDefinition, SkillSchema } from "../../workspace/skillTypes";
 const schema = z.object({});
 
 // "check-stock(sku: string, format?: string)" — `?` marks params not in the required array.
-function formatParams(parameters: SkillSchema): string {
-  const props = parameters.properties ?? {};
-  const required = new Set(parameters.required ?? []);
+function formatInput(input: SkillSchema): string {
+  const props = input.properties ?? {};
+  const required = new Set(input.required ?? []);
   return Object.entries(props)
     .map(([name, p]) => `${name}${required.has(name) ? "" : "?"}: ${p.type ?? "any"}`)
     .join(", ");
@@ -28,14 +28,26 @@ function formatOutput(output: SkillSchema): string {
   return fields.length ? `{ ${fields.join(", ")} }` : "{}";
 }
 
+function formatExample(schema: SkillSchema): string | null {
+  if (!Array.isArray(schema.examples) || !schema.examples.length) return null;
+  return JSON.stringify(schema.examples[0]);
+}
+
 export function formatSkill(skill: SkillDefinition): string {
   const desc = skill.description ? ` — ${skill.description}` : "";
-  return `  → ${skill.id}(${formatParams(skill.parameters)})${desc}\n    returns: ${formatOutput(skill.output)}`;
+  const inputExample = formatExample(skill.input);
+  const outputExample = formatExample(skill.output);
+  return [
+    `  → ${skill.id}(${formatInput(skill.input)})${desc}`,
+    `    returns: ${formatOutput(skill.output)}`,
+    ...(inputExample ? [`    example input: ${inputExample}`] : []),
+    ...(outputExample ? [`    example output: ${outputExample}`] : []),
+  ].join("\n");
 }
 
 export class ListAgentsTool extends StructuredTool<typeof schema> {
   name = "list_agents";
-  description = "List all agents this workspace can contact via call_agent, with each agent's declared skills (skill ids, input fields, and return shape)";
+  description = "List all agents this workspace can contact via call_agent, with each agent's declared skills (skill ids, input fields, return shape, and examples when supplied)";
   schema = schema;
 
   constructor(

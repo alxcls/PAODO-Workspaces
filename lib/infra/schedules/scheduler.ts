@@ -68,6 +68,7 @@ function fire(entry: ScheduleEntry, now: Date): void {
       messages,
       userInput: entry.prompt,
       maxIterations: ws.maxIterations,
+      origin: "scheduled",
     });
     log.info({ workspaceId: ws.id, conversationId, scheduleId: entry.id }, "schedule fired");
   } catch (err) {

@@ -12,7 +12,7 @@ import type { BaseMessage } from "@langchain/core/messages";
 import { runAgent, type AgentEvent } from "./runner";
 import type { RunAgentOptions } from "./runner";
 import { getStore, getContainers, getVersioning } from "../infra/services";
-import { recordTurnUsage } from "../workspace/usageStore";
+import { recordTurnUsage, type SessionOrigin } from "../workspace/usageStore";
 import * as conversations from "../workspace/conversationStore";
 import { createLogger } from "../infra/logger";
 
@@ -49,6 +49,8 @@ export interface StartRunParams {
   messages: BaseMessage[];
   userInput: string;
   maxIterations: number;
+  /** Explicit initiation path for dashboard provenance. */
+  origin?: SessionOrigin;
   // Test seams — production defaults wire the real runner, services, usage, and persistence.
   run?: typeof runAgent;
   runOptions?: Partial<RunAgentOptions>;
@@ -78,7 +80,7 @@ export function startRun(params: StartRunParams): { alreadyRunning: boolean } {
 
   const run = params.run ?? runAgent;
   const sessionId = crypto.randomUUID();
-  const origin = conversations.getMeta(params.workspaceId, params.conversationId)?.kind === "scheduled" ? "scheduled" : "manual";
+  const origin = params.origin ?? (conversations.getMeta(params.workspaceId, params.conversationId)?.kind === "scheduled" ? "scheduled" : "chat");
   const recordUsage =
     params.onTurnUsage ??
     ((sid, event) =>

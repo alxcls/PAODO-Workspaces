@@ -34,7 +34,7 @@ function selectedSkills(workspaceId: string, deps: WorkspaceMcpDeps): Promise<Sk
   return (deps.loadSkillsFn ?? loadSkills)(dir).then((skills) => skills.filter((s) => selected.has(s.id)));
 }
 
-/** The workspace's selected skills as MCP tool descriptors (id → name, name → title, plus schemas). */
+/** The workspace's selected skills as MCP tool descriptors (id → name, plus schemas). */
 export async function listWorkspaceMcpTools(
   workspaceId: string,
   deps: WorkspaceMcpDeps = {},
@@ -42,9 +42,8 @@ export async function listWorkspaceMcpTools(
   const skills = await selectedSkills(workspaceId, deps);
   return skills.map((s) => ({
     name: s.id,
-    title: s.name,
     description: s.description || undefined,
-    inputSchema: s.parameters as Tool["inputSchema"],
+    inputSchema: s.input as Tool["inputSchema"],
     outputSchema: s.output as Tool["outputSchema"],
   }));
 }
@@ -63,15 +62,24 @@ export async function callWorkspaceMcpTool(
     return toolError(`Unknown tool "${name}".`);
   }
 
-  const exec = deps.executeSkillFn ?? executeSkill;
-  const result = await exec(workspaceId, `mcp:${workspaceId}`, name, args ?? {}, {
-    // The MCP client is not a workspace with a graph edge; the credential already authorized it, so
-    // skip the Agent-Network DAG check. NOT_CONNECTED therefore cannot occur.
-    canCallFn: () => true,
-    store: getStore(),
-    containers: getContainers(),
-    signal: AbortSignal.timeout(CALL_TIMEOUT_MS),
-  });
+  let result;
+  try {
+    const exec = deps.executeSkillFn ?? executeSkill;
+    result = await exec(workspaceId, `mcp:${workspaceId}`, name, args ?? {}, {
+      // The MCP client is not a workspace with a graph edge; the credential already authorized it, so
+      // skip the Agent-Network DAG check. NOT_CONNECTED therefore cannot occur.
+      canCallFn: () => true,
+      store: getStore(),
+      containers: getContainers(),
+      signal: AbortSignal.timeout(CALL_TIMEOUT_MS),
+      origin: "mcp",
+    });
+  } catch (err) {
+    // Never let an execution exception escape the MCP request handler: doing so can leave a
+    // Streamable-HTTP client with a closed connection and no JSON-RPC response.
+    log.error({ workspaceId, skill: name, err }, "workspace MCP skill execution threw");
+    return toolError("[EXECUTION_ERROR] The skill could not be completed.");
+  }
 
   if (result.state === "completed") {
     return {

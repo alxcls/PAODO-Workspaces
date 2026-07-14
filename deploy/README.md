@@ -1,8 +1,16 @@
-# Self-Hosting on a VPS example
+# Self-hosting PAODO on a VPS
 
-Goal: a personal PAODO Workspace instance running on a VPS, accessible only over Tailscale VPN. This example uses Debian 13 on a VPS with Tailscale VPN.
+This guide runs PAODO on Debian 13. It keeps the roles of the VPS, Tailscale,
+Cloudflare, and public DNS separate:
 
-The only hard requirements are Docker + Docker Compose, an `.env`, and a network path you trust to reach the app — it ships no public-internet hardening of its own. This guide uses Tailscale for that path, but a reverse proxy with auth, another VPN, an SSH tunnel, or a LAN-only setup works the same way. Everything Debian- and Tailscale-specific below is one reference path; adapt it freely to your host.
+| Component | Role |
+|---|---|
+| VPS | Runs Docker and PAODO. Its public IPv4 is used only when you deliberately enable the public API gateway. |
+| Tailscale | Private administrator access to the VPS (SSH) and, optionally, a private HTTPS URL for the full app. Only tailnet devices can use it. |
+| Cloudflare Tunnel + Access | Optional protected browser URL for the full app, such as `ws.example.com`. Cloudflare handles the public edge and email login. |
+| DNS provider | Creates a public API hostname, such as `api.example.com`, when you opt into the direct Caddy API gateway. This is separate from Tailscale and from a Cloudflare Tunnel hostname. |
+
+The public API gateway is optional. It exposes one Bearer-key-protected route and no UI. A normal deployment can use only Tailscale, only Cloudflare Tunnel + Access, or both.
 
 ---
 
@@ -11,10 +19,12 @@ The only hard requirements are Docker + Docker Compose, an `.env`, and a network
 - VPS running Debian 13 (Trixie)
 - [Tailscale account](https://tailscale.com) (free)
 - LLM API key (OpenAI, Anthropic, or DeepSeek)
+- Optional: a domain and DNS-provider access for a public API hostname
+- Optional: Cloudflare Tunnel + Access for an email-protected browser URL
 
 ---
 
-## Step 1 — Install Tailscale and enable Tailscale SSH
+## Step 1 — Secure VPS administration with Tailscale
 
 Connect to your VPS using the IP address and root password provided by your hosting provider:
 
@@ -124,7 +134,12 @@ The proxy runs in its **own** container, deliberately kept off the app's network
 
 ---
 
-## Step 5 — Expose via Tailscale and open the app
+## Step 5 — Choose how to reach the full app
+
+The full app includes the UI, management routes, WebSocket endpoint, and every
+API route. Choose one or both of the following protected access paths.
+
+### Option A — private HTTPS through Tailscale Serve
 
 First, enable Tailscale Serve in the admin console:
 
@@ -143,18 +158,49 @@ Open that URL on any device in your tailnet, enter your `USERNAME` and `PASSWORD
 
 ---
 
-## Optional — public HTTPS access for the workspace API
+### Option B — protected browser access through Cloudflare Tunnel
 
-The app UI and management routes remain private on Tailscale. To let an
-external system call a workspace, add the optional HTTPS gateway. It exposes
-only this route, protected by the workspace's existing Bearer API key:
+Use this when you want a browser URL such as `https://ws.example.com`, protected
+by Cloudflare Access (for example, an email-login policy). In the Cloudflare
+dashboard, configure the existing Tunnel's public hostname to forward
+`ws.example.com` to:
+
+```text
+http://localhost:<your-port>
+```
+
+Protect that hostname with a Cloudflare Access application. The Tunnel is an
+outbound connection from the VPS: it does **not** require opening ports 80 or
+443 in UFW. This hostname exposes the full app after Cloudflare Access permits
+the request; it is not the restricted public API gateway below.
+
+You can keep Tailscale Serve enabled alongside Cloudflare Tunnel. They are two
+independent ways to reach the same private app listener.
+
+---
+
+## Optional — direct public HTTPS access for the workspace API
+
+To let an external system call a workspace without joining your tailnet or
+passing a Cloudflare email-login policy, enable the optional Caddy gateway. It
+exposes only this route, protected by the workspace's existing Bearer API key:
 
 ```text
 POST /api/workspaces/<workspace-id>/agent
 ```
 
-1. Create a DNS `A` (and, if applicable, `AAAA`) record for a hostname such as
-   `api.example.com`, pointing to the VPS.
+1. At the DNS provider that manages your domain, create an `A` record for a
+   hostname such as `api.example.com`, pointing to the VPS's **public IPv4**.
+   This is not configured in Tailscale or on the VPS.
+
+   If your DNS provider is Cloudflare, create an `A` record with **Proxy status:
+   DNS only** (grey cloud). Do not add this hostname as a Cloudflare Tunnel
+   public hostname: Caddy must receive ports 80 and 443 directly to obtain and
+   renew its certificate.
+
+   Use a hostname distinct from the Cloudflare Tunnel UI hostname; for example,
+   use `ws.example.com` for the protected UI and `api.example.com` for the
+   restricted public API.
 2. Set the public hostname and the VPS's public IPv4 address in `.env`:
 
    ```env
@@ -163,7 +209,7 @@ POST /api/workspaces/<workspace-id>/agent
    ```
 
    The gateway binds only that public address. This lets Tailscale Serve keep
-   using HTTPS on the VPS's Tailscale address for the private UI.
+   using HTTPS on the VPS's Tailscale address for the private app.
 3. Allow ports 80 and 443 through the firewall so Caddy can obtain and renew
    the TLS certificate:
 
@@ -191,7 +237,11 @@ The gateway returns `404` for the UI, WebSocket endpoint, and every other app
 route. It also replaces caller-supplied client-IP headers before forwarding, so
 the app's rate limiter and audit logs use the real caller IP. To disable public
 API access, stop the gateway and remove the two firewall rules; the Tailscale
-app remains available.
+and/or Cloudflare Tunnel app access paths remain available.
+
+From a tailnet device, the same Bearer API endpoint also works through the
+private Tailscale Serve URL. The Caddy hostname is needed only for callers that
+must reach the API from the public internet.
 
 ---
 

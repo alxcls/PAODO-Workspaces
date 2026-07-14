@@ -25,6 +25,7 @@ export async function GET(
     dir: ws.dir,
     createdAt: ws.createdAt,
     maxIterations: ws.maxIterations,
+    description: ws.description ?? "",
     llmProvider: ws.llmProvider,
     llmModel: ws.llmModel,
     reasoningEffort: ws.reasoningEffort,
@@ -45,6 +46,7 @@ export async function PATCH(
     llmProvider?: string;
     llmModel?: string;
     reasoningEffort?: string;
+    description?: string;
   };
 
   // Per-workspace LLM selection. All three fields are set together (the UI always sends the full
@@ -80,6 +82,15 @@ export async function PATCH(
     const ok = getStore().setWorkspaceMaxIterations(id, n);
     if (!ok) return notFound();
     return NextResponse.json({ id, maxIterations: n });
+  }
+
+  if (body.description !== undefined) {
+    if (typeof body.description !== "string") {
+      return NextResponse.json({ error: "description must be a string" }, { status: 400 });
+    }
+    const ok = getStore().setWorkspaceDescription(id, body.description);
+    if (!ok) return notFound();
+    return NextResponse.json({ id, description: body.description.trim() });
   }
 
   if (!body.name?.trim()) return NextResponse.json({ error: "name required" }, { status: 400 });

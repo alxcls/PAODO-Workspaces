@@ -26,7 +26,7 @@ const SKILL_TEMPLATE = `${JSON.stringify(
     id: "example-skill",
     name: "Example Skill",
     description:
-      "Template — copy to <skill-id>.json and edit. 'parameters' is the JSON Schema for the args a caller must send; 'output' is the JSON Schema your final answer must match (every declared output field is required unless you add your own 'output.required' array). Keep fields flat so callers see them clearly in list_agents.",
+      "Template — copy to <skill-id>.json and edit. 'id' is the machine key (must match ^[a-zA-Z0-9_-]{1,64}$; it also becomes the tool name if this workspace is exposed over MCP) and 'name' is the human-readable label. 'parameters' is the JSON Schema for the args a caller must send; 'output' is the JSON Schema your final answer must match (every declared output field is required unless you add your own 'output.required' array). Keep fields flat so callers see them clearly in list_agents.",
     parameters: {
       type: "object",
       properties: {

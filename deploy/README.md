@@ -160,14 +160,14 @@ Open that URL on any device in your tailnet, enter your `USERNAME` and `PASSWORD
 
 ---
 
-## Optional — direct public HTTPS access for the workspace API
+## Optional — direct public HTTPS access for workspace API and MCP
 
 To let an external system call a workspace without joining your tailnet, enable
-the optional Caddy gateway. It exposes only this route, protected by the
-workspace's existing Bearer API key:
+the optional Caddy gateway. It exposes only these bearer-protected routes:
 
 ```text
 POST /api/workspaces/<workspace-id>/agent
+POST /api/workspaces/<workspace-id>/mcp
 ```
 
 1. At the DNS provider that manages your domain, create an `A` record for a
@@ -201,7 +201,7 @@ POST /api/workspaces/<workspace-id>/agent
    docker compose -f docker-compose.yml -f docker-compose.workspace-api.yml up -d
    ```
 
-Generate and enable a key for the target workspace in PAODO, then call it:
+Generate and enable an API key for the target workspace in PAODO, then call it:
 
 ```bash
 curl --request POST https://api.example.com/api/workspaces/<workspace-id>/agent \
@@ -210,15 +210,19 @@ curl --request POST https://api.example.com/api/workspaces/<workspace-id>/agent 
   --data '{"message":"Process this request"}'
 ```
 
-The gateway returns `404` for the UI, WebSocket endpoint, and every other app
-route. It also replaces caller-supplied client-IP headers before forwarding, so
+For MCP, generate an MCP secret in the workspace's **Workspace MCP access** panel,
+publish the desired skills, and connect the client to
+`https://api.example.com/api/workspaces/<workspace-id>/mcp`.
+
+The gateway returns `404` for the UI, WebSocket endpoint, configuration routes,
+and every other app route. It also replaces caller-supplied client-IP headers before forwarding, so
 the app's rate limiter and audit logs use the real caller IP. To disable public
-API access, stop the gateway and remove the two firewall rules; the Tailscale
+API/MCP access, stop the gateway and remove the two firewall rules; the Tailscale
 app remains available.
 
 From a tailnet device, the same Bearer API endpoint also works through the
 private Tailscale Serve URL. The Caddy hostname is needed only for callers that
-must reach the API from the public internet.
+must reach the API or MCP endpoint from the public internet.
 
 ---
 

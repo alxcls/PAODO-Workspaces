@@ -1,5 +1,5 @@
-# The public surface is deliberately one route. The PAODO UI and all other API
-# routes remain reachable only through the private Tailscale deployment.
+# The public surface is deliberately limited to workspace API/MCP routes. The
+# PAODO UI and all other API routes remain reachable only through Tailscale.
 {$WORKSPACE_API_DOMAIN} {
 	log {
 		output stdout
@@ -12,7 +12,23 @@
 			path_regexp workspaceAgent ^/api/workspaces/[^/]+/agent$
 		}
 
+		@workspaceMcp {
+			method POST
+			path_regexp workspaceMcp ^/api/workspaces/[^/]+/mcp$
+		}
+
 		handle @workspaceAgent {
+			reverse_proxy app:{$APP_PORT} {
+				# Replace caller-supplied forwarding headers. The application uses
+				# these for rate limiting and audit logs.
+				header_up -X-Real-IP
+				header_up -X-Forwarded-For
+				header_up X-Real-IP {remote_host}
+				header_up X-Forwarded-For {remote_host}
+			}
+		}
+
+		handle @workspaceMcp {
 			reverse_proxy app:{$APP_PORT} {
 				# Replace caller-supplied forwarding headers. The application uses
 				# these for rate limiting and audit logs.

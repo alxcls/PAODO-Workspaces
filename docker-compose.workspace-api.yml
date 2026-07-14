@@ -4,8 +4,8 @@
 #   docker compose -f docker-compose.yml -f docker-compose.workspace-api.yml up -d
 #
 # The app service remains bound to 127.0.0.1 by docker-compose.yml. This is the
-# only public listener, and deploy/Caddyfile.workspace-api permits exactly one
-# route: POST /api/workspaces/<workspace-id>/agent.
+# only public listener, and deploy/Caddyfile.workspace-api permits only the
+# bearer-protected workspace API and MCP POST routes.
 services:
   workspace-api:
     image: caddy:2.10-alpine

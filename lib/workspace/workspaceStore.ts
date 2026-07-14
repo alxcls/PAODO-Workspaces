@@ -15,6 +15,7 @@ import { deleteWorkspaceConversations } from "./conversationStore";
 import type { IWorkspaceStore } from "../infra/interfaces";
 import type { ReasoningEffort } from "../agent/interfaces";
 import { deleteAllForWorkspace } from "../infra/security/workspaceSecretStore";
+import { deleteForWorkspace as deleteMcpConfig } from "../infra/security/mcpConfigStore";
 import { getCredentialProxy } from "../infra/proxy";
 export { WORKSPACES_ROOT };
 
@@ -27,6 +28,8 @@ export interface WorkspaceMetadata {
   dir: string;
   createdAt: Date;
   maxIterations: number;
+  /** Workspace-level context shown in the UI and shared with external MCP clients as instructions. */
+  description?: string;
   // Per-workspace LLM selection (chosen in the UI). Undefined when the workspace has never picked —
   // the agent then falls back to DEFAULT_LLM. .env holds only the provider API keys, not the choice.
   llmProvider?: string;
@@ -42,6 +45,7 @@ interface WorkspaceRecord {
   dir?: string;
   createdAt: string;
   maxIterations?: number;
+  description?: string;
   llmProvider?: string;
   llmModel?: string;
   reasoningEffort?: ReasoningEffort;
@@ -103,6 +107,7 @@ export class WorkspaceStore implements IWorkspaceStore {
         dir,
         createdAt: new Date(r.createdAt),
         maxIterations: r.maxIterations ?? 30,
+        description: r.description,
         llmProvider: r.llmProvider,
         llmModel: r.llmModel,
         reasoningEffort: r.reasoningEffort,
@@ -116,6 +121,7 @@ export class WorkspaceStore implements IWorkspaceStore {
       name: w.name,
       createdAt: w.createdAt.toISOString(),
       maxIterations: w.maxIterations,
+      description: w.description,
       llmProvider: w.llmProvider,
       llmModel: w.llmModel,
       reasoningEffort: w.reasoningEffort,
@@ -196,6 +202,7 @@ export class WorkspaceStore implements IWorkspaceStore {
     this.workspaces.delete(id);
     deleteWorkspaceConversations(id);
     deleteAllForWorkspace(id);
+    deleteMcpConfig(id);
     getCredentialProxy().clearRules(id);
     try {
       this.save();
@@ -210,6 +217,14 @@ export class WorkspaceStore implements IWorkspaceStore {
     const ws = this.workspaces.get(id);
     if (!ws) return false;
     ws.maxIterations = n;
+    this.save();
+    return true;
+  }
+
+  setWorkspaceDescription(id: string, description: string): boolean {
+    const ws = this.workspaces.get(id);
+    if (!ws) return false;
+    ws.description = description.trim();
     this.save();
     return true;
   }
@@ -259,4 +274,5 @@ export const listWorkspaces = () => defaultWorkspaceStore.listWorkspaces();
 export const renameWorkspace = (id: string, name: string) => defaultWorkspaceStore.renameWorkspace(id, name);
 export const deleteWorkspace = (id: string) => defaultWorkspaceStore.deleteWorkspace(id);
 export const setWorkspaceMaxIterations = (id: string, n: number) => defaultWorkspaceStore.setWorkspaceMaxIterations(id, n);
+export const setWorkspaceDescription = (id: string, description: string) => defaultWorkspaceStore.setWorkspaceDescription(id, description);
 export const setWorkspaceLlm = (id: string, sel: { provider: string; model: string; reasoningEffort: ReasoningEffort }) => defaultWorkspaceStore.setWorkspaceLlm(id, sel);

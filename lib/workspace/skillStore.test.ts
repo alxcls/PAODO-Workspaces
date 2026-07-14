@@ -55,6 +55,25 @@ describe("loadSkills", () => {
     expect(skills.map((s) => s.id)).toEqual(["check-stock"]);
   });
 
+  it("skips a skill whose id has characters illegal as an MCP tool name, keeping valid ones", async () => {
+    fs.writeFileSync(
+      path.join(SKILLS, "bad-id.json"),
+      JSON.stringify({ ...VALID_SKILL, id: "check stock!" })
+    );
+    fs.writeFileSync(path.join(SKILLS, "valid.json"), JSON.stringify(VALID_SKILL));
+    const skills = await loadSkills(WS_DIR);
+    expect(skills.map((s) => s.id)).toEqual(["check-stock"]);
+  });
+
+  it("accepts ids using the full legal charset (alnum, underscore, hyphen)", async () => {
+    fs.writeFileSync(
+      path.join(SKILLS, "legal.json"),
+      JSON.stringify({ ...VALID_SKILL, id: "get_Order-42" })
+    );
+    const skills = await loadSkills(WS_DIR);
+    expect(skills.map((s) => s.id)).toEqual(["get_Order-42"]);
+  });
+
   it("defaults name to id and description to empty string", async () => {
     fs.writeFileSync(
       path.join(SKILLS, "bare.json"),

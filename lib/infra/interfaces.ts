@@ -18,6 +18,7 @@ export interface IWorkspaceStore {
   renameWorkspace(id: string, name: string): Promise<boolean>;
   deleteWorkspace(id: string): Promise<boolean>;
   setWorkspaceMaxIterations(id: string, n: number): boolean;
+  setWorkspaceDescription(id: string, description: string): boolean;
   setWorkspaceLlm(id: string, sel: { provider: string; model: string; reasoningEffort: ReasoningEffort }): boolean;
 }
 

@@ -6,7 +6,7 @@ import { createLogger } from "@/lib/infra/logger";
 import { rateLimited } from "@/lib/api/guards";
 
 export async function GET() {
-  const list = getStore().listWorkspaces().map(({ id, name, createdAt }) => ({ id, name, createdAt }));
+  const list = getStore().listWorkspaces().map(({ id, name, createdAt, description }) => ({ id, name, createdAt, description: description ?? "" }));
   return NextResponse.json(list);
 }
 

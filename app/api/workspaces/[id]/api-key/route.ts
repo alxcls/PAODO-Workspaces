@@ -10,7 +10,10 @@ export async function GET(
 ) {
   const { id } = await params;
   const { keyHash, enabled } = getState(id);
-  return Response.json({ enabled, hasKey: keyHash !== null });
+  const publicBaseUrl = process.env.WORKSPACE_API_DOMAIN?.trim()
+    ? `https://${process.env.WORKSPACE_API_DOMAIN.trim().replace(/^https?:\/\//, "").replace(/\/+$/, "")}`
+    : null;
+  return Response.json({ enabled, hasKey: keyHash !== null, publicBaseUrl });
 }
 
 export async function POST(

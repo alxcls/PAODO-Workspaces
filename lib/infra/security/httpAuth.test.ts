@@ -110,6 +110,15 @@ describe("checkAuth", () => {
     expect(checkAuth("ip", req({ method: "POST", pathname: "/api/workspaces/ws1/agent/extra" }), CREDS, tracker)).toBe("challenge");
   });
 
+  it("exempts the Workspace MCP endpoint (own Bearer secret) for every method", () => {
+    for (const method of ["POST", "GET", "DELETE"]) {
+      expect(checkAuth("ip", req({ method, pathname: "/api/workspaces/ws1/mcp" }), CREDS, tracker)).toBe("ok");
+    }
+    // ...but not the management route or a sub-path
+    expect(checkAuth("ip", req({ method: "GET", pathname: "/api/workspaces/ws1/mcp-config" }), CREDS, tracker)).toBe("challenge");
+    expect(checkAuth("ip", req({ method: "POST", pathname: "/api/workspaces/ws1/mcp/extra" }), CREDS, tracker)).toBe("challenge");
+  });
+
 });
 
 describe("isCsrf", () => {

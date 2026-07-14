@@ -11,7 +11,6 @@ import "@xyflow/react/dist/style.css";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
 import TopBar from "@/components/layout/TopBar";
-import { loadDesc } from "@/components/home/DescriptionBlock";
 import { FloatingEdge, FloatingConnectionLine } from "./FloatingEdge";
 
 const WORKSPACE_TOP_HANDLE = "workspace-target-top";
@@ -133,7 +132,7 @@ function DriveNode({ data, selected }: NodeProps) {
   );
 }
 
-interface WorkspaceItem { id: string; name: string; }
+interface WorkspaceItem { id: string; name: string; description?: string; }
 interface DriveItem { id: string; name: string; description?: string; }
 interface DriveConnectionItem {
   id: string;
@@ -238,7 +237,7 @@ export default function GraphEditor() {
         const wsNodes: Node[] = wss.map((ws, i) => ({
           id: ws.id, type: "workspace", deletable: false,
           position: positions[ws.id] ?? { x: 80 + (i % 3) * 260, y: 80 + Math.floor(i / 3) * 220 },
-          data: { label: ws.name, description: loadDesc(ws.id) },
+          data: { label: ws.name, description: ws.description ?? "" },
         }));
         const driveNodes: Node[] = drives.map((d, i) => ({
           id: d.id, type: "drive", deletable: false,

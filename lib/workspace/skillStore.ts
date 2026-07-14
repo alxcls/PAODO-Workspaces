@@ -11,6 +11,12 @@ const log = createLogger("skillStore");
 
 export const SKILLS_DIR = "skills";
 
+// A skill `id` doubles as the tool name when the workspace is exposed over MCP, where tool names
+// must match `^[a-zA-Z0-9_-]+$`. We enforce that charset (and a sane length cap) uniformly here so
+// an id that is illegal as an MCP tool name is illegal as a skill id everywhere — the human-facing
+// label lives in `name`, which is unconstrained.
+export const SKILL_ID_RE = /^[a-zA-Z0-9_-]{1,64}$/;
+
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
@@ -23,6 +29,10 @@ function parseSkill(raw: unknown, file: string): SkillDefinition | null {
   const { id, name, description, parameters, output } = raw;
   if (typeof id !== "string" || !id) {
     log.warn({ file }, "skill file missing string 'id' — skipped");
+    return null;
+  }
+  if (!SKILL_ID_RE.test(id)) {
+    log.warn({ file, id }, "skill 'id' must match ^[a-zA-Z0-9_-]{1,64}$ (use 'name' for a human label) — skipped");
     return null;
   }
   if (!isRecord(parameters) || !isRecord(output)) {

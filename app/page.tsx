@@ -3,11 +3,12 @@
 import Image from "next/image";
 import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import DescriptionBlock, { loadDesc } from "@/components/home/DescriptionBlock";
+import DescriptionBlock from "@/components/home/DescriptionBlock";
 import ApiAccessBlock from "@/components/home/ApiAccessBlock";
 import AgentLoopBlock from "@/components/home/AgentLoopBlock";
 import ModelBlock from "@/components/home/ModelBlock";
 import EnvVarsBlock from "@/components/home/EnvVarsBlock";
+import McpBlock from "@/components/home/McpBlock";
 import TopBar from "@/components/layout/TopBar";
 
 interface WorkspaceItem { id: string; name: string; createdAt: string; }
@@ -69,9 +70,25 @@ export default function HomePage() {
   }, [selectedId]);
 
   useEffect(() => {
-    if (selectedId) setDescription(loadDesc(selectedId));
-    else setDescription("");
+    if (!selectedId) { setDescription(""); return; }
+    fetch(`/api/workspaces/${selectedId}`)
+      .then((r) => r.json())
+      .then((ws: { description?: string }) => setDescription(ws.description ?? ""))
+      .catch(() => setDescription(""));
   }, [selectedId]);
+
+  const handleDescriptionChange = async (next: string) => {
+    if (!selectedId) return;
+    const previous = description;
+    const normalized = next.trim();
+    setDescription(normalized);
+    const res = await fetch(`/api/workspaces/${selectedId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ description: next }),
+    });
+    if (!res.ok) setDescription(previous);
+  };
 
   const handleSelect = (id: string) => {
     setSelectedId(id); setConfirmDeleteId(null); setRenaming(false);
@@ -248,8 +265,9 @@ export default function HomePage() {
               )}
 
               <div className="mt-9 mb-2 text-xs font-semibold uppercase tracking-[.08em] text-text-3">Description</div>
-              <DescriptionBlock wsId={selected.id} value={description} onChange={setDescription} />
+              <DescriptionBlock value={description} onChange={handleDescriptionChange} />
               <ApiAccessBlock key={selected.id} wsId={selected.id} />
+              <McpBlock key={`mcp-${selected.id}`} wsId={selected.id} />
               <AgentLoopBlock key={`loop-${selected.id}`} wsId={selected.id} />
               <ModelBlock key={`model-${selected.id}`} wsId={selected.id} />
               <EnvVarsBlock key={`env-${selected.id}`} wsId={selected.id} />

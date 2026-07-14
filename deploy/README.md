@@ -1,7 +1,12 @@
-# Self-hosting PAODO on a VPS
+# Reference deployment — Debian, Docker, and Tailscale
 
-This guide runs PAODO on Debian 13. It keeps the roles of the VPS, Tailscale,
-and public DNS separate:
+This is one tested, security-minded deployment profile for PAODO on a Debian 13
+VPS. PAODO itself requires Docker, an `.env`, and a network path you trust to
+reach the app. This guide chooses Tailscale for private access and Caddy for an
+optional restricted public API; you may instead use another VPN, reverse proxy,
+network policy, or operating system that fits your environment.
+
+In this reference profile, the responsibilities are:
 
 | Component | Role |
 |---|---|
@@ -9,11 +14,12 @@ and public DNS separate:
 | Tailscale | Private administrator access to the VPS (SSH) and a private HTTPS URL for the full app. Only tailnet devices can use it. |
 | DNS provider | Creates a public API hostname, such as `api.example.com`, when you opt into the direct Caddy API gateway. This is separate from Tailscale. |
 
-The public API gateway is optional. It exposes one Bearer-key-protected route and no UI. The normal app UI remains private on Tailscale.
+The public API gateway is optional. It exposes one Bearer-key-protected route
+and no UI. The normal app UI remains private on Tailscale.
 
 ---
 
-## What you need
+## What you need for this reference profile
 
 - VPS running Debian 13 (Trixie)
 - [Tailscale account](https://tailscale.com) (free)

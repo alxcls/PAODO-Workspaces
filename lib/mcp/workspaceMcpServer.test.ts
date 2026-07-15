@@ -57,7 +57,14 @@ describe("callWorkspaceMcpTool", () => {
     const executeSkillFn = vi.fn();
     const res = await callWorkspaceMcpTool("ws1", "place_order", { sku: "x" }, deps(["check_stock"], { executeSkillFn: executeSkillFn as never }));
     expect(res.isError).toBe(true);
+    expect(res.content[0]).toMatchObject({ type: "text", text: 'Unknown tool "place_order". Published tools: "check_stock".' });
     expect(executeSkillFn).not.toHaveBeenCalled();
+  });
+
+  it("explains when the workspace exposes no MCP tools", async () => {
+    const res = await callWorkspaceMcpTool("ws1", "weather", {}, deps([]));
+    expect(res.isError).toBe(true);
+    expect(res.content[0]).toMatchObject({ type: "text", text: 'Unknown tool "weather". This workspace currently exposes no MCP tools.' });
   });
 
   it("maps a completed skill result to structuredContent + text, bypassing the graph check", async () => {

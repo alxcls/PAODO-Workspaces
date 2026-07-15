@@ -121,8 +121,32 @@ describe("executeSkill — pre-run rejections (callee must never run)", () => {
     const runner = fakeRunner([GOOD_OUTPUT]);
     const res = await executeSkill(CALLEE.id, CALLER.id, "check-stock", {}, opts(runner));
     expect(res).toMatchObject({ state: "failed", code: "INPUT_VALIDATION_ERROR" });
-    expect((res as { message: string }).message).toContain("'sku' is required");
+    expect((res as { message: string }).message).toContain("field 'sku' is required");
     expect(runner.inputs).toHaveLength(0);
+  });
+
+  it("includes the full path for a missing nested required field", async () => {
+    const nested: SkillDefinition = {
+      ...SKILL,
+      input: {
+        type: "object",
+        properties: { filters: { type: "object", properties: { region: { type: "string" } }, required: ["region"] } },
+        required: ["filters"],
+      },
+    };
+    const res = await executeSkill(CALLEE.id, CALLER.id, "check-stock", { filters: {} }, opts(fakeRunner([GOOD_OUTPUT]), { loadSkillsFn: async () => [nested] }));
+    expect(res).toMatchObject({ state: "failed", code: "INPUT_VALIDATION_ERROR" });
+    expect((res as { message: string }).message).toContain("field 'filters.region' is required");
+  });
+
+  it("lists the allowed values for an invalid enum", async () => {
+    const withEnum: SkillDefinition = {
+      ...SKILL,
+      input: { type: "object", properties: { mode: { type: "string", enum: ["concise", "detailed"] } }, required: ["mode"] },
+    };
+    const res = await executeSkill(CALLEE.id, CALLER.id, "check-stock", { mode: "brief" }, opts(fakeRunner([GOOD_OUTPUT]), { loadSkillsFn: async () => [withEnum] }));
+    expect(res).toMatchObject({ state: "failed", code: "INPUT_VALIDATION_ERROR" });
+    expect((res as { message: string }).message).toContain("field 'mode' must be one of: \"concise\", \"detailed\"");
   });
 
   it("rejects wrongly-typed args but allows extra fields (non-strict)", async () => {
@@ -178,7 +202,7 @@ describe("executeSkill — callee run and output contract", () => {
     const requiredMissing = await executeSkill(CALLEE.id, CALLER.id, "check-stock", { sku: "A1" },
       opts(fakeRunner([JSON.stringify({ quantity: 3 })]), { outputMaxRetries: 0 }));
     expect(requiredMissing).toMatchObject({ state: "failed", code: "OUTPUT_VALIDATION_ERROR" });
-    expect((requiredMissing as { message: string }).message).toContain("'in_stock' is required");
+    expect((requiredMissing as { message: string }).message).toContain("field 'in_stock' is required");
   });
 
   it("feeds the validation error back into the same conversation and succeeds on retry", async () => {

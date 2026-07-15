@@ -60,7 +60,11 @@ export async function callWorkspaceMcpTool(
   const skills = await selectedSkills(workspaceId, deps);
   const skill = skills.find((s) => s.id === name);
   if (!skill) {
-    return toolError(`Unknown tool "${name}".`);
+    if (!skills.length) {
+      return toolError(`Unknown tool "${name}". This workspace currently exposes no MCP tools.`);
+    }
+    const published = skills.map((s) => `"${s.id}"`).join(", ");
+    return toolError(`Unknown tool "${name}". Published tools: ${published}.`);
   }
 
   let result;

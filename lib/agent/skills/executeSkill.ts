@@ -58,10 +58,17 @@ function formatAjvErrors(errors: ErrorObject[] | null | undefined): string {
   if (!errors?.length) return "does not match the schema";
   return errors
     .map((e) => {
+      const parent = e.instancePath.replace(/^\//, "").replace(/\//g, ".");
       if (e.keyword === "required") {
-        return `'${(e.params as { missingProperty: string }).missingProperty}' is required`;
+        const missing = (e.params as { missingProperty: string }).missingProperty;
+        const field = parent ? `${parent}.${missing}` : missing;
+        return `field '${field}' is required`;
       }
-      const field = e.instancePath.replace(/^\//, "").replace(/\//g, ".");
+      if (e.keyword === "enum") {
+        const allowed = (e.params as { allowedValues: unknown[] }).allowedValues.map((value) => JSON.stringify(value)).join(", ");
+        return parent ? `field '${parent}' must be one of: ${allowed}` : `value must be one of: ${allowed}`;
+      }
+      const field = parent;
       return field ? `field '${field}' ${e.message}` : `value ${e.message}`;
     })
     .join("; ");

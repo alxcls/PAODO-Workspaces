@@ -26,11 +26,12 @@ const SKILL_TEMPLATE = `${JSON.stringify(
     input: {
       type: "object",
       properties: {
-        record_id: { type: "string", description: "Optional stable identifier of the record to retrieve. Replace with the domain-specific identifier for this skill." },
+        record_id: { type: "string", description: "Required stable identifier of the record to retrieve. Replace with the domain-specific identifier for this skill." },
         limit: { type: "integer", minimum: 1, maximum: 100, description: "Optional maximum number of records to return. Keep only if this skill returns a collection." },
         query: { type: "string", description: "Optional free-text fallback when the caller's intent cannot be expressed with this skill's structured fields." },
       },
-      examples: [{ record_id: "record-123" }, { limit: 20 }, { query: "Find records related to onboarding" }],
+      required: ["record_id"],
+      examples: [{ record_id: "record-123" }, { record_id: "record-123", limit: 20 }, { record_id: "record-123", query: "Find related onboarding records" }],
     },
     output: {
       type: "object",

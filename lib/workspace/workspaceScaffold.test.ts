@@ -22,8 +22,8 @@ describe("scaffoldWorkspaceDir", () => {
     // The template must itself be a valid skill definition once renamed to .json.
     const parsed = JSON.parse(fs.readFileSync(template, "utf-8"));
     expect(parsed.id).toBe("example-skill");
-    // Structured inputs lead; free-text remains an optional fallback.
-    expect(parsed.input.required).toBeUndefined();
+    // Structured inputs lead and demonstrate required-field enforcement; free-text remains optional.
+    expect(parsed.input.required).toEqual(["record_id"]);
     expect(parsed.input.properties.record_id.type).toBe("string");
     expect(parsed.input.properties.query.type).toBe("string");
     expect(parsed.output.required).toEqual(["summary", "count", "items"]);

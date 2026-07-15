@@ -16,6 +16,8 @@ Each *workspace* is an isolated Docker container running its own ReAct loop codi
 
 - **HTTP API** — call any workspace's agent externally with a per-workspace API key
 
+- **Workspace MCP** — expose selected workspace skills as MCP tools through a per-workspace, independently revocable access key
+
 - **Scheduled triggers** — run a workspace agent on a recurring schedule
 
 - **Live console** — shell output and file changes stream to the UI in real time

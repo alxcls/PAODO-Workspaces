@@ -53,9 +53,10 @@ export class AuthFailureTracker {
 
 // The agent endpoint authenticates via Bearer API key, not Basic Auth — exempt POSTs to it.
 const PUBLIC_API_RE = /^\/api\/workspaces\/[^/]+\/agent$/;
-// The Workspace MCP endpoint authenticates via its own Bearer secret (mcpConfigStore). It is hit by
-// external MCP clients with POST (messages) and GET/DELETE (protocol probes), so exempt every method
-// — the route validates the secret itself and returns 401 on failure.
+// The Workspace MCP endpoint authenticates via its own Bearer secret (mcpConfigStore), not Basic
+// Auth, so exempt every method here. POST is the protocol channel: the route validates the secret
+// and returns 401 on failure. GET/DELETE carry no secret and the route rejects them with 405 before
+// any workspace state is touched, so exempting them leaks nothing.
 const PUBLIC_MCP_RE = /^\/api\/workspaces\/[^/]+\/mcp$/;
 const MUTATING_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 

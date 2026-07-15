@@ -22,12 +22,17 @@ describe("scaffoldWorkspaceDir", () => {
     // The template must itself be a valid skill definition once renamed to .json.
     const parsed = JSON.parse(fs.readFileSync(template, "utf-8"));
     expect(parsed.id).toBe("example-skill");
-    // Structured inputs lead and demonstrate required-field enforcement; free-text remains optional.
-    expect(parsed.input.required).toEqual(["record_id"]);
-    expect(parsed.input.properties.record_id.type).toBe("string");
-    expect(parsed.input.properties.query.type).toBe("string");
-    expect(parsed.output.required).toEqual(["summary", "count", "items"]);
-    expect(parsed.output.properties.items.type).toBe("array");
+    // Placeholder names demonstrate schema primitives without nudging toward a business domain.
+    expect(parsed.input.required).toEqual(["string_field", "integer_field", "boolean_field"]);
+    expect(parsed.input.properties.string_field.type).toBe("string");
+    expect(parsed.input.properties.number_field).toMatchObject({ type: "number", minimum: 0, maximum: 1 });
+    expect(parsed.input.properties.integer_field).toMatchObject({ type: "integer", minimum: 1, maximum: 100 });
+    expect(parsed.input.properties.enum_field).toMatchObject({ type: "string", enum: ["option-a", "option-b"] });
+    expect(parsed.input.properties.boolean_field.type).toBe("boolean");
+    expect(parsed.input.properties.array_field).toMatchObject({ type: "array", items: { type: "string" } });
+    expect(parsed.input.properties.object_field.type).toBe("object");
+    expect(parsed.output.required).toEqual(["string_field", "array_field", "object_field"]);
+    expect(parsed.output.properties.object_field.type).toBe("object");
   });
 
   it("does NOT make the workspace callable — the .template file is ignored by the skill loader", async () => {

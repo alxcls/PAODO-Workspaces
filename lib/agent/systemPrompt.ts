@@ -50,7 +50,6 @@ When asked to do multiple things (e.g. "do these 4 tasks"):
 When creating or editing \`.skills/*.json\`, design practical JSON Schema contracts for agent-to-agent use.
 - Prefer domain-specific structured fields for information the caller already knows, such as identifiers, filters, actions, and limits. Use a free-text \`request\` or \`query\` only for genuinely open-ended intent; when structured fields cover normal calls, make the free-text field optional.
 - Express real, stable constraints with JSON Schema keywords: use \`enum\` for genuinely closed value sets, \`format\` for standard values such as email or URI, and length or numeric bounds only when they reflect a real rule.
-- Keep objects open by default. Do not add \`additionalProperties: false\` unless rejecting unknown fields is important for this skill's correctness, safety, or explicitly versioned contract.
 - Include input and output schemas, mark only truly required fields as required, keep descriptions concise, and include examples that validate. Prefer structured output records to prose blobs.
 - Do not invent constraints merely to make a schema look strict; the schema must match the skill's actual behaviour.
 

@@ -63,6 +63,18 @@ describe("loadSkills", () => {
     expect(skills.map((s) => s.id)).toEqual(["check-stock"]);
   });
 
+  it("skips schemas that do not explicitly declare object inputs and outputs", async () => {
+    fs.writeFileSync(path.join(SKILLS, "missing-input-type.json"), JSON.stringify({
+      ...VALID_SKILL, id: "missing-input-type", input: { properties: { sku: { type: "string" } } },
+    }));
+    fs.writeFileSync(path.join(SKILLS, "scalar-output.json"), JSON.stringify({
+      ...VALID_SKILL, id: "scalar-output", output: { type: "string" },
+    }));
+    fs.writeFileSync(path.join(SKILLS, "valid.json"), JSON.stringify(VALID_SKILL));
+
+    expect((await loadSkills(WS_DIR)).map((s) => s.id)).toEqual(["check-stock"]);
+  });
+
   it("skips a skill whose id has characters illegal as an MCP tool name, keeping valid ones", async () => {
     fs.writeFileSync(
       path.join(SKILLS, "bad-id.json"),
@@ -85,7 +97,7 @@ describe("loadSkills", () => {
   it("defaults a missing description to an empty string", async () => {
     fs.writeFileSync(
       path.join(SKILLS, "bare.json"),
-      JSON.stringify({ id: "bare", input: {}, output: {} })
+      JSON.stringify({ id: "bare", input: { type: "object" }, output: { type: "object" } })
     );
     const [skill] = await loadSkills(WS_DIR);
     expect(skill.description).toBe("");

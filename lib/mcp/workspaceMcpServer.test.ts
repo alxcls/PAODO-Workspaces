@@ -70,7 +70,10 @@ describe("callWorkspaceMcpTool", () => {
     expect(res.structuredContent).toEqual({ in_stock: true });
     expect(res.content[0]).toEqual({ type: "text", text: JSON.stringify({ in_stock: true }) });
     expect(executeSkillFn).toHaveBeenCalledWith(
-      "ws1", "mcp:ws1", "check_stock", { sku: "x" }, expect.objectContaining({ origin: "mcp" }),
+      "ws1", "mcp:ws1", "check_stock", { sku: "x" }, expect.objectContaining({
+        origin: "mcp",
+        resolvedSkill: CHECK_STOCK,
+      }),
     );
   });
 

@@ -6,7 +6,7 @@ const h = vi.hoisted(() => ({
   limited: null as Response | null,
   validateSecret: vi.fn(() => false),
   buildServer: vi.fn(() => ({ connect: vi.fn(async () => {}), close: vi.fn(async () => {}) })),
-  handleRequest: vi.fn(async () => Response.json({ jsonrpc: "2.0", id: 7, result: { tools: [] } })),
+  handleRequest: vi.fn(async (_req: Request) => Response.json({ jsonrpc: "2.0", id: 7, result: { tools: [] } })),
 }));
 
 vi.mock("@/lib/api/guards", () => ({ rateLimited: () => h.limited }));

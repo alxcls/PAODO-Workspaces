@@ -19,7 +19,7 @@ import { loadSkills } from "../../workspace/skillStore";
 import { createConversation, getMessages, persist } from "../../workspace/conversationStore";
 import { setSystemPrompt } from "../messageSerialization";
 import { appendUsage, recordTurnUsage, type SessionOrigin } from "../../workspace/usageStore";
-import { NEEDS_INPUT_KEY, type SkillCallResult, type SkillSchema } from "../../workspace/skillTypes";
+import { NEEDS_INPUT_KEY, type SkillCallResult, type SkillDefinition, type SkillSchema } from "../../workspace/skillTypes";
 import type { IWorkspaceStore, IContainerManager } from "../../infra/interfaces";
 import { buildSystemPrompt, buildPromptConfig, buildStructuredResponderBlock } from "../systemPrompt";
 import { buildWorkspacePromptInputs } from "../promptContext";
@@ -40,6 +40,8 @@ export interface ExecuteSkillOptions {
   /** Test seams — production uses the real graph, skill store, runner, and conversation store. */
   canCallFn?: typeof canCall;
   loadSkillsFn?: typeof loadSkills;
+  /** A skill already resolved by a trusted discovery/publishing boundary (for example MCP). */
+  resolvedSkill?: SkillDefinition;
   runAgentFn?: typeof runAgent;
   appendUsageFn?: typeof appendUsage;
   createConversationFn?: typeof createConversation;
@@ -151,8 +153,9 @@ export async function executeSkill(
     return { state: "failed", code: "EXECUTION_ERROR", message: `workspace "${calleeId}" not found.` };
   }
 
-  // 2. Skill lookup — read from .skills/ at call time; a workspace with no .skills/ is not callable.
-  const skills = await (opts.loadSkillsFn ?? loadSkills)(callee.dir);
+  // 2. Skill lookup. MCP already loaded and publication-gated its selected skill, so it may pass
+  // that definition and avoid a second directory read. Other callers continue to resolve live.
+  const skills = opts.resolvedSkill ? [opts.resolvedSkill] : await (opts.loadSkillsFn ?? loadSkills)(callee.dir);
   const skill = skills.find((s) => s.id === skillId);
   if (!skill) {
     const available = skills.length ? ` Available skills: ${skills.map((s) => s.id).join(", ")}.` : " This workspace declares no skills.";

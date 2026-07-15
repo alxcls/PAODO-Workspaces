@@ -58,7 +58,8 @@ export async function callWorkspaceMcpTool(
   // A tool that exists in the workspace but was not selected must be invisible AND uncallable, so we
   // gate on the selection set rather than letting executeSkill see every skill on disk.
   const skills = await selectedSkills(workspaceId, deps);
-  if (!skills.some((s) => s.id === name)) {
+  const skill = skills.find((s) => s.id === name);
+  if (!skill) {
     return toolError(`Unknown tool "${name}".`);
   }
 
@@ -73,6 +74,7 @@ export async function callWorkspaceMcpTool(
       containers: getContainers(),
       signal: AbortSignal.timeout(CALL_TIMEOUT_MS),
       origin: "mcp",
+      resolvedSkill: skill,
     });
   } catch (err) {
     // Never let an execution exception escape the MCP request handler: doing so can leave a

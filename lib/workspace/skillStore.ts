@@ -36,8 +36,8 @@ function parseSkill(raw: unknown, file: string): SkillDefinition | null {
     log.warn({ file, id }, "skill 'id' must match ^[a-zA-Z0-9_-]{1,64}$ and be concise and human-readable — skipped");
     return null;
   }
-  if (!isRecord(input) || !isRecord(output)) {
-    log.warn({ file, id }, "skill file missing 'input' or 'output' object — skipped");
+  if (!isRecord(input) || input.type !== "object" || !isRecord(output) || output.type !== "object") {
+    log.warn({ file, id }, "skill input and output must be JSON Schemas with type 'object' — skipped");
     return null;
   }
   return {

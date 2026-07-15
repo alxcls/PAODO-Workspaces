@@ -83,6 +83,18 @@ function opts(runner: { run: typeof runAgent }, extra: Partial<ExecuteSkillOptio
 const GOOD_OUTPUT = JSON.stringify({ in_stock: true, quantity: 3 });
 
 describe("executeSkill — pre-run rejections (callee must never run)", () => {
+  it("uses a matching pre-resolved skill without loading the directory again", async () => {
+    const runner = fakeRunner([GOOD_OUTPUT]);
+    const loadSkillsFn = vi.fn(async () => []);
+    const res = await executeSkill(CALLEE.id, CALLER.id, "check-stock", { sku: "A1" }, opts(runner, {
+      resolvedSkill: SKILL,
+      loadSkillsFn,
+    }));
+
+    expect(res.state).toBe("completed");
+    expect(loadSkillsFn).not.toHaveBeenCalled();
+  });
+
   it("rejects an unauthorized caller with NOT_CONNECTED", async () => {
     const runner = fakeRunner([GOOD_OUTPUT]);
     const res = await executeSkill(CALLEE.id, CALLER.id, "check-stock", { sku: "A1" }, opts(runner, { canCallFn: () => false }));

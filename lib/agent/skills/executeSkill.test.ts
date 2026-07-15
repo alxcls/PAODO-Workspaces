@@ -156,7 +156,7 @@ describe("executeSkill — callee run and output contract", () => {
     expect(runner.inputs[0]).toContain('"workspaceName": "shop-agent"');
     expect(runner.inputs[0]).toContain('"id": "check-stock"');
     expect(runner.inputs[0]).toContain('"args": {\n    "sku": "A1"\n  }');
-    expect(runner.inputs[0]).toContain("Structured response required");
+    expect(runner.inputs[0]).toContain("Structured skill response");
     expect(runner.inputs[0]).toContain('"in_stock"'); // output schema is in the instruction
   });
 
@@ -238,8 +238,8 @@ describe("executeSkill — callee run and output contract", () => {
     const runner = fakeRunner([GOOD_OUTPUT]);
     await executeSkill(CALLEE.id, CALLER.id, "check-stock", { sku: "A1" }, opts(runner));
     expect(runner.inputs[0]).toContain('"_needs_input"');
-    expect(runner.inputs[0]).toContain("after checking available data");
-    expect(runner.inputs[0]).toContain("valid empty, no-match, or negative results");
+    expect(runner.inputs[0]).toContain("input is missing or needs correction");
+    expect(runner.inputs[0]).toContain("one specific question or correction");
   });
 
   it("treats a non-string or empty _needs_input as an invalid output, not a question", async () => {

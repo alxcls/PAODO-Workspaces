@@ -22,11 +22,11 @@ ENV NODE_ENV=production
 # silently no-ops in production.
 RUN apk add --no-cache docker-cli git
 
-# Production dependencies + tsx (needed to run TypeScript server at runtime)
+# Production dependencies (including tsx, which runs the TypeScript server)
 # Same npm pin as the builder stage (see note above) so `npm ci` reads the lock identically.
 RUN npm install -g npm@11.6.2
 COPY package*.json ./
-RUN npm ci --omit=dev && npm install tsx
+RUN npm ci --omit=dev
 
 # Next.js build output
 COPY --from=builder /app/.next ./.next

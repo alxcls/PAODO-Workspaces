@@ -7,7 +7,6 @@ import { HumanMessage, ToolMessage, AIMessage } from "@langchain/core/messages";
 import type { AIMessageChunk, BaseMessage } from "@langchain/core/messages";
 import type { Logger } from "pino";
 import { buildTools, loadAgentConfig } from "./buildTools";
-import { selectedModelId } from "./buildModel";
 import { classifyToolStatus } from "./toolUtils";
 import type { AgentConfig, PostDispatchContext, PostDispatchFn } from "./interfaces";
 import { getContainers } from "../infra/services";
@@ -374,7 +373,7 @@ export async function* runAgent(
 ): AsyncGenerator<AgentEvent> {
   const wlog = log.child({ workspaceId });
   const config = (loadConfig ?? loadAgentConfig)(workspaceId);
-  const modelId = selectedModelId(config);
+  const modelId = config.model;
   const resolvedContainers = containers ?? getContainers();
   const {
     modelWithTools,

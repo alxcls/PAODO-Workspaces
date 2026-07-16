@@ -7,6 +7,7 @@
 // handleMove issues a contained PATCH, reports conflicts, and returns the authoritative new path.
 
 import { useState, useEffect, useCallback, useRef } from "react";
+import { collapseToRoots } from "../fileMove";
 import { useDeferredPending } from "./useDeferredPending";
 import { useTransientMessage } from "./useTransientMessage";
 
@@ -42,7 +43,6 @@ export function useFileOperations({
   const { pending: downloading, run: runDownload } = useDeferredPending();
   const [deleteError, setDeleteError] = useTransientMessage(2000);
   const [moveError, setMoveError] = useTransientMessage(3500);
-  const [movingPath, setMovingPath] = useState<string | null>(null);
   const moveInFlightRef = useRef(false);
 
   const fetchTree = useCallback(async () => {
@@ -79,9 +79,7 @@ export function useFileOperations({
 
   const handleDelete = async () => {
     const paths = Array.from(selected);
-    const roots = paths.filter(
-      (p) => !paths.some((other) => other !== p && p.startsWith(other + "/"))
-    );
+    const roots = collapseToRoots(paths);
     setDeleteError(null);
     const failures: string[] = [];
     try {
@@ -128,7 +126,6 @@ export function useFileOperations({
       return null;
     }
     moveInFlightRef.current = true;
-    setMovingPath(sourcePath);
     setMoveError(null);
     try {
       const res = await fetch(`${base}/files/content`, {
@@ -149,7 +146,6 @@ export function useFileOperations({
       return null;
     } finally {
       moveInFlightRef.current = false;
-      setMovingPath(null);
     }
   };
 
@@ -157,6 +153,6 @@ export function useFileOperations({
     tree, fetchTree,
     handleDownload, downloading,
     handleDelete, deleteError,
-    handleMove, movingPath, moveError,
+    handleMove, moveError,
   };
 }

@@ -4,8 +4,12 @@ import { useRef, useState } from "react";
 import { useFileTreeSelection } from "@/lib/client/hooks/useFileTreeSelection";
 import { useFileOperations, TreeNode } from "@/lib/client/hooks/useFileOperations";
 import { useFileUpload } from "@/lib/client/hooks/useFileUpload";
+import { useTransientMessage } from "@/lib/client/hooks/useTransientMessage";
 import { readDroppedEntries } from "@/lib/client/dropEntries";
-import { canMoveToDirectory, remapMovedPath } from "@/lib/client/fileMove";
+import { canMoveAllToDirectory, collapseToRoots, remapMovedPath } from "@/lib/client/fileMove";
+import {
+  flattenTree, flattenVisible, pathWithDescendants, selectionRange, sortTreeNodes,
+} from "@/lib/client/fileTreeOrder";
 
 type CheckState = "none" | "some" | "all";
 type DraggedTreeNode = Pick<TreeNode, "name" | "path" | "type">;
@@ -35,15 +39,30 @@ const ChevIcon = () => (
 );
 
 // ---- Helpers ----
-function getAllNodes(nodes: TreeNode[]): TreeNode[] {
-  return nodes.flatMap((n) => [n, ...getAllNodes(n.children ?? [])]);
-}
-
 function getNodeCheckState(node: TreeNode, selected: Set<string>): CheckState {
   if (selected.has(node.path)) return "all";
   if (node.type === "file") return "none";
-  const anyDescendant = getAllNodes(node.children ?? []).some((n) => selected.has(n.path));
+  const anyDescendant = flattenTree(node.children ?? []).some((n) => selected.has(n.path));
   return anyDescendant ? "some" : "none";
+}
+
+/**
+ * Browsers render a stack-with-count only for their own multi-file drags, so a multi-row drag has
+ * to supply its own ghost. setDragImage snapshots the node synchronously and only if it is laid
+ * out — hence attached to the document and merely pushed off-screen rather than hidden — after
+ * which it can go away again.
+ */
+function setCountDragImage(e: React.DragEvent, count: number) {
+  const ghost = document.createElement("div");
+  ghost.textContent = `${count} items`;
+  ghost.style.cssText = [
+    "position:fixed", "top:-1000px", "left:-1000px",
+    "padding:4px 10px", "border-radius:6px", "white-space:nowrap",
+    "background:#111827", "color:#fff", "font:500 12px system-ui,sans-serif",
+  ].join(";");
+  document.body.appendChild(ghost);
+  e.dataTransfer.setDragImage(ghost, 12, 12);
+  setTimeout(() => ghost.remove(), 0);
 }
 
 // ---- Checkbox ----
@@ -74,30 +93,33 @@ interface TreeListProps {
   expanded: Record<string, boolean>;
   onToggle: (path: string) => void; activePath: string | null;
   selected: Set<string>; onSelect: (paths: string[], on: boolean) => void;
+  onRangeSelect: (path: string) => void;
   onPick: (path: string) => void;
-  draggedNode: DraggedTreeNode | null; dropTargetPath: string | null;
-  movingPath: string | null;
+  draggedNodes: DraggedTreeNode[] | null; dropTargetPath: string | null;
+  movingPaths: Set<string>;
   onNodeDragStart: (node: TreeNode, e: React.DragEvent) => void;
   onNodeDragEnd: () => void;
   onDropTargetChange: (path: string | null) => void;
-  onMove: (sourcePath: string, destinationDirectory: string | null) => void;
+  onMove: (destinationDirectory: string | null) => void;
 }
 
 /**
  * Drag handlers for one row acting as a drop zone. A folder row targets itself; a file row targets
  * the folder containing it, so the two differ only in `targetKey` (which row highlights, "" being
  * the tree root) and `destination` (what the move request receives, null being the tree root).
+ * What is being dragged lives in the panel, so a drop only has to name where it landed.
  */
 function dropZoneHandlers({
-  targetKey, destination, canDrop, draggedNode, dropTargetPath, onDropTargetChange, onMove,
+  targetKey, destination, canDrop, isDragging, dropTargetPath, onDropTargetChange, onMove,
 }: {
   targetKey: string;
   destination: string | null;
   canDrop: boolean;
-} & Pick<TreeListProps, "draggedNode" | "dropTargetPath" | "onDropTargetChange" | "onMove">) {
+  isDragging: boolean;
+} & Pick<TreeListProps, "dropTargetPath" | "onDropTargetChange" | "onMove">) {
   return {
     onDragOver: (e: React.DragEvent) => {
-      if (!draggedNode) return;
+      if (!isDragging) return;
       e.preventDefault();
       e.stopPropagation();
       e.dataTransfer.dropEffect = canDrop ? "move" : "none";
@@ -111,32 +133,32 @@ function dropZoneHandlers({
       if (dropTargetPath === targetKey) onDropTargetChange(null);
     },
     onDrop: (e: React.DragEvent) => {
-      if (!draggedNode) return;
+      if (!isDragging) return;
       e.preventDefault();
       e.stopPropagation();
       onDropTargetChange(null);
-      if (canDrop) onMove(draggedNode.path, destination);
+      if (canDrop) onMove(destination);
     },
   };
 }
 
 const TreeNodeList = ({
-  nodes, depth, parentDirectory, expanded, onToggle, activePath, selected, onSelect, onPick,
-  draggedNode, dropTargetPath, movingPath,
+  nodes, depth, parentDirectory, expanded, onToggle, activePath, selected, onSelect,
+  onRangeSelect, onPick,
+  draggedNodes, dropTargetPath, movingPaths,
   onNodeDragStart, onNodeDragEnd, onDropTargetChange, onMove,
 }: TreeListProps) => {
-  const sorted = [...nodes].sort((a, b) => {
-    if (a.type !== b.type) return a.type === "directory" ? -1 : 1;
-    return a.name.localeCompare(b.name);
-  });
+  const isDragging = draggedNodes !== null;
 
   return (
     <>
-      {sorted.map((node) => {
+      {sortTreeNodes(nodes).map((node) => {
         if (node.type === "directory") {
           const isOpen = expanded[node.path] ?? false;
           const state = getNodeCheckState(node, selected);
-          const canDrop = draggedNode ? canMoveToDirectory(draggedNode, node.path) : false;
+          const canDrop = draggedNodes
+            ? canMoveAllToDirectory(draggedNodes, node.path)
+            : false;
           const isDropTarget = canDrop && dropTargetPath === node.path;
           return (
             <div key={node.path} className={isDropTarget ? "bg-primary-tint" : ""}>
@@ -144,22 +166,25 @@ const TreeNodeList = ({
                 className={`flex items-center w-full border-0 border-l-[3px] bg-transparent py-[5px] pl-2 pr-2 text-[13.5px] text-text cursor-pointer text-left transition-[background,border-color,color,opacity] duration-[120ms] hover:bg-black/[.04]
                   ${isDropTarget ? "bg-primary-tint border-l-primary" : "border-l-transparent"}
                   ${state !== "none" ? "bg-select-tint" : ""}
-                  ${movingPath === node.path ? "opacity-50" : ""}`}
-                onClick={() => onToggle(node.path)}
-                draggable={movingPath === null}
+                  ${movingPaths.has(node.path) ? "opacity-50" : ""}`}
+                onClick={(e) => {
+                  if (e.shiftKey) { onRangeSelect(node.path); return; }
+                  onToggle(node.path);
+                }}
+                draggable={movingPaths.size === 0}
                 onDragStart={(e) => onNodeDragStart(node, e)}
                 onDragEnd={onNodeDragEnd}
                 {...dropZoneHandlers({
                   targetKey: node.path, destination: node.path, canDrop,
-                  draggedNode, dropTargetPath, onDropTargetChange, onMove,
+                  isDragging, dropTargetPath, onDropTargetChange, onMove,
                 })}
               >
                 <Checkbox state={state} onClick={(e) => {
                   e.stopPropagation();
+                  if (e.shiftKey) { onRangeSelect(node.path); return; }
                   // Selecting/deselecting a folder cascades to every descendant so child
                   // folders and files reflect (and are included in) the selection.
-                  const descendants = getAllNodes(node.children ?? []).map((n) => n.path);
-                  onSelect([node.path, ...descendants], state === "none");
+                  onSelect(pathWithDescendants(node), state === "none");
                 }} />
                 <div className="flex items-center gap-1.5 flex-1 min-w-0 overflow-hidden" style={{ marginLeft: 6 + depth * 14 }}>
                   <span className={`inline-flex items-center justify-center w-3 h-3 flex-shrink-0 transition-transform duration-[150ms] text-text-3 ${isOpen ? "rotate-90" : ""}`}>
@@ -174,9 +199,9 @@ const TreeNodeList = ({
                   nodes={node.children} depth={depth + 1} parentDirectory={node.path}
                   expanded={expanded}
                   onToggle={onToggle} activePath={activePath} selected={selected}
-                  onSelect={onSelect} onPick={onPick}
-                  draggedNode={draggedNode} dropTargetPath={dropTargetPath}
-                  movingPath={movingPath} onNodeDragStart={onNodeDragStart}
+                  onSelect={onSelect} onRangeSelect={onRangeSelect} onPick={onPick}
+                  draggedNodes={draggedNodes} dropTargetPath={dropTargetPath}
+                  movingPaths={movingPaths} onNodeDragStart={onNodeDragStart}
                   onNodeDragEnd={onNodeDragEnd} onDropTargetChange={onDropTargetChange}
                   onMove={onMove}
                 />
@@ -187,9 +212,11 @@ const TreeNodeList = ({
 
         const isActive = node.path === activePath;
         const isSel = selected.has(node.path);
-        const canDropBesideFile = draggedNode && parentDirectory !== null
-          ? canMoveToDirectory(draggedNode, parentDirectory)
-          : Boolean(draggedNode);
+        // A file row is a drop zone for the folder holding it; at the tree root there is no folder
+        // to reject the drop, so anything being dragged is accepted.
+        const canDropBesideFile = draggedNodes && parentDirectory !== null
+          ? canMoveAllToDirectory(draggedNodes, parentDirectory)
+          : isDragging;
         return (
           <button
             key={node.path}
@@ -197,20 +224,28 @@ const TreeNodeList = ({
               ${isActive
                 ? "bg-primary-tint border-l-primary text-primary"
                 : `border-l-transparent text-text hover:bg-black/[.04] ${isSel ? "bg-select-tint" : ""}`
-              }`}
-            onClick={() => onPick(node.path)}
-            draggable={movingPath === null}
+              }
+              ${movingPaths.has(node.path) ? "opacity-50" : ""}`}
+            onClick={(e) => {
+              if (e.shiftKey) { onRangeSelect(node.path); return; }
+              onPick(node.path);
+            }}
+            draggable={movingPaths.size === 0}
             onDragStart={(e) => onNodeDragStart(node, e)}
             onDragEnd={onNodeDragEnd}
             {...dropZoneHandlers({
               targetKey: parentDirectory ?? "", destination: parentDirectory,
               canDrop: canDropBesideFile,
-              draggedNode, dropTargetPath, onDropTargetChange, onMove,
+              isDragging, dropTargetPath, onDropTargetChange, onMove,
             })}
           >
             <Checkbox
               state={isSel ? "all" : "none"}
-              onClick={(e) => { e.stopPropagation(); onSelect([node.path], !isSel); }}
+              onClick={(e) => {
+                e.stopPropagation();
+                if (e.shiftKey) { onRangeSelect(node.path); return; }
+                onSelect([node.path], !isSel);
+              }}
             />
             <div className="flex items-center gap-1.5 flex-1 min-w-0 overflow-hidden" style={{ marginLeft: 6 + depth * 14 + 14 }}>
               <span className={`inline-flex flex-shrink-0 ${isActive ? "text-primary" : "text-text-2"}`}><FileIcon /></span>
@@ -299,16 +334,22 @@ export default function FileTreePanel({
   style, refreshKey, apiBase,
 }: Props) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
-  const [draggedNode, setDraggedNode] = useState<DraggedTreeNode | null>(null);
+  const [draggedNodes, setDraggedNodes] = useState<DraggedTreeNode[] | null>(null);
+  // The whole batch dims together while its moves run, and starting another drag is blocked until
+  // it drains.
+  const [movingPaths, setMovingPaths] = useState<Set<string>>(new Set());
+  const [moveNote, setMoveNote] = useTransientMessage(3500);
   // "" is the tree root, null is no target at all — a hover the drop would reject must use null,
   // or the root lights up as though it were about to receive the item.
   const [dropTargetPath, setDropTargetPath] = useState<string | null>(null);
   const base = apiBase ?? `/api/workspaces/${workspaceId}`;
 
-  const { selected, handleSelect, clearSelection, remapSelection } = useFileTreeSelection();
+  const {
+    selected, anchorPath, handleSelect, selectPaths, clearSelection, remapSelection,
+  } = useFileTreeSelection();
   const {
     tree, fetchTree, handleDownload, downloading, handleDelete, deleteError,
-    handleMove, movingPath, moveError,
+    handleMove, moveError,
   } = useFileOperations({
     workspaceId, workspaceName, selected, clearSelection, onDeletedPaths, refreshKey, apiBase: base,
   });
@@ -356,29 +397,66 @@ export default function FileTreePanel({
   const toggleExpanded = (path: string) =>
     setExpanded((e) => ({ ...e, [path]: !e[path] }));
 
+  const selectRangeTo = (targetPath: string) => {
+    const rows = flattenVisible(tree, expanded);
+    const range = selectionRange(rows, anchorPath, targetPath);
+    if (range.length === 0) return;
+    // With no usable anchor the shift+click degrades to a plain check, and must anchor there so the
+    // next one has something to measure from. A real range must not re-anchor, or every shift+click
+    // would move the anchor and the range could only ever grow.
+    const hasAnchor = anchorPath !== null && rows.some((n) => n.path === anchorPath);
+    if (hasAnchor) selectPaths(range);
+    else handleSelect(range, true);
+  };
+
+  /**
+   * What a drag actually carries: the whole checked set when the grabbed row is part of it, and
+   * just the grabbed row otherwise — grabbing something unchecked ignores the selection, as
+   * everywhere else. Nested paths collapse so a checked folder and its checked contents move once.
+   */
+  const dragSources = (node: TreeNode): DraggedTreeNode[] => {
+    const single = [{ name: node.name, path: node.path, type: node.type }];
+    if (!selected.has(node.path) || selected.size <= 1) return single;
+    const byPath = new Map(flattenTree(tree).map((n) => [n.path, n]));
+    const roots = collapseToRoots(Array.from(selected))
+      .map((path) => byPath.get(path))
+      .filter((n): n is TreeNode => n !== undefined)
+      .map((n) => ({ name: n.name, path: n.path, type: n.type }));
+    return roots.length > 0 ? roots : single;
+  };
+
   const onNodeDragStart = (node: TreeNode, e: React.DragEvent) => {
-    const dragged = { name: node.name, path: node.path, type: node.type };
-    setDraggedNode(dragged);
+    const sources = dragSources(node);
+    setDraggedNodes(sources);
     // Until a specific folder (or one of its files) is hovered, the tree root is the target.
     setDropTargetPath("");
     e.dataTransfer.effectAllowed = "move";
-    e.dataTransfer.setData(INTERNAL_DRAG_TYPE, node.path);
-    e.dataTransfer.setData("text/plain", node.path);
+    const paths = sources.map((n) => n.path).join("\n");
+    e.dataTransfer.setData(INTERNAL_DRAG_TYPE, paths);
+    e.dataTransfer.setData("text/plain", paths);
+    if (sources.length > 1) setCountDragImage(e, sources.length);
   };
 
   const onNodeDragEnd = () => {
-    setDraggedNode(null);
+    setDraggedNodes(null);
     setDropTargetPath(null);
   };
 
-  const moveNode = async (sourcePath: string, destinationDirectory: string | null) => {
+  /** Resolves false only when the move failed; the server's `unchanged` verdict is a no-op, not an
+   * error, so a batch keeps going after one. */
+  const moveNode = async (
+    sourcePath: string,
+    destinationDirectory: string | null,
+  ): Promise<boolean> => {
     onMoveStarted?.(sourcePath);
     const moved = await handleMove(sourcePath, destinationDirectory);
-    setDraggedNode(null);
-    setDropTargetPath(null);
-    if (!moved || moved.unchanged) {
+    if (!moved) {
       onMoveCancelled?.(sourcePath);
-      return;
+      return false;
+    }
+    if (moved.unchanged) {
+      onMoveCancelled?.(sourcePath);
+      return true;
     }
     const destinationPath = moved.path;
 
@@ -392,6 +470,34 @@ export default function FileTreePanel({
       return remapped;
     });
     onMovedPath?.(sourcePath, destinationPath);
+    return true;
+  };
+
+  /**
+   * Moves the batch one PATCH at a time — the route takes a single path, and serializing them keeps
+   * each move ordered against in-flight saves. Sources are siblings once collapsed, so no move can
+   * re-path a later one. Stops at the first failure rather than pressing on through a broken tree.
+   */
+  const moveNodes = async (
+    sources: DraggedTreeNode[],
+    destinationDirectory: string | null,
+  ) => {
+    setDraggedNodes(null);
+    setDropTargetPath(null);
+    setMovingPaths(new Set(sources.map((n) => n.path)));
+    let moved = 0;
+    try {
+      for (const source of sources) {
+        if (!(await moveNode(source.path, destinationDirectory))) break;
+        moved += 1;
+      }
+    } finally {
+      setMovingPaths(new Set());
+    }
+    // handleMove already surfaces why the failing one failed; this says how much of the batch landed.
+    if (sources.length > 1 && moved < sources.length) {
+      setMoveNote(`Moved ${moved} of ${sources.length} items`);
+    }
   };
 
   return (
@@ -419,7 +525,7 @@ export default function FileTreePanel({
       <div
         className={`relative flex-1 overflow-auto py-2 transition-colors ${dropTargetPath === "" ? "bg-primary-tint" : ""}`}
         onDragOver={(e) => {
-          if (!draggedNode || e.target !== e.currentTarget) return;
+          if (!draggedNodes || e.target !== e.currentTarget) return;
           e.preventDefault();
           e.dataTransfer.dropEffect = "move";
           setDropTargetPath("");
@@ -428,21 +534,24 @@ export default function FileTreePanel({
           if (e.target === e.currentTarget && dropTargetPath === "") setDropTargetPath(null);
         }}
         onDrop={(e) => {
-          if (!draggedNode || e.target !== e.currentTarget) return;
+          if (!draggedNodes || e.target !== e.currentTarget) return;
           e.preventDefault();
-          void moveNode(draggedNode.path, null);
+          void moveNodes(draggedNodes, null);
         }}
-        title={draggedNode ? "Drop on empty space to move to the root folder" : undefined}
+        title={draggedNodes ? "Drop on empty space to move to the root folder" : undefined}
       >
         <TreeNodeList
           nodes={tree} depth={0} parentDirectory={null}
           expanded={expanded} onToggle={toggleExpanded}
           activePath={selectedPath} selected={selected} onSelect={handleSelect}
+          onRangeSelect={selectRangeTo}
           onPick={onFileSelect}
-          draggedNode={draggedNode} dropTargetPath={dropTargetPath}
-          movingPath={movingPath} onNodeDragStart={onNodeDragStart}
+          draggedNodes={draggedNodes} dropTargetPath={dropTargetPath}
+          movingPaths={movingPaths} onNodeDragStart={onNodeDragStart}
           onNodeDragEnd={onNodeDragEnd} onDropTargetChange={setDropTargetPath}
-          onMove={(sourcePath, destinationDirectory) => { void moveNode(sourcePath, destinationDirectory); }}
+          onMove={(destinationDirectory) => {
+            if (draggedNodes) void moveNodes(draggedNodes, destinationDirectory);
+          }}
         />
         {dragging && (
           <div className={`absolute inset-0 z-10 flex items-center justify-center pointer-events-none border-2 border-dashed ${busy ? "border-border bg-bg/80" : "border-primary bg-primary-tint/80"}`}>
@@ -454,7 +563,7 @@ export default function FileTreePanel({
         )}
       </div>
 
-      {(selected.size > 0 || deleteError || moveError || movingPath) && (
+      {(selected.size > 0 || deleteError || moveError || moveNote || movingPaths.size > 0) && (
         <div className="border-t border-border p-[10px_12px] bg-bg">
           <div className="flex gap-1">
             <button
@@ -474,10 +583,15 @@ export default function FileTreePanel({
           {deleteError && (
             <div className="text-xs text-danger whitespace-pre-wrap mt-2 px-1">{deleteError}</div>
           )}
-          {movingPath && <div className="text-xs text-text-3 mt-2 px-1">Moving…</div>}
+          {movingPaths.size > 0 && (
+            <div className="text-xs text-text-3 mt-2 px-1">
+              {movingPaths.size > 1 ? `Moving ${movingPaths.size} items…` : "Moving…"}
+            </div>
+          )}
           {moveError && (
             <div className="text-xs text-danger whitespace-pre-wrap mt-2 px-1">{moveError}</div>
           )}
+          {moveNote && <div className="text-xs text-text-3 mt-2 px-1">{moveNote}</div>}
         </div>
       )}
     </aside>

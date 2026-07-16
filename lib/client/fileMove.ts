@@ -25,3 +25,23 @@ export function canMoveToDirectory(
   return source.type !== "directory"
     || !isPathWithinRoot(destinationDirectory, source.path);
 }
+
+/**
+ * Reduce paths to the ones that must be acted on directly, dropping any that already travel with a
+ * selected ancestor — a checked folder carries its contents, so moving or deleting both the folder
+ * and its children would act on the children twice, at paths that no longer exist.
+ */
+export function collapseToRoots(paths: string[]): string[] {
+  return paths.filter(
+    (p) => !paths.some((other) => other !== p && isPathWithinRoot(p, other)),
+  );
+}
+
+/** A multi-item drop is all-or-nothing: one source that rejects the destination refuses the drop. */
+export function canMoveAllToDirectory(
+  sources: { path: string; type: "file" | "directory" }[],
+  destinationDirectory: string,
+): boolean {
+  return sources.length > 0
+    && sources.every((source) => canMoveToDirectory(source, destinationDirectory));
+}

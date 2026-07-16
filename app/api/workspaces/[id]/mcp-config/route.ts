@@ -8,12 +8,10 @@ import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 import { getState, setEnabled, mintSecret, revokeSecret, setSelectedSkills } from "@/lib/infra/security/mcpConfigStore";
 import { loadSkills } from "@/lib/workspace/skillStore";
-import { requireWorkspace, rateLimited } from "@/lib/api/guards";
+import { requireWorkspace } from "@/lib/api/guards";
 import type { Workspace } from "@/lib/workspace/workspaceStore";
 
-async function guard(req: NextRequest, id: string): Promise<Workspace | Response> {
-  const limited = rateLimited(req, { logContext: { workspaceId: id, route: "mcp-config" } });
-  if (limited) return limited;
+async function guard(id: string): Promise<Workspace | Response> {
   return requireWorkspace(id);
 }
 
@@ -28,7 +26,7 @@ async function jsonBody(req: NextRequest): Promise<Record<string, unknown> | nul
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const ws = await guard(req, id);
+  const ws = await guard(id);
   if (ws instanceof Response) return ws;
 
   const { enabled, secretHash, selectedSkillIds } = getState(id);
@@ -52,7 +50,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const ws = await guard(req, id);
+  const ws = await guard(id);
   if (ws instanceof Response) return ws;
 
   const body = await jsonBody(req);
@@ -66,7 +64,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const ws = await guard(req, id);
+  const ws = await guard(id);
   if (ws instanceof Response) return ws;
 
   const plain = mintSecret(id);
@@ -75,7 +73,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
 export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const ws = await guard(req, id);
+  const ws = await guard(id);
   if (ws instanceof Response) return ws;
 
   revokeSecret(id);
@@ -84,7 +82,7 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
 
 export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const ws = await guard(req, id);
+  const ws = await guard(id);
   if (ws instanceof Response) return ws;
 
   const body = await jsonBody(req);

@@ -10,7 +10,7 @@ import { handleUpload } from "@/lib/workspace/fileUpload";
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const limited = rateLimited(req, { max: 200, bucket: "upload", logContext: { driveId: id } });
+  const limited = rateLimited(req, { policy: "upload", scope: id, logContext: { driveId: id } });
   if (limited) return limited;
 
   const drive = requireDrive(id);

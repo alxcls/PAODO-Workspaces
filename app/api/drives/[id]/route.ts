@@ -2,7 +2,7 @@
 // PATCH renames it; DELETE removes the drive, its connections, and its files on disk.
 import { type NextRequest, NextResponse } from "next/server";
 import { updateDrive, deleteDrive } from "@/lib/workspace/driveStore";
-import { requireDrive, notFound, rateLimited } from "@/lib/api/guards";
+import { requireDrive, notFound } from "@/lib/api/guards";
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -13,8 +13,6 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const limited = rateLimited(req, { logContext: { driveId: id } });
-  if (limited) return limited;
   const body = (await req.json()) as { name?: string };
   try {
     const drive = updateDrive(id, body);
@@ -25,10 +23,8 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   }
 }
 
-export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const limited = rateLimited(req, { logContext: { driveId: id } });
-  if (limited) return limited;
   const deleted = await deleteDrive(id);
   return NextResponse.json({ deleted });
 }

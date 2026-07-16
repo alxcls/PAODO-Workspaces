@@ -5,7 +5,7 @@
 // In both modes the run is owned by the run broker (not this request), so closing the tab only
 // detaches this viewer — the agent keeps going until it finishes or is explicitly stopped.
 import { type NextRequest, NextResponse } from "next/server";
-import { requireWorkspace, rateLimited } from "@/lib/api/guards";
+import { requireWorkspace } from "@/lib/api/guards";
 import type { AgentEvent } from "@/lib/agent/runner";
 import { buildSystemPrompt, buildPromptConfig } from "@/lib/agent/systemPrompt";
 import { buildWorkspacePromptInputs } from "@/lib/agent/promptContext";
@@ -20,9 +20,6 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const log = createLogger("api").child({ workspaceId: id, route: "chat" });
   const ws = requireWorkspace(id);
   if (ws instanceof NextResponse) return ws;
-
-  const limited = rateLimited(req, { logContext: { workspaceId: id, route: "chat" } });
-  if (limited) return limited;
 
   const body = (await req.json()) as { message?: string; conversationId?: string };
   const conversationId = body.conversationId ?? conversations.getActiveId(ws.id);

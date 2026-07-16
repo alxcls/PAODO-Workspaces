@@ -4,7 +4,7 @@
 export const runtime = "nodejs";
 
 import { type NextRequest, NextResponse } from "next/server";
-import { requireWorkspace, rateLimited } from "@/lib/api/guards";
+import { requireWorkspace, rateLimited, subjectRateLimited } from "@/lib/api/guards";
 import { validateKey } from "@/lib/infra/security/apiKeyStore";
 import { getClientIp } from "@/lib/infra/realtime/clientIp";
 import { createLogger } from "@/lib/infra/logger";
@@ -84,7 +84,7 @@ function apiConversationStream(req: NextRequest, workspaceId: string, conversati
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const limited = rateLimited(req, { logContext: { workspaceId: id } });
+  const limited = rateLimited(req, { policy: "publicAgentIp", logContext: { workspaceId: id } });
   if (limited) return limited;
 
   const plain = req.headers.get("authorization")?.replace(/^Bearer /, "") ?? "";
@@ -94,6 +94,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     log.warn({ ip: getClientIp(req) }, "unauthorized request");
     return new Response("Unauthorized", { status: 401 });
   }
+
+  const workspaceLimited = subjectRateLimited(`workspace:${id}`, "workspaceAgent", {
+    logContext: { workspaceId: id, route: "agent" },
+  });
+  if (workspaceLimited) return workspaceLimited;
 
   const ws = requireWorkspace(id);
   if (ws instanceof NextResponse) return ws;

@@ -2,7 +2,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const h = vi.hoisted(() => ({
-  limited: null as Response | null,
   workspace: { id: "ws-1", name: "Alpha", dir: "/fake/alpha" },
   state: { enabled: false, secretHash: null as string | null, selectedSkillIds: [] as string[] },
   setEnabled: vi.fn(),
@@ -16,7 +15,6 @@ const h = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/api/guards", () => ({
-  rateLimited: () => h.limited,
   requireWorkspace: () => h.workspace,
 }));
 vi.mock("@/lib/infra/security/mcpConfigStore", () => ({
@@ -39,7 +37,6 @@ const request = (method: string, body?: string) =>
   }) as never;
 
 beforeEach(() => {
-  h.limited = null;
   h.state = { enabled: false, secretHash: null, selectedSkillIds: [] };
   h.setEnabled.mockClear();
   h.mintSecret.mockClear();
@@ -86,11 +83,5 @@ describe("workspace MCP configuration route", () => {
     );
     expect(res.status).toBe(200);
     expect(h.setSelectedSkills).toHaveBeenCalledWith("ws-1", ["read_orders", "read_orders"]);
-  });
-
-  it("short-circuits every operation when rate limited", async () => {
-    h.limited = new Response("Too Many Requests", { status: 429 });
-    expect((await POST(request("POST"), ctx())).status).toBe(429);
-    expect(h.mintSecret).not.toHaveBeenCalled();
   });
 });

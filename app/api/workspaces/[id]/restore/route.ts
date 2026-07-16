@@ -3,15 +3,12 @@
 // that bind-mount live into the container, so no container restart is needed.
 import { type NextRequest, NextResponse } from "next/server";
 import { getVersioning } from "@/lib/infra/services";
-import { requireWorkspace, rateLimited } from "@/lib/api/guards";
+import { requireWorkspace } from "@/lib/api/guards";
 
 const SHA = /^[0-9a-fA-F]{4,40}$/;
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const limited = rateLimited(req, { logContext: { workspaceId: id } });
-  if (limited) return limited;
-
   const ws = requireWorkspace(id);
   if (ws instanceof NextResponse) return ws;
 

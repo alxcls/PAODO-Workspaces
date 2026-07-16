@@ -28,7 +28,10 @@ vi.mock("@/lib/infra/services", () => ({
 }));
 vi.mock("@/lib/infra/realtime/clientIp", () => ({ getClientIp: () => "1.2.3.4" }));
 const rateLimit = { ok: true, retryAfter: 0 };
-vi.mock("@/lib/infra/security/rateLimit", () => ({ checkRateLimit: () => rateLimit }));
+vi.mock("@/lib/infra/security/rateLimit", () => ({
+  checkRateLimit: () => rateLimit,
+  checkRateLimitPolicy: () => rateLimit,
+}));
 vi.mock("@/lib/workspace/conversationStore", () => ({
   createConversation: h.createConversation,
   getMessages: h.getMessages,

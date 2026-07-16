@@ -27,7 +27,10 @@ vi.mock("@/lib/infra/services", () => ({
   getVersioning: () => ({ commitResult: async () => ({ sha: "test", changed: false }) }),
 }));
 vi.mock("@/lib/infra/realtime/clientIp", () => ({ getClientIp: () => "1.2.3.4" }));
-vi.mock("@/lib/infra/security/rateLimit", () => ({ checkRateLimit: () => ({ ok: true, retryAfter: 0 }) }));
+vi.mock("@/lib/infra/security/rateLimit", () => ({
+  checkRateLimit: () => ({ ok: true, retryAfter: 0 }),
+  checkRateLimitPolicy: () => ({ ok: true, retryAfter: 0 }),
+}));
 
 import { POST } from "./route";
 

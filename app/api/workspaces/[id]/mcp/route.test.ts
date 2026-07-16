@@ -4,12 +4,16 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const h = vi.hoisted(() => ({
   limited: null as Response | null,
+  workspaceLimited: null as Response | null,
   validateSecret: vi.fn(() => false),
   buildServer: vi.fn(() => ({ connect: vi.fn(async () => {}), close: vi.fn(async () => {}) })),
   handleRequest: vi.fn(async (_req: Request) => Response.json({ jsonrpc: "2.0", id: 7, result: { tools: [] } })),
 }));
 
-vi.mock("@/lib/api/guards", () => ({ rateLimited: () => h.limited }));
+vi.mock("@/lib/api/guards", () => ({
+  rateLimited: () => h.limited,
+  subjectRateLimited: () => h.workspaceLimited,
+}));
 vi.mock("@/lib/infra/security/mcpConfigStore", () => ({ validateSecret: h.validateSecret }));
 vi.mock("@/lib/mcp/workspaceMcpServer", () => ({ buildWorkspaceMcpServer: h.buildServer }));
 vi.mock("@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js", () => ({
@@ -36,6 +40,7 @@ const post = (body: unknown, secret?: string) =>
 
 beforeEach(() => {
   h.limited = null;
+  h.workspaceLimited = null;
   h.validateSecret.mockReset().mockReturnValue(false);
   h.buildServer.mockClear();
   h.handleRequest.mockClear();
@@ -64,6 +69,14 @@ describe("workspace MCP route", () => {
     expect(await res.json()).toEqual({ jsonrpc: "2.0", id: 7, result: { tools: [] } });
     expect(h.buildServer).toHaveBeenCalledWith("ws-1");
     expect(h.handleRequest).toHaveBeenCalledOnce();
+  });
+
+  it("applies the authenticated workspace quota before constructing an MCP server", async () => {
+    h.validateSecret.mockReturnValue(true);
+    h.workspaceLimited = new Response("Too Many Requests", { status: 429 });
+    const res = await post({ jsonrpc: "2.0", id: 7, method: "tools/list" }, "valid");
+    expect(res.status).toBe(429);
+    expect(h.buildServer).not.toHaveBeenCalled();
   });
 
   it("returns a JSON-RPC internal error if MCP setup fails", async () => {

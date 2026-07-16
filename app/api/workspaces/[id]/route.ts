@@ -2,7 +2,7 @@
 // GET returns its metadata; DELETE removes it from the registry and deletes its directory from disk.
 import { type NextRequest, NextResponse } from "next/server";
 import { getStore, getContainers, getVersioning } from "@/lib/infra/services";
-import { requireWorkspace, notFound, rateLimited } from "@/lib/api/guards";
+import { requireWorkspace, notFound } from "@/lib/api/guards";
 import { disconnectWorkspace } from "@/lib/workspace/driveStore";
 import { removeWorkspaceFromGraph } from "@/lib/workspace/workspaceGraph";
 import { deleteKey } from "@/lib/infra/security/apiKeyStore";
@@ -31,9 +31,6 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const limited = rateLimited(req, { logContext: { workspaceId: id } });
-  if (limited) return limited;
-
   const body = (await req.json()) as {
     name?: string;
     maxIterations?: number;
@@ -95,11 +92,8 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   return NextResponse.json({ id, name: body.name.trim() });
 }
 
-export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const limited = rateLimited(req, { logContext: { workspaceId: id } });
-  if (limited) return limited;
-
   const ws = getStore().getWorkspace(id);
   if (!ws) return NextResponse.json({ deleted: false });
   await getStore().deleteWorkspace(id);

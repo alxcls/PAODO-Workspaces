@@ -28,7 +28,10 @@ vi.mock("@/lib/infra/realtime/clientIp", () => ({ getClientIp: () => "1.2.3.4" }
 // Rate limit is a separate concern (rateLimit.ts); default it to "allowed" so it never masks an
 // auth assertion. One test below flips it to confirm it short-circuits *before* auth runs.
 const rateLimit = { ok: true, retryAfter: 0 };
-vi.mock("@/lib/infra/security/rateLimit", () => ({ checkRateLimit: () => rateLimit }));
+vi.mock("@/lib/infra/security/rateLimit", () => ({
+  checkRateLimit: () => rateLimit,
+  checkRateLimitPolicy: () => rateLimit,
+}));
 // makeAgentStream proceeding == auth passed. Tag the response so "did we get through?" is a
 // status-code check, not a real agent run.
 vi.mock("@/lib/agent/agentStream", () => ({

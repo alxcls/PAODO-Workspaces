@@ -9,7 +9,7 @@ import type { NextRequest } from "next/server";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { buildWorkspaceMcpServer } from "@/lib/mcp/workspaceMcpServer";
 import { validateSecret } from "@/lib/infra/security/mcpConfigStore";
-import { rateLimited } from "@/lib/api/guards";
+import { rateLimited, subjectRateLimited } from "@/lib/api/guards";
 
 function bearer(req: Request): string {
   return req.headers.get("authorization")?.replace(/^Bearer\s+/i, "") ?? "";
@@ -41,12 +41,20 @@ async function requestId(req: Request): Promise<string | number | null> {
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
 
-  const limited = rateLimited(req, { bucket: `mcp:${id}`, logContext: { workspaceId: id, route: "mcp" } });
+  const limited = rateLimited(req, {
+    policy: "publicMcpIp",
+    logContext: { workspaceId: id, route: "mcp" },
+  });
   if (limited) return limited;
 
   if (!validateSecret(id, bearer(req))) {
     return new Response("Unauthorized", { status: 401 });
   }
+
+  const workspaceLimited = subjectRateLimited(`workspace:${id}`, "workspaceMcp", {
+    logContext: { workspaceId: id, route: "mcp" },
+  });
+  if (workspaceLimited) return workspaceLimited;
 
   // Preserve a clone before the transport consumes the original request. If setup or transport
   // handling itself throws, the fallback still returns a JSON-RPC error with the caller's id.

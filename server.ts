@@ -30,6 +30,7 @@ import {
 import { buildSecurityHeaders } from "./lib/infra/security/securityHeaders";
 import { startScheduler, stopScheduler } from "./lib/infra/schedules/scheduler";
 import { startProxyReconciler, stopProxyReconciler } from "./lib/infra/docker/proxyReconciler";
+import { checkApiRateLimit } from "./lib/infra/security/rateLimit";
 
 const dev = process.env.NODE_ENV !== "production";
 const port = parseInt(process.env.PORT ?? "3000", 10);
@@ -79,7 +80,22 @@ httpServer.on("request", (req, res) => {
 
   setSecurityHeaders(res);
 
+  const pathname = new URL(url, "http://localhost").pathname;
   const ip = getClientIp(req);
+  if (pathname.startsWith("/api/")) {
+    const rl = checkApiRateLimit(ip, method, pathname);
+    if (!rl.ok) {
+      log.warn({ ip, method, pathname, policy: rl.policy, event: "api_rate_limited" }, "API rate limit exceeded");
+      res.writeHead(429, {
+        "Retry-After": String(rl.retryAfter),
+        "RateLimit-Limit": String(rl.limit),
+        "RateLimit-Remaining": String(rl.remaining),
+      });
+      res.end("Too Many Requests");
+      return;
+    }
+  }
+
   const authResult = authenticate(ip, req);
   if (authResult === "blocked") {
     log.warn({ ip, event: "auth_blocked" }, "auth blocked");
@@ -105,7 +121,6 @@ httpServer.on("request", (req, res) => {
     log.info({ event: "auth_ok" }, "auth configured and working");
   }
 
-  const pathname = new URL(url, "http://localhost").pathname;
   if (isCsrf({ method, pathname, secFetchSite: req.headers["sec-fetch-site"] as string | undefined })) {
     log.warn({ ip, method, url, event: "csrf_blocked" }, "csrf blocked");
     res.writeHead(403);

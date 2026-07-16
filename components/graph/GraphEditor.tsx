@@ -179,6 +179,9 @@ const DRIVE_EDGE_STYLE = {
   data: { kind: "drive" as const },
 };
 
+
+const FAIL_LINKS = "Failed to save drive links";
+
 function wouldCreateCycle(edges: Edge[], source: string, target: string): boolean {
   const adj = new Map<string, string[]>();
   for (const e of edges) {
@@ -212,9 +215,14 @@ export default function GraphEditor() {
   const [showDriveForm, setShowDriveForm] = useState(false);
   const [driveName, setDriveName] = useState("");
   const [driveDescription, setDriveDescription] = useState("");
+  // Drives removed from the canvas but still in the store; Save is what actually destroys them.
+  const [pendingDriveDeletes, setPendingDriveDeletes] = useState<Node[]>([]);
   const selectedNodes = nodes.filter((node) => node.selected);
   const selectedDrive = selectedNodes.length === 1 && selectedNodes[0].type === "drive" ? selectedNodes[0] : undefined;
   const driveIdsRef = useRef<Set<string>>(new Set());
+  // Drive connections as they exist in the store, keyed by edge id. persist() diffs the current
+  // drive edges against this to work out what to create and what to delete.
+  const savedDriveConnsRef = useRef<Map<string, DriveConnectionItem>>(new Map());
   const nodesRef = useRef<Node[]>([]);
   const edgesRef = useRef<Edge[]>([]);
   const errorTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -232,22 +240,16 @@ export default function GraphEditor() {
     errorTimer.current = setTimeout(() => setError(null), 3000);
   }, []);
 
-  // Delete a drive (and, server-side, its connections). Removes the node and its edges locally.
+  // Queue a drive deletion: the node and its edges leave the canvas now, but the drive and its
+  // files survive until Save, so leaving without saving undoes it like any other canvas edit.
   const handleDeleteDrive = useCallback(
-    (driveId: string) => {
-      if (!confirm("Delete this drive and everything stored in it? This cannot be undone.")) return;
-      fetch(`/api/drives/${driveId}`, { method: "DELETE" })
-        .then((r) => {
-          if (!r.ok) throw new Error("delete failed");
-        })
-        .then(() => {
-          driveIdsRef.current.delete(driveId);
-          setEdges((eds) => eds.filter((e) => e.source !== driveId && e.target !== driveId));
-          setNodes((nds) => nds.filter((n) => n.id !== driveId));
-        })
-        .catch(() => showError("Failed to delete drive"));
+    (drive: Node) => {
+      setPendingDriveDeletes((ds) => [...ds, drive]);
+      setEdges((eds) => eds.filter((e) => e.source !== drive.id && e.target !== drive.id));
+      setNodes((nds) => nds.filter((n) => n.id !== drive.id));
+      setIsDirty(true);
     },
-    [setEdges, setNodes, showError],
+    [setEdges, setNodes],
   );
 
   useEffect(() => {
@@ -285,6 +287,7 @@ export default function GraphEditor() {
           targetHandle: workspaceIds.has(e.target) ? WORKSPACE_TOP_HANDLE : e.targetHandle,
           ...EDGE_STYLE,
         }));
+        savedDriveConnsRef.current = new Map(connections.map((c) => [c.id, c]));
         const driveEdges: Edge[] = connections.map((c) => ({
           id: c.id,
           source: c.driveId,
@@ -321,7 +324,7 @@ export default function GraphEditor() {
       const srcDrive = driveIdsRef.current.has(connection.source);
       const tgtDrive = driveIdsRef.current.has(connection.target);
 
-      // Drive↔workspace link: persisted immediately to its own store, kept out of the agent graph.
+      // Drive↔workspace link: batched like agent edges and written to its own store on Save.
       if (srcDrive || tgtDrive) {
         if (srcDrive && tgtDrive) {
           showError("Drives can only connect to workspaces.");
@@ -337,29 +340,19 @@ export default function GraphEditor() {
           (e) => e.data?.kind === "drive" && e.source === driveId && e.target === workspaceId,
         );
         if (existing && existing.sourceHandle === sourceHandle && existing.targetHandle === targetHandle) return;
-        fetch("/api/drive-connections", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            driveId,
-            workspaceId,
-            sourceHandle,
-            targetHandle,
-          }),
-        })
-          .then((r) => (r.ok ? r.json() : Promise.reject()))
-          .then((conn: DriveConnectionItem) => {
-            const nextEdge: Edge = {
-              id: conn.id,
-              source: driveId,
-              target: workspaceId,
-              sourceHandle: conn.sourceHandle,
-              targetHandle: normalizeWorkspaceIncomingHandle(conn.targetHandle),
-              ...DRIVE_EDGE_STYLE,
-            };
-            setEdges((eds) => (existing ? eds.map((e) => (e.id === existing.id ? nextEdge : e)) : [...eds, nextEdge]));
-          })
-          .catch(() => showError("Failed to connect drive"));
+        // Re-dragging an existing link only moves its handles, so keep the id: the save then sees
+        // a handle change on a known connection rather than an unrelated create. A new link gets a
+        // throwaway id and picks up its real one from the store on Save.
+        const nextEdge: Edge = {
+          id: existing?.id ?? crypto.randomUUID(),
+          source: driveId,
+          target: workspaceId,
+          sourceHandle,
+          targetHandle,
+          ...DRIVE_EDGE_STYLE,
+        };
+        setEdges((eds) => (existing ? eds.map((e) => (e.id === existing.id ? nextEdge : e)) : [...eds, nextEdge]));
+        setIsDirty(true);
         return;
       }
 
@@ -376,23 +369,9 @@ export default function GraphEditor() {
 
   const handleEdgesChange: OnEdgesChange = useCallback(
     (changes: EdgeChange[]) => {
-      let workspaceEdgeRemoved = false;
-      for (const c of changes) {
-        if (c.type !== "remove") continue;
-        const edge = edgesRef.current.find((e) => e.id === c.id);
-        if (edge?.data?.kind === "drive") {
-          // Disconnect (drive still exists; this is a manual edge delete).
-          fetch("/api/drive-connections", {
-            method: "DELETE",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ connectionId: edge.id }),
-          }).catch(() => {});
-        } else {
-          workspaceEdgeRemoved = true;
-        }
-      }
+      const edgeRemoved = changes.some((c) => c.type === "remove");
       onEdgesChange(changes);
-      if (workspaceEdgeRemoved) setIsDirty(true);
+      if (edgeRemoved) setIsDirty(true);
     },
     [onEdgesChange],
   );
@@ -409,6 +388,69 @@ export default function GraphEditor() {
     },
     [router],
   );
+
+  // Drives and their links have no bulk endpoint, so reconcile them one call at a time against
+  // savedDriveConnsRef, which tracks what the store actually holds. Each step updates that ref as
+  // it succeeds, so a save that fails partway can be retried and picks up where it stopped.
+  const persistDrives = useCallback(async () => {
+    const saved = savedDriveConnsRef.current;
+    const send = async (url: string, init: RequestInit, fail: string) => {
+      const res = await fetch(url, init);
+      if (!res.ok) throw new Error(fail);
+      return res;
+    };
+    const asJson = (body: unknown): RequestInit => ({
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+
+    // Deleting a drive drops its connections server-side too, so this runs first and forgets them
+    // here — otherwise the reconcile below would try to delete each of them a second time.
+    for (const drive of pendingDriveDeletes) {
+      await send(`/api/drives/${drive.id}`, { method: "DELETE" }, `Failed to delete ${drive.data.label}`);
+      driveIdsRef.current.delete(drive.id);
+      for (const [id, conn] of saved) if (conn.driveId === drive.id) saved.delete(id);
+      setPendingDriveDeletes((ds) => ds.filter((d) => d.id !== drive.id));
+    }
+
+    const isSaved = (edge: Edge) => {
+      const conn = saved.get(edge.id);
+      return (
+        !!conn &&
+        conn.sourceHandle === edge.sourceHandle &&
+        normalizeWorkspaceIncomingHandle(conn.targetHandle) === edge.targetHandle
+      );
+    };
+    const driveEdges = edgesRef.current.filter((e) => e.data?.kind === "drive");
+    const kept = new Set(driveEdges.filter(isSaved).map((e) => e.id));
+
+    for (const connectionId of [...saved.keys()].filter((id) => !kept.has(id))) {
+      await send("/api/drive-connections", { method: "DELETE", ...asJson({ connectionId }) }, FAIL_LINKS);
+      saved.delete(connectionId);
+    }
+    // A link whose handles moved is deleted above and recreated here, so it comes back with a new
+    // store id; swap that onto the edge to keep canvas and store in sync.
+    const newIds = new Map<string, string>();
+    for (const edge of driveEdges.filter((e) => !isSaved(e))) {
+      const res = await send(
+        "/api/drive-connections",
+        {
+          method: "POST",
+          ...asJson({
+            driveId: edge.source,
+            workspaceId: edge.target,
+            sourceHandle: edge.sourceHandle,
+            targetHandle: edge.targetHandle,
+          }),
+        },
+        FAIL_LINKS,
+      );
+      const conn = (await res.json()) as DriveConnectionItem;
+      saved.set(conn.id, conn);
+      newIds.set(edge.id, conn.id);
+    }
+    if (newIds.size) setEdges((eds) => eds.map((e) => (newIds.has(e.id) ? { ...e, id: newIds.get(e.id)! } : e)));
+  }, [pendingDriveDeletes, setEdges]);
 
   // Only workspace→workspace edges go to the agent graph; drive edges live in their own store.
   const persist = useCallback(async () => {
@@ -428,9 +470,20 @@ export default function GraphEditor() {
       const body = (await res.json().catch(() => ({}))) as { error?: string };
       throw new Error(body.error ?? `Save failed (${res.status})`);
     }
-  }, []);
+    await persistDrives();
+  }, [persistDrives]);
+
+  // Removing a drive node is reversible until Save, so the point of no return is here rather than
+  // at the click — this is where the files actually go.
+  const confirmDriveDeletes = useCallback(() => {
+    if (!pendingDriveDeletes.length) return true;
+    const names = pendingDriveDeletes.map((d) => d.data.label as string).join(", ");
+    const it = pendingDriveDeletes.length > 1 ? "them" : "it";
+    return confirm(`Saving permanently deletes ${names} and everything stored in ${it}. Continue?`);
+  }, [pendingDriveDeletes]);
 
   const handleSave = useCallback(async () => {
+    if (!confirmDriveDeletes()) return;
     try {
       await persist();
       setIsDirty(false);
@@ -439,7 +492,7 @@ export default function GraphEditor() {
     } catch (err) {
       showError(err instanceof Error ? err.message : "Save failed");
     }
-  }, [persist, showError]);
+  }, [confirmDriveDeletes, persist, showError]);
 
   const handleCreateDrive = useCallback(async () => {
     const name = driveName.trim();
@@ -481,13 +534,14 @@ export default function GraphEditor() {
   }, [isDirty, router]);
 
   const handleSaveAndLeave = useCallback(async () => {
+    if (!confirmDriveDeletes()) return;
     try {
       await persist();
       router.push("/");
     } catch (err) {
       showError(err instanceof Error ? err.message : "Save failed");
     }
-  }, [persist, router, showError]);
+  }, [confirmDriveDeletes, persist, router, showError]);
 
   return (
     <div className="h-screen flex flex-col bg-bg-tint">
@@ -523,7 +577,7 @@ export default function GraphEditor() {
             {selectedDrive && (
               <button
                 className="btn btn-ghost btn-sm text-danger"
-                onClick={() => handleDeleteDrive(selectedDrive.id)}
+                onClick={() => handleDeleteDrive(selectedDrive)}
                 title={`Delete ${selectedDrive.data.label as string}`}
               >
                 Delete
@@ -608,6 +662,12 @@ export default function GraphEditor() {
             <div className="font-semibold text-[19px] mb-3 text-text">Unsaved changes</div>
             <p className="text-sm text-text-2 m-0 mb-[26px] leading-[1.5]">
               You have unsaved changes to the agent network. What would you like to do?
+              {pendingDriveDeletes.length > 0 && (
+                <span className="block mt-2 text-danger">
+                  Saving permanently deletes {pendingDriveDeletes.map((d) => d.data.label as string).join(", ")} and
+                  everything stored in {pendingDriveDeletes.length > 1 ? "them" : "it"}.
+                </span>
+              )}
             </p>
             <div className="flex gap-2.5 items-center flex-wrap">
               <button className="btn btn-primary" onClick={handleSaveAndLeave}>

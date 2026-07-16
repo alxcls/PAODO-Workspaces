@@ -212,6 +212,8 @@ export default function GraphEditor() {
   const [showDriveForm, setShowDriveForm] = useState(false);
   const [driveName, setDriveName] = useState("");
   const [driveDescription, setDriveDescription] = useState("");
+  const selectedNodes = nodes.filter((node) => node.selected);
+  const selectedDrive = selectedNodes.length === 1 && selectedNodes[0].type === "drive" ? selectedNodes[0] : undefined;
   const driveIdsRef = useRef<Set<string>>(new Set());
   const nodesRef = useRef<Node[]>([]);
   const edgesRef = useRef<Edge[]>([]);
@@ -274,7 +276,7 @@ export default function GraphEditor() {
           type: "drive",
           deletable: false,
           position: positions[d.id] ?? { x: 80 + (i % 3) * 260, y: 460 + Math.floor(i / 3) * 200 },
-          data: { label: d.name, description: d.description, kind: "drive", onDelete: handleDeleteDrive },
+          data: { label: d.name, description: d.description, kind: "drive" },
         }));
         setNodes([...wsNodes, ...driveNodes]);
         const wsEdges = (graph.edges ?? []).map((e) => ({
@@ -298,7 +300,7 @@ export default function GraphEditor() {
         if (e instanceof Error && e.message === "graph-disabled") router.replace("/");
         else setReady(true);
       });
-  }, [setNodes, setEdges, router, handleDeleteDrive]);
+  }, [setNodes, setEdges, router]);
 
   useEffect(() => {
     const handler = (e: BeforeUnloadEvent) => {
@@ -462,7 +464,7 @@ export default function GraphEditor() {
           type: "drive",
           deletable: false,
           position: { x: 200, y: 320 },
-          data: { label: drive.name, description: drive.description, kind: "drive", onDelete: handleDeleteDrive },
+          data: { label: drive.name, description: drive.description, kind: "drive" },
         },
       ]);
       setDriveName("");
@@ -471,7 +473,7 @@ export default function GraphEditor() {
     } catch (err) {
       showError(err instanceof Error ? err.message : "Create failed");
     }
-  }, [driveName, driveDescription, setNodes, handleDeleteDrive, showError]);
+  }, [driveName, driveDescription, setNodes, showError]);
 
   const handleBack = useCallback(() => {
     if (isDirty) setShowUnsavedModal(true);
@@ -516,8 +518,17 @@ export default function GraphEditor() {
         right={
           <div className="flex items-center gap-2.5">
             <button className="btn btn-ghost btn-sm" onClick={() => setShowDriveForm((v) => !v)}>
-              + Drive
+              Add drive
             </button>
+            {selectedDrive && (
+              <button
+                className="btn btn-ghost btn-sm text-danger"
+                onClick={() => handleDeleteDrive(selectedDrive.id)}
+                title={`Delete ${selectedDrive.data.label as string}`}
+              >
+                Delete
+              </button>
+            )}
             {isDirty && <span className="text-xs text-text-3 italic">Unsaved changes</span>}
             <button className="btn btn-primary btn-sm" onClick={handleSave} disabled={!isDirty}>
               {saved ? "Saved ✓" : "Save"}

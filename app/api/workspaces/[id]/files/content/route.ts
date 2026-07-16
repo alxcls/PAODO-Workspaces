@@ -1,7 +1,7 @@
 // CRUD endpoint for individual file content within a workspace.
 // GET classifies and returns the file as text, image, or binary; PUT saves edited text content;
-// PATCH moves a batch of items into one directory and DELETE removes the file. The shared core
-// (lib/workspace/fileContent.ts) does the work; the workspace backend adds a container
+// PATCH moves a batch of items into one directory and DELETE removes the file. Shared workspace
+// file modules do the work; the workspace backend adds a container
 // write-fallback for legacy root-owned files and a git snapshot.
 //
 // The container write-fallback covers PUT only; moving a legacy root-owned file still fails with a
@@ -14,7 +14,9 @@ import path from "path";
 import { getContainers, getVersioning } from "@/lib/infra/services";
 import { requireWorkspace } from "@/lib/api/guards";
 import { snapshotWorkspace } from "@/lib/infra/git/snapshotWorkspace";
-import { getFileContent, putFileContent, moveFileContent, deleteFileContent, type FileBackend } from "@/lib/workspace/fileContent";
+import { getFileContent, putFileContent, deleteFileContent } from "@/lib/workspace/fileContent";
+import { moveFileContent } from "@/lib/workspace/fileMove";
+import type { FileBackend } from "@/lib/workspace/fileBackend";
 import type { Workspace } from "@/lib/workspace/workspaceStore";
 
 function backend(ws: Workspace): FileBackend {

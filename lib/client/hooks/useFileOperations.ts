@@ -28,6 +28,11 @@ export interface MoveResult {
   unchanged: boolean;
 }
 
+export interface MoveBatchOutcome {
+  results: MoveResult[];
+  error: string | null;
+}
+
 interface Options {
   workspaceId: string;
   workspaceName: string;
@@ -136,7 +141,7 @@ export function useFileOperations({
   const handleMoveMany = async (
     sourcePaths: string[],
     destinationDirectory: string | null,
-  ): Promise<{ results: MoveResult[]; error: string | null } | null> => {
+  ): Promise<MoveBatchOutcome | null> => {
     if (moveInFlightRef.current) {
       setMoveError("Another move is still in progress");
       return null;

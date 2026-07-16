@@ -5,8 +5,12 @@ import { useFileTreeSelection } from "@/lib/client/hooks/useFileTreeSelection";
 import { useFileOperations, TreeNode } from "@/lib/client/hooks/useFileOperations";
 import { useFileUpload } from "@/lib/client/hooks/useFileUpload";
 import { readDroppedEntries } from "@/lib/client/dropEntries";
+import { canMoveToDirectory, remapMovedPath } from "@/lib/client/fileMove";
 
 type CheckState = "none" | "some" | "all";
+type DraggedTreeNode = Pick<TreeNode, "name" | "path" | "type">;
+
+const INTERNAL_DRAG_TYPE = "application/x-paodo-tree-path";
 
 // ---- Icons ----
 const UploadIcon = () => (
@@ -66,14 +70,23 @@ const Checkbox = ({ state, onClick }: { state: CheckState; onClick: (e: React.Mo
 
 // ---- Tree node list ----
 interface TreeListProps {
-  nodes: TreeNode[]; depth: number; expanded: Record<string, boolean>;
+  nodes: TreeNode[]; depth: number; parentDirectory: string | null;
+  expanded: Record<string, boolean>;
   onToggle: (path: string) => void; activePath: string | null;
   selected: Set<string>; onSelect: (paths: string[], on: boolean) => void;
   onPick: (path: string) => void;
+  draggedNode: DraggedTreeNode | null; dropTargetPath: string | null;
+  movingPath: string | null;
+  onNodeDragStart: (node: TreeNode, e: React.DragEvent) => void;
+  onNodeDragEnd: () => void;
+  onDropTargetChange: (path: string | null) => void;
+  onMove: (sourcePath: string, destinationDirectory: string | null) => void;
 }
 
 const TreeNodeList = ({
-  nodes, depth, expanded, onToggle, activePath, selected, onSelect, onPick,
+  nodes, depth, parentDirectory, expanded, onToggle, activePath, selected, onSelect, onPick,
+  draggedNode, dropTargetPath, movingPath,
+  onNodeDragStart, onNodeDragEnd, onDropTargetChange, onMove,
 }: TreeListProps) => {
   const sorted = [...nodes].sort((a, b) => {
     if (a.type !== b.type) return a.type === "directory" ? -1 : 1;
@@ -86,11 +99,37 @@ const TreeNodeList = ({
         if (node.type === "directory") {
           const isOpen = expanded[node.path] ?? false;
           const state = getNodeCheckState(node, selected);
+          const canDrop = draggedNode ? canMoveToDirectory(draggedNode, node.path) : false;
+          const isDropTarget = canDrop && dropTargetPath === node.path;
           return (
-            <div key={node.path}>
+            <div key={node.path} className={isDropTarget ? "bg-primary-tint" : ""}>
               <button
-                className={`flex items-center w-full border-0 border-l-[3px] border-l-transparent bg-transparent py-[5px] pl-2 pr-2 text-[13.5px] text-text cursor-pointer text-left transition-[background,border-color,color] duration-[120ms] hover:bg-black/[.04] ${state !== "none" ? "bg-select-tint" : ""}`}
+                className={`flex items-center w-full border-0 border-l-[3px] bg-transparent py-[5px] pl-2 pr-2 text-[13.5px] text-text cursor-pointer text-left transition-[background,border-color,color,opacity] duration-[120ms] hover:bg-black/[.04]
+                  ${isDropTarget ? "bg-primary-tint border-l-primary" : "border-l-transparent"}
+                  ${state !== "none" ? "bg-select-tint" : ""}
+                  ${movingPath === node.path ? "opacity-50" : ""}`}
                 onClick={() => onToggle(node.path)}
+                draggable={movingPath === null}
+                onDragStart={(e) => onNodeDragStart(node, e)}
+                onDragEnd={onNodeDragEnd}
+                onDragOver={(e) => {
+                  if (!draggedNode) return;
+                  e.preventDefault();
+                  e.stopPropagation();
+                  e.dataTransfer.dropEffect = canDrop ? "move" : "none";
+                  onDropTargetChange(canDrop ? node.path : "");
+                }}
+                onDragLeave={(e) => {
+                  if (e.currentTarget.contains(e.relatedTarget as Node | null)) return;
+                  if (dropTargetPath === node.path) onDropTargetChange("");
+                }}
+                onDrop={(e) => {
+                  if (!draggedNode) return;
+                  e.preventDefault();
+                  e.stopPropagation();
+                  onDropTargetChange(null);
+                  if (canDrop) onMove(draggedNode.path, node.path);
+                }}
               >
                 <Checkbox state={state} onClick={(e) => {
                   e.stopPropagation();
@@ -109,9 +148,14 @@ const TreeNodeList = ({
               </button>
               {isOpen && node.children && (
                 <TreeNodeList
-                  nodes={node.children} depth={depth + 1} expanded={expanded}
+                  nodes={node.children} depth={depth + 1} parentDirectory={node.path}
+                  expanded={expanded}
                   onToggle={onToggle} activePath={activePath} selected={selected}
                   onSelect={onSelect} onPick={onPick}
+                  draggedNode={draggedNode} dropTargetPath={dropTargetPath}
+                  movingPath={movingPath} onNodeDragStart={onNodeDragStart}
+                  onNodeDragEnd={onNodeDragEnd} onDropTargetChange={onDropTargetChange}
+                  onMove={onMove}
                 />
               )}
             </div>
@@ -120,6 +164,9 @@ const TreeNodeList = ({
 
         const isActive = node.path === activePath;
         const isSel = selected.has(node.path);
+        const canDropBesideFile = draggedNode && parentDirectory !== null
+          ? canMoveToDirectory(draggedNode, parentDirectory)
+          : Boolean(draggedNode);
         return (
           <button
             key={node.path}
@@ -129,6 +176,25 @@ const TreeNodeList = ({
                 : `border-l-transparent text-text hover:bg-black/[.04] ${isSel ? "bg-select-tint" : ""}`
               }`}
             onClick={() => onPick(node.path)}
+            draggable={movingPath === null}
+            onDragStart={(e) => onNodeDragStart(node, e)}
+            onDragEnd={onNodeDragEnd}
+            onDragOver={(e) => {
+              if (!draggedNode) return;
+              e.preventDefault();
+              e.stopPropagation();
+              e.dataTransfer.dropEffect = canDropBesideFile ? "move" : "none";
+              onDropTargetChange(canDropBesideFile ? (parentDirectory ?? "") : "");
+            }}
+            onDragLeave={() => {
+              if (dropTargetPath === (parentDirectory ?? "")) onDropTargetChange("");
+            }}
+            onDrop={(e) => {
+              if (!draggedNode) return;
+              e.preventDefault();
+              e.stopPropagation();
+              if (canDropBesideFile) onMove(draggedNode.path, parentDirectory);
+            }}
           >
             <Checkbox
               state={isSel ? "all" : "none"}
@@ -206,6 +272,7 @@ interface Props {
   selectedPath: string | null;
   onFileSelect: (path: string) => void;
   onDeletedPaths?: (paths: string[]) => void;
+  onMovedPath?: (sourcePath: string, destinationPath: string) => void;
   style?: React.CSSProperties;
   refreshKey?: number;
   /** API base for file routes. Defaults to the workspace path; drives pass /api/drives/<id>. */
@@ -214,13 +281,18 @@ interface Props {
 
 export default function FileTreePanel({
   workspaceId, workspaceName, selectedPath,
-  onFileSelect, onDeletedPaths, style, refreshKey, apiBase,
+  onFileSelect, onDeletedPaths, onMovedPath, style, refreshKey, apiBase,
 }: Props) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const [draggedNode, setDraggedNode] = useState<DraggedTreeNode | null>(null);
+  const [dropTargetPath, setDropTargetPath] = useState<string | null>(null);
   const base = apiBase ?? `/api/workspaces/${workspaceId}`;
 
-  const { selected, handleSelect, clearSelection } = useFileTreeSelection();
-  const { tree, fetchTree, handleDownload, downloading, handleDelete, deleteError } = useFileOperations({
+  const { selected, handleSelect, clearSelection, remapSelection } = useFileTreeSelection();
+  const {
+    tree, fetchTree, handleDownload, downloading, handleDelete, deleteError,
+    handleMove, movingPath, moveError,
+  } = useFileOperations({
     workspaceId, workspaceName, selected, clearSelection, onDeletedPaths, refreshKey, apiBase: base,
   });
 
@@ -267,6 +339,40 @@ export default function FileTreePanel({
   const toggleExpanded = (path: string) =>
     setExpanded((e) => ({ ...e, [path]: !e[path] }));
 
+  const onNodeDragStart = (node: TreeNode, e: React.DragEvent) => {
+    const dragged = { name: node.name, path: node.path, type: node.type };
+    setDraggedNode(dragged);
+    // Until a specific folder (or one of its files) is hovered, the tree root is the target.
+    setDropTargetPath("");
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData(INTERNAL_DRAG_TYPE, node.path);
+    e.dataTransfer.setData("text/plain", node.path);
+  };
+
+  const onNodeDragEnd = () => {
+    setDraggedNode(null);
+    setDropTargetPath(null);
+  };
+
+  const moveNode = async (sourcePath: string, destinationDirectory: string | null) => {
+    const moved = await handleMove(sourcePath, destinationDirectory);
+    setDraggedNode(null);
+    setDropTargetPath(null);
+    if (!moved || moved.unchanged) return;
+    const destinationPath = moved.path;
+
+    remapSelection(sourcePath, destinationPath);
+    setExpanded((current) => {
+      const remapped: Record<string, boolean> = {};
+      for (const [path, isOpen] of Object.entries(current)) {
+        remapped[remapMovedPath(path, sourcePath, destinationPath) ?? path] = isOpen;
+      }
+      if (destinationDirectory) remapped[destinationDirectory] = true;
+      return remapped;
+    });
+    onMovedPath?.(sourcePath, destinationPath);
+  };
+
   return (
     <aside
       className="relative flex flex-col bg-bg-tint overflow-hidden"
@@ -289,24 +395,45 @@ export default function FileTreePanel({
         />
       </div>
 
-      <div className="flex-1 overflow-auto py-2">
+      <div
+        className={`relative flex-1 overflow-auto py-2 transition-colors ${dropTargetPath === "" ? "bg-primary-tint" : ""}`}
+        onDragOver={(e) => {
+          if (!draggedNode || e.target !== e.currentTarget) return;
+          e.preventDefault();
+          e.dataTransfer.dropEffect = "move";
+          setDropTargetPath("");
+        }}
+        onDragLeave={(e) => {
+          if (e.target === e.currentTarget && dropTargetPath === "") setDropTargetPath(null);
+        }}
+        onDrop={(e) => {
+          if (!draggedNode || e.target !== e.currentTarget) return;
+          e.preventDefault();
+          void moveNode(draggedNode.path, null);
+        }}
+        title={draggedNode ? "Drop on empty space to move to the root folder" : undefined}
+      >
         <TreeNodeList
-          nodes={tree} depth={0} expanded={expanded} onToggle={toggleExpanded}
+          nodes={tree} depth={0} parentDirectory={null}
+          expanded={expanded} onToggle={toggleExpanded}
           activePath={selectedPath} selected={selected} onSelect={handleSelect}
           onPick={onFileSelect}
+          draggedNode={draggedNode} dropTargetPath={dropTargetPath}
+          movingPath={movingPath} onNodeDragStart={onNodeDragStart}
+          onNodeDragEnd={onNodeDragEnd} onDropTargetChange={setDropTargetPath}
+          onMove={(sourcePath, destinationDirectory) => { void moveNode(sourcePath, destinationDirectory); }}
         />
+        {dragging && (
+          <div className={`absolute inset-0 z-10 flex items-center justify-center pointer-events-none border-2 border-dashed ${busy ? "border-border bg-bg/80" : "border-primary bg-primary-tint/80"}`}>
+            <div className={`flex flex-col items-center gap-2 text-[13.5px] font-medium ${busy ? "text-text-3" : "text-primary"}`}>
+              <UploadIcon />
+              <span>{busy ? "Upload in progress — please wait" : "Drop files or folders to upload"}</span>
+            </div>
+          </div>
+        )}
       </div>
 
-      {dragging && (
-        <div className={`absolute inset-0 z-10 flex items-center justify-center pointer-events-none border-2 border-dashed ${busy ? "border-border bg-bg/80" : "border-primary bg-primary-tint/80"}`}>
-          <div className={`flex flex-col items-center gap-2 text-[13.5px] font-medium ${busy ? "text-text-3" : "text-primary"}`}>
-            <UploadIcon />
-            <span>{busy ? "Upload in progress — please wait" : "Drop files or folders to upload"}</span>
-          </div>
-        </div>
-      )}
-
-      {(selected.size > 0 || deleteError) && (
+      {(selected.size > 0 || deleteError || moveError || movingPath) && (
         <div className="border-t border-border p-[10px_12px] bg-bg">
           <div className="flex gap-1">
             <button
@@ -325,6 +452,10 @@ export default function FileTreePanel({
           </div>
           {deleteError && (
             <div className="text-xs text-danger whitespace-pre-wrap mt-2 px-1">{deleteError}</div>
+          )}
+          {movingPath && <div className="text-xs text-text-3 mt-2 px-1">Moving…</div>}
+          {moveError && (
+            <div className="text-xs text-danger whitespace-pre-wrap mt-2 px-1">{moveError}</div>
           )}
         </div>
       )}

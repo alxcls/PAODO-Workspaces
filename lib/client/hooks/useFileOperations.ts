@@ -3,7 +3,8 @@
 // selected paths) and delete actions. Delete collapses the selection to root paths (skipping
 // descendants of an already-selected folder), issues the DELETEs in parallel, aggregates any
 // failures into a transient deleteError (auto-cleared after 2s), and notifies the parent of
-// deleted paths so dependent views can update.
+// deleted paths so dependent views can update. Internal tree drag-and-drop also comes through here:
+// handleMove issues a contained PATCH, reports conflicts, and returns the authoritative new path.
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useDeferredPending } from "./useDeferredPending";
@@ -39,7 +40,11 @@ export function useFileOperations({
   const [tree, setTree] = useState<TreeNode[]>([]);
   const { pending: downloading, run: runDownload } = useDeferredPending();
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [moveError, setMoveError] = useState<string | null>(null);
+  const [movingPath, setMovingPath] = useState<string | null>(null);
   const deleteTimerRef = useRef<number | null>(null);
+  const moveTimerRef = useRef<number | null>(null);
+  const moveInFlightRef = useRef(false);
 
   useEffect(() => {
     if (!deleteError) return;
@@ -58,6 +63,19 @@ export function useFileOperations({
       }
     };
   }, [deleteError]);
+
+  useEffect(() => {
+    if (!moveError) return;
+    if (moveTimerRef.current) window.clearTimeout(moveTimerRef.current);
+    moveTimerRef.current = window.setTimeout(() => {
+      setMoveError(null);
+      moveTimerRef.current = null;
+    }, 3500);
+    return () => {
+      if (moveTimerRef.current) window.clearTimeout(moveTimerRef.current);
+      moveTimerRef.current = null;
+    };
+  }, [moveError]);
 
   const fetchTree = useCallback(async () => {
     try {
@@ -130,5 +148,47 @@ export function useFileOperations({
     fetchTree();
   };
 
-  return { tree, fetchTree, handleDownload, downloading, handleDelete, deleteError };
+  // Resolves to the item's new path, or null when the move did not happen. `unchanged` reports the
+  // server's own verdict that the item was already in the destination — never re-derive that by
+  // comparing paths, since the tree's paths and the server's realpaths need not be identical.
+  const handleMove = async (
+    sourcePath: string,
+    destinationDirectory: string | null,
+  ): Promise<{ path: string; unchanged: boolean } | null> => {
+    if (moveInFlightRef.current) {
+      setMoveError("Another move is still in progress");
+      return null;
+    }
+    moveInFlightRef.current = true;
+    setMovingPath(sourcePath);
+    setMoveError(null);
+    try {
+      const res = await fetch(`${base}/files/content`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sourcePath, destinationDirectory }),
+      });
+      const body = (await res.json().catch(() => ({}))) as
+        { path?: string; unchanged?: boolean; error?: string };
+      if (!res.ok || !body.path) {
+        setMoveError(body.error || `Move failed: ${res.status} ${res.statusText}`);
+        return null;
+      }
+      await fetchTree();
+      return { path: body.path, unchanged: body.unchanged === true };
+    } catch {
+      setMoveError("Move failed");
+      return null;
+    } finally {
+      moveInFlightRef.current = false;
+      setMovingPath(null);
+    }
+  };
+
+  return {
+    tree, fetchTree,
+    handleDownload, downloading,
+    handleDelete, deleteError,
+    handleMove, movingPath, moveError,
+  };
 }

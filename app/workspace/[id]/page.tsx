@@ -23,6 +23,7 @@ import { useWorkspaceSocket } from "@/lib/client/hooks/useWorkspaceSocket";
 import { useWorkspaceMeta } from "@/lib/client/hooks/useWorkspaceMeta";
 import { useConversations } from "@/lib/client/hooks/useConversations";
 import { useDragResize } from "@/lib/client/hooks/useDragResize";
+import { remapMovedPath } from "@/lib/client/fileMove";
 
 // useConversations reads useSearchParams() (for the ?conversation= deep-link), which Next requires
 // to sit under a Suspense boundary, so the page body is wrapped below.
@@ -148,6 +149,9 @@ function WorkspacePageInner({ params }: { params: Promise<{ id: string }> }) {
         onFileSelect={(path) => { setSelectedFile(path); setViewerOpen(true); }}
         onDeletedPaths={(paths) => {
           if (selectedFile && paths.includes(selectedFile)) { setSelectedFile(null); setViewerOpen(false); }
+        }}
+        onMovedPath={(sourcePath, destinationPath) => {
+          setSelectedFile((current) => remapMovedPath(current, sourcePath, destinationPath));
         }}
         style={{ width: leftWidth, minWidth: 220, flex: "none" }}
         refreshKey={treeRefreshKey}

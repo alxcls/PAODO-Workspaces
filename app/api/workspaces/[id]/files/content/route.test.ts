@@ -29,15 +29,28 @@ const { WS_DIR, ESCAPE } = vi.hoisted(() => {
 });
 
 vi.mock("@/lib/infra/services", () => ({
-  getStore: () => ({ getWorkspace: (id: string) => (id === "ws" ? { id: "ws", dir: WS_DIR } : undefined) }),
+  getStore: () => ({ getWorkspace: (id: string) => (id === "ws" ? { id: "ws", name: "ws", dir: WS_DIR } : undefined) }),
   getContainers: () => ({}),
+  getVersioning: () => ({ commitResult: async () => ({ sha: "test", changed: true }) }),
 }));
 
-import { GET } from "./route";
+import { GET, PATCH } from "./route";
+import { buildTree } from "@/lib/workspace/fileTree";
 
 const ctx = { params: Promise.resolve({ id: "ws" }) };
 const getFile = (p: string) =>
   GET(new Request(`http://x/api/files/content?path=${encodeURIComponent(p)}`), ctx);
+
+const patchMove = (body: unknown) =>
+  PATCH(new Request("http://x/api/files/content", {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: typeof body === "string" ? body : JSON.stringify(body),
+  }), ctx);
+
+/** The path the browser actually holds for a top-level entry: what buildTree serves. */
+const treePathOf = async (name: string) =>
+  (await buildTree(WS_DIR)).find((n) => n.name === name)!.path;
 
 afterAll(() => fs.rmSync(path.dirname(WS_DIR), { recursive: true, force: true }));
 
@@ -63,5 +76,150 @@ describe("files/content GET — workspace containment", () => {
     const res = await getFile(outside);
     expect(res.status).toBe(400);
     expect((await res.json()).error).toMatch(/outside workspace/i);
+  });
+});
+
+describe("files/content PATCH — move", () => {
+  it("moves a file into a folder", async () => {
+    const source = path.join(WS_DIR, "move-me.txt");
+    const destinationDirectory = path.join(WS_DIR, "archive");
+    fs.writeFileSync(source, "move me");
+    fs.mkdirSync(destinationDirectory);
+
+    const res = await PATCH(new Request("http://x/api/files/content", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ sourcePath: source, destinationDirectory }),
+    }), ctx);
+
+    expect(res.status).toBe(200);
+    expect(fs.existsSync(source)).toBe(false);
+    expect(fs.readFileSync(path.join(destinationDirectory, "move-me.txt"), "utf8")).toBe("move me");
+  });
+
+  it("rejects moving a folder into one of its descendants", async () => {
+    const source = path.join(WS_DIR, "parent");
+    const descendant = path.join(source, "child");
+    fs.mkdirSync(descendant, { recursive: true });
+
+    const res = await PATCH(new Request("http://x/api/files/content", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ sourcePath: source, destinationDirectory: descendant }),
+    }), ctx);
+
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toMatch(/into itself/i);
+    expect(fs.existsSync(descendant)).toBe(true);
+  });
+
+  it("returns a conflict without overwriting an existing item", async () => {
+    const sourceDirectory = path.join(WS_DIR, "from");
+    const destinationDirectory = path.join(WS_DIR, "to");
+    fs.mkdirSync(sourceDirectory);
+    fs.mkdirSync(destinationDirectory);
+    const source = path.join(sourceDirectory, "same.txt");
+    const destination = path.join(destinationDirectory, "same.txt");
+    fs.writeFileSync(source, "source");
+    fs.writeFileSync(destination, "destination");
+
+    const res = await PATCH(new Request("http://x/api/files/content", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ sourcePath: source, destinationDirectory }),
+    }), ctx);
+
+    expect(res.status).toBe(409);
+    expect(fs.readFileSync(source, "utf8")).toBe("source");
+    expect(fs.readFileSync(destination, "utf8")).toBe("destination");
+  });
+
+  it("rejects a destination outside the workspace", async () => {
+    const source = path.join(WS_DIR, "stay-put.txt");
+    fs.writeFileSync(source, "safe");
+
+    const res = await PATCH(new Request("http://x/api/files/content", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ sourcePath: source, destinationDirectory: path.dirname(WS_DIR) }),
+    }), ctx);
+
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toMatch(/outside workspace/i);
+    expect(fs.readFileSync(source, "utf8")).toBe("safe");
+  });
+
+  // The browser can only act on a path it can find in the tree it was served. Returning the
+  // realpath instead silently breaks selection and expansion state wherever the workspace dir
+  // contains a symlink — which it does on macOS, where os.tmpdir() sits under /var → /private/var.
+  it("returns the new path in the same space the file tree serves", async () => {
+    const destinationDirectory = path.join(WS_DIR, "inbox");
+    fs.mkdirSync(destinationDirectory);
+    fs.writeFileSync(path.join(WS_DIR, "tracked.txt"), "x");
+
+    const res = await patchMove({
+      sourcePath: await treePathOf("tracked.txt"),
+      destinationDirectory,
+    });
+
+    expect(res.status).toBe(200);
+    const inbox = (await buildTree(WS_DIR)).find((n) => n.name === "inbox")!;
+    expect(inbox.children!.map((c) => c.path)).toContain((await res.json()).path);
+  });
+
+  it("reports a move into the folder the item is already in as unchanged", async () => {
+    fs.writeFileSync(path.join(WS_DIR, "already-here.txt"), "x");
+    const sourcePath = await treePathOf("already-here.txt");
+
+    const res = await patchMove({ sourcePath, destinationDirectory: WS_DIR });
+
+    expect(res.status).toBe(200);
+    // The client keys its no-op check off `unchanged`, and echoes `path` back into its own state.
+    expect(await res.json()).toEqual({ ok: true, path: sourcePath, unchanged: true });
+    expect(fs.existsSync(sourcePath)).toBe(true);
+  });
+
+  // A symlink that escapes the workspace never reaches the symlink rule — containment resolves it
+  // to the host file and rejects it there. The host file must be left untouched either way.
+  it("refuses to move a symlink that escapes the workspace", async () => {
+    const destinationDirectory = path.join(WS_DIR, "sym-dest");
+    fs.mkdirSync(destinationDirectory);
+
+    const res = await patchMove({ sourcePath: ESCAPE, destinationDirectory });
+
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toMatch(/outside workspace/i);
+    expect(fs.lstatSync(ESCAPE).isSymbolicLink()).toBe(true);
+    expect(fs.readFileSync(path.join(path.dirname(WS_DIR), "secret.txt"), "utf8")).toBe("TOPSECRET");
+  });
+
+  // A symlink pointing *inside* the workspace passes containment, so it is the case the dedicated
+  // symlink rule exists for: moving it by its resolved target would silently move hello.txt.
+  it("refuses to move a symlink that stays inside the workspace", async () => {
+    const link = path.join(WS_DIR, "hello-link");
+    const destinationDirectory = path.join(WS_DIR, "link-dest");
+    fs.symlinkSync(path.join(WS_DIR, "hello.txt"), link);
+    fs.mkdirSync(destinationDirectory);
+
+    const res = await patchMove({ sourcePath: link, destinationDirectory });
+
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toMatch(/symbolic link/i);
+    expect(fs.lstatSync(link).isSymbolicLink()).toBe(true);
+    // The link's target stayed where it was rather than being moved in its place.
+    expect(fs.existsSync(path.join(WS_DIR, "hello.txt"))).toBe(true);
+    expect(fs.readdirSync(destinationDirectory)).toEqual([]);
+  });
+
+  it("refuses to move the workspace root", async () => {
+    const res = await patchMove({ sourcePath: WS_DIR, destinationDirectory: WS_DIR });
+
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toMatch(/workspace root/i);
+  });
+
+  it("rejects a malformed body without throwing", async () => {
+    expect((await patchMove("{not json")).status).toBe(400);
+    expect((await patchMove({ destinationDirectory: WS_DIR })).status).toBe(400);
   });
 });

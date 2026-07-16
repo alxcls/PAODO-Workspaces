@@ -1,7 +1,13 @@
 // CRUD endpoint for individual file content within a workspace.
 // GET classifies and returns the file as text, image, or binary; PUT saves edited text content;
-// DELETE removes the file. The shared file-content core (lib/workspace/fileContent.ts) does the work;
-// the workspace backend adds a container write-fallback for legacy root-owned files and a git snapshot.
+// PATCH moves and DELETE removes the file. The shared file-content core
+// (lib/workspace/fileContent.ts) does the work; the workspace backend adds a container
+// write-fallback for legacy root-owned files and a git snapshot.
+//
+// The write-fallback covers PUT only: it works by piping content through `tee` in the container,
+// which has no rename equivalent. Moving a legacy root-owned file therefore fails with a "not
+// writable" error rather than falling back. New agent writes are uid-1000-owned, so this only
+// affects files created before the non-root migration and not yet swept.
 export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
@@ -9,7 +15,7 @@ import path from "path";
 import { getContainers, getVersioning } from "@/lib/infra/services";
 import { requireWorkspace } from "@/lib/api/guards";
 import { snapshotWorkspace } from "@/lib/infra/git/snapshotWorkspace";
-import { getFileContent, putFileContent, deleteFileContent, type FileBackend } from "@/lib/workspace/fileContent";
+import { getFileContent, putFileContent, moveFileContent, deleteFileContent, type FileBackend } from "@/lib/workspace/fileContent";
 import type { Workspace } from "@/lib/workspace/workspaceStore";
 
 function backend(ws: Workspace): FileBackend {
@@ -42,6 +48,13 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
   const ws = requireWorkspace(id);
   if (ws instanceof NextResponse) return ws;
   return putFileContent(req, backend(ws));
+}
+
+export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
+  const ws = requireWorkspace(id);
+  if (ws instanceof NextResponse) return ws;
+  return moveFileContent(req, backend(ws));
 }
 
 export async function DELETE(req: Request, { params }: { params: Promise<{ id: string }> }) {

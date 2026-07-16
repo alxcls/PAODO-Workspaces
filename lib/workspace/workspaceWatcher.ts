@@ -30,6 +30,13 @@ class WorkspaceWatcher {
       this.scheduleFlush();
     });
 
+    // Directory events matter for file-tree-only changes such as moving an empty folder. Without
+    // them, another open browser would never be told to refresh its tree.
+    this.watcher.on("addDir", (absPath: string) => {
+      this.pendingChanged.add(absPath);
+      this.scheduleFlush();
+    });
+
     this.watcher.on("change", (absPath: string) => {
       const expiry = ignorePaths.get(absPath);
       if (expiry !== undefined) {
@@ -50,6 +57,11 @@ class WorkspaceWatcher {
         }
         this.scheduleFlush();
       }, 200);
+    });
+
+    this.watcher.on("unlinkDir", (absPath: string) => {
+      this.pendingDeleted.add(absPath);
+      this.scheduleFlush();
     });
 
     this.watcher.on("error", (err: unknown) => {

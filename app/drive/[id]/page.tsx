@@ -10,6 +10,7 @@ import FileTreePanel from "@/components/workspace/FileTreePanel";
 import FileViewer, { type FileViewerHandle } from "@/components/workspace/FileViewer";
 import TopBar from "@/components/layout/TopBar";
 import { useDragResize } from "@/lib/client/hooks/useDragResize";
+import { remapMovedPath } from "@/lib/client/fileMove";
 
 export default function DrivePage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -72,6 +73,10 @@ export default function DrivePage({ params }: { params: Promise<{ id: string }> 
           onFileSelect={(path) => { setSelectedFile(path); setViewerOpen(true); }}
           onDeletedPaths={(paths) => {
             if (selectedFile && paths.includes(selectedFile)) { setSelectedFile(null); setViewerOpen(false); }
+            refreshTree();
+          }}
+          onMovedPath={(sourcePath, destinationPath) => {
+            setSelectedFile((current) => remapMovedPath(current, sourcePath, destinationPath));
             refreshTree();
           }}
           refreshKey={treeRefreshKey}

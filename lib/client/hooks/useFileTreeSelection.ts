@@ -3,6 +3,7 @@
 // it. Kept separate from useFileOperations so selection state and the actions on it stay decoupled.
 
 import { useState } from "react";
+import { remapMovedPath } from "../fileMove";
 
 export function useFileTreeSelection() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -17,5 +18,11 @@ export function useFileTreeSelection() {
 
   const clearSelection = () => setSelected(new Set());
 
-  return { selected, handleSelect, clearSelection };
+  const remapSelection = (sourceRoot: string, destinationRoot: string) => {
+    setSelected((prev) => new Set(
+      Array.from(prev, (path) => remapMovedPath(path, sourceRoot, destinationRoot) ?? path),
+    ));
+  };
+
+  return { selected, handleSelect, clearSelection, remapSelection };
 }

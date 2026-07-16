@@ -76,8 +76,25 @@ export interface IWorkspaceVersioning {
   isGitAvailable(): Promise<boolean>;
 }
 
-export interface IContainerManager {
+// The container manager exposes three separable roles. They're split into role interfaces (ISP) so a
+// consumer can depend on just the capability it uses — a tool that only kills a background task takes
+// IBackgroundTasks, not the whole 12-method surface, and its tests mock three methods instead of
+// twelve. The concrete ContainerManager implements all three; IContainerManager is their union, kept
+// for the composition root (buildTools) and the services registry, which legitimately wire the lot.
+
+/** Container lifecycle: create/warm, stop, remove, workspace-dir teardown, and the boot-time
+ *  credential-proxy reattach. Everything that manages a container's existence, not what runs inside it. */
+export interface IContainerLifecycle {
   ensure(workspaceId: string, workspaceDir: string): Promise<void>;
+  stop(workspaceId: string): Promise<void>;
+  remove(workspaceId: string): Promise<void>;
+  reattachProxyNetworks(): Promise<void>;
+  deleteWorkspaceDir(workspaceDir: string): Promise<void>;
+  assertDockerAvailable(): Promise<void>;
+}
+
+/** Foreground command execution inside a workspace container. */
+export interface IContainerExec {
   exec(
     workspaceId: string,
     workspaceDir: string,
@@ -91,15 +108,17 @@ export interface IContainerManager {
     opts: { onStdout: (chunk: string) => void; onStderr: (chunk: string) => void; signal?: AbortSignal },
   ): Promise<{ code: number | null }>;
   execAsRoot(workspaceId: string, workspaceDir: string, cmdArgs: string[]): Promise<DockerResult>;
+}
+
+/** Detached, long-lived background processes (dev servers etc.) tracked across turns. */
+export interface IBackgroundTasks {
   /** Launch a command detached from the exec kill path (dev servers etc.); returns its taskId + log path. */
   startBackground(workspaceId: string, workspaceDir: string, command: string): Promise<{ taskId: string; logFile: string }>;
   /** Kill a tracked background process by taskId; false if none tracked for the workspace. */
   stopBackground(workspaceId: string, taskId: string): Promise<boolean>;
   /** Running background tasks for a workspace (for context surfacing / management across turns). */
   listBackground(workspaceId: string): BackgroundTask[];
-  stop(workspaceId: string): Promise<void>;
-  remove(workspaceId: string): Promise<void>;
-  reattachProxyNetworks(): Promise<void>;
-  deleteWorkspaceDir(workspaceDir: string): Promise<void>;
-  assertDockerAvailable(): Promise<void>;
 }
+
+/** The full manager surface — the union of the three roles above. */
+export interface IContainerManager extends IContainerLifecycle, IContainerExec, IBackgroundTasks {}

@@ -4,7 +4,8 @@
 // descendants of an already-selected folder), issues the DELETEs in parallel, aggregates any
 // failures into a transient deleteError (auto-cleared after 2s), and notifies the parent of
 // deleted paths so dependent views can update. Internal tree drag-and-drop also comes through here:
-// handleMove issues a contained PATCH, reports conflicts, and returns the authoritative new path.
+// handleMoveMany sends the whole dragged batch as one contained PATCH, reports conflicts, and
+// returns the authoritative new path of each item the server moved.
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { collapseToRoots } from "../fileMove";
@@ -16,6 +17,15 @@ export interface TreeNode {
   type: "file" | "directory";
   path: string;
   children?: TreeNode[];
+}
+
+/** What the server did with one item of a move batch. */
+export interface MoveResult {
+  sourcePath: string;
+  /** The item's authoritative new path — equal to sourcePath when unchanged. */
+  path: string;
+  /** The item was already in the destination, so nothing moved. */
+  unchanged: boolean;
 }
 
 interface Options {
@@ -114,13 +124,19 @@ export function useFileOperations({
     fetchTree();
   };
 
-  // Resolves to the item's new path, or null when the move did not happen. `unchanged` reports the
-  // server's own verdict that the item was already in the destination — never re-derive that by
-  // comparing paths, since the tree's paths and the server's realpaths need not be identical.
-  const handleMove = async (
-    sourcePath: string,
+  /**
+   * Move a batch of items into one directory with a single request, and refresh the tree once.
+   *
+   * Resolves to the per-item results the server actually performed, plus the error that stopped the
+   * batch if one did — a partial move reports both. Resolves to null only when the request itself
+   * could not be made sense of. `unchanged` is the server's own verdict that the item was already
+   * in the destination: never re-derive it by comparing paths, since the tree's paths and the
+   * server's realpaths need not be identical.
+   */
+  const handleMoveMany = async (
+    sourcePaths: string[],
     destinationDirectory: string | null,
-  ): Promise<{ path: string; unchanged: boolean } | null> => {
+  ): Promise<{ results: MoveResult[]; error: string | null } | null> => {
     if (moveInFlightRef.current) {
       setMoveError("Another move is still in progress");
       return null;
@@ -131,16 +147,18 @@ export function useFileOperations({
       const res = await fetch(`${base}/files/content`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sourcePath, destinationDirectory }),
+        body: JSON.stringify({ sourcePaths, destinationDirectory }),
       });
       const body = (await res.json().catch(() => ({}))) as
-        { path?: string; unchanged?: boolean; error?: string };
-      if (!res.ok || !body.path) {
+        { results?: MoveResult[]; error?: string };
+      // A rejected batch still carries results (an empty list); only a malformed request omits them.
+      if (!Array.isArray(body.results)) {
         setMoveError(body.error || `Move failed: ${res.status} ${res.statusText}`);
         return null;
       }
+      if (body.error) setMoveError(body.error);
       await fetchTree();
-      return { path: body.path, unchanged: body.unchanged === true };
+      return { results: body.results, error: body.error ?? null };
     } catch {
       setMoveError("Move failed");
       return null;
@@ -153,6 +171,6 @@ export function useFileOperations({
     tree, fetchTree,
     handleDownload, downloading,
     handleDelete, deleteError,
-    handleMove, moveError,
+    handleMoveMany, moveError,
   };
 }

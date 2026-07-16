@@ -28,10 +28,17 @@ const { WS_DIR, ESCAPE } = vi.hoisted(() => {
   return { ROOT: root, WS_DIR: wsDir, ESCAPE: escape };
 });
 
+// A spy, so the batch tests can pin how many snapshots a multi-item move actually costs.
+const { commitResult } = vi.hoisted(() => ({
+  commitResult: vi.fn(
+    async (_workspaceId: string, _dir: string, _label: string) => ({ sha: "test", changed: true }),
+  ),
+}));
+
 vi.mock("@/lib/infra/services", () => ({
   getStore: () => ({ getWorkspace: (id: string) => (id === "ws" ? { id: "ws", name: "ws", dir: WS_DIR } : undefined) }),
   getContainers: () => ({}),
-  getVersioning: () => ({ commitResult: async () => ({ sha: "test", changed: true }) }),
+  getVersioning: () => ({ commitResult }),
 }));
 
 import { GET, PUT, PATCH } from "./route";
@@ -108,7 +115,7 @@ describe("files/content PATCH — move", () => {
     const res = await PATCH(new Request("http://x/api/files/content", {
       method: "PATCH",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ sourcePath: source, destinationDirectory }),
+      body: JSON.stringify({ sourcePaths: [source], destinationDirectory }),
     }), ctx);
 
     expect(res.status).toBe(200);
@@ -123,7 +130,7 @@ describe("files/content PATCH — move", () => {
     fs.writeFileSync(source, "saved before move");
     fs.mkdirSync(destinationDirectory);
 
-    expect((await patchMove({ sourcePath: source, destinationDirectory })).status).toBe(200);
+    expect((await patchMove({ sourcePaths: [source], destinationDirectory })).status).toBe(200);
     const saveRes = await putFile(source, "late editor draft");
 
     expect(saveRes.status).toBe(409);
@@ -138,7 +145,7 @@ describe("files/content PATCH — move", () => {
     fs.mkdirSync(destinationDirectory);
     fs.writeFileSync(path.join(source, "nested.txt"), "nested");
 
-    const res = await patchMove({ sourcePath: source, destinationDirectory });
+    const res = await patchMove({ sourcePaths: [source], destinationDirectory });
 
     expect(res.status).toBe(200);
     expect(fs.existsSync(source)).toBe(false);
@@ -154,7 +161,7 @@ describe("files/content PATCH — move", () => {
     const res = await PATCH(new Request("http://x/api/files/content", {
       method: "PATCH",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ sourcePath: source, destinationDirectory: descendant }),
+      body: JSON.stringify({ sourcePaths: [source], destinationDirectory: descendant }),
     }), ctx);
 
     expect(res.status).toBe(400);
@@ -175,7 +182,7 @@ describe("files/content PATCH — move", () => {
     const res = await PATCH(new Request("http://x/api/files/content", {
       method: "PATCH",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ sourcePath: source, destinationDirectory }),
+      body: JSON.stringify({ sourcePaths: [source], destinationDirectory }),
     }), ctx);
 
     expect(res.status).toBe(409);
@@ -195,7 +202,7 @@ describe("files/content PATCH — move", () => {
     fs.mkdirSync(destination, { recursive: true });
     fs.writeFileSync(path.join(source, "mine.txt"), "mine");
 
-    const res = await patchMove({ sourcePath: source, destinationDirectory });
+    const res = await patchMove({ sourcePaths: [source], destinationDirectory });
 
     expect(res.status).toBe(409);
     expect(fs.readFileSync(path.join(source, "mine.txt"), "utf8")).toBe("mine");
@@ -215,7 +222,7 @@ describe("files/content PATCH — move", () => {
     fs.writeFileSync(path.join(source, "mine.txt"), "mine");
     fs.writeFileSync(path.join(destination, "theirs.txt"), "theirs");
 
-    const res = await patchMove({ sourcePath: source, destinationDirectory });
+    const res = await patchMove({ sourcePaths: [source], destinationDirectory });
 
     expect(res.status).toBe(409);
     expect(fs.readFileSync(path.join(source, "mine.txt"), "utf8")).toBe("mine");
@@ -229,7 +236,7 @@ describe("files/content PATCH — move", () => {
     const source = path.join(WS_DIR, "clash");
     fs.writeFileSync(source, "filedata");
 
-    const res = await patchMove({ sourcePath: source, destinationDirectory });
+    const res = await patchMove({ sourcePaths: [source], destinationDirectory });
 
     expect(res.status).toBe(409);
     expect(fs.readFileSync(source, "utf8")).toBe("filedata");
@@ -243,7 +250,7 @@ describe("files/content PATCH — move", () => {
     const res = await PATCH(new Request("http://x/api/files/content", {
       method: "PATCH",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ sourcePath: source, destinationDirectory: path.dirname(WS_DIR) }),
+      body: JSON.stringify({ sourcePaths: [source], destinationDirectory: path.dirname(WS_DIR) }),
     }), ctx);
 
     expect(res.status).toBe(400);
@@ -260,24 +267,27 @@ describe("files/content PATCH — move", () => {
     fs.writeFileSync(path.join(WS_DIR, "tracked.txt"), "x");
 
     const res = await patchMove({
-      sourcePath: await treePathOf("tracked.txt"),
+      sourcePaths: [await treePathOf("tracked.txt")],
       destinationDirectory,
     });
 
     expect(res.status).toBe(200);
     const inbox = (await buildTree(WS_DIR)).find((n) => n.name === "inbox")!;
-    expect(inbox.children!.map((c) => c.path)).toContain((await res.json()).path);
+    expect(inbox.children!.map((c) => c.path)).toContain((await res.json()).results[0].path);
   });
 
   it("reports a move into the folder the item is already in as unchanged", async () => {
     fs.writeFileSync(path.join(WS_DIR, "already-here.txt"), "x");
     const sourcePath = await treePathOf("already-here.txt");
 
-    const res = await patchMove({ sourcePath, destinationDirectory: WS_DIR });
+    const res = await patchMove({ sourcePaths: [sourcePath], destinationDirectory: WS_DIR });
 
     expect(res.status).toBe(200);
     // The client keys its no-op check off `unchanged`, and echoes `path` back into its own state.
-    expect(await res.json()).toEqual({ ok: true, path: sourcePath, unchanged: true });
+    expect(await res.json()).toEqual({
+      ok: true,
+      results: [{ sourcePath, path: sourcePath, unchanged: true }],
+    });
     expect(fs.existsSync(sourcePath)).toBe(true);
   });
 
@@ -287,7 +297,7 @@ describe("files/content PATCH — move", () => {
     const destinationDirectory = path.join(WS_DIR, "sym-dest");
     fs.mkdirSync(destinationDirectory);
 
-    const res = await patchMove({ sourcePath: ESCAPE, destinationDirectory });
+    const res = await patchMove({ sourcePaths: [ESCAPE], destinationDirectory });
 
     expect(res.status).toBe(400);
     expect((await res.json()).error).toMatch(/outside workspace/i);
@@ -303,7 +313,7 @@ describe("files/content PATCH — move", () => {
     fs.symlinkSync(path.join(WS_DIR, "hello.txt"), link);
     fs.mkdirSync(destinationDirectory);
 
-    const res = await patchMove({ sourcePath: link, destinationDirectory });
+    const res = await patchMove({ sourcePaths: [link], destinationDirectory });
 
     expect(res.status).toBe(400);
     expect((await res.json()).error).toMatch(/symbolic link/i);
@@ -314,7 +324,7 @@ describe("files/content PATCH — move", () => {
   });
 
   it("refuses to move the workspace root", async () => {
-    const res = await patchMove({ sourcePath: WS_DIR, destinationDirectory: WS_DIR });
+    const res = await patchMove({ sourcePaths: [WS_DIR], destinationDirectory: WS_DIR });
 
     expect(res.status).toBe(400);
     expect((await res.json()).error).toMatch(/workspace root/i);
@@ -330,10 +340,115 @@ describe("files/content PATCH — move", () => {
     const source = path.join(WS_DIR, "typed-destination.txt");
     fs.writeFileSync(source, "stay");
 
-    const res = await patchMove({ sourcePath: source, destinationDirectory: false });
+    const res = await patchMove({ sourcePaths: [source], destinationDirectory: false });
 
     expect(res.status).toBe(400);
     expect(fs.readFileSync(source, "utf8")).toBe("stay");
+  });
+
+  it("rejects a batch with no items", async () => {
+    expect((await patchMove({ sourcePaths: [], destinationDirectory: WS_DIR })).status).toBe(400);
+    expect((await patchMove({ sourcePaths: "not-an-array" })).status).toBe(400);
+    expect((await patchMove({ sourcePaths: [""] })).status).toBe(400);
+  });
+
+  it("moves every item of a batch in one request", async () => {
+    const destinationDirectory = path.join(WS_DIR, "batch-dest");
+    fs.mkdirSync(destinationDirectory);
+    const names = ["one.txt", "two.txt", "three.txt"];
+    for (const n of names) fs.writeFileSync(path.join(WS_DIR, `batch-${n}`), n);
+    const sourcePaths = names.map((n) => path.join(WS_DIR, `batch-${n}`));
+
+    const res = await patchMove({ sourcePaths, destinationDirectory });
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.ok).toBe(true);
+    expect(body.results.map((r: { sourcePath: string }) => r.sourcePath)).toEqual(sourcePaths);
+    for (const n of names) {
+      expect(fs.readFileSync(path.join(destinationDirectory, `batch-${n}`), "utf8")).toBe(n);
+      expect(fs.existsSync(path.join(WS_DIR, `batch-${n}`))).toBe(false);
+    }
+  });
+
+  // The reason the batch endpoint exists: a request-and-snapshot per item is what made large
+  // selections crawl, so a batch must cost exactly one snapshot however many items it carries.
+  it("takes a single snapshot for the whole batch", async () => {
+    const destinationDirectory = path.join(WS_DIR, "snap-dest");
+    fs.mkdirSync(destinationDirectory);
+    const sourcePaths = ["a", "b", "c", "d"].map((n) => path.join(WS_DIR, `snap-${n}.txt`));
+    for (const p of sourcePaths) fs.writeFileSync(p, "x");
+
+    commitResult.mockClear();
+    const res = await patchMove({ sourcePaths, destinationDirectory });
+
+    expect(res.status).toBe(200);
+    expect(commitResult).toHaveBeenCalledTimes(1);
+    expect(commitResult.mock.calls[0][2]).toMatch(/moved 4 items to snap-dest/);
+  });
+
+  it("does not snapshot a batch that changed nothing", async () => {
+    fs.writeFileSync(path.join(WS_DIR, "noop.txt"), "x");
+
+    commitResult.mockClear();
+    const res = await patchMove({
+      sourcePaths: [await treePathOf("noop.txt")],
+      destinationDirectory: WS_DIR,
+    });
+
+    expect(res.status).toBe(200);
+    expect(commitResult).not.toHaveBeenCalled();
+  });
+
+  it("stops at the first failure and reports the items that already moved", async () => {
+    const destinationDirectory = path.join(WS_DIR, "partial-dest");
+    fs.mkdirSync(destinationDirectory);
+    const first = path.join(WS_DIR, "partial-first.txt");
+    const blocked = path.join(WS_DIR, "partial-blocked.txt");
+    const never = path.join(WS_DIR, "partial-never.txt");
+    for (const p of [first, blocked, never]) fs.writeFileSync(p, "x");
+    // Pre-occupy the middle item's destination so it, and only it, conflicts.
+    fs.writeFileSync(path.join(destinationDirectory, "partial-blocked.txt"), "occupied");
+
+    const res = await patchMove({ sourcePaths: [first, blocked, never], destinationDirectory });
+
+    // Some of the work is real, so the batch is a 200 that carries what landed and what stopped it.
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.ok).toBe(false);
+    expect(body.error).toMatch(/already exists/i);
+    expect(body.failedSourcePath).toBe(blocked);
+    expect(body.results.map((r: { sourcePath: string }) => r.sourcePath)).toEqual([first]);
+
+    expect(fs.existsSync(path.join(destinationDirectory, "partial-first.txt"))).toBe(true);
+    expect(fs.readFileSync(blocked, "utf8")).toBe("x");
+    expect(fs.readFileSync(path.join(destinationDirectory, "partial-blocked.txt"), "utf8"))
+      .toBe("occupied");
+    // The item after the failure was never attempted and must be exactly where it was.
+    expect(fs.readFileSync(never, "utf8")).toBe("x");
+  });
+
+  // An item already in the destination is a no-op, not a failure — it must not stop the batch.
+  it("keeps going past an unchanged item", async () => {
+    const destinationDirectory = path.join(WS_DIR, "mixed-dest");
+    fs.mkdirSync(destinationDirectory);
+    fs.writeFileSync(path.join(destinationDirectory, "settled.txt"), "already");
+    const mover = path.join(WS_DIR, "mixed-mover.txt");
+    fs.writeFileSync(mover, "moves");
+    const settled = (await buildTree(WS_DIR))
+      .find((n) => n.name === "mixed-dest")!.children!
+      .find((n) => n.name === "settled.txt")!.path;
+
+    const res = await patchMove({ sourcePaths: [settled, mover], destinationDirectory });
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.ok).toBe(true);
+    expect(body.results).toEqual([
+      { sourcePath: settled, path: settled, unchanged: true },
+      { sourcePath: mover, path: path.join(destinationDirectory, "mixed-mover.txt"), unchanged: false },
+    ]);
+    expect(fs.readFileSync(path.join(destinationDirectory, "mixed-mover.txt"), "utf8")).toBe("moves");
   });
 
   it("does not replace an existing directory", async () => {
@@ -346,7 +461,7 @@ describe("files/content PATCH — move", () => {
     fs.writeFileSync(path.join(source, "source.txt"), "source");
     fs.writeFileSync(path.join(destination, "destination.txt"), "destination");
 
-    const res = await patchMove({ sourcePath: source, destinationDirectory: destinationParent });
+    const res = await patchMove({ sourcePaths: [source], destinationDirectory: destinationParent });
 
     expect(res.status).toBe(409);
     expect(fs.readFileSync(path.join(source, "source.txt"), "utf8")).toBe("source");

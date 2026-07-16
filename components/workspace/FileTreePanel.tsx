@@ -347,7 +347,7 @@ export default function FileTreePanel({
   } = useFileTreeSelection();
   const {
     tree, fetchTree, handleDownload, downloading, handleDelete, deleteError,
-    handleMove, moveError,
+    handleMoveMany, moveError,
   } = useFileOperations({
     workspaceId, workspaceName, selected, clearSelection, onDeletedPaths, refreshKey, apiBase: base,
   });
@@ -440,41 +440,11 @@ export default function FileTreePanel({
     setDropTargetPath(null);
   };
 
-  /** Distinguishes a failed request, a successful no-op, and an actual move so batches can keep
-   * going after an unchanged item without counting it as moved. */
-  const moveNode = async (
-    sourcePath: string,
-    destinationDirectory: string | null,
-  ): Promise<"failed" | "unchanged" | "moved"> => {
-    onMoveStarted?.(sourcePath);
-    const moved = await handleMove(sourcePath, destinationDirectory);
-    if (!moved) {
-      onMoveCancelled?.(sourcePath);
-      return "failed";
-    }
-    if (moved.unchanged) {
-      onMoveCancelled?.(sourcePath);
-      return "unchanged";
-    }
-    const destinationPath = moved.path;
-
-    remapSelection(sourcePath, destinationPath);
-    setExpanded((current) => {
-      const remapped: Record<string, boolean> = {};
-      for (const [path, isOpen] of Object.entries(current)) {
-        remapped[remapMovedPath(path, sourcePath, destinationPath) ?? path] = isOpen;
-      }
-      if (destinationDirectory) remapped[destinationDirectory] = true;
-      return remapped;
-    });
-    onMovedPath?.(sourcePath, destinationPath);
-    return "moved";
-  };
-
   /**
-   * Moves the batch one PATCH at a time — the route takes a single path, and serializing them keeps
-   * each move ordered against in-flight saves. Sources are siblings once collapsed, so no move can
-   * re-path a later one. Stops at the first failure rather than pressing on through a broken tree.
+   * Moves the whole dragged batch with one request — a single drag is just a batch of one. The
+   * server moves the items in order and stops at the first failure, so the results say exactly
+   * which ones landed; everything here reconciles against those rather than assuming the batch
+   * succeeded whole.
    */
   const moveNodes = async (
     sources: DraggedTreeNode[],
@@ -483,23 +453,47 @@ export default function FileTreePanel({
     setDraggedNodes(null);
     setDropTargetPath(null);
     setMovingPaths(new Set(sources.map((n) => n.path)));
-    let moved = 0;
-    let failed = false;
+    // Only the source containing the open file (if any) latches a pending move, so telling the
+    // viewer about all of them up front is safe and keeps it from closing on the watcher's
+    // source-deletion event.
+    for (const source of sources) onMoveStarted?.(source.path);
+
     try {
+      const outcome = await handleMoveMany(sources.map((n) => n.path), destinationDirectory);
+      const results = outcome?.results ?? [];
+      const moved = results.filter((r) => !r.unchanged);
+
+      for (const result of moved) {
+        remapSelection(result.sourcePath, result.path);
+        onMovedPath?.(result.sourcePath, result.path);
+      }
+      // Anything the server did not move stays where it is: an unchanged item, and every item the
+      // batch never reached once it stopped.
+      const settled = new Set(moved.map((r) => r.sourcePath));
       for (const source of sources) {
-        const result = await moveNode(source.path, destinationDirectory);
-        if (result === "failed") {
-          failed = true;
-          break;
-        }
-        if (result === "moved") moved += 1;
+        if (!settled.has(source.path)) onMoveCancelled?.(source.path);
+      }
+
+      if (moved.length > 0) {
+        setExpanded((current) => {
+          const remapped: Record<string, boolean> = {};
+          for (const [path, isOpen] of Object.entries(current)) {
+            // Sources are disjoint siblings, so at most one remap can apply to any given path.
+            let next = path;
+            for (const result of moved) next = remapMovedPath(next, result.sourcePath, result.path) ?? next;
+            remapped[next] = isOpen;
+          }
+          if (destinationDirectory) remapped[destinationDirectory] = true;
+          return remapped;
+        });
+      }
+
+      // handleMoveMany surfaces why it stopped; this says how much of the batch landed.
+      if (sources.length > 1 && (outcome === null || outcome.error)) {
+        setMoveNote(`Moved ${moved.length} of ${sources.length} items`);
       }
     } finally {
       setMovingPaths(new Set());
-    }
-    // handleMove already surfaces why the failing one failed; this says how much of the batch landed.
-    if (sources.length > 1 && failed) {
-      setMoveNote(`Moved ${moved} of ${sources.length} items`);
     }
   };
 

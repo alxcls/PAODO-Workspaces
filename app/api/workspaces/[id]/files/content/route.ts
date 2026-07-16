@@ -1,6 +1,6 @@
 // CRUD endpoint for individual file content within a workspace.
 // GET classifies and returns the file as text, image, or binary; PUT saves edited text content;
-// PATCH moves and DELETE removes the file. The shared file-content core
+// PATCH moves a batch of items into one directory and DELETE removes the file. The shared core
 // (lib/workspace/fileContent.ts) does the work; the workspace backend adds a container
 // write-fallback for legacy root-owned files and a git snapshot.
 //

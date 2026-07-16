@@ -45,11 +45,11 @@ describe("drives files/content PATCH — move", () => {
     fs.writeFileSync(path.join(DRIVE_DIR, "report.csv"), "a,b");
 
     const sourcePath = (await buildTree(DRIVE_DIR)).find((n) => n.name === "report.csv")!.path;
-    const res = await patchMove({ sourcePath, destinationDirectory });
+    const res = await patchMove({ sourcePaths: [sourcePath], destinationDirectory });
 
     expect(res.status).toBe(200);
     // Drives are passive storage with no snapshot hook — the move still completes without one.
-    expect((await res.json()).path)
+    expect((await res.json()).results[0].path)
       .toBe(path.join(destinationDirectory, "report.csv"));
     expect(fs.readFileSync(path.join(destinationDirectory, "report.csv"), "utf8")).toBe("a,b");
     expect(fs.existsSync(sourcePath)).toBe(false);
@@ -59,7 +59,7 @@ describe("drives files/content PATCH — move", () => {
     const sourcePath = path.join(DRIVE_DIR, "keep.txt");
     fs.writeFileSync(sourcePath, "safe");
 
-    const res = await patchMove({ sourcePath, destinationDirectory: path.dirname(DRIVE_DIR) });
+    const res = await patchMove({ sourcePaths: [sourcePath], destinationDirectory: path.dirname(DRIVE_DIR) });
 
     expect(res.status).toBe(400);
     expect((await res.json()).error).toMatch(/outside workspace/i);
@@ -67,7 +67,7 @@ describe("drives files/content PATCH — move", () => {
   });
 
   it("404s for an unknown drive", async () => {
-    const res = await patchMove({ sourcePath: path.join(DRIVE_DIR, "keep.txt") }, "nope");
+    const res = await patchMove({ sourcePaths: [path.join(DRIVE_DIR, "keep.txt")] }, "nope");
     expect(res.status).toBe(404);
   });
 });

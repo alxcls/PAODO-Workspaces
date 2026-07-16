@@ -1,6 +1,6 @@
 // Shared file-content CRUD for the workspace and drive file routes.
-// GET classifies a file as text/image/binary (or serves raw bytes); PUT writes text; PATCH moves;
-// DELETE removes.
+// GET classifies a file as text/image/binary (or serves raw bytes); PUT writes text; PATCH moves a
+// batch of items into one directory (see moveFileContent); DELETE removes.
 // All paths are validated to stay inside the backend directory via assertInsideWorkspace.
 //
 // PUT updates an existing file and never creates one: it opens without O_CREAT so that a save
@@ -171,6 +171,27 @@ interface MoveBody {
   destinationDirectory?: string | null;
 }
 
+/** Why one item cannot move, and the status it would carry as the whole request's outcome. */
+interface MoveFailure {
+  error: string;
+  status: number;
+}
+
+/** One item's result, as the client needs it: where it now lives, and whether it actually moved. */
+interface MoveOutcome {
+  sourcePath: string;
+  /** Lexical destination, in the path space the file tree serves. */
+  path: string;
+  unchanged: boolean;
+  /** Internal — the batch's snapshot message is composed from these, never sent to the client. */
+  name: string;
+  destinationLabel: string;
+}
+
+function isFailure<T extends object>(result: T | MoveFailure): result is MoveFailure {
+  return "error" in result;
+}
+
 interface MoveTarget {
   /** Realpath of the item being moved — what fs.rename acts on. */
   source: string;
@@ -191,21 +212,22 @@ class DestinationConflictError extends Error {}
 /**
  * Validate a move request, resolving both ends and every rule that can reject one: containment,
  * the workspace root, symlinks, non-directory destinations, and folder-into-itself. Returns the
- * resolved target, or a NextResponse to short-circuit the handler (the `lib/api/guards` idiom).
+ * resolved target, or the reason it cannot move — a plain value rather than a response, so a batch
+ * can attribute the failure to its item and still report the moves that already landed.
  */
-async function resolveMoveTarget(be: FileBackend, body: MoveBody): Promise<MoveTarget | NextResponse> {
+async function resolveMoveTarget(be: FileBackend, body: MoveBody): Promise<MoveTarget | MoveFailure> {
   const lexicalSource = lexicalPath(be, body.sourcePath);
   const source = await assertInsideWorkspace(be.dir, lexicalSource);
   const workspaceRoot = await fs.realpath(be.dir);
   if (source === workspaceRoot) {
-    return NextResponse.json({ error: "Cannot move the workspace root" }, { status: 400 });
+    return { error: "Cannot move the workspace root", status: 400 };
   }
 
   // Moving a symlink by its resolved target would be surprising and moving it lexically would
   // need a separate containment model. The file tree does not expose symlink directories, so
   // reject the uncommon leaf-symlink case explicitly instead of moving the wrong object.
   if ((await fs.lstat(lexicalSource)).isSymbolicLink()) {
-    return NextResponse.json({ error: "Symbolic links cannot be moved" }, { status: 400 });
+    return { error: "Symbolic links cannot be moved", status: 400 };
   }
 
   const lexicalDirectory = body.destinationDirectory
@@ -213,7 +235,7 @@ async function resolveMoveTarget(be: FileBackend, body: MoveBody): Promise<MoveT
     : be.dir;
   const destinationDirectory = await assertInsideWorkspace(be.dir, lexicalDirectory);
   if (!(await fs.stat(destinationDirectory)).isDirectory()) {
-    return NextResponse.json({ error: "Destination must be a directory" }, { status: 400 });
+    return { error: "Destination must be a directory", status: 400 };
   }
 
   const sourceStat = await fs.stat(source);
@@ -221,7 +243,7 @@ async function resolveMoveTarget(be: FileBackend, body: MoveBody): Promise<MoveT
     sourceStat.isDirectory()
     && (destinationDirectory === source || destinationDirectory.startsWith(source + path.sep))
   ) {
-    return NextResponse.json({ error: "Cannot move a folder into itself" }, { status: 400 });
+    return { error: "Cannot move a folder into itself", status: 400 };
   }
 
   // The leaf is not a symlink (rejected above), so realpath preserved its name.
@@ -288,6 +310,64 @@ async function moveWithoutOverwrite(target: MoveTarget): Promise<void> {
   }
 }
 
+/** Resolve and perform one item's move. Never throws: every rejection becomes a MoveFailure. */
+async function moveOne(
+  be: FileBackend,
+  sourcePath: string,
+  destinationDirectory: string | null | undefined,
+  log: ReturnType<typeof createLogger>,
+): Promise<MoveOutcome | MoveFailure> {
+  try {
+    const target = await resolveMoveTarget(be, { sourcePath, destinationDirectory });
+    if (isFailure(target)) return target;
+
+    const outcome: MoveOutcome = {
+      sourcePath,
+      path: target.clientDestination,
+      unchanged: target.unchanged,
+      name: path.basename(target.source),
+      destinationLabel: target.destinationLabel,
+    };
+    if (target.unchanged) return outcome;
+
+    try {
+      await moveWithoutOverwrite(target);
+    } catch (err) {
+      if (err instanceof DestinationConflictError) {
+        return {
+          error: `An item named ${path.basename(target.destination)} already exists in that folder`,
+          status: 409,
+        };
+      }
+
+      // Legacy root-owned files (see the workspace backend's writeFallback) may not be movable by
+      // the host process. Unlike a write, a move has no container fallback, so report it plainly
+      // rather than leaking the raw errno string.
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code !== "EACCES" && code !== "EPERM") throw err;
+      return { error: "Source or destination directory is not writable", status: 400 };
+    }
+    return outcome;
+  } catch (err) {
+    log.warn({ err, sourcePath, destinationDirectory }, "PATCH file move failed");
+    return { error: err instanceof Error ? err.message : "Unknown error", status: 400 };
+  }
+}
+
+/**
+ * Move one or more items into a single destination directory.
+ *
+ * The whole batch is one request and one git snapshot, because the alternative — a request and a
+ * snapshot per item — costs orders of magnitude more than the moves themselves (a link+unlink or a
+ * rename) and made large selections crawl.
+ *
+ * Items are moved in order and the batch stops at the first failure rather than pressing on through
+ * a tree that is already not what the client thinks it is. Whatever moved before that stays moved
+ * and is reported, so the client can reconcile precisely instead of guessing.
+ *
+ * Callers must send siblings — `collapseToRoots` on the client drops any path travelling with a
+ * selected ancestor — so no item can re-path a later one.
+ */
 export async function moveFileContent(req: Request, be: FileBackend): Promise<Response> {
   let parsedBody: unknown;
   try {
@@ -299,8 +379,16 @@ export async function moveFileContent(req: Request, be: FileBackend): Promise<Re
     return NextResponse.json({ error: "JSON body must be an object" }, { status: 400 });
   }
   const candidate = parsedBody as Record<string, unknown>;
-  if (typeof candidate.sourcePath !== "string" || candidate.sourcePath.length === 0) {
-    return NextResponse.json({ error: "sourcePath required" }, { status: 400 });
+  const sourcePaths = candidate.sourcePaths;
+  if (
+    !Array.isArray(sourcePaths)
+    || sourcePaths.length === 0
+    || !sourcePaths.every((p) => typeof p === "string" && p.length > 0)
+  ) {
+    return NextResponse.json(
+      { error: "sourcePaths must be a non-empty array of paths" },
+      { status: 400 },
+    );
   }
   if (
     candidate.destinationDirectory !== undefined
@@ -309,48 +397,50 @@ export async function moveFileContent(req: Request, be: FileBackend): Promise<Re
   ) {
     return NextResponse.json({ error: "destinationDirectory must be a non-empty string or null" }, { status: 400 });
   }
-  const body: MoveBody = {
-    sourcePath: candidate.sourcePath,
-    destinationDirectory: candidate.destinationDirectory as string | null | undefined,
-  };
+  const destinationDirectory = candidate.destinationDirectory as string | null | undefined;
 
   const log = createLogger("api").child(be.logContext);
-  try {
-    const target = await resolveMoveTarget(be, {
-      sourcePath: body.sourcePath,
-      destinationDirectory: body.destinationDirectory,
-    });
-    if (target instanceof NextResponse) return target;
-    if (target.unchanged) {
-      return NextResponse.json({ ok: true, path: target.clientDestination, unchanged: true });
+  const results: MoveOutcome[] = [];
+  let failure: MoveFailure | null = null;
+  let failedSourcePath: string | null = null;
+
+  for (const sourcePath of sourcePaths as string[]) {
+    const result = await moveOne(be, sourcePath, destinationDirectory, log);
+    if (isFailure(result)) {
+      failure = result;
+      failedSourcePath = sourcePath;
+      break;
     }
-
-    try {
-      await moveWithoutOverwrite(target);
-    } catch (err) {
-      if (err instanceof DestinationConflictError) {
-        return NextResponse.json(
-          { error: `An item named ${path.basename(target.destination)} already exists in that folder` },
-          { status: 409 },
-        );
-      }
-
-      // Legacy root-owned files (see the workspace backend's writeFallback) may not be movable by
-      // the host process. Unlike a write, a move has no container fallback, so report it plainly
-      // rather than leaking the raw errno string.
-      const code = (err as NodeJS.ErrnoException).code;
-      if (code !== "EACCES" && code !== "EPERM") throw err;
-      return NextResponse.json(
-        { error: "Source or destination directory is not writable" },
-        { status: 400 },
-      );
-    }
-
-    await be.afterWrite?.(`moved ${path.basename(target.source)} to ${target.destinationLabel}`);
-    return NextResponse.json({ ok: true, path: target.clientDestination });
-  } catch (err) {
-    log.warn({ err, sourcePath: body.sourcePath, destinationDirectory: body.destinationDirectory }, "PATCH file move failed");
-    const msg = err instanceof Error ? err.message : "Unknown error";
-    return NextResponse.json({ error: msg }, { status: 400 });
+    results.push(result);
   }
+
+  // One snapshot for the batch, and only if something actually changed on disk — an all-unchanged
+  // request is a no-op and must not manufacture an empty commit.
+  const moved = results.filter((r) => !r.unchanged);
+  if (moved.length > 0) {
+    const message = moved.length === 1
+      ? `moved ${moved[0].name} to ${moved[0].destinationLabel}`
+      : `moved ${moved.length} items to ${moved[0].destinationLabel}`;
+    try {
+      await be.afterWrite?.(message);
+    } catch (err) {
+      // The files are already moved; a failed snapshot must not be reported as a failed move, or
+      // the client would leave them on screen at paths that no longer exist.
+      log.warn({ err }, "move snapshot failed");
+    }
+  }
+
+  // A request where nothing landed answers with the failure's own status, so a single move still
+  // reports 409/400 as it always has. A partial batch is a 200: some of the work is real, and the
+  // body carries which items moved and why the rest did not.
+  const status = failure && results.length === 0 ? failure.status : 200;
+  return NextResponse.json(
+    {
+      ok: failure === null,
+      results: results.map(({ sourcePath, path: destination, unchanged }) =>
+        ({ sourcePath, path: destination, unchanged })),
+      ...(failure ? { error: failure.error, failedSourcePath } : {}),
+    },
+    { status },
+  );
 }

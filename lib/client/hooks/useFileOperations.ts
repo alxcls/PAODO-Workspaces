@@ -8,6 +8,7 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useDeferredPending } from "./useDeferredPending";
+import { useTransientMessage } from "./useTransientMessage";
 
 export interface TreeNode {
   name: string;
@@ -39,43 +40,10 @@ export function useFileOperations({
   const base = apiBase ?? `/api/workspaces/${workspaceId}`;
   const [tree, setTree] = useState<TreeNode[]>([]);
   const { pending: downloading, run: runDownload } = useDeferredPending();
-  const [deleteError, setDeleteError] = useState<string | null>(null);
-  const [moveError, setMoveError] = useState<string | null>(null);
+  const [deleteError, setDeleteError] = useTransientMessage(2000);
+  const [moveError, setMoveError] = useTransientMessage(3500);
   const [movingPath, setMovingPath] = useState<string | null>(null);
-  const deleteTimerRef = useRef<number | null>(null);
-  const moveTimerRef = useRef<number | null>(null);
   const moveInFlightRef = useRef(false);
-
-  useEffect(() => {
-    if (!deleteError) return;
-    if (deleteTimerRef.current) {
-      clearTimeout(deleteTimerRef.current);
-      deleteTimerRef.current = null;
-    }
-    deleteTimerRef.current = window.setTimeout(() => {
-      setDeleteError(null);
-      deleteTimerRef.current = null;
-    }, 2000);
-    return () => {
-      if (deleteTimerRef.current) {
-        clearTimeout(deleteTimerRef.current);
-        deleteTimerRef.current = null;
-      }
-    };
-  }, [deleteError]);
-
-  useEffect(() => {
-    if (!moveError) return;
-    if (moveTimerRef.current) window.clearTimeout(moveTimerRef.current);
-    moveTimerRef.current = window.setTimeout(() => {
-      setMoveError(null);
-      moveTimerRef.current = null;
-    }, 3500);
-    return () => {
-      if (moveTimerRef.current) window.clearTimeout(moveTimerRef.current);
-      moveTimerRef.current = null;
-    };
-  }, [moveError]);
 
   const fetchTree = useCallback(async () => {
     try {

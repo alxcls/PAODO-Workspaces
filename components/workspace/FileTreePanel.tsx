@@ -83,6 +83,43 @@ interface TreeListProps {
   onMove: (sourcePath: string, destinationDirectory: string | null) => void;
 }
 
+/**
+ * Drag handlers for one row acting as a drop zone. A folder row targets itself; a file row targets
+ * the folder containing it, so the two differ only in `targetKey` (which row highlights, "" being
+ * the tree root) and `destination` (what the move request receives, null being the tree root).
+ */
+function dropZoneHandlers({
+  targetKey, destination, canDrop, draggedNode, dropTargetPath, onDropTargetChange, onMove,
+}: {
+  targetKey: string;
+  destination: string | null;
+  canDrop: boolean;
+} & Pick<TreeListProps, "draggedNode" | "dropTargetPath" | "onDropTargetChange" | "onMove">) {
+  return {
+    onDragOver: (e: React.DragEvent) => {
+      if (!draggedNode) return;
+      e.preventDefault();
+      e.stopPropagation();
+      e.dataTransfer.dropEffect = canDrop ? "move" : "none";
+      onDropTargetChange(canDrop ? targetKey : null);
+    },
+    onDragLeave: (e: React.DragEvent) => {
+      // A row's own children (its checkbox, its label) fire dragleave on the row with relatedTarget
+      // set to the child. Treat those as staying put, or the highlight drops and the next dragover
+      // restores it — a flicker as the cursor crosses the row.
+      if (e.currentTarget.contains(e.relatedTarget as Node | null)) return;
+      if (dropTargetPath === targetKey) onDropTargetChange(null);
+    },
+    onDrop: (e: React.DragEvent) => {
+      if (!draggedNode) return;
+      e.preventDefault();
+      e.stopPropagation();
+      onDropTargetChange(null);
+      if (canDrop) onMove(draggedNode.path, destination);
+    },
+  };
+}
+
 const TreeNodeList = ({
   nodes, depth, parentDirectory, expanded, onToggle, activePath, selected, onSelect, onPick,
   draggedNode, dropTargetPath, movingPath,
@@ -112,24 +149,10 @@ const TreeNodeList = ({
                 draggable={movingPath === null}
                 onDragStart={(e) => onNodeDragStart(node, e)}
                 onDragEnd={onNodeDragEnd}
-                onDragOver={(e) => {
-                  if (!draggedNode) return;
-                  e.preventDefault();
-                  e.stopPropagation();
-                  e.dataTransfer.dropEffect = canDrop ? "move" : "none";
-                  onDropTargetChange(canDrop ? node.path : null);
-                }}
-                onDragLeave={(e) => {
-                  if (e.currentTarget.contains(e.relatedTarget as Node | null)) return;
-                  if (dropTargetPath === node.path) onDropTargetChange(null);
-                }}
-                onDrop={(e) => {
-                  if (!draggedNode) return;
-                  e.preventDefault();
-                  e.stopPropagation();
-                  onDropTargetChange(null);
-                  if (canDrop) onMove(draggedNode.path, node.path);
-                }}
+                {...dropZoneHandlers({
+                  targetKey: node.path, destination: node.path, canDrop,
+                  draggedNode, dropTargetPath, onDropTargetChange, onMove,
+                })}
               >
                 <Checkbox state={state} onClick={(e) => {
                   e.stopPropagation();
@@ -179,23 +202,11 @@ const TreeNodeList = ({
             draggable={movingPath === null}
             onDragStart={(e) => onNodeDragStart(node, e)}
             onDragEnd={onNodeDragEnd}
-            onDragOver={(e) => {
-              if (!draggedNode) return;
-              e.preventDefault();
-              e.stopPropagation();
-              e.dataTransfer.dropEffect = canDropBesideFile ? "move" : "none";
-              onDropTargetChange(canDropBesideFile ? (parentDirectory ?? "") : null);
-            }}
-            onDragLeave={() => {
-              if (dropTargetPath === (parentDirectory ?? "")) onDropTargetChange(null);
-            }}
-            onDrop={(e) => {
-              if (!draggedNode) return;
-              e.preventDefault();
-              e.stopPropagation();
-              onDropTargetChange(null);
-              if (canDropBesideFile) onMove(draggedNode.path, parentDirectory);
-            }}
+            {...dropZoneHandlers({
+              targetKey: parentDirectory ?? "", destination: parentDirectory,
+              canDrop: canDropBesideFile,
+              draggedNode, dropTargetPath, onDropTargetChange, onMove,
+            })}
           >
             <Checkbox
               state={isSel ? "all" : "none"}

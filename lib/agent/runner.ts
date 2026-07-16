@@ -21,12 +21,15 @@ const log = createLogger("agent");
 export type AgentEvent =
   | { type: "token"; content: string }
   | { type: "reasoning"; content: string }
-  | { type: "tool_start"; name: string; args: Record<string, unknown> }
+  // `id` is the provider's tool_call id: it pairs tool_link/tool_result with the exact bubble
+  // tool_start opened, which `name` cannot do when a turn runs several calls to the same tool
+  // in parallel. Optional — not every provider supplies one; consumers fall back to `name`.
+  | { type: "tool_start"; name: string; id?: string; args: Record<string, unknown> }
   // call_agent only: emitted mid-run, the moment the callee's conversation is created, so the
   // caller shows the "View session" deep-link while the callee is still working (not just at end).
-  | { type: "tool_link"; name: string; meta: CallAgentMeta }
+  | { type: "tool_link"; name: string; id?: string; meta: CallAgentMeta }
   // `meta` is set only for call_agent: a deep-link to the callee's persisted session.
-  | { type: "tool_result"; name: string; result: string; meta?: CallAgentMeta }
+  | { type: "tool_result"; name: string; id?: string; result: string; meta?: CallAgentMeta }
   | { type: "error"; message: string }
   | { type: "limit_reached" }
   | { type: "done" }
@@ -325,14 +328,16 @@ async function tryCommitResult(
   }
 }
 
+type QueuedLink = { name: string; id?: string; meta: CallAgentMeta };
+
 function createLinkQueue() {
-  const queue: Array<{ name: string; meta: CallAgentMeta }> = [];
+  const queue: QueuedLink[] = [];
   let wakeUp: (() => void) | null = null;
   let done = false;
 
   return {
-    emitLink(name: string, meta: CallAgentMeta) {
-      queue.push({ name, meta });
+    emitLink(link: QueuedLink) {
+      queue.push(link);
       wakeUp?.();
       wakeUp = null;
     },
@@ -341,7 +346,7 @@ function createLinkQueue() {
       wakeUp?.();
       wakeUp = null;
     },
-    async *drainUntilSettled(): AsyncGenerator<{ name: string; meta: CallAgentMeta }> {
+    async *drainUntilSettled(): AsyncGenerator<QueuedLink> {
       while (!done || queue.length) {
         while (queue.length) yield queue.shift()!;
         if (done) break;
@@ -497,7 +502,7 @@ export async function* runAgent(
       });
 
       for (const tc of activeCalls) {
-        yield { type: "tool_start", name: tc.name, args: tc.args };
+        yield { type: "tool_start", name: tc.name, id: tc.id, args: tc.args };
         resolvedNotify({ type: "tool_call", name: tc.name, args: tc.args });
         wlog.debug({ name: tc.name, args: tc.args }, "tool call");
       }
@@ -517,10 +522,12 @@ export async function* runAgent(
           // (a bound arrow property, so it can be called free-standing without a thisArg).
           const withMeta = tool?.callWithMeta;
           if (withMeta) {
-            const r = await withMeta(tc.args, (m) => lq.emitLink(tc.name, m), signal).catch((err) => ({
-              result: `Error: ${String(err)}`,
-              meta: undefined,
-            }));
+            const r = await withMeta(tc.args, (m) => lq.emitLink({ name: tc.name, id: tc.id, meta: m }), signal).catch(
+              (err) => ({
+                result: `Error: ${String(err)}`,
+                meta: undefined,
+              }),
+            );
             resultStr = r.result;
             meta = r.meta;
           } else {
@@ -540,7 +547,7 @@ export async function* runAgent(
       // Suspends only before the atomic history-commit below — an abort during the wait can
       // never leave a half-written turn.
       for await (const link of lq.drainUntilSettled()) {
-        yield { type: "tool_link", name: link.name, meta: link.meta };
+        yield { type: "tool_link", name: link.name, id: link.id, meta: link.meta };
       }
       const settled = await settledPromise;
 
@@ -571,7 +578,7 @@ export async function* runAgent(
       }
 
       for (const { tc, resultStr, meta } of settled) {
-        yield { type: "tool_result", name: tc.name, result: resultStr, ...(meta ? { meta } : {}) };
+        yield { type: "tool_result", name: tc.name, id: tc.id, result: resultStr, ...(meta ? { meta } : {}) };
         if (!typedToolMap[tc.name]?.suppressResultNotify) {
           resolvedNotify({ type: "tool_result_log", name: tc.name, result: resultStr });
         }

@@ -9,6 +9,9 @@ export interface Message {
   role: "user" | "assistant" | "tool_start" | "error" | "limit_notice" | "reasoning" | "usage";
   content?: string;
   toolName?: string;
+  // The provider's tool_call id, when it supplied one. Identifies which bubble a later
+  // tool_link/tool_result belongs to when one turn opens several bubbles for the same tool.
+  toolCallId?: string;
   toolSummary?: string;
   toolDone?: boolean;
   // Set only on a completed call_agent tool bubble: deep-link to the callee's persisted session.
@@ -87,11 +90,12 @@ export function upsertReasoningText(messages: Message[], content: string): Messa
 
 // Marks the current assistant turn as "thinking" (so it renders collapsed once a tool runs)
 // and appends the live tool-status bubble.
-function appendToolStart(messages: Message[], name: string, args: Record<string, unknown>): Message[] {
+function appendToolStart(messages: Message[], name: string, args: Record<string, unknown>, id?: string): Message[] {
   const last = messages[messages.length - 1];
   const toolMsg: Message = {
     role: "tool_start",
     toolName: name,
+    ...(id ? { toolCallId: id } : {}),
     toolSummary: toolArgSummary(name, args),
     toolDone: false,
   };
@@ -101,47 +105,53 @@ function appendToolStart(messages: Message[], name: string, args: Record<string,
   return [...messages, toolMsg];
 }
 
-// Flips the most recent open tool bubble for `name` to done, attaching the callee session link
-// if one was provided (call_agent only).
-function markToolDone(messages: Message[], name: string, link?: CallAgentMeta): Message[] {
-  const next = [...messages];
-  for (let j = next.length - 1; j >= 0; j--) {
-    if (next[j].role === "tool_start" && next[j].toolName === name && !next[j].toolDone) {
-      next[j] = {
-        ...next[j],
-        toolDone: true,
-        ...(link
-          ? {
-              calleeWorkspaceId: link.workspaceId,
-              calleeWorkspaceName: link.workspaceName,
-              calleeConversationId: link.conversationId,
-            }
-          : {}),
-      };
-      break;
+// Locates the open bubble an event refers to. When the event carries a tool_call id, only the
+// bubble opened by that same call matches — two parallel call_agent bubbles are then updated
+// independently instead of both events landing on the last one. Without an id (providers that
+// don't supply one) it falls back to the most recent open bubble for the tool, which is correct
+// for the one-call-at-a-time case.
+function findOpenToolIdx(messages: Message[], name: string, id?: string, unlinkedOnly = false): number {
+  for (let j = messages.length - 1; j >= 0; j--) {
+    const m = messages[j];
+    if (m.role !== "tool_start" || m.toolDone) continue;
+    if (id && m.toolCallId) {
+      if (m.toolCallId === id) return j;
+      continue;
     }
+    if (m.toolName !== name) continue;
+    // Id-less fallback for a link: an already-linked bubble belongs to a different parallel
+    // call, so keep looking rather than overwriting its link.
+    if (unlinkedOnly && m.calleeConversationId) continue;
+    return j;
   }
+  return -1;
+}
+
+const linkFields = (link: CallAgentMeta) => ({
+  calleeWorkspaceId: link.workspaceId,
+  calleeWorkspaceName: link.workspaceName,
+  calleeConversationId: link.conversationId,
+});
+
+// Flips the tool bubble this result belongs to to done, attaching the callee session link
+// if one was provided (call_agent only).
+function markToolDone(messages: Message[], name: string, id?: string, link?: CallAgentMeta): Message[] {
+  const idx = findOpenToolIdx(messages, name, id);
+  if (idx === -1) return messages;
+  const next = [...messages];
+  next[idx] = { ...next[idx], toolDone: true, ...(link ? linkFields(link) : {}) };
   return next;
 }
 
-// Attaches the callee session deep-link to the most recent still-open tool bubble for `name`
-// (call_agent), without flipping it to done — the spinner keeps running while the callee works,
-// but the "View session" link is already clickable. No-op if the bubble already carries the link.
-function attachToolLink(messages: Message[], name: string, link: CallAgentMeta): Message[] {
+// Attaches the callee session deep-link to the still-open bubble for this call (call_agent),
+// without flipping it to done — the spinner keeps running while the callee works, but the
+// "View session" link is already clickable. No-op if the bubble already carries the link.
+function attachToolLink(messages: Message[], name: string, link: CallAgentMeta, id?: string): Message[] {
+  const idx = findOpenToolIdx(messages, name, id, true);
+  if (idx === -1 || messages[idx].calleeConversationId === link.conversationId) return messages;
   const next = [...messages];
-  for (let j = next.length - 1; j >= 0; j--) {
-    if (next[j].role === "tool_start" && next[j].toolName === name && !next[j].toolDone) {
-      if (next[j].calleeConversationId === link.conversationId) return messages;
-      next[j] = {
-        ...next[j],
-        calleeWorkspaceId: link.workspaceId,
-        calleeWorkspaceName: link.workspaceName,
-        calleeConversationId: link.conversationId,
-      };
-      return next;
-    }
-  }
-  return messages;
+  next[idx] = { ...next[idx], ...linkFields(link) };
+  return next;
 }
 
 // Flips every still-open tool bubble to done. Used when a turn ends without a tool_result for
@@ -168,13 +178,18 @@ function insertUsage(messages: Message[], inputTokens: number, outputTokens: num
 export function applyDiscreteEvent(state: TranscriptState, event: AgentEvent): TranscriptState {
   switch (event.type) {
     case "tool_start":
-      return { ...state, messages: appendToolStart(state.messages, event.name, event.args) };
+      return { ...state, messages: appendToolStart(state.messages, event.name, event.args, event.id) };
     case "tool_link":
-      return { ...state, messages: attachToolLink(state.messages, event.name, event.meta) };
+      return { ...state, messages: attachToolLink(state.messages, event.name, event.meta, event.id) };
     case "tool_result":
       return {
         ...state,
-        messages: markToolDone(state.messages, event.name, event.name === "call_agent" ? event.meta : undefined),
+        messages: markToolDone(
+          state.messages,
+          event.name,
+          event.id,
+          event.name === "call_agent" ? event.meta : undefined,
+        ),
       };
     case "turn_usage":
       return {

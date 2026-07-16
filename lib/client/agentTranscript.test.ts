@@ -139,6 +139,60 @@ describe("applyDiscreteEvent", () => {
     ]);
   });
 
+  // Two call_agent calls in the same turn open two bubbles that differ only by tool_call id —
+  // each one's link and result must land on its own bubble, not both on the most recent.
+  it("keeps parallel call_agent bubbles independent via the tool_call id", () => {
+    let s = emptyTranscript();
+    for (const [id, workspace] of [
+      ["call-1", "Agent B"],
+      ["call-2", "Agent C"],
+    ]) {
+      s = applyDiscreteEvent(s, { type: "tool_start", name: "call_agent", id, args: { workspace } });
+    }
+    s = applyDiscreteEvent(s, {
+      type: "tool_link",
+      name: "call_agent",
+      id: "call-1",
+      meta: { conversationId: "conv-b", workspaceId: "ws-b", workspaceName: "Agent B" },
+    });
+    s = applyDiscreteEvent(s, {
+      type: "tool_link",
+      name: "call_agent",
+      id: "call-2",
+      meta: { conversationId: "conv-c", workspaceId: "ws-c", workspaceName: "Agent C" },
+    });
+
+    expect(s.messages.map((m) => m.calleeConversationId)).toEqual(["conv-b", "conv-c"]);
+
+    // The second call finishes first: only its bubble goes done, the first keeps spinning.
+    s = applyDiscreteEvent(s, { type: "tool_result", name: "call_agent", id: "call-2", result: "ok" });
+    expect(s.messages.map((m) => m.toolDone)).toEqual([false, true]);
+
+    s = applyDiscreteEvent(s, { type: "tool_result", name: "call_agent", id: "call-1", result: "ok" });
+    expect(s.messages.map((m) => m.toolDone)).toEqual([true, true]);
+    expect(s.messages.map((m) => m.calleeConversationId)).toEqual(["conv-b", "conv-c"]);
+  });
+
+  // Providers that supply no tool_call id fall back to name matching, which cannot tell parallel
+  // bubbles apart — but a link must still never overwrite a bubble that already has one.
+  it("gives each parallel call_agent bubble a link even without tool_call ids", () => {
+    let s = state([
+      { role: "tool_start", toolName: "call_agent", toolDone: false },
+      { role: "tool_start", toolName: "call_agent", toolDone: false },
+    ]);
+    for (const [conversationId, workspaceId] of [
+      ["conv-b", "ws-b"],
+      ["conv-c", "ws-c"],
+    ]) {
+      s = applyDiscreteEvent(s, {
+        type: "tool_link",
+        name: "call_agent",
+        meta: { conversationId, workspaceId, workspaceName: workspaceId },
+      });
+    }
+    expect(s.messages.map((m) => m.calleeConversationId).sort()).toEqual(["conv-b", "conv-c"]);
+  });
+
   // Without meta (e.g. a pre-run rejection), the bubble just marks done — no link.
   it("tool_result without meta leaves a call_agent bubble linkless", () => {
     const start = state([{ role: "tool_start", toolName: "call_agent", toolDone: false }]);

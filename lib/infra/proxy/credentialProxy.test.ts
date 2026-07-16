@@ -9,12 +9,12 @@ import type { Transform } from "stream";
 import type * as http from "http";
 import {
   substituteHeaderValue,
-  decodeChunked,
   hostMatches,
   reverseTokenMap,
   createRedactTransform,
   buildResponseHead,
 } from "./credentialProxy";
+import { decodeChunked } from "./httpWire";
 
 const TOKEN = "__pxy_ws1_OPENAI_API_KEY__";
 const REAL = "sk-realsecret123";

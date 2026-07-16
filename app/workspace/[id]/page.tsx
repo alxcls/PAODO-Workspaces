@@ -4,7 +4,7 @@
 // file tree (via treeRefreshKey) and the file viewer (via the imperative FileViewerHandle ref).
 "use client";
 
-import { use, useState, useEffect, useRef, useCallback, Suspense, lazy } from "react";
+import { use, useState, useEffect, useRef, Suspense, lazy } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import FileTreePanel from "@/components/workspace/FileTreePanel";
@@ -22,6 +22,7 @@ import TopBar from "@/components/layout/TopBar";
 import { useWorkspaceSocket } from "@/lib/client/hooks/useWorkspaceSocket";
 import { useWorkspaceMeta } from "@/lib/client/hooks/useWorkspaceMeta";
 import { useConversations } from "@/lib/client/hooks/useConversations";
+import { useDragResize } from "@/lib/client/hooks/useDragResize";
 
 // useConversations reads useSearchParams() (for the ?conversation= deep-link), which Next requires
 // to sit under a Suspense boundary, so the page body is wrapped below.
@@ -48,8 +49,6 @@ function WorkspacePageInner({ params }: { params: Promise<{ id: string }> }) {
 
   const containerRef = useRef<HTMLDivElement>(null);
   const rightRef = useRef<HTMLDivElement>(null);
-  const colDragging = useRef<"left" | "right" | null>(null);
-  const rowDragging = useRef(false);
   const viewerRef = useRef<FileViewerHandle>(null);
   const conversationsRefreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -80,51 +79,33 @@ function WorkspacePageInner({ params }: { params: Promise<{ id: string }> }) {
     },
   });
 
-  useEffect(() => {
-    const onMove = (e: MouseEvent) => {
-      if (!colDragging.current || !containerRef.current) return;
+  const startLeftDrag = useDragResize({
+    onDragChange: setIsDragging,
+    onMove: (e) => {
+      if (!containerRef.current) return;
       const rect = containerRef.current.getBoundingClientRect();
-      if (colDragging.current === "left") {
-        setLeftWidth(Math.max(220, Math.min(500, e.clientX - rect.left)));
-      } else {
-        setRightWidth(Math.max(300, Math.min(700, rect.right - e.clientX)));
-      }
-    };
-    const onUp = () => {
-      if (!colDragging.current) return;
-      colDragging.current = null; setIsDragging(false);
-      document.body.style.cursor = ""; document.body.style.userSelect = "";
-    };
-    window.addEventListener("mousemove", onMove);
-    window.addEventListener("mouseup", onUp);
-    return () => { window.removeEventListener("mousemove", onMove); window.removeEventListener("mouseup", onUp); };
-  }, []);
+      setLeftWidth(Math.max(220, Math.min(500, e.clientX - rect.left)));
+    },
+  });
 
-  useEffect(() => {
-    const onMove = (e: MouseEvent) => {
-      if (!rowDragging.current || !rightRef.current) return;
+  const startRightDrag = useDragResize({
+    onDragChange: setIsDragging,
+    onMove: (e) => {
+      if (!containerRef.current) return;
+      const rect = containerRef.current.getBoundingClientRect();
+      setRightWidth(Math.max(300, Math.min(700, rect.right - e.clientX)));
+    },
+  });
+
+  const startRowDrag = useDragResize({
+    cursor: "row-resize",
+    onDragChange: setIsDragging,
+    onMove: (e) => {
+      if (!rightRef.current) return;
       const rect = rightRef.current.getBoundingClientRect();
       setChatRatio(Math.max(0.2, Math.min(0.85, (e.clientY - rect.top) / rect.height)));
-    };
-    const onUp = () => {
-      if (!rowDragging.current) return;
-      rowDragging.current = false; setIsDragging(false);
-      document.body.style.cursor = ""; document.body.style.userSelect = "";
-    };
-    window.addEventListener("mousemove", onMove);
-    window.addEventListener("mouseup", onUp);
-    return () => { window.removeEventListener("mousemove", onMove); window.removeEventListener("mouseup", onUp); };
-  }, []);
-
-  const startColDrag = useCallback((side: "left" | "right") => {
-    colDragging.current = side; setIsDragging(true);
-    document.body.style.cursor = "col-resize"; document.body.style.userSelect = "none";
-  }, []);
-
-  const startRowDrag = useCallback(() => {
-    rowDragging.current = true; setIsDragging(true);
-    document.body.style.cursor = "row-resize"; document.body.style.userSelect = "none";
-  }, []);
+    },
+  });
 
   return (
     <div className="flex flex-col h-screen bg-bg overflow-hidden">
@@ -174,7 +155,7 @@ function WorkspacePageInner({ params }: { params: Promise<{ id: string }> }) {
 
       {viewerOpen && (
         <>
-          <div className="ws-divider" onMouseDown={() => startColDrag("left")} />
+          <div className="ws-divider" onMouseDown={startLeftDrag} />
           <section className="flex-1 flex flex-col min-w-0 min-h-0 bg-bg">
             <Suspense fallback={<div className="flex-1 grid place-items-center text-text-3 text-sm bg-bg-tint p-6 text-center">Loading viewer…</div>}>
               <FileViewer
@@ -188,7 +169,7 @@ function WorkspacePageInner({ params }: { params: Promise<{ id: string }> }) {
         </>
       )}
 
-      <div className="ws-divider" onMouseDown={() => startColDrag(viewerOpen ? "right" : "left")} />
+      <div className="ws-divider" onMouseDown={viewerOpen ? startRightDrag : startLeftDrag} />
 
       <aside
         ref={rightRef}

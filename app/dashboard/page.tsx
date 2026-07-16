@@ -6,9 +6,17 @@ import Image from "next/image";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import TopBar from "@/components/layout/TopBar";
+import { useDragResize } from "@/lib/client/hooks/useDragResize";
 import { toolLabel, toolArgSummary } from "@/lib/client/agentTranscript";
-import type { LightTurnRecord, TurnRecord, ToolStatus, SessionOrigin } from "@/lib/workspace/usageStore";
-import { computeCost } from "@/lib/workspace/modelPricing";
+import {
+  groupBySessions,
+  formatTokens,
+  formatCost,
+  formatDateTime,
+  originLabel,
+  type LightSession,
+} from "@/lib/client/usageSessions";
+import type { LightTurnRecord, TurnRecord, ToolStatus } from "@/lib/workspace/usageStore";
 
 // Tool-outcome dot: green success / red failure. From the caller's view a NEEDS_INPUT call
 // didn't return a usable result, so it reads red too (the corrected re-call is the green row).
@@ -36,98 +44,6 @@ function StatusDot({ status }: { status: ToolStatus }) {
 const mdComponents: Components = {
   table: ({ node: _n, ...props }) => <div className="table-wrap"><table {...props} /></div>,
 };
-
-function formatTokens(n: number): string {
-  if (n === 0) return "—";
-  if (n >= 1000) return (n / 1000).toFixed(1) + "K";
-  return String(n);
-}
-
-// USD cost per session. `cost` is undefined when no turn's model was found in the pricing catalog, in
-// which case we show "—" rather than a misleading $0. Sub-cent totals get more precision.
-function formatCost(cost: number | undefined): string {
-  if (cost === undefined) return "—";
-  if (cost === 0) return "$0";
-  if (cost < 0.01) return "$" + cost.toFixed(4);
-  return "$" + cost.toFixed(cost < 1 ? 3 : 2);
-}
-
-function pad(n: number): string { return String(n).padStart(2, "0"); }
-
-function formatDateTime(iso: string): string {
-  const d = new Date(iso);
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
-}
-
-function originLabel(origin: SessionOrigin): string {
-  switch (origin) {
-    case "chat": return "Workspace chat";
-    case "api": return "API";
-    case "mcp": return "Workspace MCP";
-    case "scheduled": return "Scheduled";
-    case "agent": return "Agent network";
-    // Records created before explicit source tracking used `manual`.
-    case "manual": return "Workspace chat";
-  }
-}
-
-// One user message ("turn line") = one run = one sessionId, aggregated from the light per-turn
-// records. The row shows both IDs: the session id (the per-run identifier) and the conversation
-// id (linked to its conversation tab).
-interface LightSession {
-  sessionId: string;
-  conversationId?: string;
-  workspaceId: string;
-  workspaceName: string;
-  origin: SessionOrigin;
-  timestamp: string;
-  // Distinct model ids used across the run's turns, in first-seen order. Usually one; a run that
-  // switches models mid-flight lists each once.
-  models: string[];
-  inputTokens: number;
-  outputTokens: number;
-  cachedInputTokens: number;
-  toolTotal: number;
-  // undefined until a priced turn contributes; stays undefined if no turn's model is in the catalog.
-  cost: number | undefined;
-}
-
-function groupBySessions(records: LightTurnRecord[]): LightSession[] {
-  const map = new Map<string, LightSession>();
-  for (const r of records) {
-    let s = map.get(r.sessionId);
-    if (!s) {
-      s = {
-        sessionId: r.sessionId,
-        conversationId: r.conversationId,
-        workspaceId: r.workspaceId,
-        workspaceName: r.workspaceName,
-        origin: r.origin ?? "manual",
-        timestamp: r.timestamp,
-        models: [],
-        inputTokens: 0,
-        outputTokens: 0,
-        cachedInputTokens: 0,
-        toolTotal: 0,
-        cost: undefined,
-      };
-      map.set(r.sessionId, s);
-    }
-    if (r.model && !s.models.includes(r.model)) s.models.push(r.model);
-    s.inputTokens += r.inputTokens;
-    s.outputTokens += r.outputTokens;
-    s.cachedInputTokens += r.cachedInputTokens;
-    s.toolTotal += r.toolCalls.length;
-    // Cost is per-turn: each turn may run on a different model, so sum computeCost across turns.
-    // A turn whose model isn't in the catalog contributes nothing but doesn't invalidate the total.
-    const c = computeCost(r, r.model);
-    if (c !== undefined) s.cost = (s.cost ?? 0) + c;
-    if (r.timestamp < s.timestamp) s.timestamp = r.timestamp;
-  }
-  // Order by when each session STARTED (newest first) — see the agent-to-agent note: a caller's
-  // final relay turn is its last record, so sorting by latest turn would float it above its callee.
-  return Array.from(map.values()).sort((a, b) => b.timestamp.localeCompare(a.timestamp));
-}
 
 // A tool execution located within the fetched session detail (which turn, which call).
 interface ToolRef { turnIdx: number; toolIdx: number; }
@@ -297,31 +213,16 @@ export default function DashboardPage() {
   const [drawerWidth, setDrawerWidth] = useState(440);
 
   // Drag-to-resize for the detail drawer. The drawer sits on the right edge, so its width is
-  // the distance from the cursor to the container's right edge. Mirrors the workspace layout.
+  // the distance from the cursor to the container's right edge.
   const rowRef = useRef<HTMLDivElement>(null);
-  const dragging = useRef(false);
-
-  useEffect(() => {
-    const onMove = (e: MouseEvent) => {
-      if (!dragging.current || !rowRef.current) return;
+  const startDrag = useDragResize({
+    onMove: (e) => {
+      if (!rowRef.current) return;
       const rect = rowRef.current.getBoundingClientRect();
       // Cap at the container width minus a 240px sliver so the session table never fully collapses.
       setDrawerWidth(Math.max(320, Math.min(rect.width - 240, rect.right - e.clientX)));
-    };
-    const onUp = () => {
-      if (!dragging.current) return;
-      dragging.current = false;
-      document.body.style.cursor = ""; document.body.style.userSelect = "";
-    };
-    window.addEventListener("mousemove", onMove);
-    window.addEventListener("mouseup", onUp);
-    return () => { window.removeEventListener("mousemove", onMove); window.removeEventListener("mouseup", onUp); };
-  }, []);
-
-  const startDrag = useCallback(() => {
-    dragging.current = true;
-    document.body.style.cursor = "col-resize"; document.body.style.userSelect = "none";
-  }, []);
+    },
+  });
 
   const loadUsage = useCallback(() => {
     fetch("/api/usage")

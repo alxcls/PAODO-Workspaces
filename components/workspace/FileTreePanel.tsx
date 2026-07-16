@@ -440,21 +440,21 @@ export default function FileTreePanel({
     setDropTargetPath(null);
   };
 
-  /** Resolves false only when the move failed; the server's `unchanged` verdict is a no-op, not an
-   * error, so a batch keeps going after one. */
+  /** Distinguishes a failed request, a successful no-op, and an actual move so batches can keep
+   * going after an unchanged item without counting it as moved. */
   const moveNode = async (
     sourcePath: string,
     destinationDirectory: string | null,
-  ): Promise<boolean> => {
+  ): Promise<"failed" | "unchanged" | "moved"> => {
     onMoveStarted?.(sourcePath);
     const moved = await handleMove(sourcePath, destinationDirectory);
     if (!moved) {
       onMoveCancelled?.(sourcePath);
-      return false;
+      return "failed";
     }
     if (moved.unchanged) {
       onMoveCancelled?.(sourcePath);
-      return true;
+      return "unchanged";
     }
     const destinationPath = moved.path;
 
@@ -468,7 +468,7 @@ export default function FileTreePanel({
       return remapped;
     });
     onMovedPath?.(sourcePath, destinationPath);
-    return true;
+    return "moved";
   };
 
   /**
@@ -484,16 +484,21 @@ export default function FileTreePanel({
     setDropTargetPath(null);
     setMovingPaths(new Set(sources.map((n) => n.path)));
     let moved = 0;
+    let failed = false;
     try {
       for (const source of sources) {
-        if (!(await moveNode(source.path, destinationDirectory))) break;
-        moved += 1;
+        const result = await moveNode(source.path, destinationDirectory);
+        if (result === "failed") {
+          failed = true;
+          break;
+        }
+        if (result === "moved") moved += 1;
       }
     } finally {
       setMovingPaths(new Set());
     }
     // handleMove already surfaces why the failing one failed; this says how much of the batch landed.
-    if (sources.length > 1 && moved < sources.length) {
+    if (sources.length > 1 && failed) {
       setMoveNote(`Moved ${moved} of ${sources.length} items`);
     }
   };
@@ -567,14 +572,18 @@ export default function FileTreePanel({
             <button
               className="btn btn-ghost btn-sm flex-1 justify-center whitespace-nowrap items-center gap-1.5 disabled:opacity-60 disabled:cursor-wait"
               onClick={handleDownload}
-              disabled={downloading}
+              disabled={downloading || movingPaths.size > 0}
             >
               {downloading && (
                 <span className="shrink-0 block w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin" />
               )}
               {downloading ? "Zipping…" : "Download .zip"}
             </button>
-            <button className="btn btn-ghost btn-sm flex-1 justify-center text-danger" onClick={handleDelete} disabled={downloading}>
+            <button
+              className="btn btn-ghost btn-sm flex-1 justify-center text-danger"
+              onClick={handleDelete}
+              disabled={downloading || movingPaths.size > 0}
+            >
               Delete
             </button>
           </div>

@@ -395,8 +395,8 @@ export default function HomePage() {
               )}
 
               <div className="mt-9 mb-2 text-xs font-semibold uppercase tracking-[.08em] text-text-3">Description</div>
-              <DescriptionBlock key={selected.id} value={description} onChange={handleDescriptionChange} />
-              <ApiAccessBlock key={selected.id} wsId={selected.id} />
+              <DescriptionBlock key={`desc-${selected.id}`} value={description} onChange={handleDescriptionChange} />
+              <ApiAccessBlock key={`api-${selected.id}`} wsId={selected.id} />
               <McpBlock key={`mcp-${selected.id}`} wsId={selected.id} />
               <AgentLoopBlock key={`loop-${selected.id}`} wsId={selected.id} />
               <ModelBlock key={`model-${selected.id}`} wsId={selected.id} />

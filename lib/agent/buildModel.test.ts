@@ -1,8 +1,9 @@
 // The Anthropic thinking API split by model generation: newer models (Opus 4.7+, Sonnet 5) reject
 // the legacy thinking:{type:"enabled", budget_tokens} shape with a 400 and require adaptive thinking
 // + output_config.effort; older models (Haiku 4.5) still take the legacy budget and reject effort.
-import { describe, it, expect } from "vitest";
-import { anthropicThinkingConfig } from "./buildModel";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { anthropicThinkingConfig, buildModel, SUPPORTED_PROVIDERS, providerApiKeyEnv } from "./buildModel";
+import type { LLMProviderConfig } from "./interfaces";
 
 describe("anthropicThinkingConfig", () => {
   it("uses adaptive thinking + effort for claude-sonnet-5", () => {
@@ -42,5 +43,56 @@ describe("anthropicThinkingConfig", () => {
   it("defaults an unknown model to the legacy budget path", () => {
     const c = anthropicThinkingConfig("claude-some-future-model", "high");
     expect(c.thinking).toMatchObject({ type: "enabled" });
+  });
+});
+
+// The builders are the single point where a config becomes a real client, so these assert that the
+// selected model/key actually reach the SDK. Every provider's key env var is cleared first: the SDKs
+// fall back to process.env on their own, which would mask a builder that never wired the key through.
+describe("buildModel", () => {
+  const config = (over: Partial<LLMProviderConfig>): LLMProviderConfig => ({
+    provider: "openai",
+    model: "gpt-5.5",
+    apiKey: "test-key",
+    reasoningEffort: "low",
+    anthropicCacheTtl1h: false,
+    ...over,
+  });
+
+  let saved: Record<string, string | undefined>;
+  beforeEach(() => {
+    saved = {};
+    for (const p of SUPPORTED_PROVIDERS) {
+      const env = providerApiKeyEnv(p)!;
+      saved[env] = process.env[env];
+      delete process.env[env];
+    }
+  });
+  afterEach(() => {
+    for (const [env, v] of Object.entries(saved)) {
+      if (v === undefined) delete process.env[env];
+      else process.env[env] = v;
+    }
+  });
+
+  it.each([
+    ["anthropic", "claude-haiku-4-5"],
+    ["openai", "gpt-5.5"],
+    ["deepseek", "deepseek-v4-pro"],
+  ])("wires the selected model and key into the %s client", (provider, model) => {
+    const m = buildModel(config({ provider, model, apiKey: `key-${provider}` })) as unknown as {
+      model: string;
+      apiKey: string;
+    };
+    expect(m.model).toBe(model);
+    expect(m.apiKey).toBe(`key-${provider}`);
+  });
+
+  it("rejects an unregistered provider instead of falling back to another vendor's builder", () => {
+    expect(() => buildModel(config({ provider: "retired-vendor" }))).toThrow(/unsupported LLM provider/);
+  });
+
+  it("rejects a config with no model rather than constructing an unusable client", () => {
+    expect(() => buildModel(config({ model: "" }))).toThrow(/no model selected/);
   });
 });

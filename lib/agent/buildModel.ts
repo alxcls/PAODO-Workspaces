@@ -39,68 +39,7 @@ export function anthropicThinkingConfig(model: string, effort: ReasoningEffort) 
   return { thinking: { type: "enabled" as const, budget_tokens: ANTHROPIC_THINKING_BUDGET[effort] ?? 10_000 } };
 }
 
-type ModelBuilder = (config: LLMProviderConfig) => ChatOpenAI | ChatAnthropic;
-
-const MODEL_BUILDERS: Record<string, ModelBuilder> = {
-  anthropic: (config) => {
-    if (!config.anthropicModel) throw new Error("no anthropic model selected for this workspace");
-    return new ChatAnthropic({
-      model: config.anthropicModel,
-      apiKey: config.anthropicApiKey,
-      ...anthropicThinkingConfig(config.anthropicModel, config.reasoningEffort),
-      ...(config.anthropicCacheTtl1h && {
-        clientOptions: {
-          defaultHeaders: { "anthropic-beta": "prompt-caching-scope-2026-01-05" },
-        },
-      }),
-    });
-  },
-  deepseek: (config) => {
-    if (!config.deepseekModel) throw new Error("no deepseek model selected for this workspace");
-    return new ChatOpenAI({
-      model: config.deepseekModel,
-      configuration: {
-        baseURL: "https://api.deepseek.com/v1",
-        apiKey: config.deepseekApiKey,
-      },
-    });
-  },
-  openai: (config) => {
-    if (!config.openaiModel) throw new Error("no openai model selected for this workspace");
-    // OpenAI accepts none|minimal|low|medium|high|xhigh (never "max" — validation keeps it out).
-    // "none" disables reasoning, so we omit the summary request (nothing would be produced to
-    // summarize); every other level pairs with an auto summary.
-    const effort = config.reasoningEffort as Exclude<ReasoningEffort, "max">;
-    return new ChatOpenAI({
-      model: config.openaiModel,
-      openAIApiKey: config.openaiApiKey,
-      useResponsesApi: true,
-      reasoning: effort === "none" ? { effort } : { effort, summary: "auto" },
-    });
-  },
-};
-
-export function buildModel(config: LLMProviderConfig): ChatOpenAI | ChatAnthropic {
-  return (MODEL_BUILDERS[config.provider] ?? MODEL_BUILDERS.openai)(config);
-}
-
-// The providers the app supports — the source of truth for the UI provider picker and the API-side
-// validation of a workspace's stored provider. Derived from the builder map so it can't drift.
-export const SUPPORTED_PROVIDERS = Object.keys(MODEL_BUILDERS);
-
-// The concrete model id a config resolves to (the selected provider's model field). Used to attribute
-// per-turn usage to a model for cost tracking. Undefined only if the selected provider's model is unset.
-export function selectedModelId(config: LLMProviderConfig): string | undefined {
-  switch (config.provider) {
-    case "anthropic":
-      return config.anthropicModel;
-    case "deepseek":
-      return config.deepseekModel;
-    default:
-      return config.openaiModel;
-  }
-}
-
+// The capability half of a provider entry — the only part callers outside this module see.
 interface ProviderMetadata {
   supportsPromptCaching: boolean;
   // The reasoning-effort levels this provider actually accepts (a subset of ReasoningEffort), quietest
@@ -111,12 +50,87 @@ interface ProviderMetadata {
   reasoningEfforts: ReasoningEffort[];
 }
 
-const PROVIDER_METADATA: Record<string, ProviderMetadata> = {
-  anthropic: { supportsPromptCaching: true, reasoningEfforts: ["low", "medium", "high", "xhigh", "max"] },
-  openai: { supportsPromptCaching: false, reasoningEfforts: ["none", "minimal", "low", "medium", "high", "xhigh"] },
-  deepseek: { supportsPromptCaching: false, reasoningEfforts: [] },
+interface ProviderDescriptor extends ProviderMetadata {
+  /** The .env var carrying this provider's API key — resolved into config.apiKey by loadAgentConfig. */
+  apiKeyEnv: string;
+  build: (config: LLMProviderConfig) => ChatOpenAI | ChatAnthropic;
+}
+
+// The single source of truth for provider support: capabilities, key env var and model construction
+// in one entry. Adding a provider means adding one entry here plus its models in
+// lib/workspace/models.ts — nothing else in the agent layer changes.
+const PROVIDERS: Record<string, ProviderDescriptor> = {
+  anthropic: {
+    apiKeyEnv: "ANTHROPIC_API_KEY",
+    supportsPromptCaching: true,
+    reasoningEfforts: ["low", "medium", "high", "xhigh", "max"],
+    build: (config) =>
+      new ChatAnthropic({
+        model: config.model,
+        apiKey: config.apiKey,
+        ...anthropicThinkingConfig(config.model, config.reasoningEffort),
+        ...(config.anthropicCacheTtl1h && {
+          clientOptions: {
+            defaultHeaders: { "anthropic-beta": "prompt-caching-scope-2026-01-05" },
+          },
+        }),
+      }),
+  },
+  openai: {
+    apiKeyEnv: "OPENAI_API_KEY",
+    supportsPromptCaching: false,
+    reasoningEfforts: ["none", "minimal", "low", "medium", "high", "xhigh"],
+    build: (config) => {
+      // OpenAI accepts none|minimal|low|medium|high|xhigh (never "max" — validation keeps it out).
+      // "none" disables reasoning, so we omit the summary request (nothing would be produced to
+      // summarize); every other level pairs with an auto summary.
+      const effort = config.reasoningEffort as Exclude<ReasoningEffort, "max">;
+      return new ChatOpenAI({
+        model: config.model,
+        // `apiKey`, not the legacy `openAIApiKey` alias — the latter is silently ignored by
+        // @langchain/openai v1, which then falls back to process.env.OPENAI_API_KEY on its own.
+        apiKey: config.apiKey,
+        useResponsesApi: true,
+        reasoning: effort === "none" ? { effort } : { effort, summary: "auto" },
+      });
+    },
+  },
+  deepseek: {
+    apiKeyEnv: "DEEPSEEK_API_KEY",
+    supportsPromptCaching: false,
+    reasoningEfforts: [],
+    build: (config) =>
+      new ChatOpenAI({
+        model: config.model,
+        configuration: {
+          baseURL: "https://api.deepseek.com/v1",
+          apiKey: config.apiKey,
+        },
+      }),
+  },
 };
 
+export function buildModel(config: LLMProviderConfig): ChatOpenAI | ChatAnthropic {
+  const descriptor = PROVIDERS[config.provider];
+  // Unknown providers fail loudly here rather than silently resolving to another vendor's builder:
+  // the API validates provider on write, so reaching this means a retired provider is still stored.
+  if (!descriptor) {
+    throw new Error(`unsupported LLM provider "${config.provider}" (supported: ${SUPPORTED_PROVIDERS.join(", ")})`);
+  }
+  if (!config.model) throw new Error(`no model selected for provider "${config.provider}"`);
+  return descriptor.build(config);
+}
+
+// The providers the app supports — the source of truth for the UI provider picker and the API-side
+// validation of a workspace's stored provider. Derived from the registry so it can't drift.
+export const SUPPORTED_PROVIDERS = Object.keys(PROVIDERS);
+
+// The env var holding a provider's API key; undefined for an unknown provider (buildModel rejects it).
+export function providerApiKeyEnv(provider: string): string | undefined {
+  return PROVIDERS[provider]?.apiKeyEnv;
+}
+
+// Total by design: callers include GET /api/models, which passes an unvalidated query param.
 export function getProviderMetadata(provider: string): ProviderMetadata {
-  return PROVIDER_METADATA[provider] ?? PROVIDER_METADATA.openai;
+  return PROVIDERS[provider] ?? PROVIDERS.openai;
 }

@@ -55,16 +55,19 @@ export const DEFAULT_LLM: WorkspaceLlmSelection = {
   reasoningEffort: "low",
 };
 
+// The resolved LLM config for one run: the single provider that was selected, plus the model and key
+// that belong to it. Deliberately provider-agnostic — adding a provider adds an entry to the PROVIDERS
+// registry (buildModel.ts), never a field here. Each provider's env var, builder and capabilities all
+// live in that one registry.
 export interface LLMProviderConfig {
   provider: string;
   reasoningEffort: ReasoningEffort;
-  anthropicModel: string | undefined;
-  anthropicApiKey: string | undefined;
+  /** The selected provider's model id — always set (workspace selection, else DEFAULT_LLM). */
+  model: string;
+  /** The selected provider's API key, read from the env var its registry entry declares. */
+  apiKey: string | undefined;
+  /** Anthropic-only: opt into the 1h prompt-cache beta. Inert for providers without prompt caching. */
   anthropicCacheTtl1h: boolean;
-  openaiModel: string | undefined;
-  openaiApiKey: string | undefined;
-  deepseekModel: string | undefined;
-  deepseekApiKey: string | undefined;
 }
 
 export interface ExecConfig {

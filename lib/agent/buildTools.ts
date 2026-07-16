@@ -4,7 +4,7 @@
 // Concrete infra dependencies are wired here and injected into tool constructors — tools
 // themselves only depend on the ContainerRunner interface defined in interfaces.ts.
 
-import { buildModel } from "./buildModel";
+import { buildModel, providerApiKeyEnv } from "./buildModel";
 import { applyCompaction, type CompactLevel } from "./compact";
 import { classifyToolStatus } from "./toolUtils";
 import type { PostDispatchFn } from "./interfaces";
@@ -73,19 +73,16 @@ export function loadAgentConfig(workspaceId?: string): AgentConfig {
   const provider = ws?.llmProvider ?? DEFAULT_LLM.provider;
   const model = ws?.llmModel ?? DEFAULT_LLM.model;
   const reasoningEffort = ws?.reasoningEffort ?? DEFAULT_LLM.reasoningEffort;
-  // The chosen model applies to whichever provider is selected; the other providers' model fields are
-  // left undefined (buildModel only reads the selected provider's field).
+  // The key comes from the env var the provider's registry entry declares, so a new provider needs no
+  // change here. Undefined for an unknown provider — buildModel rejects it with a clear error.
+  const apiKeyEnv = providerApiKeyEnv(provider);
   return {
     provider,
     reasoningEffort,
+    model,
+    apiKey: apiKeyEnv ? process.env[apiKeyEnv] : undefined,
     graphEnabled: process.env.GRAPH_ENABLED !== "false",
-    anthropicModel: provider === "anthropic" ? model : undefined,
-    anthropicApiKey: process.env.ANTHROPIC_API_KEY,
     anthropicCacheTtl1h: process.env.ANTHROPIC_CACHE_TTL_1H === "true",
-    openaiModel: provider === "openai" ? model : undefined,
-    openaiApiKey: process.env.OPENAI_API_KEY,
-    deepseekModel: provider === "deepseek" ? model : undefined,
-    deepseekApiKey: process.env.DEEPSEEK_API_KEY,
     silenceTimeoutMs: parseInt(process.env.EXEC_SILENCE_TIMEOUT_MS ?? "", 10) || 60_000,
     maxTimeoutMs: parseInt(process.env.EXEC_MAX_TIMEOUT_MS ?? "", 10) || 30 * 60_000,
     skillInputMaxRetries: parseInt(process.env.SKILL_INPUT_MAX_RETRIES ?? "", 10) || 2,

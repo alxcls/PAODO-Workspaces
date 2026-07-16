@@ -5,7 +5,7 @@
 
 import { StructuredTool } from "@langchain/core/tools";
 import { z } from "zod";
-import type { IContainerManager } from "../../infra/interfaces";
+import type { IBackgroundTasks } from "../../infra/interfaces";
 
 const schema = z.object({
   task_id: z.string().describe("The ID of the background task to stop (as reported when it was started)."),
@@ -21,7 +21,7 @@ background tasks are also listed in your context).`;
 
   constructor(
     private readonly workspaceId: string,
-    private readonly containers: IContainerManager,
+    private readonly containers: IBackgroundTasks,
   ) {
     super();
   }

@@ -44,10 +44,11 @@ function makeManager(opts: { pgid?: string; scanOut?: string } = {}) {
   return { mgr, execCalls };
 }
 
-// rehydrateBackgroundTasks is private (invoked from the reattach path in _ensureContainer); call it
-// directly so these unit tests don't have to stand up the whole container-status state machine.
+// Rehydration lives on the BackgroundTaskManager collaborator (invoked from the reattach path in
+// _ensureContainer); reach it directly so these unit tests don't have to stand up the whole
+// container-status state machine.
 function rehydrate(mgr: ContainerManager, workspaceId: string): Promise<void> {
-  return (mgr as unknown as { rehydrateBackgroundTasks(id: string): Promise<void> }).rehydrateBackgroundTasks(workspaceId);
+  return (mgr as unknown as { background: { rehydrate(id: string): Promise<void> } }).background.rehydrate(workspaceId);
 }
 
 describe("ContainerManager background tasks", () => {

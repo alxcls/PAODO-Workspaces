@@ -34,22 +34,22 @@ import { defaultContainerManager } from "../infra/docker/containerManager";
 import { defaultWorkspaceStore } from "../workspace/workspaceStore";
 import { getVersioning } from "../infra/services";
 import { broadcastToWorkspace } from "../infra/realtime/wsHub";
-import type { IContainerManager, IWorkspaceStore, IWorkspaceVersioning } from "../infra/interfaces";
+import type { IContainerManager, IContainerExec, IBackgroundTasks, IWorkspaceStore, IWorkspaceVersioning } from "../infra/interfaces";
 import type { AgentConfig, PrivilegedRunner, StreamingExecFn, BackgroundExecFn } from "./interfaces";
 import { DEFAULT_LLM } from "./interfaces";
 
-function makeContainerRunner(workspaceId: string, workspaceDir: string, containers: IContainerManager): PrivilegedRunner {
+function makeContainerRunner(workspaceId: string, workspaceDir: string, containers: IContainerExec): PrivilegedRunner {
   return {
     exec:       (cmd, opts) => containers.exec(workspaceId, workspaceDir, cmd, opts),
     execAsRoot: (cmd)       => containers.execAsRoot(workspaceId, workspaceDir, cmd),
   };
 }
 
-function makeStreamingExecFn(workspaceId: string, workspaceDir: string, containers: IContainerManager): StreamingExecFn {
+function makeStreamingExecFn(workspaceId: string, workspaceDir: string, containers: IContainerExec): StreamingExecFn {
   return (cmd, opts) => containers.execStreaming(workspaceId, workspaceDir, cmd, opts);
 }
 
-function makeBackgroundExecFn(workspaceId: string, workspaceDir: string, containers: IContainerManager): BackgroundExecFn {
+function makeBackgroundExecFn(workspaceId: string, workspaceDir: string, containers: IBackgroundTasks): BackgroundExecFn {
   return (command) => containers.startBackground(workspaceId, workspaceDir, command);
 }
 

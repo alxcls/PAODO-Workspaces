@@ -16,8 +16,13 @@ import { ImageManager, HASH_LABEL } from "./imageManager";
 import type { IContainerManager } from "../interfaces";
 import { listSecretMeta, PROXY_TOKEN_FORMAT_VERSION } from "../security/workspaceSecretStore";
 import { buildCredentialEnv, installProxyCA } from "./containerCredentials";
+import { containerName, networkName } from "./naming";
+import { BackgroundTaskManager, type BackgroundTask } from "./backgroundTaskManager";
+import { ProxyNetworkManager } from "./proxyNetworkManager";
 
 export type { DockerResult } from "./dockerClient";
+// Re-exported for back-compat: consumers (interfaces.ts) still import BackgroundTask from here.
+export type { BackgroundTask } from "./backgroundTaskManager";
 
 const log = createLogger("container");
 
@@ -34,19 +39,6 @@ function hashSecretNames(secrets: { name: string }[]): string {
     .digest("hex");
 }
 
-// In-container directory holding background-task log/pid files. Under /tmp so it never
-// clutters /workspace (which is bind-mounted and watched for file-change events).
-const TASK_DIR = "/tmp/paodo-tasks";
-
-// One agent-launched background process (dev server etc.). pgid == the pid of the setsid
-// session leader, so `kill -KILL -<pgid>` takes down the process and every child it spawned.
-export interface BackgroundTask {
-  taskId: string;
-  pgid: number;
-  logFile: string;
-  command: string;
-}
-
 const CONTAINER_IMAGE = process.env.CONTAINER_IMAGE ?? "paodo-workspace";
 const CONTAINER_MEMORY = process.env.CONTAINER_MEMORY ?? "1g";
 const CONTAINER_CPUS = process.env.CONTAINER_CPUS ?? "1.0";
@@ -55,46 +47,27 @@ const IDLE_TIMEOUT_MS = parseInt(process.env.CONTAINER_IDLE_MS ?? "", 10) || 10 
 // "paodo_ws") + "_" + volume key ("workspaces"). Falls back to a plain bind mount when unset
 // so local dev (app running directly on host) still works without Docker Compose.
 const WORKSPACES_VOLUME_NAME = process.env.WORKSPACES_VOLUME_NAME ?? "";
-// In production the credential proxy runs in its own sidecar container (compose service `credproxy`),
-// NOT in the app. The app attaches that sidecar — never itself — to each per-workspace network, so a
-// workspace can reach only port 9998 and never the app's control plane. CREDENTIAL_PROXY_ALIAS is the
-// network alias the workspace's HTTP_PROXY targets; CREDENTIAL_PROXY_CONTAINER is the container name
-// the app runs `docker network connect` against. Only used when the app is containerized (prod).
-// The env-var / CA-trust side of proxy wiring lives in containerCredentials.ts.
-const CREDENTIAL_PROXY_ALIAS = process.env.CREDENTIAL_PROXY_ALIAS ?? "credproxy";
-const CREDENTIAL_PROXY_CONTAINER = process.env.CREDENTIAL_PROXY_CONTAINER ?? "paodo_ws_credproxy";
 
 export class ContainerManager implements IContainerManager {
   private docker: IDockerClient;
   private imageManager: ImageManager;
+  // Long-lived background processes the agent launched (dev servers etc.) and the credential-proxy
+  // sidecar networking are each their own collaborator — this class owns only container/network
+  // lifecycle and exec, and delegates those two subdomains. Both share our injected docker client.
+  private background: BackgroundTaskManager;
+  private proxy: ProxyNetworkManager;
   constructor(docker: IDockerClient = new DockerClient()) {
     this.docker = docker;
     this.imageManager = new ImageManager(docker);
+    this.background = new BackgroundTaskManager(docker);
+    this.proxy = new ProxyNetworkManager(docker);
   }
   private idleTimers = new Map<string, ReturnType<typeof setTimeout>>();
   // Prevents concurrent docker run/start calls for the same workspace.
   private startLocks = new Map<string, Promise<void>>();
-  // Long-lived background processes the agent launched (dev servers etc.), keyed
-  // workspaceId → taskId. These are deliberately NOT tied to a single agent run: they
-  // persist across turns (so a dev server stays up) and are reaped when the container
-  // stops/idles. Cleared in stop()/remove() — the processes themselves die with the container.
-  private backgroundTasks = new Map<string, Map<string, BackgroundTask>>();
-  // Workspaces whose background-task map has been rebuilt from the container's pidfiles this
-  // process-lifetime. The in-memory map above is lost on app restart while the workspace container
-  // (and its servers) keep running; we rebuild it ONCE on the first reattach so a survivor server
-  // is visible/stoppable again. Reset in stop()/remove() so a post-restart reattach re-scans.
-  private backgroundRehydrated = new Set<string>();
-
-  private containerName(workspaceId: string): string {
-    return `ws_${workspaceId}`;
-  }
-
-  private networkName(workspaceId: string): string {
-    return `wsnet_${workspaceId}`;
-  }
 
   private async ensureNetwork(workspaceId: string): Promise<void> {
-    const name = this.networkName(workspaceId);
+    const name = networkName(workspaceId);
     const inspect = await this.docker.cmd("network", "inspect", name);
     if (inspect.code === 0) return;
     const r = await this.docker.cmd("network", "create", "--driver", "bridge", name);
@@ -110,7 +83,7 @@ export class ContainerManager implements IContainerManager {
   }
 
   private async getContainerStatus(workspaceId: string): Promise<"running" | "stopped" | "missing"> {
-    const r = await this.docker.cmd("inspect", "--format", "{{.State.Status}}", this.containerName(workspaceId));
+    const r = await this.docker.cmd("inspect", "--format", "{{.State.Status}}", containerName(workspaceId));
     if (r.code !== 0) return "missing";
     if (r.stdout === "running") return "running";
     return "stopped";
@@ -150,8 +123,8 @@ export class ContainerManager implements IContainerManager {
     const secretsHash = hashSecretNames(listSecretMeta(workspaceId));
 
     if (status === "running" || status === "stopped") {
-      const containerHash = await this.imageManager.getContainerImageHash(this.containerName(workspaceId));
-      const containerSecretsHash = await this.getContainerSecretsHash(this.containerName(workspaceId));
+      const containerHash = await this.imageManager.getContainerImageHash(containerName(workspaceId));
+      const containerSecretsHash = await this.getContainerSecretsHash(containerName(workspaceId));
       const imageMatches = !hash || containerHash === hash;
       const secretsMatch = containerSecretsHash === secretsHash;
       if (imageMatches && secretsMatch) {
@@ -159,10 +132,10 @@ export class ContainerManager implements IContainerManager {
           // Reattaching to a still-running container (e.g. after an app restart wiped our
           // in-memory task map). Rebuild it from the container's pidfiles so a survivor
           // background process is surfaced and stoppable rather than colliding invisibly.
-          await this.rehydrateBackgroundTasks(workspaceId);
+          await this.background.rehydrate(workspaceId);
           // A redeploy can recreate the credproxy sidecar and drop its attachment to this
           // still-running workspace's network, black-holing egress. Reattach idempotently.
-          if (WORKSPACES_VOLUME_NAME) await this.attachProxyToNetwork(workspaceId);
+          await this.proxy.attach(workspaceId);
           return;
         }
         // Stopped, image unchanged, secrets unchanged — just restart it.
@@ -171,13 +144,13 @@ export class ContainerManager implements IContainerManager {
         const connect = await this.docker.cmd(
           "network",
           "connect",
-          this.networkName(workspaceId),
-          this.containerName(workspaceId),
+          networkName(workspaceId),
+          containerName(workspaceId),
         );
         if (connect.code !== 0) throw new Error(`docker network connect failed: ${connect.stderr}`);
-        const r = await this.docker.cmd("start", this.containerName(workspaceId));
+        const r = await this.docker.cmd("start", containerName(workspaceId));
         if (r.code !== 0) throw new Error(`docker start failed: ${r.stderr}`);
-        if (WORKSPACES_VOLUME_NAME) await this.attachProxyToNetwork(workspaceId);
+        await this.proxy.attach(workspaceId);
         return;
       } else if (!secretsMatch) {
         // Workspace secrets were added/removed since this container was created (or it
@@ -197,9 +170,10 @@ export class ContainerManager implements IContainerManager {
     // Build the credential-proxy + secret env args (tokens only — real values stay in the proxy).
     // See containerCredentials.ts for how tokens, the proxy URL, and the CA-trust vars are derived.
     const { envArgs: credentialEnvArgs, hasProxyCA } = buildCredentialEnv(workspaceId);
-    // Attach the sidecar to this workspace's network so `${CREDENTIAL_PROXY_ALIAS}` resolves inside
-    // the container. Prod-only; in local dev there is no sidecar (proxy is in-process).
-    if (hasProxyCA && WORKSPACES_VOLUME_NAME) await this.attachProxyToNetwork(workspaceId);
+    // Attach the sidecar to this workspace's network so the proxy alias resolves inside the
+    // container. Only when this workspace actually has a proxy CA; attach() itself no-ops in local
+    // dev (no sidecar — proxy is in-process).
+    if (hasProxyCA) await this.proxy.attach(workspaceId);
 
     const r = await this.docker.cmd(
       "run", "-d",
@@ -207,8 +181,8 @@ export class ContainerManager implements IContainerManager {
       // `sleep infinity` is PID 1 and never wait()s on reparented children, so every command we
       // group-kill (execStreaming) would linger as a zombie and slowly exhaust the PID table.
       "--init",
-      "--name", this.containerName(workspaceId),
-      "--network", this.networkName(workspaceId),
+      "--name", containerName(workspaceId),
+      "--network", networkName(workspaceId),
       `--memory=${CONTAINER_MEMORY}`,
       `--cpus=${CONTAINER_CPUS}`,
       ...this.buildVolumeArg(workspaceDir),
@@ -237,7 +211,7 @@ export class ContainerManager implements IContainerManager {
     // Runs as root (-u 0) for this single bootstrap command only. Idempotent and cheap on
     // already-1000-owned trees.
     const chown = await this.docker.exec(
-      this.containerName(workspaceId),
+      containerName(workspaceId),
       ["chown", "-R", "1000:1000", "/workspace"],
       { asRoot: true, trimStdout: true },
     );
@@ -246,7 +220,7 @@ export class ContainerManager implements IContainerManager {
 
     // Install the proxy CA and build the combined trust bundle inside the fresh container (no-op
     // when the proxy isn't set up). See containerCredentials.installProxyCA.
-    await installProxyCA(this.docker, this.containerName(workspaceId), workspaceId);
+    await installProxyCA(this.docker, containerName(workspaceId), workspaceId);
   }
 
   async ensure(workspaceId: string, workspaceDir: string): Promise<void> {
@@ -259,7 +233,7 @@ export class ContainerManager implements IContainerManager {
       // Enforce the egress invariant on every wake: the credproxy sidecar must be attached to this
       // workspace's network. Self-heals a dropped attachment and fails loudly if it can't, rather
       // than letting the agent black-hole on cryptic "could not resolve proxy" DNS errors.
-      await this.verifyProxyAttached(workspaceId);
+      await this.proxy.verify(workspaceId);
     })().finally(() => {
       this.startLocks.delete(workspaceId);
       this.resetIdleTimer(workspaceId);
@@ -281,7 +255,7 @@ export class ContainerManager implements IContainerManager {
     opts: { stdin?: string } = {},
   ) {
     await this.ensure(workspaceId, workspaceDir);
-    return this.docker.exec(this.containerName(workspaceId), cmdArgs, { stdin: opts.stdin });
+    return this.docker.exec(containerName(workspaceId), cmdArgs, { stdin: opts.stdin });
   }
 
   async execStreaming(
@@ -291,7 +265,7 @@ export class ContainerManager implements IContainerManager {
     opts: { onStdout: (chunk: string) => void; onStderr: (chunk: string) => void; signal?: AbortSignal },
   ): Promise<{ code: number | null }> {
     await this.ensure(workspaceId, workspaceDir);
-    const containerName = this.containerName(workspaceId);
+    const name = containerName(workspaceId);
     return new Promise((resolve) => {
       // Run the command in its OWN session via setsid (so it becomes a process-group leader) and
       // record that leader PID. Killing the negative PID later (`kill -KILL -<pid>`) takes down the
@@ -306,7 +280,7 @@ export class ContainerManager implements IContainerManager {
       // parent exits immediately, so the docker exec client closes at once — the command looks
       // instantly "done" and its output never streams.
       const proc = spawn("docker", [
-        "exec", "-i", "-w", "/workspace", containerName,
+        "exec", "-i", "-w", "/workspace", name,
         "setsid", "--wait", "/bin/bash", "-c", launcher, ...cmdArgs,
       ]);
       proc.stdin.end();
@@ -319,7 +293,7 @@ export class ContainerManager implements IContainerManager {
         killed = true;
         // Fire-and-forget: kill the in-container process group, then drop the host-side client.
         this.docker
-          .exec(containerName, ["/bin/bash", "-c", `kill -KILL -"$(cat ${pidFile} 2>/dev/null)" 2>/dev/null; rm -f ${pidFile}`])
+          .exec(name, ["/bin/bash", "-c", `kill -KILL -"$(cat ${pidFile} 2>/dev/null)" 2>/dev/null; rm -f ${pidFile}`])
           .catch(() => {});
         proc.kill("SIGKILL");
       };
@@ -344,196 +318,46 @@ export class ContainerManager implements IContainerManager {
   // The regular agent shell (exec / execute_command) never runs as root.
   async execAsRoot(workspaceId: string, workspaceDir: string, cmdArgs: string[]) {
     await this.ensure(workspaceId, workspaceDir);
-    return this.docker.exec(this.containerName(workspaceId), cmdArgs, {
+    return this.docker.exec(containerName(workspaceId), cmdArgs, {
       asRoot: true,
       trimStdout: true,
     });
   }
 
-  // Launch a long-running command DETACHED from the exec kill path (dev servers etc.). Unlike
-  // execStreaming — whose `setsid --wait` session is group-killed the moment a silence/max timeout
-  // or user-escape aborts — this starts the command in its OWN session (setsid, no --wait), redirects
-  // its output to a log file, and returns immediately. The process is therefore immune to the
-  // foreground exec timeout and lives until stopBackground(), a new run, or container stop/idle.
-  // The user command enters only as an argv positional ($1), never string-interpolated — no injection.
+  // Detached, long-lived background processes (dev servers etc.) — delegated to BackgroundTaskManager.
+  // ensure() runs first so the container is up before the collaborator issues its in-container launch.
   async startBackground(
     workspaceId: string,
     workspaceDir: string,
     command: string,
   ): Promise<{ taskId: string; logFile: string }> {
     await this.ensure(workspaceId, workspaceDir);
-    const name = this.containerName(workspaceId);
-    const taskId = randomUUID();
-    const logFile = `${TASK_DIR}/${taskId}.output`;
-    const pidFile = `${TASK_DIR}/${taskId}.pid`;
-    const cmdFile = `${TASK_DIR}/${taskId}.cmd`;
-
-    // setsid makes the inner bash a new session/process-group leader; it self-reports that pid
-    // (== pgid) to the pidfile, then execs the user command in place so the recorded pid IS the
-    // server. The trailing `&` frees the launching `docker exec` at once; tini (--init) reaps the
-    // detached tree on container stop. Same `echo $$ > pid; exec "$0" "$@"` idiom as execStreaming.
-    // The command is also recorded verbatim to a .cmd file (via `printf '%s' "$1"` — argv, no
-    // injection) so rehydrateBackgroundTasks can recover it if the in-memory map is lost.
-    const launcher =
-      `mkdir -p ${TASK_DIR}; ` +
-      `printf '%s' "$1" > ${cmdFile}; ` +
-      `setsid /bin/bash -c 'echo $$ > ${pidFile}; exec "$0" "$@"' ` +
-      `/bin/bash -c "$1" > ${logFile} 2>&1 & `;
-    const launch = await this.docker.exec(name, ["/bin/bash", "-c", launcher, "bash", command]);
-    if (launch.code !== 0) throw new Error(`background launch failed: ${launch.stderr}`);
-
-    // Poll (in-container) up to ~2s for the self-reported pgid so a command that crashes on the
-    // very first line still yields a pid we can report/track.
-    const read = await this.docker.exec(name, [
-      "/bin/bash",
-      "-c",
-      `for i in $(seq 1 20); do if [ -s ${pidFile} ]; then cat ${pidFile}; exit 0; fi; sleep 0.1; done; exit 1`,
-    ], { trimStdout: true });
-    const pgid = parseInt(read.stdout, 10);
-    if (!read.code && Number.isInteger(pgid)) {
-      let tasks = this.backgroundTasks.get(workspaceId);
-      if (!tasks) this.backgroundTasks.set(workspaceId, (tasks = new Map()));
-      tasks.set(taskId, { taskId, pgid, logFile, command });
-    } else {
-      log.warn({ workspaceId, taskId }, "background task started but pid was not captured (not tracked)");
-    }
-    return { taskId, logFile };
+    return this.background.start(workspaceId, command);
   }
 
-  // Kill a tracked background process by taskId (negative-pgid group kill, so children die too).
-  // Returns false if no such task is tracked for the workspace. An already-dead group is still a
-  // success — the kill is best-effort and we always clear the bookkeeping + pid/cmd files.
   async stopBackground(workspaceId: string, taskId: string): Promise<boolean> {
-    const task = this.backgroundTasks.get(workspaceId)?.get(taskId);
-    if (!task) return false;
-    await this.docker
-      .exec(this.containerName(workspaceId), [
-        "/bin/bash",
-        "-c",
-        `kill -KILL -${task.pgid} 2>/dev/null; rm -f ${TASK_DIR}/${taskId}.pid ${TASK_DIR}/${taskId}.cmd`,
-      ])
-      .catch(() => {});
-    this.backgroundTasks.get(workspaceId)?.delete(taskId);
-    return true;
+    return this.background.stop(workspaceId, taskId);
   }
 
-  // Running background tasks for a workspace — surfaced into the agent's context each turn so a
-  // later run (which has no memory of a prior run's taskIds) can read their logs or stop them.
   listBackground(workspaceId: string): BackgroundTask[] {
-    return [...(this.backgroundTasks.get(workspaceId)?.values() ?? [])];
+    return this.background.list(workspaceId);
   }
 
-  // Rebuild a workspace's in-memory background-task map from the container's pidfiles — the durable
-  // source of truth that survives an app restart (which wipes the map while the workspace container
-  // and its servers keep running). Runs at most once per workspace per process-lifetime, on the
-  // first reattach to an already-running container. A pidfile whose process group is dead
-  // (`kill -0 -<pgid>` fails) is skipped, so this doubles as a stale-task prune. Best-effort: any
-  // failure leaves the map empty (the pre-existing behavior), never throws.
-  private async rehydrateBackgroundTasks(workspaceId: string): Promise<void> {
-    if (this.backgroundRehydrated.has(workspaceId)) return;
-    this.backgroundRehydrated.add(workspaceId);
-    // For each live pidfile, emit "taskId<TAB>pgid<TAB>base64(command)". The command is base64'd so
-    // arbitrary shell text can't break the line/field framing; decoded back in JS.
-    const scan =
-      `shopt -s nullglob; for p in ${TASK_DIR}/*.pid; do ` +
-      `pgid=$(cat "$p" 2>/dev/null); [ -n "$pgid" ] || continue; ` +
-      `kill -0 -"$pgid" 2>/dev/null || continue; ` +
-      `id=$(basename "$p" .pid); ` +
-      `cmd=$(cat "${TASK_DIR}/$id.cmd" 2>/dev/null | base64 | tr -d "\\n"); ` +
-      `printf '%s\\t%s\\t%s\\n' "$id" "$pgid" "$cmd"; done`;
-    const res = await this.docker
-      .exec(this.containerName(workspaceId), ["/bin/bash", "-c", scan], { trimStdout: true })
-      .catch(() => null);
-    if (!res || res.code !== 0 || !res.stdout) return;
-    const tasks = new Map<string, BackgroundTask>();
-    for (const line of res.stdout.split("\n")) {
-      const [taskId, pgidStr, cmdB64] = line.split("\t");
-      const pgid = parseInt(pgidStr, 10);
-      if (!taskId || !Number.isInteger(pgid)) continue;
-      const command = cmdB64
-        ? Buffer.from(cmdB64, "base64").toString("utf8")
-        : "(unknown — recovered after restart)";
-      tasks.set(taskId, { taskId, pgid, logFile: `${TASK_DIR}/${taskId}.output`, command });
-    }
-    if (tasks.size) {
-      this.backgroundTasks.set(workspaceId, tasks);
-      log.debug({ workspaceId, count: tasks.size }, "rehydrated background tasks from container");
-    }
-  }
-
-  // Attach the credential-proxy sidecar (never the app itself) to a workspace's isolated network so
-  // the workspace resolves `${CREDENTIAL_PROXY_ALIAS}` to the proxy and can reach nothing else the
-  // app hosts. Idempotent: a repeat connect ("already exists") is not an error.
-  private async attachProxyToNetwork(workspaceId: string): Promise<void> {
-    const r = await this.docker.cmd(
-      "network", "connect", "--alias", CREDENTIAL_PROXY_ALIAS,
-      this.networkName(workspaceId), CREDENTIAL_PROXY_CONTAINER,
-    );
-    if (r.code !== 0 && !/already (exists|connected)/i.test(r.stderr)) {
-      log.warn({ workspaceId, stderr: r.stderr }, "failed to attach credential proxy to workspace network");
-    }
-  }
-
-  // True when the credential-proxy sidecar is currently an endpoint on the workspace's network, so
-  // the alias resolves inside the container. Host-side check (docker network inspect) — deliberately
-  // avoids exec'ing into the container, whose image may lack getent/nslookup.
-  private async isProxyAttached(workspaceId: string): Promise<boolean> {
-    const r = await this.docker.cmd(
-      "network", "inspect", this.networkName(workspaceId),
-      "--format", "{{range .Containers}}{{.Name}} {{end}}",
-    );
-    if (r.code !== 0) return false;
-    return r.stdout.split(/\s+/).includes(CREDENTIAL_PROXY_CONTAINER);
-  }
-
-  // Guarantee the workspace can reach the credential proxy before the agent runs against it. If the
-  // sidecar isn't on the network (typically because a redeploy recreated it and dropped the
-  // attachment), reattach and re-check; if it still isn't reachable, fail loudly with an actionable
-  // message rather than letting egress silently black-hole. Prod-only (no sidecar in local dev).
-  private async verifyProxyAttached(workspaceId: string): Promise<void> {
-    if (!WORKSPACES_VOLUME_NAME) return;
-    if (await this.isProxyAttached(workspaceId)) return;
-    log.warn({ workspaceId }, "credential proxy not attached to workspace network — reattaching");
-    await this.attachProxyToNetwork(workspaceId);
-    if (await this.isProxyAttached(workspaceId)) return;
-    throw new Error(
-      `workspace egress proxy (${CREDENTIAL_PROXY_ALIAS}) is not attached to ${this.networkName(workspaceId)} — ` +
-        `check the ${CREDENTIAL_PROXY_CONTAINER} sidecar is running`,
-    );
-  }
-
-  // Detach the sidecar before removing a workspace network — `network rm` fails while an endpoint is
-  // still attached. Non-fatal (the sidecar may not be attached in local dev).
-  private async detachProxyFromNetwork(workspaceId: string): Promise<void> {
-    const r = await this.docker.cmd(
-      "network", "disconnect", "-f", this.networkName(workspaceId), CREDENTIAL_PROXY_CONTAINER,
-    );
-    if (r.code !== 0) log.debug({ workspaceId, stderr: r.stderr }, "detach credential proxy (may not be attached)");
-  }
-
-  // On boot, reconnect the sidecar to every running workspace network. A redeploy recreates the
-  // sidecar (and the app), dropping its attachments while workspace containers keep running; without
-  // this their egress would black-hole until they are recreated. Prod-only (no sidecar in local dev).
+  // On boot, reconnect the credproxy sidecar to every running workspace network (prod-only).
   async reattachProxyNetworks(): Promise<void> {
-    if (!WORKSPACES_VOLUME_NAME) return;
-    const r = await this.docker.cmd("ps", "--filter", "name=^ws_", "--format", "{{.Names}}");
-    if (r.code !== 0) { log.warn({ stderr: r.stderr }, "reattachProxyNetworks: docker ps failed"); return; }
-    for (const name of r.stdout.split("\n").map((s) => s.trim()).filter(Boolean)) {
-      await this.attachProxyToNetwork(name.replace(/^ws_/, ""));
-    }
+    await this.proxy.reattachAll();
   }
 
   async stop(workspaceId: string): Promise<void> {
     const t = this.idleTimers.get(workspaceId);
     if (t) { clearTimeout(t); this.idleTimers.delete(workspaceId); }
     // Background processes die with the container (tini reaps the tree) — just drop the bookkeeping.
-    this.backgroundTasks.delete(workspaceId);
-    this.backgroundRehydrated.delete(workspaceId);
-    const r = await this.docker.cmd("stop", this.containerName(workspaceId));
+    this.background.clear(workspaceId);
+    const r = await this.docker.cmd("stop", containerName(workspaceId));
     if (r.code !== 0) log.warn({ workspaceId, stderr: r.stderr }, "docker stop failed");
-    await this.docker.cmd("network", "disconnect", this.networkName(workspaceId), this.containerName(workspaceId));
-    if (WORKSPACES_VOLUME_NAME) await this.detachProxyFromNetwork(workspaceId);
-    const net = await this.docker.cmd("network", "rm", this.networkName(workspaceId));
+    await this.docker.cmd("network", "disconnect", networkName(workspaceId), containerName(workspaceId));
+    await this.proxy.detach(workspaceId);
+    const net = await this.docker.cmd("network", "rm", networkName(workspaceId));
     if (net.code !== 0) log.debug({ workspaceId, stderr: net.stderr }, "network rm on stop (may not exist)");
   }
 
@@ -541,15 +365,14 @@ export class ContainerManager implements IContainerManager {
     const t = this.idleTimers.get(workspaceId);
     if (t) { clearTimeout(t); this.idleTimers.delete(workspaceId); }
     this.startLocks.delete(workspaceId);
-    this.backgroundTasks.delete(workspaceId);
-    this.backgroundRehydrated.delete(workspaceId);
+    this.background.clear(workspaceId);
     // Non-zero exit codes are expected if the container/network was never created.
-    const stop = await this.docker.cmd("stop", this.containerName(workspaceId));
+    const stop = await this.docker.cmd("stop", containerName(workspaceId));
     if (stop.code !== 0) log.debug({ workspaceId, stderr: stop.stderr }, "docker stop on remove (may not exist)");
-    const rm = await this.docker.cmd("rm", this.containerName(workspaceId));
+    const rm = await this.docker.cmd("rm", containerName(workspaceId));
     if (rm.code !== 0) log.debug({ workspaceId, stderr: rm.stderr }, "docker rm on remove (may not exist)");
-    if (WORKSPACES_VOLUME_NAME) await this.detachProxyFromNetwork(workspaceId);
-    const net = await this.docker.cmd("network", "rm", this.networkName(workspaceId));
+    await this.proxy.detach(workspaceId);
+    const net = await this.docker.cmd("network", "rm", networkName(workspaceId));
     if (net.code !== 0) log.debug({ workspaceId, stderr: net.stderr }, "docker network rm on remove (may not exist)");
   }
 

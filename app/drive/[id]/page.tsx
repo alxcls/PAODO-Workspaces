@@ -9,6 +9,7 @@ import Link from "next/link";
 import FileTreePanel from "@/components/workspace/FileTreePanel";
 import FileViewer, { type FileViewerHandle } from "@/components/workspace/FileViewer";
 import TopBar from "@/components/layout/TopBar";
+import { useDragResize } from "@/lib/client/hooks/useDragResize";
 
 export default function DrivePage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -22,7 +23,6 @@ export default function DrivePage({ params }: { params: Promise<{ id: string }> 
   const [isDragging, setIsDragging] = useState(false);
 
   const containerRef = useRef<HTMLDivElement>(null);
-  const colDragging = useRef(false);
   const viewerRef = useRef<FileViewerHandle>(null);
 
   useEffect(() => {
@@ -32,17 +32,14 @@ export default function DrivePage({ params }: { params: Promise<{ id: string }> 
       .catch(() => {});
   }, [id]);
 
-  useEffect(() => {
-    const onMove = (e: MouseEvent) => {
-      if (!colDragging.current || !containerRef.current) return;
+  const startColDrag = useDragResize({
+    onDragChange: setIsDragging,
+    onMove: (e) => {
+      if (!containerRef.current) return;
       const rect = containerRef.current.getBoundingClientRect();
       setLeftWidth(Math.max(220, Math.min(500, e.clientX - rect.left)));
-    };
-    const onUp = () => { colDragging.current = false; setIsDragging(false); };
-    window.addEventListener("mousemove", onMove);
-    window.addEventListener("mouseup", onUp);
-    return () => { window.removeEventListener("mousemove", onMove); window.removeEventListener("mouseup", onUp); };
-  }, []);
+    },
+  });
 
   // A save/upload/delete in this view should refresh the tree (no agent socket to do it for us).
   const refreshTree = useCallback(() => setTreeRefreshKey((k) => k + 1), []);
@@ -82,7 +79,7 @@ export default function DrivePage({ params }: { params: Promise<{ id: string }> 
         />
         <div
           className="w-[5px] cursor-col-resize flex-shrink-0 hover:bg-primary-soft"
-          onMouseDown={() => { colDragging.current = true; setIsDragging(true); }}
+          onMouseDown={startColDrag}
         />
         <div className="flex-1 min-w-0 flex flex-col bg-bg relative">
           {isDragging && <div className="absolute inset-0 z-10" />}

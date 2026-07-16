@@ -20,7 +20,6 @@ import { containerName, networkName } from "./naming";
 import { BackgroundTaskManager, type BackgroundTask } from "./backgroundTaskManager";
 import { ProxyNetworkManager } from "./proxyNetworkManager";
 
-export type { DockerResult } from "./dockerClient";
 // Re-exported for back-compat: consumers (interfaces.ts) still import BackgroundTask from here.
 export type { BackgroundTask } from "./backgroundTaskManager";
 
@@ -409,15 +408,6 @@ export class ContainerManager implements IContainerManager {
 // hot-reload doesn't re-import server-side-only infra modules through the app bundle.
 const _manager = new ContainerManager();
 
-// Exposed for lib/infra/services.ts (the default IContainerManager). Free-function exports below
-// remain the back-compat call path.
+// Exposed for lib/infra/services.ts as the default IContainerManager. Consumers call through this
+// instance (or the getContainers() DI seam); there is no separate free-function call path.
 export const defaultContainerManager = _manager;
-
-export const ensureContainer        = (id: string, dir: string)                                        => _manager.ensure(id, dir);
-export const dockerExec             = (id: string, dir: string, cmd: string[], opts?: { stdin?: string }) => _manager.exec(id, dir, cmd, opts);
-export const dockerExecAsRoot       = (id: string, dir: string, cmd: string[])                         => _manager.execAsRoot(id, dir, cmd);
-export const dockerExecStreaming    = (id: string, dir: string, cmd: string[], opts: { onStdout: (chunk: string) => void; onStderr: (chunk: string) => void }) => _manager.execStreaming(id, dir, cmd, opts);
-export const stopContainer          = (id: string)                                                      => _manager.stop(id);
-export const removeContainer        = (id: string)                                                      => _manager.remove(id);
-export const deleteWorkspaceDir     = (dir: string)                                                     => _manager.deleteWorkspaceDir(dir);
-export const assertDockerAvailable  = ()                                                                => _manager.assertDockerAvailable();

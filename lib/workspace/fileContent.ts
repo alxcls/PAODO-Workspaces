@@ -3,6 +3,10 @@
 // DELETE removes.
 // All paths are validated to stay inside the backend directory via assertInsideWorkspace.
 //
+// PUT updates an existing file and never creates one: it opens without O_CREAT so that a save
+// racing a move fails with ENOENT (surfaced as 409) instead of resurrecting the old path. Any
+// future caller that needs create-on-save must add it deliberately, not by relaxing the open flags.
+//
 // The two callers differ only in their FileBackend: a workspace supplies a container `writeFallback`
 // (for legacy root-owned files) and an `afterWrite` git snapshot; a drive is passive host storage and
 // supplies neither. Everything else — classification, containment, raw serving — is identical here.

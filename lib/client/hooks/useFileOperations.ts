@@ -185,12 +185,10 @@ export function useFileOperations({
     }
   };
 
-  const reportMoveError = (message: string) => setMoveError(message);
-
   return {
     tree, fetchTree,
     handleDownload, downloading,
     handleDelete, deleteError,
-    handleMove, movingPath, moveError, reportMoveError,
+    handleMove, movingPath, moveError,
   };
 }

@@ -273,8 +273,7 @@ interface Props {
   selectedPath: string | null;
   onFileSelect: (path: string) => void;
   onDeletedPaths?: (paths: string[]) => void;
-  /** Return false to reject a move before its request starts (for example, during an editor save). */
-  onMoveStarted?: (sourcePath: string) => boolean | void;
+  onMoveStarted?: (sourcePath: string) => void;
   onMoveCancelled?: (sourcePath: string) => void;
   onMovedPath?: (sourcePath: string, destinationPath: string) => void;
   style?: React.CSSProperties;
@@ -298,7 +297,7 @@ export default function FileTreePanel({
   const { selected, handleSelect, clearSelection, remapSelection } = useFileTreeSelection();
   const {
     tree, fetchTree, handleDownload, downloading, handleDelete, deleteError,
-    handleMove, movingPath, moveError, reportMoveError,
+    handleMove, movingPath, moveError,
   } = useFileOperations({
     workspaceId, workspaceName, selected, clearSelection, onDeletedPaths, refreshKey, apiBase: base,
   });
@@ -362,12 +361,7 @@ export default function FileTreePanel({
   };
 
   const moveNode = async (sourcePath: string, destinationDirectory: string | null) => {
-    if (onMoveStarted?.(sourcePath) === false) {
-      setDraggedNode(null);
-      setDropTargetPath(null);
-      reportMoveError("Wait for the current save or delete to finish");
-      return;
-    }
+    onMoveStarted?.(sourcePath);
     const moved = await handleMove(sourcePath, destinationDirectory);
     setDraggedNode(null);
     setDropTargetPath(null);

@@ -21,7 +21,7 @@ const CloseIcon = () => (
 export interface FileViewerHandle {
   notifyFilesChanged: (paths: string[]) => void;
   notifyFilesDeleted: (paths: string[]) => void;
-  notifyFileMoveStarted: (sourceRoot: string) => boolean;
+  notifyFileMoveStarted: (sourceRoot: string) => void;
   notifyFileMoveCancelled: (sourceRoot: string) => void;
   notifyFileMoved: (sourceRoot: string, destinationRoot: string) => void;
 }

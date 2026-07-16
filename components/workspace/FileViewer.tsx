@@ -21,7 +21,7 @@ const CloseIcon = () => (
 export interface FileViewerHandle {
   notifyFilesChanged: (paths: string[]) => void;
   notifyFilesDeleted: (paths: string[]) => void;
-  notifyFileMoveStarted: (sourceRoot: string) => void;
+  notifyFileMoveStarted: (sourceRoot: string) => boolean;
   notifyFileMoveCancelled: (sourceRoot: string) => void;
   notifyFileMoved: (sourceRoot: string, destinationRoot: string) => void;
 }
@@ -40,7 +40,7 @@ const FileViewer = forwardRef<FileViewerHandle, Props>(function FileViewer(
   const base = apiBase ?? `/api/workspaces/${workspaceId}`;
   const {
     fileType, content, draft, setDraft,
-    loading, error, saving, deleting,
+    loading, error, saving, deleting, moving,
     isDirty,
     handleSave, deleteFile,
     notifyFilesChanged, notifyFilesDeleted,
@@ -117,15 +117,15 @@ const FileViewer = forwardRef<FileViewerHandle, Props>(function FileViewer(
               <button
                 className="btn btn-sm btn-primary"
                 onClick={handleSave}
-                disabled={!isDirty || saving}
+                disabled={!isDirty || saving || deleting || moving}
               >
-                {saving ? "Saving…" : "Save"}
+                {saving ? "Saving…" : moving ? "Moving…" : "Save"}
               </button>
             )}
             <button
               className="btn btn-sm text-danger"
               onClick={handleDelete}
-              disabled={deleting}
+              disabled={deleting || saving || moving}
             >
               {deleting ? "Deleting…" : "Delete"}
             </button>

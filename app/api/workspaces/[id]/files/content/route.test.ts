@@ -34,7 +34,7 @@ vi.mock("@/lib/infra/services", () => ({
   getVersioning: () => ({ commitResult: async () => ({ sha: "test", changed: true }) }),
 }));
 
-import { GET, PATCH } from "./route";
+import { GET, PUT, PATCH } from "./route";
 import { buildTree } from "@/lib/workspace/fileTree";
 
 const ctx = { params: Promise.resolve({ id: "ws" }) };
@@ -46,6 +46,13 @@ const patchMove = (body: unknown) =>
     method: "PATCH",
     headers: { "content-type": "application/json" },
     body: typeof body === "string" ? body : JSON.stringify(body),
+  }), ctx);
+
+const putFile = (filePath: string, content: string) =>
+  PUT(new Request("http://x/api/files/content", {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ path: filePath, content }),
   }), ctx);
 
 /** The path the browser actually holds for a top-level entry: what buildTree serves. */
@@ -79,6 +86,18 @@ describe("files/content GET — workspace containment", () => {
   });
 });
 
+describe("files/content PUT — save", () => {
+  it("overwrites an existing file without leaving trailing content", async () => {
+    const filePath = path.join(WS_DIR, "edit-me.txt");
+    fs.writeFileSync(filePath, "a much longer original value");
+
+    const res = await putFile(filePath, "short");
+
+    expect(res.status).toBe(200);
+    expect(fs.readFileSync(filePath, "utf8")).toBe("short");
+  });
+});
+
 describe("files/content PATCH — move", () => {
   it("moves a file into a folder", async () => {
     const source = path.join(WS_DIR, "move-me.txt");
@@ -95,6 +114,21 @@ describe("files/content PATCH — move", () => {
     expect(res.status).toBe(200);
     expect(fs.existsSync(source)).toBe(false);
     expect(fs.readFileSync(path.join(destinationDirectory, "move-me.txt"), "utf8")).toBe("move me");
+  });
+
+  it("does not recreate the old path when a save arrives after a move", async () => {
+    const source = path.join(WS_DIR, "move-then-save.txt");
+    const destinationDirectory = path.join(WS_DIR, "moved-before-save");
+    const destination = path.join(destinationDirectory, path.basename(source));
+    fs.writeFileSync(source, "saved before move");
+    fs.mkdirSync(destinationDirectory);
+
+    expect((await patchMove({ sourcePath: source, destinationDirectory })).status).toBe(200);
+    const saveRes = await putFile(source, "late editor draft");
+
+    expect(saveRes.status).toBe(409);
+    expect(fs.existsSync(source)).toBe(false);
+    expect(fs.readFileSync(destination, "utf8")).toBe("saved before move");
   });
 
   it("moves a folder into another folder without merging", async () => {

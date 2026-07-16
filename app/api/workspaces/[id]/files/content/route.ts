@@ -4,9 +4,8 @@
 // (lib/workspace/fileContent.ts) does the work; the workspace backend adds a container
 // write-fallback for legacy root-owned files and a git snapshot.
 //
-// The write-fallback covers PUT only: it works by piping content through `tee` in the container,
-// which has no rename equivalent. Moving a legacy root-owned file therefore fails with a "not
-// writable" error rather than falling back. New agent writes are uid-1000-owned, so this only
+// The container write-fallback covers PUT only; moving a legacy root-owned file still fails with a
+// "not writable" error rather than falling back. New agent writes are uid-1000-owned, so this only
 // affects files created before the non-root migration and not yet swept.
 export const runtime = "nodejs";
 
@@ -23,11 +22,22 @@ function backend(ws: Workspace): FileBackend {
     dir: ws.dir,
     logContext: { workspaceId: ws.id, route: "files/content" },
     // Fallback for legacy root-owned files (created before the non-root migration, not yet swept):
-    // write through the container. New agent writes are uid-1000-owned so the direct fs.writeFile
-    // succeeds and this path is not hit.
+    // overwrite through the container. The Node snippet deliberately opens with r+ and no create,
+    // preserving the shared core's guarantee that a concurrent move cannot recreate an old path.
     writeFallback: async (resolved, content) => {
       const relPath = path.relative(ws.dir, resolved);
-      const r = await getContainers().exec(ws.id, ws.dir, ["tee", `/workspace/${relPath}`], { stdin: content });
+      const overwriteExisting = [
+        "const fs=require('fs');",
+        "const fd=fs.openSync(process.argv[1],'r+');",
+        "try{fs.ftruncateSync(fd,0);fs.writeFileSync(fd,fs.readFileSync(0,'utf8'),'utf8');}",
+        "finally{fs.closeSync(fd);}",
+      ].join("");
+      const r = await getContainers().exec(
+        ws.id,
+        ws.dir,
+        ["node", "-e", overwriteExisting, `/workspace/${relPath}`],
+        { stdin: content },
+      );
       if (r.code !== 0) throw new Error(r.stderr || "docker write failed");
     },
     afterWrite: async (message) => {

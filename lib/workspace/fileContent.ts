@@ -26,7 +26,8 @@ function lexicalPath(be: FileBackend, p: string): string {
 export interface FileBackend {
   dir: string;
   logContext: Record<string, unknown>;
-  // Called when a direct fs.writeFile fails with EACCES/EPERM (workspace container fallback).
+  // Called when a direct existing-file overwrite fails with EACCES/EPERM (workspace container
+  // fallback). It must not create a missing path: a concurrent move may already have removed it.
   writeFallback?: (resolved: string, content: string) => Promise<void>;
   // Called after a successful mutation (workspace git snapshot). `message` describes the change.
   afterWrite?: (message: string) => Promise<void>;
@@ -101,9 +102,17 @@ export async function putFileContent(req: Request, be: FileBackend): Promise<Res
   const log = createLogger("api").child(be.logContext);
   try {
     const resolved = await assertInsideWorkspace(be.dir, lexicalPath(be, body.path));
-    await fs.mkdir(path.dirname(resolved), { recursive: true });
     try {
-      await fs.writeFile(resolved, body.content, "utf-8");
+      // Open without O_CREAT before truncating. If a move won the race, this fails instead of
+      // recreating the old path; if the open won, the descriptor follows the same inode through
+      // the move and the content lands at its new name.
+      const handle = await fs.open(resolved, "r+");
+      try {
+        await handle.truncate(0);
+        await handle.writeFile(body.content, "utf-8");
+      } finally {
+        await handle.close();
+      }
     } catch (writeErr) {
       const code = (writeErr as NodeJS.ErrnoException).code;
       if ((code === "EACCES" || code === "EPERM") && be.writeFallback) {
@@ -116,6 +125,12 @@ export async function putFileContent(req: Request, be: FileBackend): Promise<Res
     return NextResponse.json({ ok: true });
   } catch (err) {
     log.warn({ err, path: body.path }, "PUT file failed");
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+      return NextResponse.json(
+        { error: "File was moved or deleted before it could be saved" },
+        { status: 409 },
+      );
+    }
     const msg = err instanceof Error ? err.message : "Unknown error";
     return NextResponse.json({ error: msg }, { status: 400 });
   }

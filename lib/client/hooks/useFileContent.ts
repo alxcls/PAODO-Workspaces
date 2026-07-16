@@ -4,7 +4,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { remapMovedPath } from "../fileMove";
+import { EditorFileMutationLock, remapMovedPath } from "../fileMove";
 
 export type FileType = "text" | "image" | "binary" | null;
 
@@ -28,6 +28,7 @@ export function useFileContent(
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [moving, setMoving] = useState(false);
 
   // Refs stay current across renders without invalidating callbacks.
   const filePathRef = useRef(filePath);
@@ -35,7 +36,7 @@ export function useFileContent(
   const onCloseRef = useRef(onClose);
   const onSelfWriteRef = useRef(onSelfWrite);
   const draftRef = useRef(draft);
-  const pendingMoveRootRef = useRef<string | null>(null);
+  const mutationLockRef = useRef(new EditorFileMutationLock());
   const preservedMovedPathRef = useRef<string | null>(null);
 
   const isDirty = fileType === "text" && draft !== content;
@@ -80,7 +81,7 @@ export function useFileContent(
 
   const handleSave = useCallback(async () => {
     const path = filePathRef.current;
-    if (!path) return;
+    if (!path || !mutationLockRef.current.startMutation(path)) return;
     const currentDraft = draftRef.current;
     setSaving(true); setError(null);
     try {
@@ -93,12 +94,15 @@ export function useFileContent(
       setContent(currentDraft);
       onSelfWriteRef.current?.(path);
     } catch { setError("Save failed"); }
-    finally { setSaving(false); }
+    finally {
+      mutationLockRef.current.finishMutation();
+      setSaving(false);
+    }
   }, [base]);
 
   const deleteFile = useCallback(async () => {
     const path = filePathRef.current;
-    if (!path) return;
+    if (!path || !mutationLockRef.current.startMutation(path)) return;
     setDeleting(true);
     try {
       const res = await fetch(
@@ -112,7 +116,10 @@ export function useFileContent(
         onCloseRef.current();
       }
     } catch { setError("Delete failed"); }
-    finally { setDeleting(false); }
+    finally {
+      mutationLockRef.current.finishMutation();
+      setDeleting(false);
+    }
   }, [base]);
 
   // Reload the open file after an agent-side edit, but never overwrite a local draft.
@@ -127,24 +134,27 @@ export function useFileContent(
     // A local move is observed by chokidar as a source deletion plus a destination addition. The
     // deletion can arrive before the PATCH response, so do not close the viewer while that move is
     // pending; completion remaps the path, while cancellation clears this exception.
-    if (pendingMoveRootRef.current && paths.includes(currentPath)) return;
+    if (mutationLockRef.current.pendingMoveRoot && paths.includes(currentPath)) return;
     if (paths.includes(currentPath)) onCloseRef.current();
   }, []);
 
-  const notifyFileMoveStarted = useCallback((sourceRoot: string) => {
+  const notifyFileMoveStarted = useCallback((sourceRoot: string): boolean => {
     const currentPath = filePathRef.current;
-    if (currentPath === sourceRoot || currentPath?.startsWith(sourceRoot + "/")) {
-      pendingMoveRootRef.current = sourceRoot;
-    }
+    const allowed = mutationLockRef.current.startMove(sourceRoot, currentPath);
+    if (!allowed) return false;
+    if (mutationLockRef.current.pendingMoveRoot === sourceRoot) setMoving(true);
+    return true;
   }, []);
 
   const notifyFileMoveCancelled = useCallback((sourceRoot: string) => {
-    if (pendingMoveRootRef.current === sourceRoot) pendingMoveRootRef.current = null;
+    mutationLockRef.current.finishMove(sourceRoot);
+    setMoving(false);
   }, []);
 
   const notifyFileMoved = useCallback((sourceRoot: string, destinationRoot: string) => {
-    if (pendingMoveRootRef.current !== sourceRoot) return;
-    pendingMoveRootRef.current = null;
+    if (mutationLockRef.current.pendingMoveRoot !== sourceRoot) return;
+    mutationLockRef.current.finishMove(sourceRoot);
+    setMoving(false);
     const currentPath = filePathRef.current;
     const movedPath = remapMovedPath(currentPath, sourceRoot, destinationRoot);
     if (movedPath === null || movedPath === currentPath) return;
@@ -155,7 +165,7 @@ export function useFileContent(
 
   return {
     fileType, content, draft, setDraft,
-    loading, error, saving, deleting,
+    loading, error, saving, deleting, moving,
     isDirty,
     handleSave, deleteFile,
     notifyFilesChanged, notifyFilesDeleted,

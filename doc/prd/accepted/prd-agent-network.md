@@ -48,4 +48,4 @@ A citizen developer building a complex service needs to coordinate multiple spec
 
 ## Note
 
-This feature is gated behind `GRAPH_ENABLED=true` and kept optional, as agent-to-agent coordination is inherently messy and may not align with the core product vision. It is experimental and should be evaluated before being promoted to a default-on capability.
+This feature is gated behind `GRAPH_ENABLED=true`

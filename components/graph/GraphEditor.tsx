@@ -17,8 +17,6 @@ import {
   Handle,
   Position,
   NodeProps,
-  OnEdgesChange,
-  EdgeChange,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { useRouter } from "next/navigation";
@@ -182,6 +180,14 @@ const DRIVE_EDGE_STYLE = {
 
 const FAIL_LINKS = "Failed to save drive links";
 
+const plural = (n: number, noun: string) => `${n} ${noun}${n > 1 ? "s" : ""}`;
+
+/** Delete keys belong to whatever field has focus before they belong to the canvas. */
+const isTyping = (target: EventTarget | null) => {
+  const el = target as HTMLElement | null;
+  return !!el && (el.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(el.tagName));
+};
+
 function wouldCreateCycle(edges: Edge[], source: string, target: string): boolean {
   const adj = new Map<string, string[]>();
   for (const e of edges) {
@@ -217,8 +223,16 @@ export default function GraphEditor() {
   const [driveDescription, setDriveDescription] = useState("");
   // Drives removed from the canvas but still in the store; Save is what actually destroys them.
   const [pendingDriveDeletes, setPendingDriveDeletes] = useState<Node[]>([]);
-  const selectedNodes = nodes.filter((node) => node.selected);
-  const selectedDrive = selectedNodes.length === 1 && selectedNodes[0].type === "drive" ? selectedNodes[0] : undefined;
+  // Everything the canvas can delete: drive nodes and any edge. Agents are deletable:false and are
+  // never part of it — they are deleted from the home page, not here.
+  const selection = useMemo(() => {
+    const drives = nodes.filter((n) => n.selected && n.data?.kind === "drive");
+    const links = edges.filter((e) => e.selected);
+    const parts: string[] = [];
+    if (drives.length) parts.push(plural(drives.length, "drive"));
+    if (links.length) parts.push(plural(links.length, "link"));
+    return { drives, links, label: parts.join(" and ") };
+  }, [nodes, edges]);
   const driveIdsRef = useRef<Set<string>>(new Set());
   // Drive connections as they exist in the store, keyed by edge id. persist() diffs the current
   // drive edges against this to work out what to create and what to delete.
@@ -240,17 +254,29 @@ export default function GraphEditor() {
     errorTimer.current = setTimeout(() => setError(null), 3000);
   }, []);
 
-  // Queue a drive deletion: the node and its edges leave the canvas now, but the drive and its
-  // files survive until Save, so leaving without saving undoes it like any other canvas edit.
-  const handleDeleteDrive = useCallback(
-    (drive: Node) => {
-      setPendingDriveDeletes((ds) => [...ds, drive]);
-      setEdges((eds) => eds.filter((e) => e.source !== drive.id && e.target !== drive.id));
-      setNodes((nds) => nds.filter((n) => n.id !== drive.id));
-      setIsDirty(true);
-    },
-    [setEdges, setNodes],
-  );
+  // The one way anything leaves the canvas, shared by the Delete button and the delete key. Nothing
+  // here touches the store: drives and links alike come back if you leave without saving.
+  const deleteSelection = useCallback(() => {
+    const { drives, links } = selection;
+    if (!drives.length && !links.length) return;
+    const goneDrives = new Set(drives.map((d) => d.id));
+    const goneLinks = new Set(links.map((e) => e.id));
+    setPendingDriveDeletes((ds) => [...ds, ...drives]);
+    setNodes((nds) => nds.filter((n) => !goneDrives.has(n.id)));
+    // A drive's links go with it, selected or not — they cannot outlive the node they hang off.
+    setEdges((eds) =>
+      eds.filter((e) => !goneLinks.has(e.id) && !goneDrives.has(e.source) && !goneDrives.has(e.target)),
+    );
+    setIsDirty(true);
+  }, [selection, setEdges, setNodes]);
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if ((e.key === "Backspace" || e.key === "Delete") && !isTyping(e.target)) deleteSelection();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [deleteSelection]);
 
   useEffect(() => {
     Promise.all([
@@ -365,15 +391,6 @@ export default function GraphEditor() {
       setIsDirty(true);
     },
     [setEdges, showError],
-  );
-
-  const handleEdgesChange: OnEdgesChange = useCallback(
-    (changes: EdgeChange[]) => {
-      const edgeRemoved = changes.some((c) => c.type === "remove");
-      onEdgesChange(changes);
-      if (edgeRemoved) setIsDirty(true);
-    },
-    [onEdgesChange],
   );
 
   const onNodeDragStop = useCallback(() => {
@@ -574,11 +591,11 @@ export default function GraphEditor() {
             <button className="btn btn-ghost btn-sm" onClick={() => setShowDriveForm((v) => !v)}>
               Add drive
             </button>
-            {selectedDrive && (
+            {selection.label && (
               <button
                 className="btn btn-ghost btn-sm text-danger"
-                onClick={() => handleDeleteDrive(selectedDrive)}
-                title={`Delete ${selectedDrive.data.label as string}`}
+                onClick={deleteSelection}
+                title={`Delete ${selection.label}`}
               >
                 Delete
               </button>
@@ -631,7 +648,7 @@ export default function GraphEditor() {
             nodes={nodes}
             edges={edges}
             onNodesChange={onNodesChange}
-            onEdgesChange={handleEdgesChange}
+            onEdgesChange={onEdgesChange}
             onConnect={onConnect}
             onNodeDragStop={onNodeDragStop}
             onNodeDoubleClick={onNodeDoubleClick}
@@ -642,7 +659,7 @@ export default function GraphEditor() {
             fitView
             fitViewOptions={{ padding: 0.3, maxZoom: 1 }}
             nodeDragThreshold={4}
-            deleteKeyCode={["Backspace", "Delete"]}
+            deleteKeyCode={null}
             multiSelectionKeyCode="Shift"
           >
             <Background variant={BackgroundVariant.Dots} color="var(--color-border)" gap={24} size={1.2} />

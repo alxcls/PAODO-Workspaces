@@ -66,10 +66,13 @@ function setCountDragImage(e: React.DragEvent, count: number) {
 }
 
 // ---- Checkbox ----
+// Only a fully checked box is filled in: a folder holding a checked child draws as unchecked, and
+// the row's tint is what hints at the selection inside it. The mixed state still reaches assistive
+// tech through aria-checked, which is not tied to the visual.
 const Checkbox = ({ state, onClick }: { state: CheckState; onClick: (e: React.MouseEvent) => void }) => (
   <span
     className={`w-[14px] h-[14px] rounded-[3px] inline-flex items-center justify-center flex-shrink-0 transition-[border-color,background] duration-[120ms] border-[1.4px] cursor-pointer
-      ${state !== "none" ? "bg-select border-select text-white" : "bg-white border-border hover:border-select"}`}
+      ${state === "all" ? "bg-select border-select text-white" : "bg-white border-border hover:border-select"}`}
     onClick={onClick}
     role="checkbox"
     aria-checked={state === "all" ? "true" : state === "some" ? "mixed" : "false"}
@@ -77,11 +80,6 @@ const Checkbox = ({ state, onClick }: { state: CheckState; onClick: (e: React.Mo
     {state === "all" && (
       <svg viewBox="0 0 16 16" width="10" height="10" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
         <polyline points="3 9 6.5 12.5 13 4" />
-      </svg>
-    )}
-    {state === "some" && (
-      <svg viewBox="0 0 16 16" width="10" height="10" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round">
-        <line x1="4" y1="8" x2="12" y2="8" />
       </svg>
     )}
   </span>

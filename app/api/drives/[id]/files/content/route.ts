@@ -1,14 +1,16 @@
 // CRUD endpoint for individual file content within a shared drive.
 // GET classifies and returns the file as text, image, or binary; PUT saves edited text; PATCH moves;
 // DELETE removes.
-// Drives are passive host storage: no git snapshots, no container — the shared file-content core
-// (lib/workspace/fileContent.ts) runs with a bare backend (plain fs writes, no fallback/snapshot).
+// Drives are passive host storage: no git snapshots, no container. Shared workspace file modules
+// run with a bare backend (plain fs writes, no fallback/snapshot).
 export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
 import { requireDrive } from "@/lib/api/guards";
 import { driveContentDir } from "@/lib/workspace/driveStore";
-import { getFileContent, putFileContent, moveFileContent, deleteFileContent, type FileBackend } from "@/lib/workspace/fileContent";
+import { getFileContent, putFileContent, deleteFileContent } from "@/lib/workspace/fileContent";
+import { moveFileContent } from "@/lib/workspace/fileMove";
+import type { FileBackend } from "@/lib/workspace/fileBackend";
 
 function backend(id: string): FileBackend {
   return { dir: driveContentDir(id), logContext: { driveId: id, route: "drive-files/content" } };

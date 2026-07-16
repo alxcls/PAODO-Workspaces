@@ -9,11 +9,7 @@ import path from "path";
 import type { ExecRunner } from "../interfaces";
 import { toolError } from "../toolUtils";
 
-export async function writeContainerFile(
-  runner: ExecRunner,
-  relpath: string,
-  content: string,
-): Promise<string | null> {
+export async function writeContainerFile(runner: ExecRunner, relpath: string, content: string): Promise<string | null> {
   try {
     const dirRelpath = path.posix.dirname(relpath);
     if (dirRelpath && dirRelpath !== ".") {

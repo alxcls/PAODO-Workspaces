@@ -11,7 +11,12 @@ import type { ExecRunner } from "../interfaces";
 
 const schema = z.object({
   file_path: z.string().describe("File path relative to workspace root"),
-  offset: z.number().int().min(0).optional().describe("Line index to start from (0-based). Omit to start from the beginning."),
+  offset: z
+    .number()
+    .int()
+    .min(0)
+    .optional()
+    .describe("Line index to start from (0-based). Omit to start from the beginning."),
   limit: z.number().int().min(1).optional().describe("Maximum number of lines to return. Omit to read to end of file."),
 });
 
@@ -44,9 +49,7 @@ Use this instead of cat, head, or tail.
       } else {
         const startLine = (offset ?? 0) + 1;
         const endLine = limit !== undefined ? (offset ?? 0) + limit : "$";
-        const r = await this.runner.exec([
-          "sed", "-n", `${startLine},${endLine}p`, `/workspace/${relpath}`,
-        ]);
+        const r = await this.runner.exec(["sed", "-n", `${startLine},${endLine}p`, `/workspace/${relpath}`]);
         if (r.code !== 0) return `Error: ${r.stderr || "file not found or unreadable"}`;
         const start = offset ?? 0;
         const lines = r.stdout.split("\n");

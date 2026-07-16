@@ -7,10 +7,14 @@ import { useConsoleSocket, type ConsoleLine } from "@/lib/client/hooks/useConsol
 function lineClass(type: ConsoleLine["type"]): string {
   const base = "whitespace-pre-wrap break-words";
   switch (type) {
-    case "tool":   return `${base} text-console-call`;
-    case "stderr": return `${base} text-console-err`;
-    case "info":   return `${base} text-console-res`;
-    default:       return `${base} text-console-fg`;
+    case "tool":
+      return `${base} text-console-call`;
+    case "stderr":
+      return `${base} text-console-err`;
+    case "info":
+      return `${base} text-console-res`;
+    default:
+      return `${base} text-console-fg`;
   }
 }
 
@@ -37,9 +41,7 @@ export default function ConsolePanel({ workspaceId }: { workspaceId: string }) {
         </div>
       </div>
       <div className="flex-1 overflow-auto px-4 pt-2 pb-3 font-mono text-[12.5px] leading-[1.6] text-console-fg">
-        {lines.length === 0 && (
-          <div className="text-[#888] italic">Agent output will stream here.</div>
-        )}
+        {lines.length === 0 && <div className="text-[#888] italic">Agent output will stream here.</div>}
         {lines.map((line, i) => (
           <div key={i} className={lineClass(line.type)}>
             {line.text}

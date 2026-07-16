@@ -151,7 +151,11 @@ export default function McpBlock({ wsId }: { wsId: string }) {
         </button>
       </div>
 
-      {error && <p className="m-0 text-xs text-danger" role="alert">{error}</p>}
+      {error && (
+        <p className="m-0 text-xs text-danger" role="alert">
+          {error}
+        </p>
+      )}
 
       {enabled && (
         <>
@@ -203,8 +207,12 @@ export default function McpBlock({ wsId }: { wsId: string }) {
 
           {hasSecret && !newSecret && (
             <div className="flex items-center gap-2.5">
-              <button className="linkbtn" onClick={mint} disabled={loading || saving}>Rotate</button>
-              <button className="linkbtn text-danger" onClick={revoke} disabled={saving || loading}>Revoke</button>
+              <button className="linkbtn" onClick={mint} disabled={loading || saving}>
+                Rotate
+              </button>
+              <button className="linkbtn text-danger" onClick={revoke} disabled={saving || loading}>
+                Revoke
+              </button>
             </div>
           )}
 
@@ -215,9 +223,13 @@ export default function McpBlock({ wsId }: { wsId: string }) {
                 <code className="font-mono text-xs leading-[1.4] text-text bg-bg-tint px-2 py-1 rounded border border-border flex-1 min-w-0 break-all">
                   {newSecret}
                 </code>
-                <button className="btn btn-sm" onClick={() => copySecret(newSecret)}>{copied ? "Copied!" : "Copy"}</button>
+                <button className="btn btn-sm" onClick={() => copySecret(newSecret)}>
+                  {copied ? "Copied!" : "Copy"}
+                </button>
               </div>
-              <button className="linkbtn" onClick={() => setNewSecret(null)}>Close</button>
+              <button className="linkbtn" onClick={() => setNewSecret(null)}>
+                Close
+              </button>
             </div>
           )}
         </>

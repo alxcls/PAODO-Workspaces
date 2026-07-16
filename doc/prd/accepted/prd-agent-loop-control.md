@@ -10,7 +10,7 @@
 
 A confused agent can keep working indefinitely, consuming API credits and blocking a workspace with no automatic intervention. This is a barrier to trusting the platform with a real API key. Additionally, when the iteration limit is hit, all interaction paths (chat UI, external API, agent-to-agent) currently discard whatever work the agent completed and return only an error — making the limit feel like a crash rather than a graceful stop.
 
-The automatic cap is not enough on its own: a user watching the agent go the wrong way needs to stop it *now*, and a naive stop that only drops the client connection leaves the in-flight shell command running inside the container, still burning resources.
+The automatic cap is not enough on its own: a user watching the agent go the wrong way needs to stop it _now_, and a naive stop that only drops the client connection leaves the in-flight shell command running inside the container, still burning resources.
 
 ## Goals
 
@@ -18,7 +18,7 @@ Give citizen developer a simple, per-workspace control over how much work an age
 
 ## Non-goals
 
-- Detecting *why* an agent got stuck (stall detection, loop detection)
+- Detecting _why_ an agent got stuck (stall detection, loop detection)
 - Cost or time-based budgets
 - Pause-and-confirm checkpoint instead of a hard stop
 - Automatically retrying a callee that hit its limit (the calling agent decides)

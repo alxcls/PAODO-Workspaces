@@ -1,0 +1,19 @@
+# Dependencies and build output
+node_modules/
+.next/
+out/
+build/
+coverage/
+test-results/
+
+# Runtime and local-only workspace data
+data/
+.data-backup/
+e2e/
+playwright.config.ts
+
+# Generated or machine-maintained files
+package-lock.json
+dev_tools/viz/graph.html
+doc/images/
+*.pem

@@ -15,17 +15,20 @@ Expose each workspace through the stateless Streamable HTTP endpoint `POST /api/
 - Rate-limit requests by client IP. The public reverse proxy permits only the workspace agent and MCP POST routes.
 
 Consequences
+
 - MCP clients see a small, explicitly published and revocable tool surface per workspace.
 - MCP and agent-to-agent calls share one skill contract and execution path.
 - Calls have no MCP session state; each tool execution still creates an auditable workspace conversation.
 - Skill authors must provide object-shaped JSON Schema contracts.
 
 Alternatives considered
+
 - Expose every workspace skill automatically: rejected because publication must be explicit.
 - Reuse the workspace HTTP API key: rejected to keep MCP access independently revocable.
 - Maintain stateful MCP sessions and SSE: rejected because current tools need only request/response exchanges.
 - Implement a separate MCP execution engine: rejected to avoid diverging validation and runtime behavior.
 
 Notes
+
 - Related ADRs: [Agent-to-agent server-mediated calls](adr-agent-to-agent-server-mediated-calls.md) — defines the agent-network edge check and shared `executeSkill` path this endpoint reuses.
 - Related PRDs: [Workspace MCP](../../prd/draft/prd-workspace-mcp.md)

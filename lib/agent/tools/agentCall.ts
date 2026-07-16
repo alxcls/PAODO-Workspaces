@@ -74,7 +74,11 @@ A workspace with no declared skills is not callable. If the workspace is not con
    * `onLink` fires as soon as the callee conversation is created — before the call finishes —
    * so the runner surfaces the link mid-run rather than only at completion.
    */
-  readonly callWithMeta = (input: z.infer<typeof schema>, onLink?: (meta: CallAgentMeta) => void, callerSignal?: AbortSignal): Promise<CallAgentResult> => {
+  readonly callWithMeta = (
+    input: z.infer<typeof schema>,
+    onLink?: (meta: CallAgentMeta) => void,
+    callerSignal?: AbortSignal,
+  ): Promise<CallAgentResult> => {
     return this.runCall(input, onLink, callerSignal);
   };
 
@@ -89,9 +93,10 @@ A workspace with no declared skills is not callable. If the workspace is not con
     if (code === "INPUT_VALIDATION_ERROR") {
       const failures = (this.inputFailures.get(retryKey) ?? 0) + 1;
       this.inputFailures.set(retryKey, failures);
-      const terminal = failures >= maxInputRetries
-        ? " Do NOT retry with the same args — re-read the skill's input schema via list_agents."
-        : "";
+      const terminal =
+        failures >= maxInputRetries
+          ? " Do NOT retry with the same args — re-read the skill's input schema via list_agents."
+          : "";
       return { result: `Error (${code}): ${message}${terminal}`, meta };
     }
     if (code === "NEEDS_INPUT") {
@@ -107,7 +112,10 @@ A workspace with no declared skills is not callable. If the workspace is not con
           meta,
         };
       }
-      return { result: `Needs input: the target agent needs different input: "${message}" Re-call the same skill with corrected args.`, meta };
+      return {
+        result: `Needs input: the target agent needs different input: "${message}" Re-call the same skill with corrected args.`,
+        meta,
+      };
     }
     this.inputFailures.delete(retryKey);
     this.needsInputRounds.delete(retryKey);
@@ -124,16 +132,34 @@ A workspace with no declared skills is not callable. If the workspace is not con
 
   // Word an abort correctly: a caller cancel (user hit Stop) is not a timeout. Shared by the
   // non-throwing-abort path and the thrown-abort catch, which classify it identically.
-  private abortResult(workspace: string, skill: string, cancelledByCaller: boolean, meta?: CallAgentMeta): CallAgentResult {
+  private abortResult(
+    workspace: string,
+    skill: string,
+    cancelledByCaller: boolean,
+    meta?: CallAgentMeta,
+  ): CallAgentResult {
     if (cancelledByCaller) {
-      this.log.info({ callerWorkspaceId: this.callerWorkspaceId, callee: workspace, skill }, "call_agent cancelled by caller");
+      this.log.info(
+        { callerWorkspaceId: this.callerWorkspaceId, callee: workspace, skill },
+        "call_agent cancelled by caller",
+      );
       return { result: `Error: call to "${workspace}" was cancelled.`, meta };
     }
-    this.log.warn({ callerWorkspaceId: this.callerWorkspaceId, callee: workspace, skill, timeoutMs: TIMEOUT_MS }, "call_agent timed out");
-    return { result: `Error: call to "${workspace}" timed out after ${TIMEOUT_MS / 1000}s — the target agent is too slow or stuck.`, meta };
+    this.log.warn(
+      { callerWorkspaceId: this.callerWorkspaceId, callee: workspace, skill, timeoutMs: TIMEOUT_MS },
+      "call_agent timed out",
+    );
+    return {
+      result: `Error: call to "${workspace}" timed out after ${TIMEOUT_MS / 1000}s — the target agent is too slow or stuck.`,
+      meta,
+    };
   }
 
-  private async runCall({ workspace, skill, args }: z.infer<typeof schema>, onLink?: (meta: CallAgentMeta) => void, callerSignal?: AbortSignal): Promise<CallAgentResult> {
+  private async runCall(
+    { workspace, skill, args }: z.infer<typeof schema>,
+    onLink?: (meta: CallAgentMeta) => void,
+    callerSignal?: AbortSignal,
+  ): Promise<CallAgentResult> {
     const callee = this.store.getWorkspaceByName(workspace);
     if (!callee) {
       this.log.warn({ callerWorkspaceId: this.callerWorkspaceId, callee: workspace }, "call_agent target not found");
@@ -182,18 +208,31 @@ A workspace with no declared skills is not callable. If the workspace is not con
       }
 
       if (result.state === "failed") {
-        this.log.warn({ callerWorkspaceId: this.callerWorkspaceId, callee: workspace, skill, code: result.code, agentError: result.message }, "call_agent failed");
+        this.log.warn(
+          {
+            callerWorkspaceId: this.callerWorkspaceId,
+            callee: workspace,
+            skill,
+            code: result.code,
+            agentError: result.message,
+          },
+          "call_agent failed",
+        );
         return this.handleFailedResult(result.code, result.message, meta, workspace, retryKey, maxInputRetries);
       }
 
       this.inputFailures.delete(retryKey);
       this.needsInputRounds.delete(retryKey);
       const output = JSON.stringify(result.output, null, 2);
-      this.log.debug({ callerWorkspaceId: this.callerWorkspaceId, callee: workspace, skill, responseChars: output.length }, "call_agent done");
-      const truncated = output.length > MAX_RESPONSE_CHARS
-        ? output.slice(0, MAX_RESPONSE_CHARS) +
+      this.log.debug(
+        { callerWorkspaceId: this.callerWorkspaceId, callee: workspace, skill, responseChars: output.length },
+        "call_agent done",
+      );
+      const truncated =
+        output.length > MAX_RESPONSE_CHARS
+          ? output.slice(0, MAX_RESPONSE_CHARS) +
             `\n\n[response truncated — ${output.length} chars total, showing first ${MAX_RESPONSE_CHARS}]`
-        : output;
+          : output;
       return { result: truncated, meta };
     } catch (err) {
       if (signal.aborted) {

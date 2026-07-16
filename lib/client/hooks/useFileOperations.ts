@@ -66,10 +66,16 @@ export function useFileOperations({
       if (!res.ok) return;
       const { tree: data } = (await res.json()) as { tree: TreeNode[] };
       setTree(data);
-    } catch { /* silent */ }
+    } catch {
+      /* silent */
+    }
   }, [base]);
 
-  useEffect(() => { fetchTree(); }, [fetchTree, refreshKey]);
+  useEffect(() => {
+    // fetchTree updates state only after its asynchronous request resolves.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void fetchTree();
+  }, [fetchTree, refreshKey]);
 
   const handleDownload = () =>
     runDownload(async () => {
@@ -102,22 +108,18 @@ export function useFileOperations({
         roots.map((p) =>
           fetch(`${base}/files/content?path=${encodeURIComponent(p)}`, {
             method: "DELETE",
-          })
-        )
+          }),
+        ),
       );
       for (const r of resArr) {
         if (!r.ok) {
-          const body = await r.json().catch(() => ({} as { error?: string; message?: string }));
+          const body = await r.json().catch(() => ({}) as { error?: string; message?: string });
           failures.push((body.error || body.message) ?? `${r.status} ${r.statusText}`);
         }
       }
       if (failures.length > 0) {
         const uniq = Array.from(new Set(failures));
-        setDeleteError(
-          uniq.length === 1
-            ? `Failed to delete: ${uniq[0]}`
-            : `Failed to delete: ${uniq.join("; ")}`
-        );
+        setDeleteError(uniq.length === 1 ? `Failed to delete: ${uniq[0]}` : `Failed to delete: ${uniq.join("; ")}`);
       }
     } catch (err) {
       setDeleteError(err instanceof Error ? err.message : String(err));
@@ -154,8 +156,7 @@ export function useFileOperations({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ sourcePaths, destinationDirectory }),
       });
-      const body = (await res.json().catch(() => ({}))) as
-        { results?: MoveResult[]; error?: string };
+      const body = (await res.json().catch(() => ({}))) as { results?: MoveResult[]; error?: string };
       // A rejected batch still carries results (an empty list); only a malformed request omits them.
       if (!Array.isArray(body.results)) {
         setMoveError(body.error || `Move failed: ${res.status} ${res.statusText}`);
@@ -173,9 +174,13 @@ export function useFileOperations({
   };
 
   return {
-    tree, fetchTree,
-    handleDownload, downloading,
-    handleDelete, deleteError,
-    handleMoveMany, moveError,
+    tree,
+    fetchTree,
+    handleDownload,
+    downloading,
+    handleDelete,
+    deleteError,
+    handleMoveMany,
+    moveError,
   };
 }

@@ -28,13 +28,7 @@ function dockerAvailable(): boolean {
 function inContainer(snippet: string): string {
   return execFileSync(
     "docker",
-    [
-      "run", "--rm",
-      "--cap-drop", "ALL",
-      "--security-opt", "no-new-privileges:true",
-      IMAGE,
-      "bash", "-c", snippet,
-    ],
+    ["run", "--rm", "--cap-drop", "ALL", "--security-opt", "no-new-privileges:true", IMAGE, "bash", "-c", snippet],
     { encoding: "utf8" },
   ).trim();
 }

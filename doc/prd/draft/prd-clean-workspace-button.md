@@ -33,21 +33,21 @@ Today the only option is to delete the whole workspace and start over, which als
 
 - As a user, when my workspace stops working I want one button that fixes it, without losing my work.
 - As a user, I want to be told clearly that my files are safe before I press it.
-- As a user, I don't want to understand *why* it broke — I just want it working again.
+- As a user, I don't want to understand _why_ it broke — I just want it working again.
 
 ## Requirements
 
 ### Must have
 
 - A **Rebuild workspace** button, available per workspace.
-- Pressing it shows a short confirmation: *"This gives your workspace a fresh start. Your files and folders are kept. Dependencies the agent installed will be cleared."*
+- Pressing it shows a short confirmation: _"This gives your workspace a fresh start. Your files and folders are kept. Dependencies the agent installed will be cleared."_
 - After confirming, the workspace is rebuilt and ready to use again.
 - Files, folders, history, and the API key are all kept untouched.
 
 ### Nice to have
 
 - The agent offers the button automatically when it notices the workspace is stuck, instead of the user having to find it.
-- A short note shown afterward: *"Done — your workspace is fresh. The agent will re-install any dependencies it needs as it works."*
+- A short note shown afterward: _"Done — your workspace is fresh. The agent will re-install any dependencies it needs as it works."_
 
 ## Decided
 

@@ -41,7 +41,8 @@ function hasCycle(edges: GraphEdge[]): boolean {
   const visited = new Set<string>();
   const stack = new Set<string>();
   function dfs(n: string): boolean {
-    visited.add(n); stack.add(n);
+    visited.add(n);
+    stack.add(n);
     for (const m of adj.get(n) ?? []) {
       if (stack.has(m) || (!visited.has(m) && dfs(m))) return true;
     }
@@ -52,10 +53,7 @@ function hasCycle(edges: GraphEdge[]): boolean {
   return false;
 }
 
-export function saveGraph(
-  edges: GraphEdge[],
-  positions: Record<string, { x: number; y: number }>
-): void {
+export function saveGraph(edges: GraphEdge[], positions: Record<string, { x: number; y: number }>): void {
   if (hasCycle(edges)) {
     log.warn({ edgeCount: edges.length }, "saveGraph rejected — cycle detected");
     throw new Error("Graph contains a cycle — only DAGs are allowed.");

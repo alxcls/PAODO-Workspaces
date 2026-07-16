@@ -14,7 +14,9 @@ vi.mock("@/lib/infra/security/mcpConfigStore", () => ({ validateSecret: h.valida
 vi.mock("@/lib/mcp/workspaceMcpServer", () => ({ buildWorkspaceMcpServer: h.buildServer }));
 vi.mock("@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js", () => ({
   WebStandardStreamableHTTPServerTransport: class {
-    async handleRequest(req: Request) { return h.handleRequest(req); }
+    async handleRequest(req: Request) {
+      return h.handleRequest(req);
+    }
     async close() {}
   },
 }));
@@ -22,14 +24,15 @@ vi.mock("@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js", () => (
 import { DELETE, GET, POST } from "./route";
 
 const ctx = (id = "ws-1") => ({ params: Promise.resolve({ id }) });
-const post = (body: unknown, secret?: string) => POST(
-  new Request("http://x/api/workspaces/ws-1/mcp", {
-    method: "POST",
-    headers: { "content-type": "application/json", ...(secret ? { authorization: `Bearer ${secret}` } : {}) },
-    body: JSON.stringify(body),
-  }) as never,
-  ctx(),
-);
+const post = (body: unknown, secret?: string) =>
+  POST(
+    new Request("http://x/api/workspaces/ws-1/mcp", {
+      method: "POST",
+      headers: { "content-type": "application/json", ...(secret ? { authorization: `Bearer ${secret}` } : {}) },
+      body: JSON.stringify(body),
+    }) as never,
+    ctx(),
+  );
 
 beforeEach(() => {
   h.limited = null;
@@ -65,11 +68,15 @@ describe("workspace MCP route", () => {
 
   it("returns a JSON-RPC internal error if MCP setup fails", async () => {
     h.validateSecret.mockReturnValue(true);
-    h.buildServer.mockImplementationOnce(() => { throw new Error("boom"); });
+    h.buildServer.mockImplementationOnce(() => {
+      throw new Error("boom");
+    });
     const res = await post({ jsonrpc: "2.0", id: "req-1", method: "tools/list" }, "valid");
     expect(res.status).toBe(500);
     expect(await res.json()).toEqual({
-      jsonrpc: "2.0", error: { code: -32603, message: "Internal error" }, id: "req-1",
+      jsonrpc: "2.0",
+      error: { code: -32603, message: "Internal error" },
+      id: "req-1",
     });
   });
 

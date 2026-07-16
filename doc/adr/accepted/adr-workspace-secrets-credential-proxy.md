@@ -7,8 +7,8 @@ Context
 Agents often need a third-party credential (API key, bearer token) to call an outside service.
 Putting the real value in the container's environment fails the threat model: the agent runs
 untrusted code and can read its own env, so it could print, log, or leak the secret. The container
-is exactly the component we do not trust with plaintext. We need the agent to *use* a credential on
-outbound calls without ever *holding* it. The platform already routes containers through
+is exactly the component we do not trust with plaintext. We need the agent to _use_ a credential on
+outbound calls without ever _holding_ it. The platform already routes containers through
 host-controlled infrastructure, so mediating egress fits the existing posture. Constraints: package
 installs and clones (pypi, apt, github) must keep working; no new datastore (metadata is JSON on
 host); shared runtime state must survive the Next.js route/custom-server module split (held on
@@ -42,7 +42,7 @@ HTTPS. The container never receives a plaintext secret.
 
 4. Responses are redacted. On the MITM path, real values are substituted back to tokens in response
    headers and body (streaming, with a chunk-boundary carry so SSE is not stalled; `Accept-Encoding`
-   stripped so bodies stay scannable). An upstream echoing the *literal* key back (API error
+   stripped so bodies stay scannable). An upstream echoing the _literal_ key back (API error
    messages) never exposes plaintext. Transformed echoes (base64, truncation) are not caught.
 
 5. HTTPS-only injection. Plain HTTP forwards the opaque token untouched (substituting on cleartext
@@ -68,12 +68,14 @@ HTTPS. The container never receives a plaintext secret.
 Consequences
 
 Enables
+
 - Agents call third-party services with a credential they never possess; a careless or literal-echo
   leak exposes only the opaque token.
 - Each secret is scoped to exactly one host; a key for one API is never injected elsewhere.
 - No new datastore; encryption protects backups/snapshots.
 
 Costs / risks
+
 - The proxy is a MITM for configured domains: the CA key and encryption key on the host are now
   sensitive assets (`0600`).
 - A single shared process on every container's egress (bounded 64 KB header / 10 MB body reads guard
@@ -84,6 +86,7 @@ Costs / risks
   leak.
 
 Alternatives considered
+
 - Real value in container env — defeats the threat model. Rejected.
 - Sidecar/broker with a placeholder — needs a bespoke API; breaks transparent `curl`/`requests`.
   Rejected for `HTTP_PROXY` interception existing tooling already honors.
@@ -93,6 +96,7 @@ Alternatives considered
 - Subdomain (wildcard) matching — a key must never leak to a sibling host. Exact host only.
 
 Notes
+
 - PRD: doc/prd/accepted/prd-workspace-third-party-api-keys.md (Shipped).
 - Impl: lib/infra/proxy/{credentialProxy,proxyCA,destinationGuard,index}.ts,
   lib/infra/security/{workspaceSecretStore,secretsEncryption}.ts, containerManager.ts, server.ts.

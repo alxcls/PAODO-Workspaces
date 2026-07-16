@@ -22,17 +22,20 @@ if (mode === "summary") {
     .slice(0, 5)
     .map(([file, count]) => ({ file, usedBy: count }));
 
-  const isolated = nodes
-    .filter((n) => !usedByCount[n.id] && !edges.some((e) => e.source === n.id))
-    .map((n) => n.id);
+  const isolated = nodes.filter((n) => !usedByCount[n.id] && !edges.some((e) => e.source === n.id)).map((n) => n.id);
 
   console.log(JSON.stringify({ files: nodes.length, imports: edges.length, layers, mostUsed, isolated }, null, 2));
-
 } else if (mode === "file") {
-  if (!arg) { console.error("Usage: query-graph file <relpath>"); process.exit(1); }
+  if (!arg) {
+    console.error("Usage: query-graph file <relpath>");
+    process.exit(1);
+  }
 
   const node = nodes.find((n) => n.id === arg || n.relPath === arg);
-  if (!node) { console.error(`File not found: ${arg}`); process.exit(1); }
+  if (!node) {
+    console.error(`File not found: ${arg}`);
+    process.exit(1);
+  }
 
   const uses = edges
     .filter((e) => e.source === node.id)
@@ -42,20 +45,28 @@ if (mode === "summary") {
     .filter((e) => e.target === node.id)
     .map((e) => ({ file: e.source, imports: e.importedNames, typeOnly: e.isTypeOnly }));
 
-  console.log(JSON.stringify({
-    file: node.relPath,
-    layer: LAYER_LABELS[node.layer] ?? node.layer,
-    description: node.description.join(" "),
-    exports: node.exportNames,
-    uses,
-    usedBy,
-  }, null, 2));
-
+  console.log(
+    JSON.stringify(
+      {
+        file: node.relPath,
+        layer: LAYER_LABELS[node.layer] ?? node.layer,
+        description: node.description.join(" "),
+        exports: node.exportNames,
+        uses,
+        usedBy,
+      },
+      null,
+      2,
+    ),
+  );
 } else if (mode === "layer") {
-  if (!arg) { console.error("Usage: query-graph layer <name>"); process.exit(1); }
+  if (!arg) {
+    console.error("Usage: query-graph layer <name>");
+    process.exit(1);
+  }
 
   const layerKey = Object.keys(LAYER_LABELS).find(
-    (k) => k === arg || LAYER_LABELS[k].toLowerCase() === arg.toLowerCase()
+    (k) => k === arg || LAYER_LABELS[k].toLowerCase() === arg.toLowerCase(),
   );
   if (!layerKey) {
     console.error(`Unknown layer: ${arg}. Valid: ${Object.keys(LAYER_LABELS).join(", ")}`);
@@ -74,10 +85,8 @@ if (mode === "summary") {
     }));
 
   console.log(JSON.stringify({ layer: LAYER_LABELS[layerKey], files }, null, 2));
-
 } else if (mode === "full") {
   console.log(JSON.stringify({ nodes, edges }, null, 2));
-
 } else {
   console.error(`Unknown mode: ${mode}. Valid: summary, full, file, layer`);
   process.exit(1);

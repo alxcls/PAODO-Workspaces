@@ -44,14 +44,20 @@ interface FormState {
 // ---------------------------------------------------------------------------
 
 const browserTz = (): string => {
-  try { return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC"; } catch { return "UTC"; }
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  } catch {
+    return "UTC";
+  }
 };
 
 const allTimezones = (): string[] => {
   try {
     const fn = (Intl as unknown as { supportedValuesOf?: (k: string) => string[] }).supportedValuesOf;
     if (typeof fn === "function") return fn("timeZone");
-  } catch { /* fall through */ }
+  } catch {
+    /* fall through */
+  }
   return [browserTz(), "UTC"];
 };
 
@@ -96,13 +102,34 @@ const toPayload = (f: FormState) => ({
 // ---------------------------------------------------------------------------
 
 const CalendarIcon = () => (
-  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-    <rect x="3" y="4" width="18" height="18" rx="2" /><line x1="3" y1="9" x2="21" y2="9" />
-    <line x1="8" y1="2" x2="8" y2="6" /><line x1="16" y1="2" x2="16" y2="6" />
+  <svg
+    viewBox="0 0 24 24"
+    width="16"
+    height="16"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+  >
+    <rect x="3" y="4" width="18" height="18" rx="2" />
+    <line x1="3" y1="9" x2="21" y2="9" />
+    <line x1="8" y1="2" x2="8" y2="6" />
+    <line x1="16" y1="2" x2="16" y2="6" />
   </svg>
 );
 
-function Field({ label, hint, grow, children }: { label: string; hint?: string; grow?: boolean; children: React.ReactNode }) {
+function Field({
+  label,
+  hint,
+  grow,
+  children,
+}: {
+  label: string;
+  hint?: string;
+  grow?: boolean;
+  children: React.ReactNode;
+}) {
   return (
     <label className={`flex flex-col gap-1.5 min-w-0 ${grow ? "flex-1 min-h-0" : ""}`}>
       <span className="flex items-baseline justify-between gap-2">
@@ -128,7 +155,9 @@ function LiveToggle({ enabled, onToggle }: { enabled: boolean; onToggle: () => v
         {enabled ? "Live" : "Paused"}
       </span>
       <span className={`relative w-9 h-5 rounded-full transition-colors ${enabled ? "bg-primary" : "bg-border"}`}>
-        <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow-sm transition-all ${enabled ? "left-[18px]" : "left-0.5"}`} />
+        <span
+          className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow-sm transition-all ${enabled ? "left-[18px]" : "left-0.5"}`}
+        />
       </span>
     </button>
   );
@@ -177,19 +206,26 @@ function ScheduleModal({ workspaceId, onClose, onStatus }: ModalProps) {
         if (!res.ok) throw new Error(`Failed to load schedule (${res.status})`);
         const s = (await res.json()) as Schedule | null;
         if (!alive) return;
-        if (s) { setForm(toForm(s)); onStatus(s.enabled); }
+        if (s) {
+          setForm(toForm(s));
+          onStatus(s.enabled);
+        }
       } catch (err) {
         if (alive) setError(err instanceof Error ? err.message : "Failed to load schedule");
       } finally {
         if (alive) setLoading(false);
       }
     })();
-    return () => { alive = false; };
+    return () => {
+      alive = false;
+    };
   }, [url, onStatus]);
 
   // Dismiss on Escape.
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
@@ -219,10 +255,15 @@ function ScheduleModal({ workspaceId, onClose, onStatus }: ModalProps) {
   return (
     <div
       className="fixed inset-0 bg-[rgba(15,10,30,0.55)] flex items-center justify-center z-[1000] p-4 sm:p-6"
-      onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
     >
       <form
-        onSubmit={(e) => { e.preventDefault(); void save(); }}
+        onSubmit={(e) => {
+          e.preventDefault();
+          void save();
+        }}
         className="bg-bg rounded-2xl shadow-[0_24px_60px_rgba(15,10,30,0.35)] border border-border flex flex-col overflow-hidden w-[min(1120px,94vw)] h-[min(700px,90vh)]"
       >
         {/* Header */}
@@ -247,7 +288,9 @@ function ScheduleModal({ workspaceId, onClose, onStatus }: ModalProps) {
         ) : (
           <div className="flex-1 min-h-0 overflow-auto p-7 flex flex-col gap-6">
             {error && (
-              <div className="text-ms text-danger bg-danger-soft border border-danger/20 rounded-md px-3 py-2">{error}</div>
+              <div className="text-ms text-danger bg-danger-soft border border-danger/20 rounded-md px-3 py-2">
+                {error}
+              </div>
             )}
 
             {/* Prompt — primary writing surface */}
@@ -267,7 +310,9 @@ function ScheduleModal({ workspaceId, onClose, onStatus }: ModalProps) {
                 <Field label="Repeat every">
                   <div className="flex gap-2.5">
                     <input
-                      type="number" min={1} className="input input-sm basis-[84px] grow-0 shrink-0 text-center"
+                      type="number"
+                      min={1}
+                      className="input input-sm basis-[84px] grow-0 shrink-0 text-center"
                       value={form.intervalValue}
                       onChange={(e) => set("intervalValue", e.target.value)}
                     />
@@ -285,14 +330,23 @@ function ScheduleModal({ workspaceId, onClose, onStatus }: ModalProps) {
                 </Field>
 
                 <Field label="Timezone">
-                  <select className="input input-sm" value={form.timezone} onChange={(e) => set("timezone", e.target.value)}>
-                    {timezoneOptions.map((tz) => <option key={tz.value} value={tz.value}>{tz.label}</option>)}
+                  <select
+                    className="input input-sm"
+                    value={form.timezone}
+                    onChange={(e) => set("timezone", e.target.value)}
+                  >
+                    {timezoneOptions.map((tz) => (
+                      <option key={tz.value} value={tz.value}>
+                        {tz.label}
+                      </option>
+                    ))}
                   </select>
                 </Field>
 
                 <Field label="Start">
                   <input
-                    type="datetime-local" className="input input-sm"
+                    type="datetime-local"
+                    className="input input-sm"
                     value={form.startAt}
                     onChange={(e) => set("startAt", e.target.value)}
                   />
@@ -300,7 +354,8 @@ function ScheduleModal({ workspaceId, onClose, onStatus }: ModalProps) {
 
                 <Field label="End" hint="optional">
                   <input
-                    type="date" className="input input-sm"
+                    type="date"
+                    className="input input-sm"
                     value={form.endAt}
                     onChange={(e) => set("endAt", e.target.value)}
                   />
@@ -344,7 +399,8 @@ export default function SchedulePanel({ workspaceId }: Props) {
         onClick={() => setOpen(true)}
         className={`btn btn-ghost btn-sm ${active ? "text-primary" : ""}`}
       >
-        <CalendarIcon /><span>Schedule</span>
+        <CalendarIcon />
+        <span>Schedule</span>
       </button>
 
       {open && <ScheduleModal workspaceId={workspaceId} onClose={close} onStatus={setActive} />}

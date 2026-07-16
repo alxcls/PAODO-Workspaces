@@ -29,7 +29,9 @@ function buildHistory(): BaseMessage[] {
 
 // Asserts no AIMessage tool_call is left without its matching ToolMessage later in the array.
 function assertNoOrphans(messages: BaseMessage[]) {
-  const resultIds = new Set(messages.filter((m) => m instanceof ToolMessage).map((m) => (m as ToolMessage).tool_call_id));
+  const resultIds = new Set(
+    messages.filter((m) => m instanceof ToolMessage).map((m) => (m as ToolMessage).tool_call_id),
+  );
   for (const m of messages) {
     if (m instanceof AIMessage && Array.isArray(m.tool_calls)) {
       for (const tc of m.tool_calls) expect(resultIds.has(tc.id!)).toBe(true);

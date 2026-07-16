@@ -13,6 +13,7 @@ Containers are started eagerly when an agent session begins and stopped after an
 The `WORKSPACES_VOLUME_NAME` env var must be set to the runtime Docker volume name (compose project prefix + `_workspaces`). Run `docker volume ls | grep workspaces` to find the exact name. Requires Docker Engine ≥ 25.
 
 Consequences
+
 - Strong OS-level isolation for all agent operations; no app-level path check can be bypassed. "OS-level isolation" here means cross-workspace and host-filesystem isolation: other workspaces are never mounted in a container, and host paths are not visible inside it. It does not mean isolation from the container's own base image — a symlink inside `/workspace` pointing to a container-internal path (e.g. `/etc/passwd`) will still be followed. This is acceptable because the base image contains no sensitive data, and `execute_command` already gives the agent root access inside the container.
 - The `realpath` + `startsWith` boundary check in file tools is no longer needed — see superseded `symlink-resolution-before-boundary-check.md`.
 - Global workspace lock (`[R]`) is enforced at OS level via two complementary mechanisms:
@@ -23,6 +24,7 @@ Consequences
 - The platform accesses the host Docker daemon via a socket proxy, limiting blast radius to the 7 whitelisted API groups — see [`docker-socket-proxy.md`](docker-socket-proxy.md).
 
 Alternatives considered
+
 - Single host process with chroot-like isolation: lighter but weaker isolation and insufficient for runtime differences.
 - VM per workspace: stronger isolation but too heavyweight for our use case.
 

@@ -47,7 +47,8 @@ export function formatSkill(skill: SkillDefinition): string {
 
 export class ListAgentsTool extends StructuredTool<typeof schema> {
   name = "list_agents";
-  description = "List all agents this workspace can contact via call_agent, with each agent's declared skills (skill ids, input fields, return shape, and examples when supplied)";
+  description =
+    "List all agents this workspace can contact via call_agent, with each agent's declared skills (skill ids, input fields, return shape, and examples when supplied)";
   schema = schema;
 
   constructor(
@@ -69,7 +70,7 @@ export class ListAgentsTool extends StructuredTool<typeof schema> {
         const skills = await this.loadSkillsFn(ws.dir);
         if (!skills.length) return `- ${ws.name}\n  (no skills declared — not callable)`;
         return `- ${ws.name}\n${skills.map(formatSkill).join("\n")}`;
-      })
+      }),
     );
 
     return `Connected agents:\n\n${sections.join("\n\n")}`;

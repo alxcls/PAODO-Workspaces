@@ -56,7 +56,12 @@ describe("computeNextRun", () => {
 
   it("keeps wall-clock time across a DST transition for day intervals", () => {
     // Europe/Brussels springs forward on 2026-03-29 (CET +01 -> CEST +02).
-    const e = entry({ startAt: "2026-03-27T09:00", intervalUnit: "day", intervalValue: 1, timezone: "Europe/Brussels" });
+    const e = entry({
+      startAt: "2026-03-27T09:00",
+      intervalUnit: "day",
+      intervalValue: 1,
+      timezone: "Europe/Brussels",
+    });
     const next = computeNextRun(e, iso("2026-03-30T00:00:00Z"));
     expect(next).not.toBeNull();
     // 09:00 local must be preserved despite the offset change.
@@ -75,7 +80,13 @@ describe("computeNextRun", () => {
   });
 
   it("returns null once past the end bound (date-only end is inclusive of that day)", () => {
-    const e = entry({ startAt: "2026-07-13T09:00", intervalUnit: "day", intervalValue: 1, endAt: "2026-07-15", timezone: "UTC" });
+    const e = entry({
+      startAt: "2026-07-13T09:00",
+      intervalUnit: "day",
+      intervalValue: 1,
+      endAt: "2026-07-15",
+      timezone: "UTC",
+    });
     // After the end date entirely -> expired.
     expect(computeNextRun(e, iso("2026-07-16T00:00:00Z"))).toBeNull();
     // On the 14th the schedule is still live.

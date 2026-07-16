@@ -30,7 +30,10 @@ export function decodeChunked(raw: Buffer): { body: Buffer; done: boolean } {
     if (lineEnd === -1) break;
     const size = parseInt(raw.toString("latin1", pos, lineEnd).trim(), 16);
     if (Number.isNaN(size)) break;
-    if (size === 0) { done = true; break; }
+    if (size === 0) {
+      done = true;
+      break;
+    }
     const dataStart = lineEnd + 2;
     if (dataStart + size + 2 > raw.length) break; // rest of this chunk hasn't arrived yet
     out.push(raw.subarray(dataStart, dataStart + size));
@@ -73,7 +76,11 @@ export function collectBody(src: net.Socket, headers: Record<string, string>, re
         return true;
       }
       const { body, done } = decodeChunked(raw);
-      if (done) { cleanup(); resolve(body); return true; }
+      if (done) {
+        cleanup();
+        resolve(body);
+        return true;
+      }
       if (raw.length > MAX_BODY_SUBSTITUTE) {
         cleanup();
         reject(new Error("chunked request body exceeds substitution cap"));
@@ -81,8 +88,14 @@ export function collectBody(src: net.Socket, headers: Record<string, string>, re
       }
       return false;
     };
-    const onData = (chunk: Buffer) => { raw = raw.length ? Buffer.concat([raw, chunk]) : chunk; settle(); };
-    const onError = (err: Error) => { cleanup(); reject(err); };
+    const onData = (chunk: Buffer) => {
+      raw = raw.length ? Buffer.concat([raw, chunk]) : chunk;
+      settle();
+    };
+    const onError = (err: Error) => {
+      cleanup();
+      reject(err);
+    };
     const onEnd = () => {
       cleanup();
       resolve(contentLength >= 0 ? raw.subarray(0, Math.max(0, contentLength)) : decodeChunked(raw).body);

@@ -128,11 +128,7 @@ export function createRedactTransform(redactMap: TokenMap): Transform {
 // Substitute every request-line/header place a secret can ride: the request target (path + query
 // string) and all header values. Mutates `headers` in place; returns the substituted path.
 // The request body is handled separately by forwardRequestBody (it must be buffered to rewrite).
-function substituteRequestMeta(
-  requestPath: string,
-  headers: Record<string, string>,
-  tokenMap: TokenMap,
-): string {
+function substituteRequestMeta(requestPath: string, headers: Record<string, string>, tokenMap: TokenMap): string {
   for (const k of Object.keys(headers)) headers[k] = substituteHeaderValue(headers[k], tokenMap);
   return substituteTokens(requestPath, tokenMap);
 }
@@ -237,11 +233,20 @@ export class CredentialProxy {
         const upstream = net.connect({ host: hostname, port, lookup: this.lookup });
         let established = false;
         upstream.on("error", () => {
-          if (!established) { try { socket.write("HTTP/1.1 403 Forbidden\r\n\r\n"); } catch { /* socket gone */ } }
+          if (!established) {
+            try {
+              socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
+            } catch {
+              /* socket gone */
+            }
+          }
           socket.destroy();
           upstream.destroy();
         });
-        socket.on("error", () => { socket.destroy(); upstream.destroy(); });
+        socket.on("error", () => {
+          socket.destroy();
+          upstream.destroy();
+        });
         upstream.on("connect", () => {
           established = true;
           socket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
@@ -374,7 +379,10 @@ export class CredentialProxy {
   ): Promise<void> {
     // e.g. GET http://example.com/path HTTP/1.1
     const match = /^(\w+)\s+http:\/\/([^/\s]+)(\/[^\s]*)?\s/.exec(statusLine);
-    if (!match) { socket.destroy(); return; }
+    if (!match) {
+      socket.destroy();
+      return;
+    }
 
     const [, method, hostHeader, requestPath = "/"] = match;
     const colonIdx = hostHeader.lastIndexOf(":");
@@ -400,14 +408,11 @@ export class CredentialProxy {
     const path = substituteRequestMeta(requestPath, headers, tokenMap);
 
     const startUpstream = () =>
-      http.request(
-        { hostname, port, method, path, headers, lookup: this.lookup },
-        (upstreamRes) => {
-          socket.write(buildResponseHead(upstreamRes));
-          upstreamRes.pipe(socket);
-          upstreamRes.on("error", () => socket.destroy());
-        },
-      );
+      http.request({ hostname, port, method, path, headers, lookup: this.lookup }, (upstreamRes) => {
+        socket.write(buildResponseHead(upstreamRes));
+        upstreamRes.pipe(socket);
+        upstreamRes.on("error", () => socket.destroy());
+      });
 
     await this.forwardRequestBody(socket, headers, remaining, tokenMap, startUpstream, hostname);
   }

@@ -17,11 +17,7 @@ import { WORKSPACES_ROOT } from "./lib/infra/paths";
 import { getWorkspaceRules } from "./lib/infra/security/workspaceSecretStore";
 import { setTodos } from "./lib/workspace/todoStore";
 import { loadIndex } from "./lib/workspace/conversationStore";
-import {
-  addConnection,
-  removeConnection,
-  getConnectionCount,
-} from "./lib/infra/realtime/wsHub";
+import { addConnection, removeConnection, getConnectionCount } from "./lib/infra/realtime/wsHub";
 import { ensureWatcher, stopWatcher, markSelfWrite, stopAllWatchers } from "./lib/workspace/workspaceWatcher";
 import {
   AuthFailureTracker,
@@ -135,7 +131,7 @@ httpServer.on("upgrade", (req, socket, head) => {
     }
     if (wsAuthResult === "challenge" || wsAuthResult === "unauthorized") {
       if (wsAuthResult === "unauthorized") log.warn({ ip: wsIp, event: "auth_unauthorized" }, "auth unauthorized");
-      socket.write("HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: Basic realm=\"App\"\r\n\r\n");
+      socket.write('HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: Basic realm="App"\r\n\r\n');
       socket.destroy();
       return;
     }

@@ -47,25 +47,32 @@ function baseTurn(over: Record<string, unknown> = {}) {
 }
 
 describe("usageStore", () => {
-  beforeEach(() => { vi.resetModules(); });
+  beforeEach(() => {
+    vi.resetModules();
+  });
 
   it("appends one JSONL line per turn", async () => {
     const store = await freshStore();
     store.appendUsage(baseTurn());
     store.appendUsage(baseTurn());
-    const lines = fs.readFileSync(FILE, "utf-8").split("\n").filter((l) => l.trim());
+    const lines = fs
+      .readFileSync(FILE, "utf-8")
+      .split("\n")
+      .filter((l) => l.trim());
     expect(lines).toHaveLength(2);
     expect(JSON.parse(lines[0]).inputTokens).toBe(100);
   });
 
   it("round-trips user input, reasoning text, agent response, and tool output via getSessionDetail", async () => {
     const store = await freshStore();
-    store.appendUsage(baseTurn({
-      userInput: "fix the bug",
-      reasoningText: "I should read the file first",
-      outputText: "Done — the bug was a missing null check.",
-      toolCalls: [{ name: "file_read", args: { file_path: "a.ts" }, output: "line1\nline2", status: "ok" }],
-    }));
+    store.appendUsage(
+      baseTurn({
+        userInput: "fix the bug",
+        reasoningText: "I should read the file first",
+        outputText: "Done — the bug was a missing null check.",
+        toolCalls: [{ name: "file_read", args: { file_path: "a.ts" }, output: "line1\nline2", status: "ok" }],
+      }),
+    );
     const detail = store.getSessionDetail("s1");
     expect(detail).toHaveLength(1);
     expect(detail[0].userInput).toBe("fix the bug");
@@ -77,12 +84,14 @@ describe("usageStore", () => {
 
   it("listUsageLight strips heavy content but keeps tokens and tool names", async () => {
     const store = await freshStore();
-    store.appendUsage(baseTurn({
-      userInput: "secret prompt",
-      reasoningText: "secret reasoning",
-      outputText: "secret response",
-      toolCalls: [{ name: "execute_command", args: { command: "ls" }, output: "huge output", status: "error" }],
-    }));
+    store.appendUsage(
+      baseTurn({
+        userInput: "secret prompt",
+        reasoningText: "secret reasoning",
+        outputText: "secret response",
+        toolCalls: [{ name: "execute_command", args: { command: "ls" }, output: "huge output", status: "error" }],
+      }),
+    );
     const light = store.listUsageLight();
     expect(light).toHaveLength(1);
     const rec = light[0] as unknown as Record<string, unknown>;
@@ -117,9 +126,18 @@ describe("usageStore", () => {
   it("toLight defaults a missing tool status to ok (tolerates pre-status records)", async () => {
     const store = await freshStore();
     // Simulate a record written before status existed — no status on the tool call.
-    store.appendUsage(baseTurn({
-      toolCalls: [{ name: "file_read", args: {}, output: "x" } as unknown as { name: string; args: Record<string, unknown>; output: string; status: "ok" }],
-    }));
+    store.appendUsage(
+      baseTurn({
+        toolCalls: [
+          { name: "file_read", args: {}, output: "x" } as unknown as {
+            name: string;
+            args: Record<string, unknown>;
+            output: string;
+            status: "ok";
+          },
+        ],
+      }),
+    );
     expect(store.listUsageLight()[0].toolCalls).toEqual([{ name: "file_read", status: "ok" }]);
   });
 
@@ -128,10 +146,13 @@ describe("usageStore", () => {
     fs.mkdirSync(ROOT, { recursive: true });
     process.env.WORKSPACES_ROOT = ROOT;
     // Seed the file oldest-first; the store should expose it newest-first.
-    fs.writeFileSync(FILE, [
-      JSON.stringify({ id: "1", timestamp: "2026-01-01T00:00:00Z", ...baseTurn() }),
-      JSON.stringify({ id: "2", timestamp: "2026-01-02T00:00:00Z", ...baseTurn() }),
-    ].join("\n") + "\n");
+    fs.writeFileSync(
+      FILE,
+      [
+        JSON.stringify({ id: "1", timestamp: "2026-01-01T00:00:00Z", ...baseTurn() }),
+        JSON.stringify({ id: "2", timestamp: "2026-01-02T00:00:00Z", ...baseTurn() }),
+      ].join("\n") + "\n",
+    );
     clearGlobalLog();
     vi.resetModules();
     const store = await import("./usageStore");

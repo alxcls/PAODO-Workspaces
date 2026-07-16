@@ -9,18 +9,41 @@ import type { InitialConversation } from "@/lib/client/hooks/useConversations";
 
 const mdComponents: Components = {
   table: ({ node: _n, ...props }) => (
-    <div className="table-wrap"><table {...props} /></div>
+    <div className="table-wrap">
+      <table {...props} />
+    </div>
   ),
 };
 
 const SendIcon = () => (
-  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+  <svg
+    viewBox="0 0 24 24"
+    width="16"
+    height="16"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+  >
     <line x1="12" y1="19" x2="12" y2="5" />
     <polyline points="5 12 12 5 19 12" />
   </svg>
 );
 
-export default function ChatPanel({ workspaceId, conversationId, initialConversation, onAgentTurnComplete, onRunStart }: { workspaceId: string; conversationId: string | null; initialConversation?: InitialConversation | null; onAgentTurnComplete?: () => void; onRunStart?: () => void }) {
+export default function ChatPanel({
+  workspaceId,
+  conversationId,
+  initialConversation,
+  onAgentTurnComplete,
+  onRunStart,
+}: {
+  workspaceId: string;
+  conversationId: string | null;
+  initialConversation?: InitialConversation | null;
+  onAgentTurnComplete?: () => void;
+  onRunStart?: () => void;
+}) {
   const [draft, setDraft] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -60,16 +83,21 @@ export default function ChatPanel({ workspaceId, conversationId, initialConversa
   // Load the selected conversation: render its saved history, then re-attach to its in-flight run
   // (if any) to watch it continue live. Detaches the previous conversation's stream on switch.
   useEffect(() => {
-    setDraft("");
     pinnedRef.current = true;
-    if (!conversationId) { reset(); return; }
+    if (!conversationId) {
+      reset();
+      return;
+    }
     let cancelled = false;
     // Fast path: the inline payload that came with the conversation list, used once on first paint.
     if (initialConversation?.id === conversationId && consumedInitialRef.current !== conversationId) {
       consumedInitialRef.current = conversationId;
       hydrate(initialConversation.transcript);
       if (initialConversation.running) attachLive(initialConversation.userInput);
-      return () => { cancelled = true; detach(); };
+      return () => {
+        cancelled = true;
+        detach();
+      };
     }
     (async () => {
       const res = await fetch(`/api/workspaces/${workspaceId}/conversations/${conversationId}`);
@@ -78,7 +106,10 @@ export default function ChatPanel({ workspaceId, conversationId, initialConversa
       hydrate(data.transcript);
       if (data.running) attachLive(data.userInput);
     })();
-    return () => { cancelled = true; detach(); };
+    return () => {
+      cancelled = true;
+      detach();
+    };
   }, [workspaceId, conversationId, hydrate, attachLive, reset, detach, initialConversation]);
 
   useEffect(() => {
@@ -103,9 +134,7 @@ export default function ChatPanel({ workspaceId, conversationId, initialConversa
     <div className="flex flex-col flex-1 min-h-0">
       <div ref={scrollRef} onScroll={onScroll} className="flex-1 overflow-auto p-[14px_16px] flex flex-col gap-2">
         {messages.length === 0 && !streaming && (
-          <div className="text-text-3 text-ms text-center mt-6">
-            Ask the agent anything about this workspace.
-          </div>
+          <div className="text-text-3 text-ms text-center mt-6">Ask the agent anything about this workspace.</div>
         )}
 
         {messages.map((m, i) => {
@@ -113,8 +142,13 @@ export default function ChatPanel({ workspaceId, conversationId, initialConversa
             const content = m.content?.trim();
             if (!content) return null;
             return (
-              <div key={i} className="text-[11.5px] text-text-3 italic px-0.5 py-0.5 leading-[1.5] [&_strong]:font-semibold [&_strong]:not-italic">
-                <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>{content}</ReactMarkdown>
+              <div
+                key={i}
+                className="text-[11.5px] text-text-3 italic px-0.5 py-0.5 leading-[1.5] [&_strong]:font-semibold [&_strong]:not-italic"
+              >
+                <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
+                  {content}
+                </ReactMarkdown>
               </div>
             );
           }
@@ -122,19 +156,27 @@ export default function ChatPanel({ workspaceId, conversationId, initialConversa
             const content = m.content?.trim();
             if (!content) return null;
             return (
-              <div key={i} className="text-[11.5px] text-text-3 italic px-0.5 py-0.5 leading-[1.5] [&_strong]:font-semibold [&_strong]:not-italic">
-                <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>{content}</ReactMarkdown>
+              <div
+                key={i}
+                className="text-[11.5px] text-text-3 italic px-0.5 py-0.5 leading-[1.5] [&_strong]:font-semibold [&_strong]:not-italic"
+              >
+                <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
+                  {content}
+                </ReactMarkdown>
               </div>
             );
           }
           if (m.role === "tool_start") {
             return (
               <div key={i} className="flex flex-col gap-1.5 mb-1.5">
-                <div className={`font-mono text-[12.5px] leading-[1.4] text-primary-2 px-0.5${m.toolDone ? " opacity-45" : ""}`}>
-                  {m.toolDone
-                    ? <span className="text-primary-2 mr-0.5">✓</span>
-                    : <span className="inline-block w-2 h-2 border-[1.5px] border-primary-2 border-t-transparent rounded-full animate-[tool-spin_0.7s_linear_infinite] align-middle mr-0.5" />
-                  }{" "}
+                <div
+                  className={`font-mono text-[12.5px] leading-[1.4] text-primary-2 px-0.5${m.toolDone ? " opacity-45" : ""}`}
+                >
+                  {m.toolDone ? (
+                    <span className="text-primary-2 mr-0.5">✓</span>
+                  ) : (
+                    <span className="inline-block w-2 h-2 border-[1.5px] border-primary-2 border-t-transparent rounded-full animate-[tool-spin_0.7s_linear_infinite] align-middle mr-0.5" />
+                  )}{" "}
                   <b>{toolLabel(m.toolName ?? "")}</b>
                   {m.toolSummary && <span className="text-text-3"> {m.toolSummary}</span>}
                 </div>
@@ -171,8 +213,12 @@ export default function ChatPanel({ workspaceId, conversationId, initialConversa
           if (m.role === "usage") {
             return (
               <div key={i} className="flex justify-start gap-2.5 px-0.5 text-2xs select-none">
-                <span title="Input tokens" className="text-sky-800">↑ {m.inputTokens?.toLocaleString()}</span>
-                <span title="Output tokens" className="text-orange-800">↓ {m.outputTokens?.toLocaleString()}</span>
+                <span title="Input tokens" className="text-sky-800">
+                  ↑ {m.inputTokens?.toLocaleString()}
+                </span>
+                <span title="Output tokens" className="text-orange-800">
+                  ↓ {m.outputTokens?.toLocaleString()}
+                </span>
               </div>
             );
           }
@@ -182,7 +228,9 @@ export default function ChatPanel({ workspaceId, conversationId, initialConversa
             return (
               <div key={i} className="flex justify-start">
                 <div className="bubble-agent md-prose">
-                  <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>{content}</ReactMarkdown>
+                  <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
+                    {content}
+                  </ReactMarkdown>
                 </div>
               </div>
             );
@@ -199,7 +247,9 @@ export default function ChatPanel({ workspaceId, conversationId, initialConversa
         {streaming && pendingTools === 0 && (
           <div className="flex justify-start">
             <div className="bubble-agent md-prose typing">
-              <span /><span /><span />
+              <span />
+              <span />
+              <span />
             </div>
           </div>
         )}
@@ -222,7 +272,10 @@ export default function ChatPanel({ workspaceId, conversationId, initialConversa
           }}
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSubmit(); }
+            if (e.key === "Enter" && !e.shiftKey) {
+              e.preventDefault();
+              handleSubmit();
+            }
           }}
         />
         {streaming ? (

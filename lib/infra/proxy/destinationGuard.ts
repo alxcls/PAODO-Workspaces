@@ -82,9 +82,7 @@ export function makeGuardedLookup(isBlocked: (ip: string) => boolean = isBlocked
   return (hostname, options, callback) => {
     dns.lookup(hostname, options, (err, address, family) => {
       if (err) return callback(err, address, family);
-      const blocked = Array.isArray(address)
-        ? address.some((a) => isBlocked(a.address))
-        : isBlocked(address);
+      const blocked = Array.isArray(address) ? address.some((a) => isBlocked(a.address)) : isBlocked(address);
       if (blocked) {
         const e = new Error(`blocked destination: ${hostname}`) as NodeJS.ErrnoException;
         e.code = "EBLOCKED";

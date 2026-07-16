@@ -17,7 +17,11 @@ function bearer(req: Request): string {
 
 const methodNotAllowed = () =>
   Response.json(
-    { jsonrpc: "2.0", error: { code: -32000, message: "Method not allowed. This MCP endpoint is stateless; use POST." }, id: null },
+    {
+      jsonrpc: "2.0",
+      error: { code: -32000, message: "Method not allowed. This MCP endpoint is stateless; use POST." },
+      id: null,
+    },
     { status: 405 },
   );
 

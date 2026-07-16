@@ -15,7 +15,10 @@ import { toolError } from "../toolUtils";
 const schema = z.object({
   source_path: z.string().describe("Path of the workspace file to upload (relative to workspace root)"),
   drive_name: z.string().describe("Drive to upload into, by name or id"),
-  dest_path: z.string().optional().describe("Destination path within the drive. Defaults to the source file name at the drive root."),
+  dest_path: z
+    .string()
+    .optional()
+    .describe("Destination path within the drive. Defaults to the source file name at the drive root."),
 });
 
 export class DriveUploadTool extends StructuredTool<typeof schema> {
@@ -24,7 +27,10 @@ export class DriveUploadTool extends StructuredTool<typeof schema> {
 If a file already exists at the destination it is overwritten (newest wins) and the result says so.`;
   schema = schema;
 
-  constructor(private workspaceId: string, private workspaceDir: string) {
+  constructor(
+    private workspaceId: string,
+    private workspaceDir: string,
+  ) {
     super();
   }
 

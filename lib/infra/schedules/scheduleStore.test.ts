@@ -45,7 +45,9 @@ function entry(store: Store, over: Partial<Parameters<Store["setSchedule"]>[0]> 
 }
 
 let store: Store;
-beforeEach(async () => { store = await freshStore(); });
+beforeEach(async () => {
+  store = await freshStore();
+});
 
 describe("scheduleStore", () => {
   it("returns null before anything is set", () => {
@@ -69,7 +71,12 @@ describe("scheduleStore", () => {
 
   it("recordRun updates status, snippet, timestamps and next-run atomically", () => {
     store.setSchedule(entry(store));
-    store.recordRun("w1", { at: "2026-07-13T09:00:05.000Z", status: "ok", snippet: "done", nextRunAt: "2026-07-14T09:00:00.000Z" });
+    store.recordRun("w1", {
+      at: "2026-07-13T09:00:05.000Z",
+      status: "ok",
+      snippet: "done",
+      nextRunAt: "2026-07-14T09:00:00.000Z",
+    });
     const s = store.getSchedule("w1");
     expect(s?.lastRunStatus).toBe("ok");
     expect(s?.lastRunSnippet).toBe("done");

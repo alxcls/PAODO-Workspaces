@@ -54,7 +54,11 @@ describe("encryption at rest", () => {
 
   it("supports multiple allowed hosts per secret", async () => {
     const store = await freshStore();
-    store.setSecret("ws1", "GITHUB_PAT", "ghp_secret", ["github.com", "api.GitHub.com", " https://api.github.com/path "]);
+    store.setSecret("ws1", "GITHUB_PAT", "ghp_secret", [
+      "github.com",
+      "api.GitHub.com",
+      " https://api.github.com/path ",
+    ]);
 
     const meta = store.listSecretMeta("ws1");
     expect(meta[0].domains).toEqual(["api.github.com", "github.com"]);
@@ -127,7 +131,7 @@ describe("reloadSecretStore (credential-proxy sidecar reader)", () => {
     // instance sharing the same file) mutates secrets on disk. Only reloadSecretStore() makes the
     // reader see them.
     const reader = await freshStore();
-    reader.setSecret("ws1", "K1", "v1", ["api.openai.com"]); 
+    reader.setSecret("ws1", "K1", "v1", ["api.openai.com"]);
     expect(reader.listSecretWorkspaceIds()).toEqual(["ws1"]);
 
     const app = await freshStore(); // fresh in-memory instance, same FILE on disk

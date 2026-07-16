@@ -11,9 +11,16 @@ import EnvVarsBlock from "@/components/home/EnvVarsBlock";
 import McpBlock from "@/components/home/McpBlock";
 import TopBar from "@/components/layout/TopBar";
 
-interface WorkspaceItem { id: string; name: string; createdAt: string; }
+interface WorkspaceItem {
+  id: string;
+  name: string;
+  createdAt: string;
+}
 
-interface TreeNode { type: "file" | "directory"; children?: TreeNode[]; }
+interface TreeNode {
+  type: "file" | "directory";
+  children?: TreeNode[];
+}
 
 function countFiles(nodes: TreeNode[]): number {
   let n = 0;
@@ -27,7 +34,9 @@ function countFiles(nodes: TreeNode[]): number {
 function formatDate(iso: string) {
   try {
     return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
-  } catch { return "—"; }
+  } catch {
+    return "—";
+  }
 }
 
 export default function HomePage() {
@@ -49,7 +58,19 @@ export default function HomePage() {
     if (res.ok) setWorkspaces((await res.json()) as WorkspaceItem[]);
   }, []);
 
-  useEffect(() => { fetchWorkspaces(); }, [fetchWorkspaces]);
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/workspaces")
+      .then(async (res) => {
+        if (!res.ok) return;
+        const items = (await res.json()) as WorkspaceItem[];
+        if (!cancelled) setWorkspaces(items);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     fetch("/api/config")
@@ -61,20 +82,35 @@ export default function HomePage() {
   const selected = workspaces.find((w) => w.id === selectedId);
 
   useEffect(() => {
-    if (!selectedId) { setFileCount(null); return; }
-    setFileCount(null);
+    if (!selectedId) return;
+    let cancelled = false;
     fetch(`/api/workspaces/${selectedId}/files`)
       .then((r) => r.json())
-      .then((data) => setFileCount(countFiles((data as { tree: TreeNode[] }).tree ?? [])))
-      .catch(() => setFileCount(0));
+      .then((data) => {
+        if (!cancelled) setFileCount(countFiles((data as { tree: TreeNode[] }).tree ?? []));
+      })
+      .catch(() => {
+        if (!cancelled) setFileCount(0);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [selectedId]);
 
   useEffect(() => {
-    if (!selectedId) { setDescription(""); return; }
+    if (!selectedId) return;
+    let cancelled = false;
     fetch(`/api/workspaces/${selectedId}`)
       .then((r) => r.json())
-      .then((ws: { description?: string }) => setDescription(ws.description ?? ""))
-      .catch(() => setDescription(""));
+      .then((ws: { description?: string }) => {
+        if (!cancelled) setDescription(ws.description ?? "");
+      })
+      .catch(() => {
+        if (!cancelled) setDescription("");
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [selectedId]);
 
   const handleDescriptionChange = async (next: string) => {
@@ -91,7 +127,13 @@ export default function HomePage() {
   };
 
   const handleSelect = (id: string) => {
-    setSelectedId(id); setConfirmDeleteId(null); setRenaming(false);
+    if (id !== selectedId) {
+      setFileCount(null);
+      setDescription("");
+    }
+    setSelectedId(id);
+    setConfirmDeleteId(null);
+    setRenaming(false);
   };
 
   const handleCreate = async () => {
@@ -99,30 +141,44 @@ export default function HomePage() {
     setIsCreating(true);
     try {
       const res = await fetch("/api/workspaces", {
-        method: "POST", headers: { "Content-Type": "application/json" },
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name }),
       });
       if (res.ok) {
         const ws = (await res.json()) as WorkspaceItem;
-        setNewName(""); setShowCreateForm(false);
-        await fetchWorkspaces(); setSelectedId(ws.id);
+        setNewName("");
+        setShowCreateForm(false);
+        await fetchWorkspaces();
+        setFileCount(null);
+        setDescription("");
+        setSelectedId(ws.id);
       }
-    } finally { setIsCreating(false); }
+    } finally {
+      setIsCreating(false);
+    }
   };
 
   const handleRename = async () => {
     if (!selectedId || !renameDraft.trim()) return;
     await fetch(`/api/workspaces/${selectedId}`, {
-      method: "PATCH", headers: { "Content-Type": "application/json" },
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name: renameDraft.trim() }),
     });
-    setRenaming(false); await fetchWorkspaces();
+    setRenaming(false);
+    await fetchWorkspaces();
   };
 
   const handleDelete = async (id: string) => {
     await fetch(`/api/workspaces/${id}`, { method: "DELETE" });
-    if (selectedId === id) setSelectedId(null);
-    setConfirmDeleteId(null); await fetchWorkspaces();
+    if (selectedId === id) {
+      setSelectedId(null);
+      setFileCount(null);
+      setDescription("");
+    }
+    setConfirmDeleteId(null);
+    await fetchWorkspaces();
   };
 
   return (
@@ -131,7 +187,14 @@ export default function HomePage() {
         left={
           <div className="flex items-center gap-2">
             <div className="w-[34px] h-[34px] rounded-[10px] overflow-hidden flex-shrink-0 inline-flex items-center justify-center bg-gradient-to-br from-primary to-primary-2">
-              <Image src="/paodo-logo.svg" alt="Paodo logo" width={34} height={34} className="block w-full h-full object-cover" unoptimized />
+              <Image
+                src="/paodo-logo.svg"
+                alt="Paodo logo"
+                width={34}
+                height={34}
+                className="block w-full h-full object-cover"
+                unoptimized
+              />
             </div>
             <span className="font-semibold tracking-[-0.01em] text-lg leading-none inline-flex items-center">
               PAODO WS agents
@@ -140,22 +203,46 @@ export default function HomePage() {
         }
         right={
           <div className="flex items-center gap-1">
-            <button className="btn btn-ghost text-ms gap-1.5 text-text-2 hover:text-primary" onClick={() => router.push("/dashboard")} title="Usage Dashboard">
+            <button
+              className="btn btn-ghost text-ms gap-1.5 text-text-2 hover:text-primary"
+              onClick={() => router.push("/dashboard")}
+              title="Usage Dashboard"
+            >
               <svg width="15" height="15" viewBox="0 0 15 15" fill="none">
-                <rect x="1" y="9" width="3" height="5" rx="0.5" fill="currentColor"/>
-                <rect x="6" y="5" width="3" height="9" rx="0.5" fill="currentColor"/>
-                <rect x="11" y="2" width="3" height="12" rx="0.5" fill="currentColor"/>
+                <rect x="1" y="9" width="3" height="5" rx="0.5" fill="currentColor" />
+                <rect x="6" y="5" width="3" height="9" rx="0.5" fill="currentColor" />
+                <rect x="11" y="2" width="3" height="12" rx="0.5" fill="currentColor" />
               </svg>
               Dashboard
             </button>
             {graphEnabled ? (
-              <button className="btn btn-ghost text-ms gap-1.5 text-text-2 hover:text-primary" onClick={() => router.push("/graph")} title="Agent Network">
+              <button
+                className="btn btn-ghost text-ms gap-1.5 text-text-2 hover:text-primary"
+                onClick={() => router.push("/graph")}
+                title="Agent Network"
+              >
                 <svg width="15" height="15" viewBox="0 0 15 15" fill="none">
                   <circle cx="2.5" cy="7.5" r="2" stroke="currentColor" strokeWidth="1.3" />
                   <circle cx="12.5" cy="3" r="2" stroke="currentColor" strokeWidth="1.3" />
                   <circle cx="12.5" cy="12" r="2" stroke="currentColor" strokeWidth="1.3" />
-                  <line x1="4.4" y1="6.5" x2="10.6" y2="3.6" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
-                  <line x1="4.4" y1="8.5" x2="10.6" y2="11.4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+                  <line
+                    x1="4.4"
+                    y1="6.5"
+                    x2="10.6"
+                    y2="3.6"
+                    stroke="currentColor"
+                    strokeWidth="1.3"
+                    strokeLinecap="round"
+                  />
+                  <line
+                    x1="4.4"
+                    y1="8.5"
+                    x2="10.6"
+                    y2="11.4"
+                    stroke="currentColor"
+                    strokeWidth="1.3"
+                    strokeLinecap="round"
+                  />
                 </svg>
                 Network
               </button>
@@ -175,25 +262,48 @@ export default function HomePage() {
           </button>
 
           {showCreateForm && (
-            <div className="flex-none bg-white border border-border rounded-card p-2.5 flex flex-col gap-2 shadow-sm" onClick={(e) => e.stopPropagation()}>
+            <div
+              className="flex-none bg-white border border-border rounded-card p-2.5 flex flex-col gap-2 shadow-sm"
+              onClick={(e) => e.stopPropagation()}
+            >
               <input
-                autoFocus className="input" placeholder="Workspace name"
-                value={newName} onChange={(e) => setNewName(e.target.value)}
+                autoFocus
+                className="input"
+                placeholder="Workspace name"
+                value={newName}
+                onChange={(e) => setNewName(e.target.value)}
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && newName.trim()) handleCreate();
-                  if (e.key === "Escape") { setShowCreateForm(false); setNewName(""); }
+                  if (e.key === "Escape") {
+                    setShowCreateForm(false);
+                    setNewName("");
+                  }
                 }}
               />
               <div className="flex gap-2 items-center">
-                <button className="btn btn-primary btn-sm" disabled={!newName.trim() || isCreating} onClick={handleCreate}>
+                <button
+                  className="btn btn-primary btn-sm"
+                  disabled={!newName.trim() || isCreating}
+                  onClick={handleCreate}
+                >
                   {isCreating ? "Creating…" : "Create"}
                 </button>
-                <button className="linkbtn" onClick={() => { setShowCreateForm(false); setNewName(""); }}>Cancel</button>
+                <button
+                  className="linkbtn"
+                  onClick={() => {
+                    setShowCreateForm(false);
+                    setNewName("");
+                  }}
+                >
+                  Cancel
+                </button>
               </div>
             </div>
           )}
 
-          <div className="flex-none mt-2 text-2xs font-semibold text-text-3 tracking-[.08em] px-1.5 uppercase">Workspaces</div>
+          <div className="flex-none mt-2 text-2xs font-semibold text-text-3 tracking-[.08em] px-1.5 uppercase">
+            Workspaces
+          </div>
           <div className="workspace-list h-0 flex-1 min-h-0 overflow-y-scroll overscroll-contain flex flex-col gap-1 mr-[-16px] pr-2">
             {workspaces.length === 0 && (
               <div className="flex-none text-text-3 text-ms p-[8px_6px]">No workspaces yet</div>
@@ -202,9 +312,10 @@ export default function HomePage() {
               <button
                 key={w.id}
                 className={`flex-none flex items-center justify-between min-h-[34px] px-2.5 py-[7px] border-0 border-l-[3px] bg-transparent rounded-[4px] cursor-pointer text-left text-sm w-full transition-[background,border-color,color] duration-[120ms] overflow-hidden
-                  ${w.id === selectedId
-                    ? "bg-primary-tint border-l-primary text-primary font-medium"
-                    : "border-l-transparent text-text hover:bg-black/[.04]"
+                  ${
+                    w.id === selectedId
+                      ? "bg-primary-tint border-l-primary text-primary font-medium"
+                      : "border-l-transparent text-text hover:bg-black/[.04]"
                   }`}
                 onClick={() => handleSelect(w.id)}
               >
@@ -223,15 +334,22 @@ export default function HomePage() {
               {renaming ? (
                 <div style={{ display: "flex", gap: 8, alignItems: "center", margin: "6px 0 6px" }}>
                   <input
-                    autoFocus className="input" style={{ fontSize: 20, fontWeight: 600, height: 44 }}
-                    value={renameDraft} onChange={(e) => setRenameDraft(e.target.value)}
+                    autoFocus
+                    className="input"
+                    style={{ fontSize: 20, fontWeight: 600, height: 44 }}
+                    value={renameDraft}
+                    onChange={(e) => setRenameDraft(e.target.value)}
                     onKeyDown={(e) => {
                       if (e.key === "Enter") handleRename();
                       if (e.key === "Escape") setRenaming(false);
                     }}
                   />
-                  <button className="btn btn-primary" onClick={handleRename}>Done</button>
-                  <button className="linkbtn" onClick={() => setRenaming(false)}>Cancel</button>
+                  <button className="btn btn-primary" onClick={handleRename}>
+                    Done
+                  </button>
+                  <button className="linkbtn" onClick={() => setRenaming(false)}>
+                    Cancel
+                  </button>
                 </div>
               ) : (
                 <h1 className="text-[34px] font-semibold tracking-[-0.02em] my-1.5 text-text">{selected.name}</h1>
@@ -246,7 +364,13 @@ export default function HomePage() {
                 <button className="btn btn-primary btn-lg" onClick={() => router.push(`/workspace/${selected.id}`)}>
                   Open workspace <span className="font-semibold">→</span>
                 </button>
-                <button className="btn btn-ghost btn-lg" onClick={() => { setRenameDraft(selected.name); setRenaming(true); }}>
+                <button
+                  className="btn btn-ghost btn-lg"
+                  onClick={() => {
+                    setRenameDraft(selected.name);
+                    setRenaming(true);
+                  }}
+                >
                   Rename
                 </button>
                 <button className="btn btn-danger btn-lg" onClick={() => setConfirmDeleteId(selected.id)}>
@@ -256,16 +380,22 @@ export default function HomePage() {
 
               {confirmDeleteId === selected.id && (
                 <div className="mt-2 p-[10px_14px] border border-danger bg-danger-soft rounded-card text-text flex items-center justify-between gap-3">
-                  <span>Delete <b>{selected.name}</b>? This can&apos;t be undone.</span>
+                  <span>
+                    Delete <b>{selected.name}</b>? This can&apos;t be undone.
+                  </span>
                   <div className="flex gap-2 items-center">
-                    <button className="btn btn-danger btn-sm" onClick={() => handleDelete(selected.id)}>Yes, delete</button>
-                    <button className="linkbtn" onClick={() => setConfirmDeleteId(null)}>Cancel</button>
+                    <button className="btn btn-danger btn-sm" onClick={() => handleDelete(selected.id)}>
+                      Yes, delete
+                    </button>
+                    <button className="linkbtn" onClick={() => setConfirmDeleteId(null)}>
+                      Cancel
+                    </button>
                   </div>
                 </div>
               )}
 
               <div className="mt-9 mb-2 text-xs font-semibold uppercase tracking-[.08em] text-text-3">Description</div>
-              <DescriptionBlock value={description} onChange={handleDescriptionChange} />
+              <DescriptionBlock key={selected.id} value={description} onChange={handleDescriptionChange} />
               <ApiAccessBlock key={selected.id} wsId={selected.id} />
               <McpBlock key={`mcp-${selected.id}`} wsId={selected.id} />
               <AgentLoopBlock key={`loop-${selected.id}`} wsId={selected.id} />

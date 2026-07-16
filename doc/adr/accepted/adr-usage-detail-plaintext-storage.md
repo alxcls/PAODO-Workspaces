@@ -26,6 +26,7 @@ light records, and the JSONL file is compacted to its last `MAX_RECORDS` lines o
 `COMPACT_AT` (1.5×), so heavy content on disk is bounded too.
 
 Consequences
+
 - The dashboard remains fully useful: operators can inspect exactly what each turn did, including
   raw tool I/O, without lossy redaction.
 - Anyone with host or tailnet access to the VPS can read all workspaces' prompts and tool output,
@@ -36,6 +37,7 @@ Consequences
   or encryption at rest.
 
 Alternatives considered
+
 - Redact secrets from tool output before persisting — rejected: unreliable (no robust secret
   detector), and it would strip exactly the detail the dashboard exists to show.
 - Auth-gate / authorize the usage routes per workspace — rejected for now: inconsistent with the

@@ -30,7 +30,14 @@ describe("models catalog", () => {
   it("exposes each provider's accepted reasoning-effort levels; empty hides the control", () => {
     // The levels come from the installed SDK unions and differ per provider; deepseek has no dial.
     expect(getProviderMetadata("anthropic").reasoningEfforts).toEqual(["low", "medium", "high", "xhigh", "max"]);
-    expect(getProviderMetadata("openai").reasoningEfforts).toEqual(["none", "minimal", "low", "medium", "high", "xhigh"]);
+    expect(getProviderMetadata("openai").reasoningEfforts).toEqual([
+      "none",
+      "minimal",
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+    ]);
     expect(getProviderMetadata("deepseek").reasoningEfforts).toEqual([]);
   });
 

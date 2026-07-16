@@ -8,21 +8,9 @@
 //
 // Keys are provider ids and must match SUPPORTED_PROVIDERS (lib/agent/buildModel.ts).
 export const AVAILABLE_MODELS: Record<string, readonly string[]> = {
-  anthropic: [
-    "claude-opus-4-8",
-    "claude-sonnet-5",
-    "claude-haiku-4-5",
-  ],
-  openai: [
-    "gpt-5.5",
-    "gpt-5.5-pro",
-    "gpt-5.4",
-    "gpt-5.1",
-    "gpt-5",
-  ],
-  deepseek: [
-    "deepseek-v4-pro",
-  ],
+  anthropic: ["claude-opus-4-8", "claude-sonnet-5", "claude-haiku-4-5"],
+  openai: ["gpt-5.5", "gpt-5.5-pro", "gpt-5.4", "gpt-5.1", "gpt-5"],
+  deepseek: ["deepseek-v4-pro"],
 };
 
 // The models offered for a provider (empty for an unknown provider). Drives the model picker dropdown.

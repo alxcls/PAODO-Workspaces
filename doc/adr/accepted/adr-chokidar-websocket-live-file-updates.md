@@ -22,6 +22,7 @@ When the first browser tab connects to a workspace, a chokidar watcher is starte
 The watcher is stopped (with a 5-second grace period) when the last client disconnects. The per-workspace connection registry lives in `wsHub.ts` on the Node.js `global` object so it survives hot-reloads (see [global-object-hot-reload-survival](global-object-hot-reload-survival.md)).
 
 On the client, the workspace page owns a single shared WebSocket and routes events to `FileViewer` via its imperative handle (`notifyFilesChanged` / `notifyFilesDeleted`). FileViewer itself holds no socket. On receipt:
+
 - `files_changed`: silently re-fetches the open file's content, unless the user has unsaved edits (`isDirtyRef`).
 - `files_deleted`: closes the viewer if the deleted path matches the open file.
 

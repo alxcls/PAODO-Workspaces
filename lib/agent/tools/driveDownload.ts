@@ -24,7 +24,10 @@ export class DriveDownloadTool extends StructuredTool<typeof schema> {
 Use this when you need an editable local copy. For a quick read without a copy, use drive_read.`;
   schema = schema;
 
-  constructor(private workspaceId: string, private runner: ExecRunner) {
+  constructor(
+    private workspaceId: string,
+    private runner: ExecRunner,
+  ) {
     super();
   }
 
@@ -51,10 +54,9 @@ Use this when you need an editable local copy. For a quick read without a copy, 
       // exec stdin is text-only, so the bytes ride in base64 and are decoded container-side. The
       // dest path is passed as a positional arg ($1), not interpolated into the script, so an odd
       // drive or file name cannot inject shell.
-      const write = await this.runner.exec(
-        ["sh", "-c", 'base64 -d > "$1"', "sh", `/workspace/${dest}`],
-        { stdin: content.toString("base64") },
-      );
+      const write = await this.runner.exec(["sh", "-c", 'base64 -d > "$1"', "sh", `/workspace/${dest}`], {
+        stdin: content.toString("base64"),
+      });
       if (write.code !== 0) return `Error: ${write.stderr || "write failed"}`;
     } catch (err: unknown) {
       return toolError(err);

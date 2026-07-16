@@ -35,7 +35,7 @@ services:
       - WORKSPACES_ROOT=/app/data
     volumes:
       - workspaces:/app/data
-      - /var/log/paodo:/logs   # host bind mount — security logs survive container wipe
+      - /var/log/paodo:/logs # host bind mount — security logs survive container wipe
     depends_on:
       - socket-proxy
     restart: unless-stopped

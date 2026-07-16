@@ -11,8 +11,12 @@ import type { GitResult, IGitClient } from "./gitClient";
 
 // _initRepo does a real `mkdir -p` of the git-dir parent, so tests need a writable root.
 let ROOT: string;
-beforeAll(() => { ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "ver-test-")); });
-afterAll(() => { fs.rmSync(ROOT, { recursive: true, force: true }); });
+beforeAll(() => {
+  ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "ver-test-"));
+});
+afterAll(() => {
+  fs.rmSync(ROOT, { recursive: true, force: true });
+});
 const opts = () => ({ rootDir: ROOT });
 
 type Call = { args: string[] };
@@ -38,7 +42,13 @@ class FakeGit implements IGitClient {
   // Convenience: the subcommand (first non-global token) of the nth recorded call.
   subcommand(n: number): string {
     const args = this.calls[n].args;
-    const i = args.findIndex((a, idx) => !a.startsWith("-") && args[idx - 1] !== "--git-dir" && args[idx - 1] !== "--work-tree" && args[idx - 1] !== "-c");
+    const i = args.findIndex(
+      (a, idx) =>
+        !a.startsWith("-") &&
+        args[idx - 1] !== "--git-dir" &&
+        args[idx - 1] !== "--work-tree" &&
+        args[idx - 1] !== "-c",
+    );
     return args[i];
   }
 }
@@ -166,7 +176,8 @@ describe("WorkspaceVersioning", () => {
     );
     expect(await empty.history(ID, DIR)).toEqual([]);
 
-    const log = "deadbeef\x1f1700000000\x1frun 1 (user prompt): hello\x1e\nabad1dea\x1f1699999999\x1fpre-run (user prompt): hi\x1e";
+    const log =
+      "deadbeef\x1f1700000000\x1frun 1 (user prompt): hello\x1e\nabad1dea\x1f1699999999\x1fpre-run (user prompt): hi\x1e";
     const ver = new WorkspaceVersioning(
       new FakeGit([
         { match: (j) => j.includes("rev-parse --verify HEAD"), result: { stdout: "deadbeef" } },
@@ -177,8 +188,18 @@ describe("WorkspaceVersioning", () => {
     const entries = await ver.history(ID, DIR);
     expect(entries).toEqual([
       // HEAD is "deadbeef", so only that entry is flagged current.
-      { sha: "deadbeef", message: "run 1 (user prompt): hello", timestamp: new Date(1700000000 * 1000).toISOString(), current: true },
-      { sha: "abad1dea", message: "pre-run (user prompt): hi", timestamp: new Date(1699999999 * 1000).toISOString(), current: false },
+      {
+        sha: "deadbeef",
+        message: "run 1 (user prompt): hello",
+        timestamp: new Date(1700000000 * 1000).toISOString(),
+        current: true,
+      },
+      {
+        sha: "abad1dea",
+        message: "pre-run (user prompt): hi",
+        timestamp: new Date(1699999999 * 1000).toISOString(),
+        current: false,
+      },
     ]);
   });
 
@@ -206,11 +227,26 @@ describe("WorkspaceVersioning", () => {
     );
     const stats = await ver.versionStats(ID, DIR, 5);
     expect(stats).toEqual([
-      { sha: "deadbee", age: "2 hours ago", subject: "run 2 (user prompt): edits", files: [{ path: "src/a.ts", add: 10, del: 4 }], totalAdd: 10, totalDel: 4, current: true },
       {
-        sha: "abad1de", age: "3 hours ago", subject: "run 1 (user prompt): init",
-        files: [{ path: "README.md", add: 5, del: 0 }, { path: "logo.png", add: -1, del: -1 }],
-        totalAdd: 5, totalDel: 0, current: false,
+        sha: "deadbee",
+        age: "2 hours ago",
+        subject: "run 2 (user prompt): edits",
+        files: [{ path: "src/a.ts", add: 10, del: 4 }],
+        totalAdd: 10,
+        totalDel: 4,
+        current: true,
+      },
+      {
+        sha: "abad1de",
+        age: "3 hours ago",
+        subject: "run 1 (user prompt): init",
+        files: [
+          { path: "README.md", add: 5, del: 0 },
+          { path: "logo.png", add: -1, del: -1 },
+        ],
+        totalAdd: 5,
+        totalDel: 0,
+        current: false,
       },
     ]);
   });

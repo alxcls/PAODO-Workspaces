@@ -67,7 +67,9 @@ describe("ExecCommandTool exit-code surfacing", () => {
 
   // A thrown exec failure (e.g. Docker down) surfaces as an Error line, not a crash.
   it("surfaces a hard exec failure (rejected streamExec) as an Error line", async () => {
-    const failingExec: StreamingExecFn = async () => { throw new Error("docker not running"); };
+    const failingExec: StreamingExecFn = async () => {
+      throw new Error("docker not running");
+    };
     const tool = makeTool(failingExec);
     const result = await tool.invoke({ command: "ls" });
     expect(result).toMatch(/^Error:/);
@@ -81,7 +83,10 @@ describe("ExecCommandTool run_in_background", () => {
   it("routes to backgroundExec (not streamExec) and returns the task ID + log path", async () => {
     const { fn, calls } = fakeBackground();
     let streamExecCalled = false;
-    const exec: StreamingExecFn = async () => { streamExecCalled = true; return { code: 0 }; };
+    const exec: StreamingExecFn = async () => {
+      streamExecCalled = true;
+      return { code: 0 };
+    };
     const tool = makeTool(exec, fn);
 
     const result = await tool.invoke({ command: "python3 -m http.server 8080", run_in_background: true });
@@ -99,15 +104,20 @@ describe("ExecCommandTool run_in_background", () => {
     const controller = new AbortController();
     controller.abort();
 
-    const result = await tool.invoke({ command: "npm run dev", run_in_background: true }, { signal: controller.signal });
+    const result = await tool.invoke(
+      { command: "npm run dev", run_in_background: true },
+      { signal: controller.signal },
+    );
 
-    expect(sawAbort()).toBe(false);           // background path never wires the abort signal
+    expect(sawAbort()).toBe(false); // background path never wires the abort signal
     expect(result).toContain("task ID: task-123");
   });
 
   // A launch failure surfaces as an Error line, not a crash.
   it("surfaces a background launch failure as an Error line", async () => {
-    const failing: BackgroundExecFn = async () => { throw new Error("background launch failed"); };
+    const failing: BackgroundExecFn = async () => {
+      throw new Error("background launch failed");
+    };
     const tool = makeTool(fakeExec({ code: 0 }), failing);
     const result = await tool.invoke({ command: "npm run dev", run_in_background: true });
     expect(result).toMatch(/^Error:/);
@@ -123,10 +133,10 @@ describe("ExecCommandTool user abort (escape)", () => {
     const controller = new AbortController();
 
     const resultP = tool.invoke({ command: "sleep 999" }, { signal: controller.signal });
-    controller.abort();                       // user hits escape mid-command
+    controller.abort(); // user hits escape mid-command
     const result = await resultP;
 
-    expect(sawAbort()).toBe(true);            // kill reached streamExec (real in-container kill)
+    expect(sawAbort()).toBe(true); // kill reached streamExec (real in-container kill)
     expect(result).toContain("Stopped by user");
   });
 

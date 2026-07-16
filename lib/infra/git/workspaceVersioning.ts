@@ -65,9 +65,11 @@ export class WorkspaceVersioning implements IWorkspaceVersioning {
     const tail = prev.then(fn, fn);
     this.locks.set(
       key,
-      tail.catch(() => {}).finally(() => {
-        if (this.locks.get(key) === stored) this.locks.delete(key);
-      }),
+      tail
+        .catch(() => {})
+        .finally(() => {
+          if (this.locks.get(key) === stored) this.locks.delete(key);
+        }),
     );
     const stored = this.locks.get(key)!;
     return tail;
@@ -88,8 +90,20 @@ export class WorkspaceVersioning implements IWorkspaceVersioning {
     return r.stdout.trim() === "";
   }
 
-  private async commit(workspaceId: string, workspaceDir: string, message: string, extra: string[] = []): Promise<string> {
-    const r = await this.git.run([...this.base(workspaceId, workspaceDir), ...IDENTITY, "commit", "-m", message, ...extra]);
+  private async commit(
+    workspaceId: string,
+    workspaceDir: string,
+    message: string,
+    extra: string[] = [],
+  ): Promise<string> {
+    const r = await this.git.run([
+      ...this.base(workspaceId, workspaceDir),
+      ...IDENTITY,
+      "commit",
+      "-m",
+      message,
+      ...extra,
+    ]);
     if (r.code !== 0) throw new Error(`git commit failed: ${r.stderr || r.stdout}`);
     const sha = await this.headSha(workspaceId, workspaceDir);
     if (!sha) throw new Error("git commit succeeded but HEAD is unresolved");
@@ -172,10 +186,7 @@ export class WorkspaceVersioning implements IWorkspaceVersioning {
   }
 
   async diff(workspaceId: string, workspaceDir: string, from: string, to: string): Promise<string> {
-    const r = await this.git.run(
-      [...this.base(workspaceId, workspaceDir), "diff", from, to],
-      { trimStdout: false },
-    );
+    const r = await this.git.run([...this.base(workspaceId, workspaceDir), "diff", from, to], { trimStdout: false });
     return r.stdout;
   }
 
@@ -192,7 +203,11 @@ export class WorkspaceVersioning implements IWorkspaceVersioning {
     const r = await this.git.run(
       [
         ...this.base(workspaceId, workspaceDir),
-        "log", "--all", ...limitArgs, "--no-renames", "--numstat",
+        "log",
+        "--all",
+        ...limitArgs,
+        "--no-renames",
+        "--numstat",
         "--pretty=format:%x1e%h%x1f%cr%x1f%s",
       ],
       { trimStdout: false },
@@ -255,7 +270,12 @@ export class WorkspaceVersioning implements IWorkspaceVersioning {
 
   restore(workspaceId: string, workspaceDir: string, sha: string): Promise<boolean> {
     return this.serialize(workspaceId, async () => {
-      const verify = await this.git.run([...this.base(workspaceId, workspaceDir), "rev-parse", "--verify", `${sha}^{commit}`]);
+      const verify = await this.git.run([
+        ...this.base(workspaceId, workspaceDir),
+        "rev-parse",
+        "--verify",
+        `${sha}^{commit}`,
+      ]);
       if (verify.code !== 0) {
         log.warn({ workspaceId, sha }, "restore: unknown sha");
         return false;

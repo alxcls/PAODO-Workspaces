@@ -1,9 +1,5 @@
 /** Remap a path when `sourceRoot` itself, or one of its descendants, has been moved. */
-export function remapMovedPath(
-  currentPath: string | null,
-  sourceRoot: string,
-  destinationRoot: string,
-): string | null {
+export function remapMovedPath(currentPath: string | null, sourceRoot: string, destinationRoot: string): string | null {
   if (currentPath === null) return null;
   if (currentPath === sourceRoot) return destinationRoot;
   if (currentPath.startsWith(sourceRoot + "/")) {
@@ -22,8 +18,7 @@ export function canMoveToDirectory(
   source: { path: string; type: "file" | "directory" },
   destinationDirectory: string,
 ): boolean {
-  return source.type !== "directory"
-    || !isPathWithinRoot(destinationDirectory, source.path);
+  return source.type !== "directory" || !isPathWithinRoot(destinationDirectory, source.path);
 }
 
 /**
@@ -32,9 +27,7 @@ export function canMoveToDirectory(
  * and its children would act on the children twice, at paths that no longer exist.
  */
 export function collapseToRoots(paths: string[]): string[] {
-  return paths.filter(
-    (p) => !paths.some((other) => other !== p && isPathWithinRoot(p, other)),
-  );
+  return paths.filter((p) => !paths.some((other) => other !== p && isPathWithinRoot(p, other)));
 }
 
 /** A multi-item drop is all-or-nothing: one source that rejects the destination refuses the drop. */
@@ -42,6 +35,5 @@ export function canMoveAllToDirectory(
   sources: { path: string; type: "file" | "directory" }[],
   destinationDirectory: string,
 ): boolean {
-  return sources.length > 0
-    && sources.every((source) => canMoveToDirectory(source, destinationDirectory));
+  return sources.length > 0 && sources.every((source) => canMoveToDirectory(source, destinationDirectory));
 }

@@ -78,12 +78,8 @@ describe("assertPublicUrl — http_get chokepoint", () => {
   });
 
   it("rejects non-http(s) schemes", async () => {
-    await expect(assertPublicUrl("ftp://example.com", failingResolver)).rejects.toThrow(
-      "Only HTTPS URLs are allowed",
-    );
-    await expect(assertPublicUrl("file:///etc/passwd", failingResolver)).rejects.toThrow(
-      "Only HTTPS URLs are allowed",
-    );
+    await expect(assertPublicUrl("ftp://example.com", failingResolver)).rejects.toThrow("Only HTTPS URLs are allowed");
+    await expect(assertPublicUrl("file:///etc/passwd", failingResolver)).rejects.toThrow("Only HTTPS URLs are allowed");
   });
 
   it("rejects malformed URLs", async () => {
@@ -91,17 +87,14 @@ describe("assertPublicUrl — http_get chokepoint", () => {
   });
 
   it("blocks private IPv4 literals without consulting DNS", async () => {
-    await expect(assertPublicUrl("https://127.0.0.1", failingResolver)).rejects.toThrow(
+    await expect(assertPublicUrl("https://127.0.0.1", failingResolver)).rejects.toThrow("Blocked internal address");
+    await expect(assertPublicUrl("https://169.254.169.254/latest/meta-data", failingResolver)).rejects.toThrow(
       "Blocked internal address",
     );
-    await expect(assertPublicUrl("https://169.254.169.254/latest/meta-data", failingResolver))
-      .rejects.toThrow("Blocked internal address");
   });
 
   it("blocks bracketed private IPv6 literals", async () => {
-    await expect(assertPublicUrl("https://[::1]/", failingResolver)).rejects.toThrow(
-      "Blocked internal address",
-    );
+    await expect(assertPublicUrl("https://[::1]/", failingResolver)).rejects.toThrow("Blocked internal address");
   });
 
   it("allows public IP literals without consulting DNS and pins the literal", async () => {
@@ -114,9 +107,7 @@ describe("assertPublicUrl — http_get chokepoint", () => {
   it("blocks a hostname that resolves to a private IP", async () => {
     // The dangerous case: a public-looking name pointing at internal infra.
     const evil: HostnameResolver = async () => ({ address: "10.0.0.5" });
-    await expect(assertPublicUrl("https://internal.evil.test", evil)).rejects.toThrow(
-      "Blocked internal address",
-    );
+    await expect(assertPublicUrl("https://internal.evil.test", evil)).rejects.toThrow("Blocked internal address");
   });
 
   it("allows a hostname that resolves to a public IP", async () => {
@@ -131,8 +122,6 @@ describe("assertPublicUrl — http_get chokepoint", () => {
     const broken: HostnameResolver = async () => {
       throw new Error("ENOTFOUND");
     };
-    await expect(assertPublicUrl("https://does-not-exist.test", broken)).rejects.toThrow(
-      "Failed to resolve hostname",
-    );
+    await expect(assertPublicUrl("https://does-not-exist.test", broken)).rejects.toThrow("Failed to resolve hostname");
   });
 });

@@ -48,7 +48,6 @@ interface WorkspaceConversations {
   messages: Map<string, BaseMessage[]>; // convId -> live history (lazy)
 }
 
-
 // Singleton shared across the custom server and the webpack-bundled API routes (same rationale as
 // wsHub/workspaceStore): without it each module instance would keep a divergent view.
 const g = global as typeof global & { _conversations?: Map<string, WorkspaceConversations> };
@@ -100,7 +99,6 @@ function notifyConversationsChanged(workspaceId: string): void {
     // Best-effort UI hint only: failures must never affect conversation persistence.
   }
 }
-
 
 /** Called on first WebSocket connect so a returning user immediately sees prior conversations. */
 export function loadIndex(workspaceId: string): ConversationMeta[] {

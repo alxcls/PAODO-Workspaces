@@ -46,5 +46,5 @@ The workspace already keeps a snapshot of every run, and a person can browse and
 
 ### Nice to have
 
-- A UI signal when the agent rolls back, so a watching user sees it happen. *(The system already announces the roll-back internally; no panel shows it yet.)*
-- A per-workspace switch to turn agent roll-back off. *(Currently always on.)*
+- A UI signal when the agent rolls back, so a watching user sees it happen. _(The system already announces the roll-back internally; no panel shows it yet.)_
+- A per-workspace switch to turn agent roll-back off. _(Currently always on.)_

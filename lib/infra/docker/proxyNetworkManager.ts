@@ -35,8 +35,12 @@ export class ProxyNetworkManager {
   async attach(workspaceId: string): Promise<void> {
     if (!this.enabled) return;
     const r = await this.docker.cmd(
-      "network", "connect", "--alias", CREDENTIAL_PROXY_ALIAS,
-      networkName(workspaceId), CREDENTIAL_PROXY_CONTAINER,
+      "network",
+      "connect",
+      "--alias",
+      CREDENTIAL_PROXY_ALIAS,
+      networkName(workspaceId),
+      CREDENTIAL_PROXY_CONTAINER,
     );
     if (r.code !== 0 && !/already (exists|connected)/i.test(r.stderr)) {
       log.warn({ workspaceId, stderr: r.stderr }, "failed to attach credential proxy to workspace network");
@@ -48,8 +52,11 @@ export class ProxyNetworkManager {
   // the container, whose image may lack getent/nslookup.
   private async isAttached(workspaceId: string): Promise<boolean> {
     const r = await this.docker.cmd(
-      "network", "inspect", networkName(workspaceId),
-      "--format", "{{range .Containers}}{{.Name}} {{end}}",
+      "network",
+      "inspect",
+      networkName(workspaceId),
+      "--format",
+      "{{range .Containers}}{{.Name}} {{end}}",
     );
     if (r.code !== 0) return false;
     return r.stdout.split(/\s+/).includes(CREDENTIAL_PROXY_CONTAINER);
@@ -76,7 +83,11 @@ export class ProxyNetworkManager {
   async detach(workspaceId: string): Promise<void> {
     if (!this.enabled) return;
     const r = await this.docker.cmd(
-      "network", "disconnect", "-f", networkName(workspaceId), CREDENTIAL_PROXY_CONTAINER,
+      "network",
+      "disconnect",
+      "-f",
+      networkName(workspaceId),
+      CREDENTIAL_PROXY_CONTAINER,
     );
     if (r.code !== 0) log.debug({ workspaceId, stderr: r.stderr }, "detach credential proxy (may not be attached)");
   }
@@ -87,8 +98,14 @@ export class ProxyNetworkManager {
   async reattachAll(): Promise<void> {
     if (!this.enabled) return;
     const r = await this.docker.cmd("ps", "--filter", "name=^ws_", "--format", "{{.Names}}");
-    if (r.code !== 0) { log.warn({ stderr: r.stderr }, "reattachProxyNetworks: docker ps failed"); return; }
-    for (const name of r.stdout.split("\n").map((s) => s.trim()).filter(Boolean)) {
+    if (r.code !== 0) {
+      log.warn({ stderr: r.stderr }, "reattachProxyNetworks: docker ps failed");
+      return;
+    }
+    for (const name of r.stdout
+      .split("\n")
+      .map((s) => s.trim())
+      .filter(Boolean)) {
       await this.attach(name.replace(/^ws_/, ""));
     }
   }

@@ -35,7 +35,10 @@ function objectLiteralShape(obj: ts.ObjectLiteralExpression): MockShape {
   const keys: string[] = [];
   let hasSpread = false;
   for (const prop of obj.properties) {
-    if (ts.isSpreadAssignment(prop)) { hasSpread = true; continue; }
+    if (ts.isSpreadAssignment(prop)) {
+      hasSpread = true;
+      continue;
+    }
     const name = prop.name;
     if (name && (ts.isIdentifier(name) || ts.isStringLiteral(name))) keys.push(name.text);
   }
@@ -84,7 +87,8 @@ function run(): number {
       if (
         ts.isCallExpression(node) &&
         ts.isPropertyAccessExpression(node.expression) &&
-        ts.isIdentifier(node.expression.expression) && node.expression.expression.text === "vi" &&
+        ts.isIdentifier(node.expression.expression) &&
+        node.expression.expression.text === "vi" &&
         node.expression.name.text === "mock" &&
         node.arguments.length >= 2 &&
         ts.isStringLiteralLike(node.arguments[0])
@@ -94,7 +98,10 @@ function run(): number {
         if (obj) {
           // Resolve the specifier to the real source file (handles @/ alias + relative paths).
           const resolved = ts.resolveModuleName(
-            specifier, sf.fileName, program.getCompilerOptions(), ts.sys,
+            specifier,
+            sf.fileName,
+            program.getCompilerOptions(),
+            ts.sys,
           ).resolvedModule;
           // Only diff project modules; a stub of `fs` or another dependency has no local source to
           // compare against and isn't the drift class we care about.
@@ -111,7 +118,10 @@ function run(): number {
                 findings.push({
                   testFile: path.relative(ROOT, sf.fileName),
                   line: line + 1,
-                  specifier, staleKeys, hasSpread, realExports,
+                  specifier,
+                  staleKeys,
+                  hasSpread,
+                  realExports,
                 });
               }
             }

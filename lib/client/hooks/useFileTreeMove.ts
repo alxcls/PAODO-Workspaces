@@ -1,8 +1,5 @@
 import { useState, type Dispatch, type DragEvent, type SetStateAction } from "react";
-import {
-  collapseToRoots,
-  remapMovedPath,
-} from "../fileMove";
+import { collapseToRoots, remapMovedPath } from "../fileMove";
 import { flattenTree } from "../fileTreeOrder";
 import type { MoveBatchOutcome, TreeNode } from "./useFileOperations";
 import { useTransientMessage } from "./useTransientMessage";
@@ -22,10 +19,7 @@ interface Options {
   selected: Set<string>;
   setExpanded: Dispatch<SetStateAction<Record<string, boolean>>>;
   remapSelection: (sourceRoot: string, destinationRoot: string) => void;
-  moveMany: (
-    sourcePaths: string[],
-    destinationDirectory: string | null,
-  ) => Promise<MoveBatchOutcome | null>;
+  moveMany: (sourcePaths: string[], destinationDirectory: string | null) => Promise<MoveBatchOutcome | null>;
   lifecycle: MoveLifecycle;
 }
 
@@ -33,9 +27,15 @@ function setCountDragImage(event: DragEvent, count: number) {
   const ghost = document.createElement("div");
   ghost.textContent = `${count} items`;
   ghost.style.cssText = [
-    "position:fixed", "top:-1000px", "left:-1000px",
-    "padding:4px 10px", "border-radius:6px", "white-space:nowrap",
-    "background:#111827", "color:#fff", "font:500 12px system-ui,sans-serif",
+    "position:fixed",
+    "top:-1000px",
+    "left:-1000px",
+    "padding:4px 10px",
+    "border-radius:6px",
+    "white-space:nowrap",
+    "background:#111827",
+    "color:#fff",
+    "font:500 12px system-ui,sans-serif",
   ].join(";");
   document.body.appendChild(ghost);
   event.dataTransfer.setDragImage(ghost, 12, 12);
@@ -60,14 +60,7 @@ function remapExpandedPaths(
 }
 
 /** Owns the complete internal tree-move interaction and its reconciliation lifecycle. */
-export function useFileTreeMove({
-  tree,
-  selected,
-  setExpanded,
-  remapSelection,
-  moveMany,
-  lifecycle,
-}: Options) {
+export function useFileTreeMove({ tree, selected, setExpanded, remapSelection, moveMany, lifecycle }: Options) {
   const [draggedNodes, setDraggedNodes] = useState<DraggedTreeNode[] | null>(null);
   const [movingPaths, setMovingPaths] = useState<Set<string>>(new Set());
   const [dropTargetPath, setDropTargetPath] = useState<string | null>(null);
@@ -110,7 +103,10 @@ export function useFileTreeMove({
     for (const source of sources) lifecycle.started?.(source.path);
 
     try {
-      const outcome = await moveMany(sources.map((source) => source.path), destinationDirectory);
+      const outcome = await moveMany(
+        sources.map((source) => source.path),
+        destinationDirectory,
+      );
       const moved = (outcome?.results ?? []).filter((result) => !result.unchanged);
 
       for (const result of moved) {

@@ -19,7 +19,7 @@ Testing is **risk-targeted, not coverage-targeted.** The rules:
    - **API-route authorization and input validation** (auth checks, ownership scoping, rejection of malformed input).
    - **Security-sensitive tool wrappers actually invoking their guard** — the tool must be shown to call the guard, not just that the guard works in isolation.
 
-Coverage reporting exists for *visibility* — to tell genuinely-trivial untested files apart from quietly-important ones — and is not gated on a percentage threshold.
+Coverage reporting exists for _visibility_ — to tell genuinely-trivial untested files apart from quietly-important ones — and is not gated on a percentage threshold.
 
 ## Consequences
 
@@ -30,7 +30,7 @@ Coverage reporting exists for *visibility* — to tell genuinely-trivial unteste
 ## Alternatives considered
 
 - **Coverage-threshold gate:** rejected. It forces low-value tests on trivial glue, inflating maintenance cost and diluting signal, without protecting the invariants that actually break.
-- **Unit-test everything including hooks/routes:** rejected as the default — duplicates what E2E covers for glue and couples tests to implementation. Adopted *only* for the two security-relevant exceptions where E2E coverage is insufficient.
+- **Unit-test everything including hooks/routes:** rejected as the default — duplicates what E2E covers for glue and couples tests to implementation. Adopted _only_ for the two security-relevant exceptions where E2E coverage is insufficient.
 - **Leave the philosophy implicit:** rejected — a future contributor sees a low coverage number and either ignores testing or carpet-fills it, both of which erode the signal-to-noise ratio.
 
 ## Notes

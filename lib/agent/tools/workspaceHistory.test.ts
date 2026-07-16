@@ -11,10 +11,17 @@ const DIR = "/tmp/ws";
 
 // Minimal fake: only versionStats/versionDiff are exercised; the rest throw if touched.
 function fakeVersioning(over: Partial<IWorkspaceVersioning>): IWorkspaceVersioning {
-  const notUsed = () => { throw new Error("not used"); };
+  const notUsed = () => {
+    throw new Error("not used");
+  };
   return {
-    initRepo: notUsed, commitBaseline: notUsed, commitResult: notUsed,
-    history: notUsed, diff: notUsed, restore: notUsed, deleteRepo: notUsed,
+    initRepo: notUsed,
+    commitBaseline: notUsed,
+    commitResult: notUsed,
+    history: notUsed,
+    diff: notUsed,
+    restore: notUsed,
+    deleteRepo: notUsed,
     isGitAvailable: notUsed as IWorkspaceVersioning["isGitAvailable"],
     versionStats: notUsed as IWorkspaceVersioning["versionStats"],
     versionDiff: notUsed as IWorkspaceVersioning["versionDiff"],
@@ -28,8 +35,23 @@ function tool(over: Partial<IWorkspaceVersioning>): WorkspaceHistoryTool {
 
 describe("WorkspaceHistoryTool — overview (no sha)", () => {
   const versions: VersionStat[] = [
-    { sha: "deadbee", age: "2 hours ago", subject: "run 2 (user prompt): edits", files: [{ path: "src/a.ts", add: 10, del: 4 }], totalAdd: 10, totalDel: 4, current: true },
-    { sha: "abad1de", age: "3 hours ago", subject: "run 1 (user prompt): init", files: [{ path: "logo.png", add: -1, del: -1 }], totalAdd: 0, totalDel: 0 },
+    {
+      sha: "deadbee",
+      age: "2 hours ago",
+      subject: "run 2 (user prompt): edits",
+      files: [{ path: "src/a.ts", add: 10, del: 4 }],
+      totalAdd: 10,
+      totalDel: 4,
+      current: true,
+    },
+    {
+      sha: "abad1de",
+      age: "3 hours ago",
+      subject: "run 1 (user prompt): init",
+      files: [{ path: "logo.png", add: -1, del: -1 }],
+      totalAdd: 0,
+      totalDel: 0,
+    },
   ];
 
   it("renders one block per version with numeric churn, binary marker, and the (current) tag on the sha", async () => {
@@ -37,10 +59,10 @@ describe("WorkspaceHistoryTool — overview (no sha)", () => {
     expect(out).toBe(
       // (current) rides on the sha of the snapshot the work-tree is on, not the newest by default.
       "deadbee (current)  2 hours ago  1 file +10/-4  run 2 (user prompt): edits\n" +
-      "  src/a.ts  +10/-4\n\n" +
-      // Binary files contribute 0 to the header totals; only the per-file line marks "binary".
-      "abad1de  3 hours ago  1 file +0/-0  run 1 (user prompt): init\n" +
-      "  logo.png  binary"
+        "  src/a.ts  +10/-4\n\n" +
+        // Binary files contribute 0 to the header totals; only the per-file line marks "binary".
+        "abad1de  3 hours ago  1 file +0/-0  run 1 (user prompt): init\n" +
+        "  logo.png  binary",
     );
   });
 
@@ -55,21 +77,36 @@ describe("WorkspaceHistoryTool — overview (no sha)", () => {
 
   it("lists all snapshots by default and reports empty history", async () => {
     let seen: number | undefined = -1;
-    const t = tool({ versionStats: async (_id, _dir, n) => { seen = n; return []; } });
+    const t = tool({
+      versionStats: async (_id, _dir, n) => {
+        seen = n;
+        return [];
+      },
+    });
     expect(await t.invoke({})).toBe("No snapshots yet.");
     expect(seen).toBeUndefined();
   });
 
   it("passes the overview last limit through, including '-10' shorthand", async () => {
     let seen: number | undefined;
-    const t = tool({ versionStats: async (_id, _dir, n) => { seen = n; return versions; } });
+    const t = tool({
+      versionStats: async (_id, _dir, n) => {
+        seen = n;
+        return versions;
+      },
+    });
     await t.invoke({ last: "-10" });
     expect(seen).toBe(10);
   });
 
   it("treats positive and negative last values the same: newest N snapshots", async () => {
     let seen: number | undefined;
-    const t = tool({ versionStats: async (_id, _dir, n) => { seen = n; return versions; } });
+    const t = tool({
+      versionStats: async (_id, _dir, n) => {
+        seen = n;
+        return versions;
+      },
+    });
     await t.invoke({ last: 10 });
     expect(seen).toBe(10);
   });
@@ -101,7 +138,12 @@ describe("WorkspaceHistoryTool — detail (sha given)", () => {
 
   it("strips git boilerplate but keeps @@ hunks and +/- lines", async () => {
     let opts: unknown;
-    const t = tool({ versionDiff: async (_i, _d, _s, o) => { opts = o; return rawDiff; } });
+    const t = tool({
+      versionDiff: async (_i, _d, _s, o) => {
+        opts = o;
+        return rawDiff;
+      },
+    });
     const out = await t.invoke({ sha: "deadbee" });
     expect(out).toContain("README.md");
     expect(out).toContain("@@ -98,7 +98,7 @@");
@@ -115,14 +157,24 @@ describe("WorkspaceHistoryTool — detail (sha given)", () => {
 
   it("forwards path scope to the service", async () => {
     let opts: unknown;
-    const t = tool({ versionDiff: async (_i, _d, _s, o) => { opts = o; return rawDiff; } });
+    const t = tool({
+      versionDiff: async (_i, _d, _s, o) => {
+        opts = o;
+        return rawDiff;
+      },
+    });
     await t.invoke({ sha: "deadbee", path: "README.md" });
     expect(opts).toEqual({ path: "README.md" });
   });
 
   it("rejects a non-hex sha before calling the service", async () => {
     let called = false;
-    const t = tool({ versionDiff: async () => { called = true; return ""; } });
+    const t = tool({
+      versionDiff: async () => {
+        called = true;
+        return "";
+      },
+    });
     const out = await t.invoke({ sha: "not a sha!" });
     expect(out).toContain("invalid sha");
     expect(called).toBe(false);
@@ -134,10 +186,7 @@ describe("WorkspaceHistoryTool — detail (sha given)", () => {
   });
 
   // A diff with 6 stripped content lines (1 file header + @@ + 4 +/- lines) for paging assertions.
-  const longDiff =
-    "diff --git a/f.ts b/f.ts\n" +
-    "@@ -1,4 +1,4 @@\n" +
-    "-a\n+b\n-c\n+d\n";
+  const longDiff = "diff --git a/f.ts b/f.ts\n" + "@@ -1,4 +1,4 @@\n" + "-a\n+b\n-c\n+d\n";
 
   it("quantifies truncation: footer reports the visible range and total line count", async () => {
     const t = tool({ versionDiff: async () => longDiff });
@@ -164,5 +213,4 @@ describe("WorkspaceHistoryTool — detail (sha given)", () => {
     expect(out).not.toContain("showing lines");
     expect(out).toContain("+d");
   });
-
 });

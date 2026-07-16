@@ -66,13 +66,18 @@ export function useConversations(workspaceId: string) {
       };
       if (cancelled) return;
       setConversations(conversations);
-      if (conversations.length === 0) { await create(); return; }
+      if (conversations.length === 0) {
+        await create();
+        return;
+      }
       setInitial(active);
       // Honor a ?conversation= deep-link when it points at a real conversation; else newest.
       const requested = requestedConvId && conversations.some((c) => c.id === requestedConvId) ? requestedConvId : null;
       setActiveId(requested ?? conversations[0].id);
     })();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [workspaceId, create, requestedConvId]);
 
   // Keep the per-conversation "running" dot fresh, but only while a run is actually in flight — so an
@@ -82,7 +87,9 @@ export function useConversations(workspaceId: string) {
   const anyRunning = conversations.some((c) => c.running);
   useEffect(() => {
     if (!anyRunning) return;
-    const t = setInterval(() => { void refresh(); }, 2500);
+    const t = setInterval(() => {
+      void refresh();
+    }, 2500);
     return () => clearInterval(t);
   }, [anyRunning, refresh]);
 

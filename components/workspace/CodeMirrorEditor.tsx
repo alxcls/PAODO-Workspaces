@@ -51,43 +51,109 @@ function languageFor(filePath: string): Extension[] {
   // `foo.json.template` -> highlight as json; `.env.example` -> use "env" (no lang, still fine).
   if (WRAPPER_EXTS.has(ext) && parts.length > 1) ext = parts.pop() ?? "";
   switch (ext) {
-    case "json": return [json()];
-    case "js": case "jsx": case "cjs": case "mjs": return [javascript({ jsx: true })];
-    case "ts": return [javascript({ typescript: true })];
-    case "tsx": return [javascript({ typescript: true, jsx: true })];
-    case "py": return [python()];
-    case "html": case "htm": return [html()];
-    case "svg": case "xml": return [xml()];
-    case "css": return [css()];
-    case "md": case "markdown": return [markdown()];
-    case "yml": case "yaml": return [yaml()];
-    case "rs": return [rust()];
-    case "sql": return [sql()];
-    case "scss": case "less": return [css()];
-    case "sh": case "bash": case "zsh": return [StreamLanguage.define(shell)];
-    case "rb": return [StreamLanguage.define(ruby)];
-    case "toml": return [StreamLanguage.define(toml)];
-    case "ps1": return [StreamLanguage.define(powerShell)];
-    case "c": case "h": return [StreamLanguage.define(c)];
-    case "cpp": case "cc": case "cxx": case "hpp": case "hh": case "hxx": return [StreamLanguage.define(cpp)];
-    case "java": return [StreamLanguage.define(java)];
-    case "cs": return [StreamLanguage.define(csharp)];
-    case "scala": case "sc": return [StreamLanguage.define(scala)];
-    case "kt": case "kts": return [StreamLanguage.define(kotlin)];
-    case "go": return [StreamLanguage.define(go)];
-    case "lua": return [StreamLanguage.define(lua)];
-    case "r": return [StreamLanguage.define(r)];
-    case "pl": case "pm": return [StreamLanguage.define(perl)];
-    case "swift": return [StreamLanguage.define(swift)];
-    case "clj": case "cljs": case "cljc": case "edn": return [StreamLanguage.define(clojure)];
-    case "hs": return [StreamLanguage.define(haskell)];
-    case "erl": case "hrl": return [StreamLanguage.define(erlang)];
-    case "elm": return [StreamLanguage.define(elm)];
-    case "groovy": case "gradle": return [StreamLanguage.define(groovy)];
-    case "dockerfile": return [StreamLanguage.define(dockerFile)];
-    case "ini": case "conf": case "cfg": case "env": case "properties": return [StreamLanguage.define(properties)];
-    case "diff": case "patch": return [StreamLanguage.define(diff)];
-    default: return [];
+    case "json":
+      return [json()];
+    case "js":
+    case "jsx":
+    case "cjs":
+    case "mjs":
+      return [javascript({ jsx: true })];
+    case "ts":
+      return [javascript({ typescript: true })];
+    case "tsx":
+      return [javascript({ typescript: true, jsx: true })];
+    case "py":
+      return [python()];
+    case "html":
+    case "htm":
+      return [html()];
+    case "svg":
+    case "xml":
+      return [xml()];
+    case "css":
+      return [css()];
+    case "md":
+    case "markdown":
+      return [markdown()];
+    case "yml":
+    case "yaml":
+      return [yaml()];
+    case "rs":
+      return [rust()];
+    case "sql":
+      return [sql()];
+    case "scss":
+    case "less":
+      return [css()];
+    case "sh":
+    case "bash":
+    case "zsh":
+      return [StreamLanguage.define(shell)];
+    case "rb":
+      return [StreamLanguage.define(ruby)];
+    case "toml":
+      return [StreamLanguage.define(toml)];
+    case "ps1":
+      return [StreamLanguage.define(powerShell)];
+    case "c":
+    case "h":
+      return [StreamLanguage.define(c)];
+    case "cpp":
+    case "cc":
+    case "cxx":
+    case "hpp":
+    case "hh":
+    case "hxx":
+      return [StreamLanguage.define(cpp)];
+    case "java":
+      return [StreamLanguage.define(java)];
+    case "cs":
+      return [StreamLanguage.define(csharp)];
+    case "scala":
+    case "sc":
+      return [StreamLanguage.define(scala)];
+    case "kt":
+    case "kts":
+      return [StreamLanguage.define(kotlin)];
+    case "go":
+      return [StreamLanguage.define(go)];
+    case "lua":
+      return [StreamLanguage.define(lua)];
+    case "r":
+      return [StreamLanguage.define(r)];
+    case "pl":
+    case "pm":
+      return [StreamLanguage.define(perl)];
+    case "swift":
+      return [StreamLanguage.define(swift)];
+    case "clj":
+    case "cljs":
+    case "cljc":
+    case "edn":
+      return [StreamLanguage.define(clojure)];
+    case "hs":
+      return [StreamLanguage.define(haskell)];
+    case "erl":
+    case "hrl":
+      return [StreamLanguage.define(erlang)];
+    case "elm":
+      return [StreamLanguage.define(elm)];
+    case "groovy":
+    case "gradle":
+      return [StreamLanguage.define(groovy)];
+    case "dockerfile":
+      return [StreamLanguage.define(dockerFile)];
+    case "ini":
+    case "conf":
+    case "cfg":
+    case "env":
+    case "properties":
+      return [StreamLanguage.define(properties)];
+    case "diff":
+    case "patch":
+      return [StreamLanguage.define(diff)];
+    default:
+      return [];
   }
 }
 
@@ -146,7 +212,7 @@ interface Props {
 export default function CodeMirrorEditor({ value, onChange, filePath }: Props) {
   const extensions = useMemo(
     () => [...languageFor(filePath), Prec.highest(syntaxHighlighting(githubLight))],
-    [filePath]
+    [filePath],
   );
 
   return (

@@ -19,11 +19,11 @@ type MsgHandler = (m: WsMsg) => ConsoleLine | null;
 
 // Extend this map to handle new server message types without touching dispatch logic (OCP).
 const MSG_HANDLERS: Record<string, MsgHandler> = {
-  stdout:          (m) => m.data ? { type: "stdout", text: m.data } : null,
-  stderr:          (m) => m.data ? { type: "stderr", text: m.data } : null,
-  exec_done:       (m) => ({ type: "info", text: `--- process exited (code ${m.exitCode ?? "?"}) ---` }),
-  tool_call:       (m) => m.name ? { type: "tool", text: `▶ ${m.name}(${m.args ? JSON.stringify(m.args) : "{}"})` } : null,
-  tool_result_log: (m) => m.name ? { type: "info", text: `← ${m.name}: ${m.result ?? ""}` } : null,
+  stdout: (m) => (m.data ? { type: "stdout", text: m.data } : null),
+  stderr: (m) => (m.data ? { type: "stderr", text: m.data } : null),
+  exec_done: (m) => ({ type: "info", text: `--- process exited (code ${m.exitCode ?? "?"}) ---` }),
+  tool_call: (m) => (m.name ? { type: "tool", text: `▶ ${m.name}(${m.args ? JSON.stringify(m.args) : "{}"})` } : null),
+  tool_result_log: (m) => (m.name ? { type: "info", text: `← ${m.name}: ${m.result ?? ""}` } : null),
 };
 
 export function useConsoleSocket(workspaceId: string) {
@@ -46,7 +46,7 @@ export function useConsoleSocket(workspaceId: string) {
     function connect() {
       if (cancelled) return;
       const socket = new WebSocket(
-        `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}/ws?workspaceId=${workspaceId}`
+        `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}/ws?workspaceId=${workspaceId}`,
       );
       ws = socket;
 
@@ -60,7 +60,10 @@ export function useConsoleSocket(workspaceId: string) {
 
       socket.onclose = () => {
         setConnected(false);
-        if (pingInterval) { clearInterval(pingInterval); pingInterval = null; }
+        if (pingInterval) {
+          clearInterval(pingInterval);
+          pingInterval = null;
+        }
         if (!cancelled && ws === socket) {
           appendLine({ type: "info", text: "WebSocket disconnected. Reconnecting in 2s…" });
           reconnectTimer = setTimeout(connect, 2_000);
@@ -74,7 +77,9 @@ export function useConsoleSocket(workspaceId: string) {
           const msg = JSON.parse(event.data as string) as WsMsg;
           const line = MSG_HANDLERS[msg.type]?.(msg);
           if (line) appendLine(line);
-        } catch { /* ignore malformed */ }
+        } catch {
+          /* ignore malformed */
+        }
       };
     }
 

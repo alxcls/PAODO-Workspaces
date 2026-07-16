@@ -53,14 +53,15 @@ export default function AgentLoopBlock({ wsId }: { wsId: string }) {
           max={500}
           className="input input-sm w-[72px] text-center"
           value={draft}
-          onChange={(e) => { setDraft(e.target.value); setSaved(false); }}
-          onKeyDown={(e) => { if (e.key === "Enter") save(); }}
+          onChange={(e) => {
+            setDraft(e.target.value);
+            setSaved(false);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") save();
+          }}
         />
-        <button
-          className="btn"
-          disabled={!dirty || saving}
-          onClick={save}
-        >
+        <button className="btn" disabled={!dirty || saving} onClick={save}>
           {saving ? "Saving…" : saved ? "Saved" : "Save"}
         </button>
         <span className="text-xs text-text-3">Agent summarises progress and stops when this limit is hit.</span>

@@ -137,9 +137,7 @@ upgradeStoreDomains(store);
 export const PROXY_TOKEN_FORMAT_VERSION = "v2";
 
 export function proxyToken(wsId: string, name: string): string {
-  const digest = createHash("sha256")
-    .update(`${PROXY_TOKEN_FORMAT_VERSION}\0${wsId}\0${name}`)
-    .digest("hex");
+  const digest = createHash("sha256").update(`${PROXY_TOKEN_FORMAT_VERSION}\0${wsId}\0${name}`).digest("hex");
   return `p${digest}`;
 }
 

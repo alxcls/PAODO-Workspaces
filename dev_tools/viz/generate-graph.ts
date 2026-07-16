@@ -426,4 +426,7 @@ function esc(str) {
 </html>`;
 }
 
-main().catch((err) => { console.error(err); process.exit(1); });
+main().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});

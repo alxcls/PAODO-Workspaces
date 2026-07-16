@@ -19,7 +19,12 @@ import { loadSkills } from "../../workspace/skillStore";
 import { createConversation, getMessages, persist } from "../../workspace/conversationStore";
 import { setSystemPrompt } from "../messageSerialization";
 import { appendUsage, recordTurnUsage, type SessionOrigin } from "../../workspace/usageStore";
-import { NEEDS_INPUT_KEY, type SkillCallResult, type SkillDefinition, type SkillSchema } from "../../workspace/skillTypes";
+import {
+  NEEDS_INPUT_KEY,
+  type SkillCallResult,
+  type SkillDefinition,
+  type SkillSchema,
+} from "../../workspace/skillTypes";
 import type { IWorkspaceStore, IContainerManager } from "../../infra/interfaces";
 import { buildSystemPrompt, buildPromptConfig, buildStructuredResponderBlock } from "../systemPrompt";
 import { buildWorkspacePromptInputs } from "../promptContext";
@@ -65,7 +70,9 @@ function formatAjvErrors(errors: ErrorObject[] | null | undefined): string {
         return `field '${field}' is required`;
       }
       if (e.keyword === "enum") {
-        const allowed = (e.params as { allowedValues: unknown[] }).allowedValues.map((value) => JSON.stringify(value)).join(", ");
+        const allowed = (e.params as { allowedValues: unknown[] }).allowedValues
+          .map((value) => JSON.stringify(value))
+          .join(", ");
         return parent ? `field '${parent}' must be one of: ${allowed}` : `value must be one of: ${allowed}`;
       }
       const field = parent;
@@ -131,7 +138,17 @@ async function runCalleeTurn(
     if (event.type === "token") text += event.content;
     if (event.type === "error") return { error: event.message };
     if (event.type === "turn_usage") {
-      recordTurnUsage({ sessionId, conversationId, workspaceId: callee.id, workspaceName: callee.name, origin: opts.origin ?? "agent" }, event, recordUsage);
+      recordTurnUsage(
+        {
+          sessionId,
+          conversationId,
+          workspaceId: callee.id,
+          workspaceName: callee.name,
+          origin: opts.origin ?? "agent",
+        },
+        event,
+        recordUsage,
+      );
     }
   }
   return { text };
@@ -152,7 +169,11 @@ export async function executeSkill(
   // 1. Authorize — the existing DAG edge is the only caller identity.
   if (!(opts.canCallFn ?? canCall)(callerId, calleeId)) {
     elog.warn("skill call rejected — no edge in graph");
-    return { state: "failed", code: "NOT_CONNECTED", message: "this workspace is not connected to the target in the Agent Network." };
+    return {
+      state: "failed",
+      code: "NOT_CONNECTED",
+      message: "this workspace is not connected to the target in the Agent Network.",
+    };
   }
 
   const callee = opts.store?.getWorkspace(calleeId);
@@ -165,8 +186,14 @@ export async function executeSkill(
   const skills = opts.resolvedSkill ? [opts.resolvedSkill] : await (opts.loadSkillsFn ?? loadSkills)(callee.dir);
   const skill = skills.find((s) => s.id === skillId);
   if (!skill) {
-    const available = skills.length ? ` Available skills: ${skills.map((s) => s.id).join(", ")}.` : " This workspace declares no skills.";
-    return { state: "failed", code: "SKILL_NOT_FOUND", message: `"${callee.name}" has no skill "${skillId}".${available}` };
+    const available = skills.length
+      ? ` Available skills: ${skills.map((s) => s.id).join(", ")}.`
+      : " This workspace declares no skills.";
+    return {
+      state: "failed",
+      code: "SKILL_NOT_FOUND",
+      message: `"${callee.name}" has no skill "${skillId}".${available}`,
+    };
   }
 
   // 3. Input validation. A schema that fails to COMPILE is the callee author's bug, not the
@@ -174,10 +201,18 @@ export async function executeSkill(
   // counts as an input-failure strike in AgentCallTool, and retrying can't fix a broken file).
   const validateInput = compileSchema(skill.input);
   if ("compileError" in validateInput) {
-    return { state: "failed", code: "EXECUTION_ERROR", message: `skill "${skillId}" has a broken input schema (the skill file needs fixing): ${validateInput.compileError}` };
+    return {
+      state: "failed",
+      code: "EXECUTION_ERROR",
+      message: `skill "${skillId}" has a broken input schema (the skill file needs fixing): ${validateInput.compileError}`,
+    };
   }
   if (!validateInput(args)) {
-    return { state: "failed", code: "INPUT_VALIDATION_ERROR", message: `Invalid args for ${skillId}: ${formatAjvErrors(validateInput.errors)}.` };
+    return {
+      state: "failed",
+      code: "INPUT_VALIDATION_ERROR",
+      message: `Invalid args for ${skillId}: ${formatAjvErrors(validateInput.errors)}.`,
+    };
   }
 
   // Use the author's JSON Schema unchanged. In particular, output properties are optional
@@ -185,7 +220,11 @@ export async function executeSkill(
   // as MCP clients discover them.
   const validateOutput = compileSchema(skill.output);
   if ("compileError" in validateOutput) {
-    return { state: "failed", code: "EXECUTION_ERROR", message: `skill "${skillId}" has a broken output schema (the skill file needs fixing): ${validateOutput.compileError}` };
+    return {
+      state: "failed",
+      code: "EXECUTION_ERROR",
+      message: `skill "${skillId}" has a broken output schema (the skill file needs fixing): ${validateOutput.compileError}`,
+    };
   }
 
   // 4. Run the callee — same prompt construction the free-form call_agent used, plus the
@@ -231,7 +270,9 @@ ${buildStructuredResponderBlock(skill)}`;
   const { startExternalRun } = await import("../runBroker");
   const liveRun = startExternalRun(callee.id, conv.id, firstInput);
   const publish = liveRun
-    ? (event: AgentEvent) => { if (event.type !== "done") liveRun.publish(event); }
+    ? (event: AgentEvent) => {
+        if (event.type !== "done") liveRun.publish(event);
+      }
     : undefined;
 
   // The signal the callee actually runs under: whichever of these fires first halts it.
@@ -271,7 +312,12 @@ ${buildStructuredResponderBlock(skill)}`;
         // own tab (liveRun.signal).
         if (calleeSignal?.aborted) {
           elog.warn({ attempt }, "skill call aborted");
-          return { state: "failed", code: "EXECUTION_ERROR", message: "the call was aborted before the agent finished (timeout or cancellation).", conversationId: conv.id };
+          return {
+            state: "failed",
+            code: "EXECUTION_ERROR",
+            message: "the call was aborted before the agent finished (timeout or cancellation).",
+            conversationId: conv.id,
+          };
         }
         elog.error({ attempt, agentError: turn.error }, "skill call execution error");
         return { state: "failed", code: "EXECUTION_ERROR", message: turn.error, conversationId: conv.id };

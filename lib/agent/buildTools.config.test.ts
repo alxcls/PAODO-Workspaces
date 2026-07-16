@@ -38,8 +38,14 @@ describe("loadAgentConfig", () => {
 
   it("uses the workspace's stored selection and routes the model to the right provider field", () => {
     seedWorkspace({
-      id: "ws-anthropic", name: "y", dir: "/tmp/y", createdAt: new Date(), maxIterations: 30,
-      llmProvider: "anthropic", llmModel: "claude-haiku-4-5", reasoningEffort: "high",
+      id: "ws-anthropic",
+      name: "y",
+      dir: "/tmp/y",
+      createdAt: new Date(),
+      maxIterations: 30,
+      llmProvider: "anthropic",
+      llmModel: "claude-haiku-4-5",
+      reasoningEffort: "high",
     });
     const c = loadAgentConfig("ws-anthropic");
     expect(c.provider).toBe("anthropic");

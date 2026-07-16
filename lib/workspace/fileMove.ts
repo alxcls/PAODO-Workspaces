@@ -59,9 +59,7 @@ async function resolveMoveTarget(be: FileBackend, body: MoveBody): Promise<MoveT
     return { error: "Symbolic links cannot be moved", status: 400 };
   }
 
-  const lexicalDirectory = body.destinationDirectory
-    ? lexicalFilePath(be, body.destinationDirectory)
-    : be.dir;
+  const lexicalDirectory = body.destinationDirectory ? lexicalFilePath(be, body.destinationDirectory) : be.dir;
   const destinationDirectory = await assertInsideWorkspace(be.dir, lexicalDirectory);
   if (!(await fs.stat(destinationDirectory)).isDirectory()) {
     return { error: "Destination must be a directory", status: 400 };
@@ -69,8 +67,8 @@ async function resolveMoveTarget(be: FileBackend, body: MoveBody): Promise<MoveT
 
   const sourceStat = await fs.stat(source);
   if (
-    sourceStat.isDirectory()
-    && (destinationDirectory === source || destinationDirectory.startsWith(source + path.sep))
+    sourceStat.isDirectory() &&
+    (destinationDirectory === source || destinationDirectory.startsWith(source + path.sep))
   ) {
     return { error: "Cannot move a folder into itself", status: 400 };
   }
@@ -185,24 +183,18 @@ export async function moveFileContent(req: Request, be: FileBackend): Promise<Re
   const candidate = parsedBody as Record<string, unknown>;
   const sourcePaths = candidate.sourcePaths;
   if (
-    !Array.isArray(sourcePaths)
-    || sourcePaths.length === 0
-    || !sourcePaths.every((p) => typeof p === "string" && p.length > 0)
+    !Array.isArray(sourcePaths) ||
+    sourcePaths.length === 0 ||
+    !sourcePaths.every((p) => typeof p === "string" && p.length > 0)
   ) {
-    return NextResponse.json(
-      { error: "sourcePaths must be a non-empty array of paths" },
-      { status: 400 },
-    );
+    return NextResponse.json({ error: "sourcePaths must be a non-empty array of paths" }, { status: 400 });
   }
   if (
-    candidate.destinationDirectory !== undefined
-    && candidate.destinationDirectory !== null
-    && (typeof candidate.destinationDirectory !== "string" || candidate.destinationDirectory.length === 0)
+    candidate.destinationDirectory !== undefined &&
+    candidate.destinationDirectory !== null &&
+    (typeof candidate.destinationDirectory !== "string" || candidate.destinationDirectory.length === 0)
   ) {
-    return NextResponse.json(
-      { error: "destinationDirectory must be a non-empty string or null" },
-      { status: 400 },
-    );
+    return NextResponse.json({ error: "destinationDirectory must be a non-empty string or null" }, { status: 400 });
   }
 
   const destinationDirectory = candidate.destinationDirectory as string | null | undefined;
@@ -223,9 +215,10 @@ export async function moveFileContent(req: Request, be: FileBackend): Promise<Re
 
   const moved = results.filter((result) => !result.unchanged);
   if (moved.length > 0) {
-    const message = moved.length === 1
-      ? `moved ${moved[0].name} to ${moved[0].destinationLabel}`
-      : `moved ${moved.length} items to ${moved[0].destinationLabel}`;
+    const message =
+      moved.length === 1
+        ? `moved ${moved[0].name} to ${moved[0].destinationLabel}`
+        : `moved ${moved.length} items to ${moved[0].destinationLabel}`;
     try {
       await be.afterWrite?.(message);
     } catch (err) {
@@ -238,8 +231,11 @@ export async function moveFileContent(req: Request, be: FileBackend): Promise<Re
   return NextResponse.json(
     {
       ok: failure === null,
-      results: results.map(({ sourcePath, path: destination, unchanged }) =>
-        ({ sourcePath, path: destination, unchanged })),
+      results: results.map(({ sourcePath, path: destination, unchanged }) => ({
+        sourcePath,
+        path: destination,
+        unchanged,
+      })),
       ...(failure ? { error: failure.error, failedSourcePath } : {}),
     },
     { status },

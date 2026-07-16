@@ -8,11 +8,11 @@ We think the next generation of business tools won't be Excel spreadsheets and P
 
 ## Core idea
 
-AI is isolated and grounded inside a workspace which has a file and folder hierarchy and a terminal You describe what you want, it writes the terminal commands, the code, runs the code. 
+AI is isolated and grounded inside a workspace which has a file and folder hierarchy and a terminal You describe what you want, it writes the terminal commands, the code, runs the code.
 
 The agent handles the terminal. You handle the intent.
 
-workspace agents can then be organized in a controlled DAG according to the network architecture so they can call each other as tools. 
+workspace agents can then be organized in a controlled DAG according to the network architecture so they can call each other as tools.
 
 Any workspace agent can be triggered from an external tool, for example we can embed it into a chatbot which can abstract the workspace files and separate concerns.
 
@@ -42,7 +42,6 @@ Benefit : build complex workflows by wiring together workspaces, each with a sin
 
 Benefit : plug your service into any existing tool, chatbot, or workflow without rebuilding enabling separation of concerns
 
-
 ## The future of work
 
 Today a business process lives in a spreadsheet a person babysits and a deck that explains it. We think it becomes a small living service: grounded in its own data and scripts, run by an agent, callable on demand, and able to collaborate with other services the same way teams of people do.
@@ -54,7 +53,6 @@ The metaphor is an organization, not a program:
 - The **agent network** is the org chart — who may ask whom, with an orchestrator routing work to the specialists below it.
 - **Shared drives** (on the roadmap) are the shared workspace — the SharePoint where agents drop artifacts for each other to pick up, so collaboration outlives any single request.
 
-The citizen developer's job shifts from *doing the work* to *designing the organization*: defining intents, contracts, and who-talks-to-whom — then letting a fleet of grounded agents run it. You handle the intent and the structure. The agents handle the terminal, the data, and the handoffs.
+The citizen developer's job shifts from _doing the work_ to _designing the organization_: defining intents, contracts, and who-talks-to-whom — then letting a fleet of grounded agents run it. You handle the intent and the structure. The agents handle the terminal, the data, and the handoffs.
 
 And because every agent is a real isolated environment you self-host — not a shared sandbox — this organization runs on infrastructure you control, with your data, your models, your rules.
-

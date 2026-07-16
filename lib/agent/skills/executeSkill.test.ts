@@ -31,7 +31,11 @@ const SKILL: SkillDefinition = {
     required: ["sku"],
   },
   // `quantity` is deliberately optional, exercising normal JSON Schema output semantics.
-  output: { type: "object", properties: { in_stock: { type: "boolean" }, quantity: { type: "number" } }, required: ["in_stock"] },
+  output: {
+    type: "object",
+    properties: { in_stock: { type: "boolean" }, quantity: { type: "number" } },
+    required: ["in_stock"],
+  },
 };
 
 const CALLEE = { id: "callee-1", name: "stock-agent", dir: "/tmp/nowhere", maxIterations: 5 };
@@ -45,10 +49,7 @@ const store = {
 // it was driven with, so tests can assert what the callee actually saw.
 function fakeRunner(responses: string[]) {
   const inputs: string[] = [];
-  const run = async function* (
-    _messages: unknown,
-    userInput: string,
-  ): AsyncGenerator<AgentEvent> {
+  const run = async function* (_messages: unknown, userInput: string): AsyncGenerator<AgentEvent> {
     inputs.push(userInput);
     const text = responses[inputs.length - 1] ?? "";
     yield { type: "token", content: text };
@@ -86,10 +87,16 @@ describe("executeSkill — pre-run rejections (callee must never run)", () => {
   it("uses a matching pre-resolved skill without loading the directory again", async () => {
     const runner = fakeRunner([GOOD_OUTPUT]);
     const loadSkillsFn = vi.fn(async () => []);
-    const res = await executeSkill(CALLEE.id, CALLER.id, "check-stock", { sku: "A1" }, opts(runner, {
-      resolvedSkill: SKILL,
-      loadSkillsFn,
-    }));
+    const res = await executeSkill(
+      CALLEE.id,
+      CALLER.id,
+      "check-stock",
+      { sku: "A1" },
+      opts(runner, {
+        resolvedSkill: SKILL,
+        loadSkillsFn,
+      }),
+    );
 
     expect(res.state).toBe("completed");
     expect(loadSkillsFn).not.toHaveBeenCalled();
@@ -97,7 +104,13 @@ describe("executeSkill — pre-run rejections (callee must never run)", () => {
 
   it("rejects an unauthorized caller with NOT_CONNECTED", async () => {
     const runner = fakeRunner([GOOD_OUTPUT]);
-    const res = await executeSkill(CALLEE.id, CALLER.id, "check-stock", { sku: "A1" }, opts(runner, { canCallFn: () => false }));
+    const res = await executeSkill(
+      CALLEE.id,
+      CALLER.id,
+      "check-stock",
+      { sku: "A1" },
+      opts(runner, { canCallFn: () => false }),
+    );
     expect(res).toMatchObject({ state: "failed", code: "NOT_CONNECTED" });
     expect(runner.inputs).toHaveLength(0);
   });
@@ -112,7 +125,13 @@ describe("executeSkill — pre-run rejections (callee must never run)", () => {
 
   it("rejects a workspace with no skills at all with SKILL_NOT_FOUND", async () => {
     const runner = fakeRunner([GOOD_OUTPUT]);
-    const res = await executeSkill(CALLEE.id, CALLER.id, "check-stock", { sku: "A1" }, opts(runner, { loadSkillsFn: async () => [] }));
+    const res = await executeSkill(
+      CALLEE.id,
+      CALLER.id,
+      "check-stock",
+      { sku: "A1" },
+      opts(runner, { loadSkillsFn: async () => [] }),
+    );
     expect(res).toMatchObject({ state: "failed", code: "SKILL_NOT_FOUND" });
     expect((res as { message: string }).message).toContain("no skills");
   });
@@ -134,7 +153,13 @@ describe("executeSkill — pre-run rejections (callee must never run)", () => {
         required: ["filters"],
       },
     };
-    const res = await executeSkill(CALLEE.id, CALLER.id, "check-stock", { filters: {} }, opts(fakeRunner([GOOD_OUTPUT]), { loadSkillsFn: async () => [nested] }));
+    const res = await executeSkill(
+      CALLEE.id,
+      CALLER.id,
+      "check-stock",
+      { filters: {} },
+      opts(fakeRunner([GOOD_OUTPUT]), { loadSkillsFn: async () => [nested] }),
+    );
     expect(res).toMatchObject({ state: "failed", code: "INPUT_VALIDATION_ERROR" });
     expect((res as { message: string }).message).toContain("field 'filters.region' is required");
   });
@@ -142,11 +167,21 @@ describe("executeSkill — pre-run rejections (callee must never run)", () => {
   it("lists the allowed values for an invalid enum", async () => {
     const withEnum: SkillDefinition = {
       ...SKILL,
-      input: { type: "object", properties: { mode: { type: "string", enum: ["concise", "detailed"] } }, required: ["mode"] },
+      input: {
+        type: "object",
+        properties: { mode: { type: "string", enum: ["concise", "detailed"] } },
+        required: ["mode"],
+      },
     };
-    const res = await executeSkill(CALLEE.id, CALLER.id, "check-stock", { mode: "brief" }, opts(fakeRunner([GOOD_OUTPUT]), { loadSkillsFn: async () => [withEnum] }));
+    const res = await executeSkill(
+      CALLEE.id,
+      CALLER.id,
+      "check-stock",
+      { mode: "brief" },
+      opts(fakeRunner([GOOD_OUTPUT]), { loadSkillsFn: async () => [withEnum] }),
+    );
     expect(res).toMatchObject({ state: "failed", code: "INPUT_VALIDATION_ERROR" });
-    expect((res as { message: string }).message).toContain("field 'mode' must be one of: \"concise\", \"detailed\"");
+    expect((res as { message: string }).message).toContain('field \'mode\' must be one of: "concise", "detailed"');
   });
 
   it("rejects wrongly-typed args but allows extra fields (non-strict)", async () => {
@@ -161,9 +196,18 @@ describe("executeSkill — pre-run rejections (callee must never run)", () => {
   it("reports an uncompilable input schema as EXECUTION_ERROR, not the caller's fault", async () => {
     // INPUT_VALIDATION_ERROR would make AgentCallTool count a strike against the caller and
     // tell it to re-read the schema — useless when the skill FILE is what's broken.
-    const broken: SkillDefinition = { ...SKILL, input: { type: "object", properties: { sku: { type: "not-a-type" } } } };
+    const broken: SkillDefinition = {
+      ...SKILL,
+      input: { type: "object", properties: { sku: { type: "not-a-type" } } },
+    };
     const runner = fakeRunner([GOOD_OUTPUT]);
-    const res = await executeSkill(CALLEE.id, CALLER.id, "check-stock", { sku: "A1" }, opts(runner, { loadSkillsFn: async () => [broken] }));
+    const res = await executeSkill(
+      CALLEE.id,
+      CALLER.id,
+      "check-stock",
+      { sku: "A1" },
+      opts(runner, { loadSkillsFn: async () => [broken] }),
+    );
     expect(res).toMatchObject({ state: "failed", code: "EXECUTION_ERROR" });
     expect((res as { message: string }).message).toContain("broken input schema");
     expect(runner.inputs).toHaveLength(0);
@@ -191,16 +235,31 @@ describe("executeSkill — callee run and output contract", () => {
   });
 
   it("allows extra output fields and omitted optional output fields", async () => {
-    const extra = await executeSkill(CALLEE.id, CALLER.id, "check-stock", { sku: "A1" },
-      opts(fakeRunner([JSON.stringify({ in_stock: true, quantity: 3, warehouse: "B" })])));
+    const extra = await executeSkill(
+      CALLEE.id,
+      CALLER.id,
+      "check-stock",
+      { sku: "A1" },
+      opts(fakeRunner([JSON.stringify({ in_stock: true, quantity: 3, warehouse: "B" })])),
+    );
     expect(extra.state).toBe("completed");
 
-    const optionalOmitted = await executeSkill(CALLEE.id, CALLER.id, "check-stock", { sku: "A1" },
-      opts(fakeRunner([JSON.stringify({ in_stock: true })]), { outputMaxRetries: 0 }));
+    const optionalOmitted = await executeSkill(
+      CALLEE.id,
+      CALLER.id,
+      "check-stock",
+      { sku: "A1" },
+      opts(fakeRunner([JSON.stringify({ in_stock: true })]), { outputMaxRetries: 0 }),
+    );
     expect(optionalOmitted).toMatchObject({ state: "completed", output: { in_stock: true } });
 
-    const requiredMissing = await executeSkill(CALLEE.id, CALLER.id, "check-stock", { sku: "A1" },
-      opts(fakeRunner([JSON.stringify({ quantity: 3 })]), { outputMaxRetries: 0 }));
+    const requiredMissing = await executeSkill(
+      CALLEE.id,
+      CALLER.id,
+      "check-stock",
+      { sku: "A1" },
+      opts(fakeRunner([JSON.stringify({ quantity: 3 })]), { outputMaxRetries: 0 }),
+    );
     expect(requiredMissing).toMatchObject({ state: "failed", code: "OUTPUT_VALIDATION_ERROR" });
     expect((requiredMissing as { message: string }).message).toContain("field 'in_stock' is required");
   });
@@ -220,7 +279,13 @@ describe("executeSkill — callee run and output contract", () => {
 
   it("resolves as OUTPUT_VALIDATION_ERROR after exhausting correction retries", async () => {
     const runner = fakeRunner(["nope", "still nope", "nope again", "never reached"]);
-    const res = await executeSkill(CALLEE.id, CALLER.id, "check-stock", { sku: "A1" }, opts(runner, { outputMaxRetries: 2 }));
+    const res = await executeSkill(
+      CALLEE.id,
+      CALLER.id,
+      "check-stock",
+      { sku: "A1" },
+      opts(runner, { outputMaxRetries: 2 }),
+    );
     expect(res).toMatchObject({ state: "failed", code: "OUTPUT_VALIDATION_ERROR" });
     expect(runner.inputs).toHaveLength(3); // initial run + 2 retries, then stop
   });
@@ -232,13 +297,33 @@ describe("executeSkill — callee run and output contract", () => {
     const responses = ["not json", GOOD_OUTPUT];
     let call = 0;
     const run = async function* (): AsyncGenerator<AgentEvent> {
-      yield { type: "turn_usage", inputTokens: 100 + call, outputTokens: 5, reasoningTokens: 0, cachedInputTokens: 0, cacheCreationTokens: 0, toolCalls: [] };
+      yield {
+        type: "turn_usage",
+        inputTokens: 100 + call,
+        outputTokens: 5,
+        reasoningTokens: 0,
+        cachedInputTokens: 0,
+        cacheCreationTokens: 0,
+        toolCalls: [],
+      };
       yield { type: "token", content: responses[call++] };
       yield { type: "done" };
     } as unknown as typeof runAgent;
 
-    const res = await executeSkill(CALLEE.id, CALLER.id, "check-stock", { sku: "A1" },
-      opts({ run }, { appendUsageFn: (r) => { recorded.push(r as typeof recorded[number]); } }));
+    const res = await executeSkill(
+      CALLEE.id,
+      CALLER.id,
+      "check-stock",
+      { sku: "A1" },
+      opts(
+        { run },
+        {
+          appendUsageFn: (r) => {
+            recorded.push(r as (typeof recorded)[number]);
+          },
+        },
+      ),
+    );
     expect(res.state).toBe("completed");
     expect(recorded).toHaveLength(2); // initial run + one correction retry
     expect(recorded[0]).toMatchObject({ workspaceId: CALLEE.id, workspaceName: "stock-agent", inputTokens: 100 });
@@ -252,7 +337,13 @@ describe("executeSkill — callee run and output contract", () => {
       JSON.stringify({ _needs_input: "SKU 'CMP-MOTORS' not found — did you mean CMP-MOTOR?" }),
       GOOD_OUTPUT, // must never be reached
     ]);
-    const res = await executeSkill(CALLEE.id, CALLER.id, "check-stock", { sku: "CMP-MOTORS" }, opts(runner, { outputMaxRetries: 2 }));
+    const res = await executeSkill(
+      CALLEE.id,
+      CALLER.id,
+      "check-stock",
+      { sku: "CMP-MOTORS" },
+      opts(runner, { outputMaxRetries: 2 }),
+    );
     expect(res).toMatchObject({ state: "failed", code: "NEEDS_INPUT" });
     expect((res as { message: string }).message).toContain("did you mean CMP-MOTOR?");
     expect(runner.inputs).toHaveLength(1);
@@ -281,17 +372,35 @@ describe("executeSkill — callee run and output contract", () => {
       yield { type: "error", message: "model exploded" };
     } as unknown as typeof runAgent;
     const res = await executeSkill(CALLEE.id, CALLER.id, "check-stock", { sku: "A1" }, opts({ run }));
-    expect(res).toEqual({ state: "failed", code: "EXECUTION_ERROR", message: "model exploded", conversationId: FAKE_CONV_ID });
+    expect(res).toEqual({
+      state: "failed",
+      code: "EXECUTION_ERROR",
+      message: "model exploded",
+      conversationId: FAKE_CONV_ID,
+    });
   });
 
   it("persists the callee run as a skill-call conversation in the callee workspace and returns its id", async () => {
-    const createConversationFn = vi.fn((_wsId: string, o?: { title?: string; kind?: "user" | "skill-call" | "scheduled" }) =>
-      ({ id: "conv-1", title: o?.title ?? "", kind: o?.kind, createdAt: "", updatedAt: "", lastMessageAt: "" }));
+    const createConversationFn = vi.fn(
+      (_wsId: string, o?: { title?: string; kind?: "user" | "skill-call" | "scheduled" }) => ({
+        id: "conv-1",
+        title: o?.title ?? "",
+        kind: o?.kind,
+        createdAt: "",
+        updatedAt: "",
+        lastMessageAt: "",
+      }),
+    );
     const persistFn = vi.fn();
 
     const runner = fakeRunner([GOOD_OUTPUT]);
-    const res = await executeSkill(CALLEE.id, CALLER.id, "check-stock", { sku: "A1" },
-      opts(runner, { createConversationFn, getMessagesFn: () => [], persistFn }));
+    const res = await executeSkill(
+      CALLEE.id,
+      CALLER.id,
+      "check-stock",
+      { sku: "A1" },
+      opts(runner, { createConversationFn, getMessagesFn: () => [], persistFn }),
+    );
 
     expect(res).toMatchObject({ state: "completed", conversationId: "conv-1" });
     expect(createConversationFn).toHaveBeenCalledWith(CALLEE.id, { kind: "skill-call" });
@@ -300,21 +409,31 @@ describe("executeSkill — callee run and output contract", () => {
 
   it("persists and returns the conversation id even when output validation fails", async () => {
     const persistFn = vi.fn();
-    const res = await executeSkill(CALLEE.id, CALLER.id, "check-stock", { sku: "A1" },
+    const res = await executeSkill(
+      CALLEE.id,
+      CALLER.id,
+      "check-stock",
+      { sku: "A1" },
       opts(fakeRunner([JSON.stringify({ quantity: 3 })]), {
         outputMaxRetries: 0,
         createConversationFn: () => ({ id: "conv-9", title: "", createdAt: "", updatedAt: "", lastMessageAt: "" }),
         getMessagesFn: () => [],
         persistFn,
-      }));
+      }),
+    );
     expect(res).toMatchObject({ state: "failed", code: "OUTPUT_VALIDATION_ERROR", conversationId: "conv-9" });
     expect(persistFn).toHaveBeenCalledWith(CALLEE.id, "conv-9");
   });
 
   it("creates no conversation for a pre-run rejection (NOT_CONNECTED)", async () => {
     const createConversationFn = vi.fn();
-    const res = await executeSkill(CALLEE.id, CALLER.id, "check-stock", { sku: "A1" },
-      opts(fakeRunner([GOOD_OUTPUT]), { canCallFn: () => false, createConversationFn }));
+    const res = await executeSkill(
+      CALLEE.id,
+      CALLER.id,
+      "check-stock",
+      { sku: "A1" },
+      opts(fakeRunner([GOOD_OUTPUT]), { canCallFn: () => false, createConversationFn }),
+    );
     expect(res).toMatchObject({ state: "failed", code: "NOT_CONNECTED" });
     expect((res as { conversationId?: string }).conversationId).toBeUndefined();
     expect(createConversationFn).not.toHaveBeenCalled();
@@ -333,8 +452,19 @@ describe("executeSkill — callee run and output contract", () => {
     } as unknown as typeof runAgent;
 
     const CONV = "conv-live";
-    const call = executeSkill(CALLEE.id, CALLER.id, "check-stock", { sku: "A1" },
-      opts({ run }, { createConversationFn: () => ({ id: CONV, title: "", createdAt: "", updatedAt: "", lastMessageAt: "" }), getMessagesFn: () => [] }));
+    const call = executeSkill(
+      CALLEE.id,
+      CALLER.id,
+      "check-stock",
+      { sku: "A1" },
+      opts(
+        { run },
+        {
+          createConversationFn: () => ({ id: CONV, title: "", createdAt: "", updatedAt: "", lastMessageAt: "" }),
+          getMessagesFn: () => [],
+        },
+      ),
+    );
 
     // Give the runner a tick to emit its first token into the broker buffer.
     await new Promise((r) => setTimeout(r, 0));
@@ -361,12 +491,19 @@ describe("executeSkill — callee run and output contract", () => {
     const CONV = "conv-retry-done";
     const received: AgentEvent[] = [];
     // Subscribe synchronously after the broker session exists by intercepting the first turn.
-    const res = await executeSkill(CALLEE.id, CALLER.id, "check-stock", { sku: "A1" },
+    const res = await executeSkill(
+      CALLEE.id,
+      CALLER.id,
+      "check-stock",
+      { sku: "A1" },
       opts(runner, {
         createConversationFn: () => ({ id: CONV, title: "", createdAt: "", updatedAt: "", lastMessageAt: "" }),
         getMessagesFn: () => [],
-        onConversationStart: () => { broker.subscribe(CALLEE.id, CONV, (e) => received.push(e)); },
-      }));
+        onConversationStart: () => {
+          broker.subscribe(CALLEE.id, CONV, (e) => received.push(e));
+        },
+      }),
+    );
     expect(res.state).toBe("completed");
     expect(received.filter((e) => e.type === "done")).toHaveLength(1);
   });
@@ -378,7 +515,11 @@ describe("executeSkill — callee run and output contract", () => {
     const CONV = "conv-callee-stop";
     let sawAbort = false;
     const run = async function* (
-      _m: unknown, _u: unknown, _d: unknown, _id: unknown, options: { signal?: AbortSignal },
+      _m: unknown,
+      _u: unknown,
+      _d: unknown,
+      _id: unknown,
+      options: { signal?: AbortSignal },
     ): AsyncGenerator<AgentEvent> {
       await new Promise<void>((res) => {
         if (options.signal?.aborted) return res();
@@ -388,8 +529,19 @@ describe("executeSkill — callee run and output contract", () => {
       yield { type: "error", message: "AbortError: This operation was aborted" };
     } as unknown as typeof runAgent;
 
-    const call = executeSkill(CALLEE.id, CALLER.id, "check-stock", { sku: "A1" },
-      opts({ run }, { createConversationFn: () => ({ id: CONV, title: "", createdAt: "", updatedAt: "", lastMessageAt: "" }), getMessagesFn: () => [] }));
+    const call = executeSkill(
+      CALLEE.id,
+      CALLER.id,
+      "check-stock",
+      { sku: "A1" },
+      opts(
+        { run },
+        {
+          createConversationFn: () => ({ id: CONV, title: "", createdAt: "", updatedAt: "", lastMessageAt: "" }),
+          getMessagesFn: () => [],
+        },
+      ),
+    );
 
     // Let the broker session register and the runner start awaiting its signal, then Stop the callee.
     await new Promise((r) => setTimeout(r, 0));
@@ -408,8 +560,13 @@ describe("executeSkill — callee run and output contract", () => {
     const run = async function* (): AsyncGenerator<AgentEvent> {
       yield { type: "error", message: "AbortError: This operation was aborted" };
     } as unknown as typeof runAgent;
-    const res = await executeSkill(CALLEE.id, CALLER.id, "check-stock", { sku: "A1" },
-      opts({ run }, { signal: AbortSignal.abort() }));
+    const res = await executeSkill(
+      CALLEE.id,
+      CALLER.id,
+      "check-stock",
+      { sku: "A1" },
+      opts({ run }, { signal: AbortSignal.abort() }),
+    );
     expect(res).toMatchObject({ state: "failed", code: "EXECUTION_ERROR" });
     expect((res as { message: string }).message).toContain("aborted");
     expect((res as { message: string }).message).toContain("timeout or cancellation");

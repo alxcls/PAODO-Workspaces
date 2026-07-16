@@ -32,26 +32,26 @@ export const emptyTranscript = (): TranscriptState => ({ messages: [], totalInpu
 
 // Extend this map to support new tools without modifying dispatch logic (OCP).
 const TOOL_LABELS: Record<string, string> = {
-  file_read:       "Reading file",
-  file_write:      "Writing file",
-  file_edit:       "Editing file",
+  file_read: "Reading file",
+  file_write: "Writing file",
+  file_edit: "Editing file",
   execute_command: "Running command",
-  http_get:        "Fetching page",
-  todo_write:      "Updating tasks",
-  glob:            "Searching files",
-  list_directory:  "Listing directory",
+  http_get: "Fetching page",
+  todo_write: "Updating tasks",
+  glob: "Searching files",
+  list_directory: "Listing directory",
 };
 
 type ArgExtractor = (args: Record<string, unknown>) => string;
 const TOOL_ARG_SUMMARY: Record<string, ArgExtractor> = {
   execute_command: (a) => String(a.command ?? ""),
-  file_read:       (a) => String(a.file_path ?? ""),
-  file_write:      (a) => String(a.file_path ?? ""),
-  file_edit:       (a) => String(a.file_path ?? ""),
-  glob:            (a) => String(a.pattern ?? ""),
-  list_directory:  (a) => String(a.dir_path ?? "") || ".",
-  http_get:        (a) => String(a.url ?? ""),
-  call_agent:      (a) => `→ ${String(a.workspace ?? "")}${a.action ? ` · ${String(a.action)}` : ""}`,
+  file_read: (a) => String(a.file_path ?? ""),
+  file_write: (a) => String(a.file_path ?? ""),
+  file_edit: (a) => String(a.file_path ?? ""),
+  glob: (a) => String(a.pattern ?? ""),
+  list_directory: (a) => String(a.dir_path ?? "") || ".",
+  http_get: (a) => String(a.url ?? ""),
+  call_agent: (a) => `→ ${String(a.workspace ?? "")}${a.action ? ` · ${String(a.action)}` : ""}`,
 };
 
 export function toolLabel(name: string): string {
@@ -89,7 +89,12 @@ export function upsertReasoningText(messages: Message[], content: string): Messa
 // and appends the live tool-status bubble.
 function appendToolStart(messages: Message[], name: string, args: Record<string, unknown>): Message[] {
   const last = messages[messages.length - 1];
-  const toolMsg: Message = { role: "tool_start", toolName: name, toolSummary: toolArgSummary(name, args), toolDone: false };
+  const toolMsg: Message = {
+    role: "tool_start",
+    toolName: name,
+    toolSummary: toolArgSummary(name, args),
+    toolDone: false,
+  };
   if (last?.role === "assistant" && !last.thinking) {
     return [...messages.slice(0, -1), { ...last, thinking: true }, toolMsg];
   }
@@ -105,7 +110,13 @@ function markToolDone(messages: Message[], name: string, link?: CallAgentMeta): 
       next[j] = {
         ...next[j],
         toolDone: true,
-        ...(link ? { calleeWorkspaceId: link.workspaceId, calleeWorkspaceName: link.workspaceName, calleeConversationId: link.conversationId } : {}),
+        ...(link
+          ? {
+              calleeWorkspaceId: link.workspaceId,
+              calleeWorkspaceName: link.workspaceName,
+              calleeConversationId: link.conversationId,
+            }
+          : {}),
       };
       break;
     }
@@ -121,7 +132,12 @@ function attachToolLink(messages: Message[], name: string, link: CallAgentMeta):
   for (let j = next.length - 1; j >= 0; j--) {
     if (next[j].role === "tool_start" && next[j].toolName === name && !next[j].toolDone) {
       if (next[j].calleeConversationId === link.conversationId) return messages;
-      next[j] = { ...next[j], calleeWorkspaceId: link.workspaceId, calleeWorkspaceName: link.workspaceName, calleeConversationId: link.conversationId };
+      next[j] = {
+        ...next[j],
+        calleeWorkspaceId: link.workspaceId,
+        calleeWorkspaceName: link.workspaceName,
+        calleeConversationId: link.conversationId,
+      };
       return next;
     }
   }
@@ -161,7 +177,11 @@ export function applyDiscreteEvent(state: TranscriptState, event: AgentEvent): T
         messages: markToolDone(state.messages, event.name, event.name === "call_agent" ? event.meta : undefined),
       };
     case "turn_usage":
-      return { ...state, totalInput: state.totalInput + event.inputTokens, totalOutput: state.totalOutput + event.outputTokens };
+      return {
+        ...state,
+        totalInput: state.totalInput + event.inputTokens,
+        totalOutput: state.totalOutput + event.outputTokens,
+      };
     case "done":
       return state.totalInput > 0 || state.totalOutput > 0
         ? { ...state, messages: insertUsage(state.messages, state.totalInput, state.totalOutput) }

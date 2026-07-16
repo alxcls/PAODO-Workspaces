@@ -34,14 +34,20 @@ import { defaultContainerManager } from "../infra/docker/containerManager";
 import { defaultWorkspaceStore } from "../workspace/workspaceStore";
 import { getVersioning } from "../infra/services";
 import { broadcastToWorkspace } from "../infra/realtime/wsHub";
-import type { IContainerManager, IContainerExec, IBackgroundTasks, IWorkspaceStore, IWorkspaceVersioning } from "../infra/interfaces";
+import type {
+  IContainerManager,
+  IContainerExec,
+  IBackgroundTasks,
+  IWorkspaceStore,
+  IWorkspaceVersioning,
+} from "../infra/interfaces";
 import type { AgentConfig, PrivilegedRunner, StreamingExecFn, BackgroundExecFn } from "./interfaces";
 import { DEFAULT_LLM } from "./interfaces";
 
 function makeContainerRunner(workspaceId: string, workspaceDir: string, containers: IContainerExec): PrivilegedRunner {
   return {
-    exec:       (cmd, opts) => containers.exec(workspaceId, workspaceDir, cmd, opts),
-    execAsRoot: (cmd)       => containers.execAsRoot(workspaceId, workspaceDir, cmd),
+    exec: (cmd, opts) => containers.exec(workspaceId, workspaceDir, cmd, opts),
+    execAsRoot: (cmd) => containers.execAsRoot(workspaceId, workspaceDir, cmd),
   };
 }
 
@@ -49,7 +55,11 @@ function makeStreamingExecFn(workspaceId: string, workspaceDir: string, containe
   return (cmd, opts) => containers.execStreaming(workspaceId, workspaceDir, cmd, opts);
 }
 
-function makeBackgroundExecFn(workspaceId: string, workspaceDir: string, containers: IBackgroundTasks): BackgroundExecFn {
+function makeBackgroundExecFn(
+  workspaceId: string,
+  workspaceDir: string,
+  containers: IBackgroundTasks,
+): BackgroundExecFn {
   return (command) => containers.startBackground(workspaceId, workspaceDir, command);
 }
 
@@ -60,27 +70,27 @@ function makeBackgroundExecFn(workspaceId: string, workspaceDir: string, contain
 // the defaults are fine.
 export function loadAgentConfig(workspaceId?: string): AgentConfig {
   const ws = workspaceId ? defaultWorkspaceStore.getWorkspace(workspaceId) : undefined;
-  const provider        = ws?.llmProvider ?? DEFAULT_LLM.provider;
-  const model           = ws?.llmModel ?? DEFAULT_LLM.model;
+  const provider = ws?.llmProvider ?? DEFAULT_LLM.provider;
+  const model = ws?.llmModel ?? DEFAULT_LLM.model;
   const reasoningEffort = ws?.reasoningEffort ?? DEFAULT_LLM.reasoningEffort;
   // The chosen model applies to whichever provider is selected; the other providers' model fields are
   // left undefined (buildModel only reads the selected provider's field).
   return {
     provider,
     reasoningEffort,
-    graphEnabled:         process.env.GRAPH_ENABLED !== "false",
-    anthropicModel:       provider === "anthropic" ? model : undefined,
-    anthropicApiKey:      process.env.ANTHROPIC_API_KEY,
-    anthropicCacheTtl1h:  process.env.ANTHROPIC_CACHE_TTL_1H === "true",
-    openaiModel:          provider === "openai" ? model : undefined,
-    openaiApiKey:         process.env.OPENAI_API_KEY,
-    deepseekModel:        provider === "deepseek" ? model : undefined,
-    deepseekApiKey:       process.env.DEEPSEEK_API_KEY,
+    graphEnabled: process.env.GRAPH_ENABLED !== "false",
+    anthropicModel: provider === "anthropic" ? model : undefined,
+    anthropicApiKey: process.env.ANTHROPIC_API_KEY,
+    anthropicCacheTtl1h: process.env.ANTHROPIC_CACHE_TTL_1H === "true",
+    openaiModel: provider === "openai" ? model : undefined,
+    openaiApiKey: process.env.OPENAI_API_KEY,
+    deepseekModel: provider === "deepseek" ? model : undefined,
+    deepseekApiKey: process.env.DEEPSEEK_API_KEY,
     silenceTimeoutMs: parseInt(process.env.EXEC_SILENCE_TIMEOUT_MS ?? "", 10) || 60_000,
-    maxTimeoutMs:     parseInt(process.env.EXEC_MAX_TIMEOUT_MS ?? "", 10) || 30 * 60_000,
-    skillInputMaxRetries:       parseInt(process.env.SKILL_INPUT_MAX_RETRIES ?? "", 10) || 2,
-    skillOutputMaxRetries:      parseInt(process.env.SKILL_OUTPUT_MAX_RETRIES ?? "", 10) || 2,
-    skillNeedsInputMaxRounds:   parseInt(process.env.SKILL_NEEDS_INPUT_MAX_ROUNDS ?? "", 10) || 2,
+    maxTimeoutMs: parseInt(process.env.EXEC_MAX_TIMEOUT_MS ?? "", 10) || 30 * 60_000,
+    skillInputMaxRetries: parseInt(process.env.SKILL_INPUT_MAX_RETRIES ?? "", 10) || 2,
+    skillOutputMaxRetries: parseInt(process.env.SKILL_OUTPUT_MAX_RETRIES ?? "", 10) || 2,
+    skillNeedsInputMaxRounds: parseInt(process.env.SKILL_NEEDS_INPUT_MAX_ROUNDS ?? "", 10) || 2,
   };
 }
 
@@ -117,10 +127,7 @@ export function buildTools(
     // Calling tools go only to a caller (a workspace with outgoing edges). A pure callee
     // never receives call_agent/list_agents, even when the graph feature is enabled.
     ...(config.graphEnabled && isCaller(workspaceId)
-      ? [
-          new AgentCallTool(workspaceId, store, containers, config),
-          new ListAgentsTool(workspaceId, store),
-        ]
+      ? [new AgentCallTool(workspaceId, store, containers, config), new ListAgentsTool(workspaceId, store)]
       : []),
     // Drive tools are injected only when this workspace has at least one connected drive,
     // keeping the prompt lean for the common no-drive case.
@@ -135,9 +142,7 @@ export function buildTools(
       : []),
   ];
 
-  const toolMap: Record<string, (typeof tools)[number]> = Object.fromEntries(
-    tools.map((t) => [t.name, t])
-  );
+  const toolMap: Record<string, (typeof tools)[number]> = Object.fromEntries(tools.map((t) => [t.name, t]));
 
   const modelWithTools = model.bindTools(tools);
 

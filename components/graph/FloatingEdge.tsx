@@ -19,8 +19,12 @@ export function FloatingEdge({ id, source, target, markerEnd, style }: EdgeProps
 
   const { sx, sy, tx, ty, sourcePos, targetPos } = getEdgeParams(sourceNode, targetNode);
   const [path] = getBezierPath({
-    sourceX: sx, sourceY: sy, sourcePosition: sourcePos,
-    targetX: tx, targetY: ty, targetPosition: targetPos,
+    sourceX: sx,
+    sourceY: sy,
+    sourcePosition: sourcePos,
+    targetX: tx,
+    targetY: ty,
+    targetPosition: targetPos,
   });
 
   return <BaseEdge id={id} path={path} markerEnd={markerEnd} style={style} interactionWidth={20} />;
@@ -29,7 +33,14 @@ export function FloatingEdge({ id, source, target, markerEnd, style }: EdgeProps
 // Drag preview while a connection is being drawn. For drives it floats from the node's
 // nearest border (matching committed drive edges); for workspaces it starts at the handle
 // being dragged, so the input/output side stays meaningful.
-export function FloatingConnectionLine({ fromX, fromY, toX, toY, fromNode, fromPosition }: ConnectionLineComponentProps) {
+export function FloatingConnectionLine({
+  fromX,
+  fromY,
+  toX,
+  toY,
+  fromNode,
+  fromPosition,
+}: ConnectionLineComponentProps) {
   if (!fromNode) return null;
 
   const isDrive = fromNode.type === "drive";
@@ -46,8 +57,11 @@ export function FloatingConnectionLine({ fromX, fromY, toX, toY, fromNode, fromP
     sourcePos = params.sourcePos;
   }
   const [path] = getBezierPath({
-    sourceX: sx, sourceY: sy, sourcePosition: sourcePos,
-    targetX: toX, targetY: toY,
+    sourceX: sx,
+    sourceY: sy,
+    sourcePosition: sourcePos,
+    targetX: toX,
+    targetY: toY,
   });
 
   return (

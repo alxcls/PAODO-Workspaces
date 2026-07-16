@@ -175,33 +175,46 @@ export class ContainerManager implements IContainerManager {
     if (hasProxyCA) await this.proxy.attach(workspaceId);
 
     const r = await this.docker.cmd(
-      "run", "-d",
+      "run",
+      "-d",
       // --init runs tini as PID 1 so it reaps orphaned/killed processes. Without it, the keep-alive
       // `sleep infinity` is PID 1 and never wait()s on reparented children, so every command we
       // group-kill (execStreaming) would linger as a zombie and slowly exhaust the PID table.
       "--init",
-      "--name", containerName(workspaceId),
-      "--network", networkName(workspaceId),
+      "--name",
+      containerName(workspaceId),
+      "--network",
+      networkName(workspaceId),
       `--memory=${CONTAINER_MEMORY}`,
       `--cpus=${CONTAINER_CPUS}`,
       ...this.buildVolumeArg(workspaceDir),
       ...(hash ? ["--label", `${HASH_LABEL}=${hash}`] : []),
-      "--label", `${SECRETS_LABEL}=${secretsHash}`,
+      "--label",
+      `${SECRETS_LABEL}=${secretsHash}`,
       ...credentialEnvArgs,
       // Drop all Linux capabilities, then add back only the minimal set dpkg/apt and the chown sweep
       // need when run as root via `docker exec -u 0` (apt_install tool, ownership sweep). The agent's
       // shell is non-root with no setuid path, so it cannot use these caps — they are reachable only
       // by the app-initiated root execs. Combined with no-new-privileges this blocks setuid escalation.
-      "--cap-drop", "ALL",
-      "--cap-add", "CHOWN",
-      "--cap-add", "DAC_OVERRIDE",
-      "--cap-add", "FOWNER",
-      "--cap-add", "FSETID",
-      "--cap-add", "SETGID",
-      "--cap-add", "SETUID",
-      "--security-opt", "no-new-privileges:true",
+      "--cap-drop",
+      "ALL",
+      "--cap-add",
+      "CHOWN",
+      "--cap-add",
+      "DAC_OVERRIDE",
+      "--cap-add",
+      "FOWNER",
+      "--cap-add",
+      "FSETID",
+      "--cap-add",
+      "SETGID",
+      "--cap-add",
+      "SETUID",
+      "--security-opt",
+      "no-new-privileges:true",
       CONTAINER_IMAGE,
-      "sleep", "infinity",
+      "sleep",
+      "infinity",
     );
     if (r.code !== 0) throw new Error(`docker run failed: ${r.stderr}`);
 
@@ -209,13 +222,11 @@ export class ContainerManager implements IContainerManager {
     // files the uid-1000 agent/app can no longer manage. Chown the tree to 1000:1000 so both can.
     // Runs as root (-u 0) for this single bootstrap command only. Idempotent and cheap on
     // already-1000-owned trees.
-    const chown = await this.docker.exec(
-      containerName(workspaceId),
-      ["chown", "-R", "1000:1000", "/workspace"],
-      { asRoot: true, trimStdout: true },
-    );
-    if (chown.code !== 0)
-      log.debug({ workspaceId, stderr: chown.stderr }, "workspace chown sweep failed (non-fatal)");
+    const chown = await this.docker.exec(containerName(workspaceId), ["chown", "-R", "1000:1000", "/workspace"], {
+      asRoot: true,
+      trimStdout: true,
+    });
+    if (chown.code !== 0) log.debug({ workspaceId, stderr: chown.stderr }, "workspace chown sweep failed (non-fatal)");
 
     // Install the proxy CA and build the combined trust bundle inside the fresh container (no-op
     // when the proxy isn't set up). See containerCredentials.installProxyCA.
@@ -247,12 +258,7 @@ export class ContainerManager implements IContainerManager {
    * cmdArgs are passed directly to execvp — no shell interpolation, so injection is impossible.
    * stdout is NOT trimmed so callers receive exact file content (trailing newlines preserved).
    */
-  async exec(
-    workspaceId: string,
-    workspaceDir: string,
-    cmdArgs: string[],
-    opts: { stdin?: string } = {},
-  ) {
+  async exec(workspaceId: string, workspaceDir: string, cmdArgs: string[], opts: { stdin?: string } = {}) {
     await this.ensure(workspaceId, workspaceDir);
     return this.docker.exec(containerName(workspaceId), cmdArgs, { stdin: opts.stdin });
   }
@@ -279,8 +285,17 @@ export class ContainerManager implements IContainerManager {
       // parent exits immediately, so the docker exec client closes at once — the command looks
       // instantly "done" and its output never streams.
       const proc = spawn("docker", [
-        "exec", "-i", "-w", "/workspace", name,
-        "setsid", "--wait", "/bin/bash", "-c", launcher, ...cmdArgs,
+        "exec",
+        "-i",
+        "-w",
+        "/workspace",
+        name,
+        "setsid",
+        "--wait",
+        "/bin/bash",
+        "-c",
+        launcher,
+        ...cmdArgs,
       ]);
       proc.stdin.end();
       proc.stdout.on("data", (chunk: Buffer) => opts.onStdout(chunk.toString()));
@@ -349,7 +364,10 @@ export class ContainerManager implements IContainerManager {
 
   async stop(workspaceId: string): Promise<void> {
     const t = this.idleTimers.get(workspaceId);
-    if (t) { clearTimeout(t); this.idleTimers.delete(workspaceId); }
+    if (t) {
+      clearTimeout(t);
+      this.idleTimers.delete(workspaceId);
+    }
     // Background processes die with the container (tini reaps the tree) — just drop the bookkeeping.
     this.background.clear(workspaceId);
     const r = await this.docker.cmd("stop", containerName(workspaceId));
@@ -362,7 +380,10 @@ export class ContainerManager implements IContainerManager {
 
   async remove(workspaceId: string): Promise<void> {
     const t = this.idleTimers.get(workspaceId);
-    if (t) { clearTimeout(t); this.idleTimers.delete(workspaceId); }
+    if (t) {
+      clearTimeout(t);
+      this.idleTimers.delete(workspaceId);
+    }
     this.startLocks.delete(workspaceId);
     this.background.clear(workspaceId);
     // Non-zero exit codes are expected if the container/network was never created.
@@ -384,9 +405,16 @@ export class ContainerManager implements IContainerManager {
     if (WORKSPACES_VOLUME_NAME) {
       const workspaceName = path.basename(workspaceDir);
       const r = await this.docker.cmd(
-        "run", "--rm", "-u", "0",
-        "-v", `${WORKSPACES_VOLUME_NAME}:/data`,
-        CONTAINER_IMAGE, "rm", "-rf", `/data/${workspaceName}`,
+        "run",
+        "--rm",
+        "-u",
+        "0",
+        "-v",
+        `${WORKSPACES_VOLUME_NAME}:/data`,
+        CONTAINER_IMAGE,
+        "rm",
+        "-rf",
+        `/data/${workspaceName}`,
       );
       if (r.code !== 0) throw new Error(`failed to delete workspace dir: ${r.stderr}`);
     } else {
@@ -397,7 +425,10 @@ export class ContainerManager implements IContainerManager {
   async assertDockerAvailable(): Promise<void> {
     const r = await this.docker.cmd("info");
     if (r.code !== 0) {
-      log.error({ stderr: r.stderr }, "Docker is not available. Make sure Docker is running before starting the server.");
+      log.error(
+        { stderr: r.stderr },
+        "Docker is not available. Make sure Docker is running before starting the server.",
+      );
       process.exit(1);
     }
     await this.imageManager.ensureImage(CONTAINER_IMAGE, "Dockerfile.workspace");

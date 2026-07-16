@@ -22,13 +22,7 @@ export const CLEARED = "[content cleared to save context]";
 // Tools whose output is bulky and trivially re-derivable (re-read the file, re-run the search).
 // Stripping these is the cheap win against O(n²) compounding. Deliberately excludes todo_write
 // (the agent's live checklist), compact_context (carries next_step), and call_agent/list_agents.
-export const STRIPPABLE_TOOLS = new Set<string>([
-  "file_read",
-  "glob",
-  "list_directory",
-  "http_get",
-  "execute_command",
-]);
+export const STRIPPABLE_TOOLS = new Set<string>(["file_read", "glob", "list_directory", "http_get", "execute_command"]);
 
 // How many trailing messages medium tries to keep verbatim before snapping to a turn boundary.
 const KEEP_RECENT = 6;
@@ -66,18 +60,28 @@ export function stripToolOutputs(messages: BaseMessage[]): void {
 // One tool-less LLM turn that condenses the given history into a brief.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function summarizeHistory(model: any, history: BaseMessage[], nextStep: string): Promise<string> {
-  const res = await model.invoke([...history, new HumanMessage(`${COMPACT_PROMPT}\n\nThe next step after this summary is: ${nextStep}`)]);
+  const res = await model.invoke([
+    ...history,
+    new HumanMessage(`${COMPACT_PROMPT}\n\nThe next step after this summary is: ${nextStep}`),
+  ]);
   const content = res?.content;
   if (typeof content === "string") return content;
   if (Array.isArray(content)) {
-    return content.map((b: unknown) => (b && typeof b === "object" && "text" in b ? (b as { text: string }).text : "")).join("");
+    return content
+      .map((b: unknown) => (b && typeof b === "object" && "text" in b ? (b as { text: string }).text : ""))
+      .join("");
   }
   return String(content ?? "");
 }
 
 // Applies the chosen level to `messages` IN PLACE (splice preserves the array reference the
 // runner and the route layer both hold). messages[0] is the SystemMessage and is always kept.
-export async function applyCompaction(model: BaseChatModel, messages: BaseMessage[], level: CompactLevel, nextStep: string): Promise<void> {
+export async function applyCompaction(
+  model: BaseChatModel,
+  messages: BaseMessage[],
+  level: CompactLevel,
+  nextStep: string,
+): Promise<void> {
   const before = messages.length;
 
   if (level === "light") {

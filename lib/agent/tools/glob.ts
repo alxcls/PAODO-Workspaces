@@ -12,10 +12,7 @@ const schema = z.object({
 });
 
 function segmentToRegex(segment: string): RegExp {
-  const escaped = segment
-    .replace(/\./g, "\\.")
-    .replace(/\*/g, "[^/]*")
-    .replace(/\?/g, "[^/]");
+  const escaped = segment.replace(/\./g, "\\.").replace(/\*/g, "[^/]*").replace(/\?/g, "[^/]");
   return new RegExp("^" + escaped + "$");
 }
 
@@ -64,10 +61,15 @@ Dot-files and dot-directories are excluded automatically.`;
       }
 
       const r = await this.runner.exec([
-        "find", "/workspace",
-        "-not", "-path", "*/.*",
-        "-mindepth", "1",
-        "-printf", "%y\t%P\n",
+        "find",
+        "/workspace",
+        "-not",
+        "-path",
+        "*/.*",
+        "-mindepth",
+        "1",
+        "-printf",
+        "%y\t%P\n",
       ]);
       if (r.code !== 0) return `Error: ${r.stderr || "glob search failed"}`;
 

@@ -2,10 +2,23 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  ReactFlow, Node, Edge, addEdge, useNodesState, useEdgesState,
-  Background, BackgroundVariant, Controls, MarkerType, Connection,
+  ReactFlow,
+  Node,
+  Edge,
+  addEdge,
+  useNodesState,
+  useEdgesState,
+  Background,
+  BackgroundVariant,
+  Controls,
+  MarkerType,
+  Connection,
   ConnectionMode,
-  Handle, Position, NodeProps, OnEdgesChange, EdgeChange,
+  Handle,
+  Position,
+  NodeProps,
+  OnEdgesChange,
+  EdgeChange,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { useRouter } from "next/navigation";
@@ -50,9 +63,7 @@ function NodeCard({
     >
       {children}
       <div className="flex gap-3 items-center">
-        <div className="flex h-[34px] w-[34px] flex-shrink-0 items-center justify-center">
-          {icon}
-        </div>
+        <div className="flex h-[34px] w-[34px] flex-shrink-0 items-center justify-center">{icon}</div>
         <div className="min-w-0 flex-1">
           <div className="font-semibold text-ms text-text whitespace-nowrap overflow-hidden text-ellipsis">{label}</div>
           {hasDescription && (
@@ -132,8 +143,16 @@ function DriveNode({ data, selected }: NodeProps) {
   );
 }
 
-interface WorkspaceItem { id: string; name: string; description?: string; }
-interface DriveItem { id: string; name: string; description?: string; }
+interface WorkspaceItem {
+  id: string;
+  name: string;
+  description?: string;
+}
+interface DriveItem {
+  id: string;
+  name: string;
+  description?: string;
+}
 interface DriveConnectionItem {
   id: string;
   driveId: string;
@@ -198,8 +217,12 @@ export default function GraphEditor() {
   const edgesRef = useRef<Edge[]>([]);
   const errorTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  useEffect(() => { nodesRef.current = nodes; }, [nodes]);
-  useEffect(() => { edgesRef.current = edges; }, [edges]);
+  useEffect(() => {
+    nodesRef.current = nodes;
+  }, [nodes]);
+  useEffect(() => {
+    edgesRef.current = edges;
+  }, [edges]);
 
   const showError = useCallback((msg: string) => {
     setError(msg);
@@ -208,17 +231,22 @@ export default function GraphEditor() {
   }, []);
 
   // Delete a drive (and, server-side, its connections). Removes the node and its edges locally.
-  const handleDeleteDrive = useCallback((driveId: string) => {
-    if (!confirm("Delete this drive and everything stored in it? This cannot be undone.")) return;
-    fetch(`/api/drives/${driveId}`, { method: "DELETE" })
-      .then((r) => { if (!r.ok) throw new Error("delete failed"); })
-      .then(() => {
-        driveIdsRef.current.delete(driveId);
-        setEdges((eds) => eds.filter((e) => e.source !== driveId && e.target !== driveId));
-        setNodes((nds) => nds.filter((n) => n.id !== driveId));
-      })
-      .catch(() => showError("Failed to delete drive"));
-  }, [setEdges, setNodes, showError]);
+  const handleDeleteDrive = useCallback(
+    (driveId: string) => {
+      if (!confirm("Delete this drive and everything stored in it? This cannot be undone.")) return;
+      fetch(`/api/drives/${driveId}`, { method: "DELETE" })
+        .then((r) => {
+          if (!r.ok) throw new Error("delete failed");
+        })
+        .then(() => {
+          driveIdsRef.current.delete(driveId);
+          setEdges((eds) => eds.filter((e) => e.source !== driveId && e.target !== driveId));
+          setNodes((nds) => nds.filter((n) => n.id !== driveId));
+        })
+        .catch(() => showError("Failed to delete drive"));
+    },
+    [setEdges, setNodes, showError],
+  );
 
   useEffect(() => {
     Promise.all([
@@ -235,12 +263,16 @@ export default function GraphEditor() {
         const workspaceIds = new Set(wss.map((ws) => ws.id));
         driveIdsRef.current = new Set(drives.map((d) => d.id));
         const wsNodes: Node[] = wss.map((ws, i) => ({
-          id: ws.id, type: "workspace", deletable: false,
+          id: ws.id,
+          type: "workspace",
+          deletable: false,
           position: positions[ws.id] ?? { x: 80 + (i % 3) * 260, y: 80 + Math.floor(i / 3) * 220 },
           data: { label: ws.name, description: ws.description ?? "" },
         }));
         const driveNodes: Node[] = drives.map((d, i) => ({
-          id: d.id, type: "drive", deletable: false,
+          id: d.id,
+          type: "drive",
+          deletable: false,
           position: positions[d.id] ?? { x: 80 + (i % 3) * 260, y: 460 + Math.floor(i / 3) * 200 },
           data: { label: d.name, description: d.description, kind: "drive", onDelete: handleDeleteDrive },
         }));
@@ -269,106 +301,138 @@ export default function GraphEditor() {
   }, [setNodes, setEdges, router, handleDeleteDrive]);
 
   useEffect(() => {
-    const handler = (e: BeforeUnloadEvent) => { if (!isDirty) return; e.preventDefault(); };
+    const handler = (e: BeforeUnloadEvent) => {
+      if (!isDirty) return;
+      e.preventDefault();
+    };
     window.addEventListener("beforeunload", handler);
     return () => window.removeEventListener("beforeunload", handler);
   }, [isDirty]);
 
-  const onConnect = useCallback((connection: Connection) => {
-    if (!connection.source || !connection.target) return;
-    if (connection.source === connection.target) { showError("A node cannot connect to itself."); return; }
-    const srcDrive = driveIdsRef.current.has(connection.source);
-    const tgtDrive = driveIdsRef.current.has(connection.target);
-
-    // Drive↔workspace link: persisted immediately to its own store, kept out of the agent graph.
-    if (srcDrive || tgtDrive) {
-      if (srcDrive && tgtDrive) { showError("Drives can only connect to workspaces."); return; }
-      const driveId = srcDrive ? connection.source : connection.target;
-      const workspaceId = srcDrive ? connection.target : connection.source;
-      const sourceHandle = srcDrive ? connection.sourceHandle : connection.targetHandle;
-      const targetHandle = normalizeWorkspaceIncomingHandle(srcDrive ? connection.targetHandle : connection.sourceHandle);
-      const existing = edgesRef.current.find((e) => e.data?.kind === "drive" && e.source === driveId && e.target === workspaceId);
-      if (existing && existing.sourceHandle === sourceHandle && existing.targetHandle === targetHandle) return;
-      fetch("/api/drive-connections", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          driveId,
-          workspaceId,
-          sourceHandle,
-          targetHandle,
-        }),
-      })
-        .then((r) => (r.ok ? r.json() : Promise.reject()))
-        .then((conn: DriveConnectionItem) => {
-          const nextEdge: Edge = {
-            id: conn.id,
-            source: driveId,
-            target: workspaceId,
-            sourceHandle: conn.sourceHandle,
-            targetHandle: normalizeWorkspaceIncomingHandle(conn.targetHandle),
-            ...DRIVE_EDGE_STYLE,
-          };
-          setEdges((eds) => existing ? eds.map((e) => (e.id === existing.id ? nextEdge : e)) : [...eds, nextEdge]);
-        })
-        .catch(() => showError("Failed to connect drive"));
-      return;
-    }
-
-    // Workspace→workspace agent-call edge: batched, cycle-checked, saved on Save.
-    if (wouldCreateCycle(edgesRef.current, connection.source, connection.target)) {
-      showError("Loop detected — agents cannot call back up the chain."); return;
-    }
-    setEdges((eds) => addEdge({ ...connection, ...EDGE_STYLE }, eds));
-    setIsDirty(true);
-  }, [setEdges, showError]);
-
-  const handleEdgesChange: OnEdgesChange = useCallback((changes: EdgeChange[]) => {
-    let workspaceEdgeRemoved = false;
-    for (const c of changes) {
-      if (c.type !== "remove") continue;
-      const edge = edgesRef.current.find((e) => e.id === c.id);
-      if (edge?.data?.kind === "drive") {
-        // Disconnect (drive still exists; this is a manual edge delete).
-        fetch("/api/drive-connections", {
-          method: "DELETE", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ connectionId: edge.id }),
-        }).catch(() => {});
-      } else {
-        workspaceEdgeRemoved = true;
+  const onConnect = useCallback(
+    (connection: Connection) => {
+      if (!connection.source || !connection.target) return;
+      if (connection.source === connection.target) {
+        showError("A node cannot connect to itself.");
+        return;
       }
-    }
-    onEdgesChange(changes);
-    if (workspaceEdgeRemoved) setIsDirty(true);
-  }, [onEdgesChange]);
+      const srcDrive = driveIdsRef.current.has(connection.source);
+      const tgtDrive = driveIdsRef.current.has(connection.target);
 
-  const onNodeDragStop = useCallback(() => { setIsDirty(true); }, []);
+      // Drive↔workspace link: persisted immediately to its own store, kept out of the agent graph.
+      if (srcDrive || tgtDrive) {
+        if (srcDrive && tgtDrive) {
+          showError("Drives can only connect to workspaces.");
+          return;
+        }
+        const driveId = srcDrive ? connection.source : connection.target;
+        const workspaceId = srcDrive ? connection.target : connection.source;
+        const sourceHandle = srcDrive ? connection.sourceHandle : connection.targetHandle;
+        const targetHandle = normalizeWorkspaceIncomingHandle(
+          srcDrive ? connection.targetHandle : connection.sourceHandle,
+        );
+        const existing = edgesRef.current.find(
+          (e) => e.data?.kind === "drive" && e.source === driveId && e.target === workspaceId,
+        );
+        if (existing && existing.sourceHandle === sourceHandle && existing.targetHandle === targetHandle) return;
+        fetch("/api/drive-connections", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            driveId,
+            workspaceId,
+            sourceHandle,
+            targetHandle,
+          }),
+        })
+          .then((r) => (r.ok ? r.json() : Promise.reject()))
+          .then((conn: DriveConnectionItem) => {
+            const nextEdge: Edge = {
+              id: conn.id,
+              source: driveId,
+              target: workspaceId,
+              sourceHandle: conn.sourceHandle,
+              targetHandle: normalizeWorkspaceIncomingHandle(conn.targetHandle),
+              ...DRIVE_EDGE_STYLE,
+            };
+            setEdges((eds) => (existing ? eds.map((e) => (e.id === existing.id ? nextEdge : e)) : [...eds, nextEdge]));
+          })
+          .catch(() => showError("Failed to connect drive"));
+        return;
+      }
+
+      // Workspace→workspace agent-call edge: batched, cycle-checked, saved on Save.
+      if (wouldCreateCycle(edgesRef.current, connection.source, connection.target)) {
+        showError("Loop detected — agents cannot call back up the chain.");
+        return;
+      }
+      setEdges((eds) => addEdge({ ...connection, ...EDGE_STYLE }, eds));
+      setIsDirty(true);
+    },
+    [setEdges, showError],
+  );
+
+  const handleEdgesChange: OnEdgesChange = useCallback(
+    (changes: EdgeChange[]) => {
+      let workspaceEdgeRemoved = false;
+      for (const c of changes) {
+        if (c.type !== "remove") continue;
+        const edge = edgesRef.current.find((e) => e.id === c.id);
+        if (edge?.data?.kind === "drive") {
+          // Disconnect (drive still exists; this is a manual edge delete).
+          fetch("/api/drive-connections", {
+            method: "DELETE",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ connectionId: edge.id }),
+          }).catch(() => {});
+        } else {
+          workspaceEdgeRemoved = true;
+        }
+      }
+      onEdgesChange(changes);
+      if (workspaceEdgeRemoved) setIsDirty(true);
+    },
+    [onEdgesChange],
+  );
+
+  const onNodeDragStop = useCallback(() => {
+    setIsDirty(true);
+  }, []);
 
   // Double-click a node to open it: drives go to their file browser, workspaces to the workspace.
-  const onNodeDoubleClick = useCallback((_: React.MouseEvent, node: Node) => {
-    if (node.data?.kind === "drive") router.push(`/drive/${node.id}`);
-    else router.push(`/workspace/${node.id}`);
-  }, [router]);
+  const onNodeDoubleClick = useCallback(
+    (_: React.MouseEvent, node: Node) => {
+      if (node.data?.kind === "drive") router.push(`/drive/${node.id}`);
+      else router.push(`/workspace/${node.id}`);
+    },
+    [router],
+  );
 
   // Only workspace→workspace edges go to the agent graph; drive edges live in their own store.
   const persist = useCallback(async () => {
     const positions: Record<string, { x: number; y: number }> = {};
-    nodesRef.current.forEach((n) => { positions[n.id] = n.position; });
+    nodesRef.current.forEach((n) => {
+      positions[n.id] = n.position;
+    });
     const wsEdges = edgesRef.current
       .filter((e) => e.data?.kind !== "drive")
       .map((e) => ({ id: e.id, source: e.source, target: e.target }));
     const res = await fetch("/api/workspace-graph", {
-      method: "PUT", headers: { "Content-Type": "application/json" },
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ edges: wsEdges, positions }),
     });
     if (!res.ok) {
-      const body = await res.json().catch(() => ({})) as { error?: string };
+      const body = (await res.json().catch(() => ({}))) as { error?: string };
       throw new Error(body.error ?? `Save failed (${res.status})`);
     }
   }, []);
 
   const handleSave = useCallback(async () => {
     try {
-      await persist(); setIsDirty(false); setSaved(true);
+      await persist();
+      setIsDirty(false);
+      setSaved(true);
       setTimeout(() => setSaved(false), 2000);
     } catch (err) {
       showError(err instanceof Error ? err.message : "Save failed");
@@ -381,21 +445,29 @@ export default function GraphEditor() {
     const description = driveDescription.trim();
     try {
       const res = await fetch("/api/drives", {
-        method: "POST", headers: { "Content-Type": "application/json" },
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name, description: description || undefined }),
       });
       if (!res.ok) {
-        const body = await res.json().catch(() => ({})) as { error?: string };
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
         throw new Error(body.error ?? "Create failed");
       }
       const drive = (await res.json()) as DriveItem;
       driveIdsRef.current.add(drive.id);
-      setNodes((nds) => [...nds, {
-        id: drive.id, type: "drive", deletable: false,
-        position: { x: 200, y: 320 },
-        data: { label: drive.name, description: drive.description, kind: "drive", onDelete: handleDeleteDrive },
-      }]);
-      setDriveName(""); setDriveDescription(""); setShowDriveForm(false);
+      setNodes((nds) => [
+        ...nds,
+        {
+          id: drive.id,
+          type: "drive",
+          deletable: false,
+          position: { x: 200, y: 320 },
+          data: { label: drive.name, description: drive.description, kind: "drive", onDelete: handleDeleteDrive },
+        },
+      ]);
+      setDriveName("");
+      setDriveDescription("");
+      setShowDriveForm(false);
     } catch (err) {
       showError(err instanceof Error ? err.message : "Create failed");
     }
@@ -407,8 +479,12 @@ export default function GraphEditor() {
   }, [isDirty, router]);
 
   const handleSaveAndLeave = useCallback(async () => {
-    try { await persist(); router.push("/"); }
-    catch (err) { showError(err instanceof Error ? err.message : "Save failed"); }
+    try {
+      await persist();
+      router.push("/");
+    } catch (err) {
+      showError(err instanceof Error ? err.message : "Save failed");
+    }
   }, [persist, router, showError]);
 
   return (
@@ -423,7 +499,14 @@ export default function GraphEditor() {
               title="Back to workspaces"
               className="w-[34px] h-[34px] rounded-[10px] overflow-hidden flex-shrink-0 inline-flex items-center justify-center bg-gradient-to-br from-primary to-primary-2 border-0 p-0 cursor-pointer"
             >
-              <Image src="/paodo-logo.svg" alt="Paodo logo" width={34} height={34} className="block w-full h-full object-cover" unoptimized />
+              <Image
+                src="/paodo-logo.svg"
+                alt="Paodo logo"
+                width={34}
+                height={34}
+                className="block w-full h-full object-cover"
+                unoptimized
+              />
             </button>
             <span className="font-semibold tracking-[-0.01em] text-lg leading-none inline-flex items-center">
               PAODO WS agents
@@ -432,7 +515,9 @@ export default function GraphEditor() {
         }
         right={
           <div className="flex items-center gap-2.5">
-            <button className="btn btn-ghost btn-sm" onClick={() => setShowDriveForm((v) => !v)}>+ Drive</button>
+            <button className="btn btn-ghost btn-sm" onClick={() => setShowDriveForm((v) => !v)}>
+              + Drive
+            </button>
             {isDirty && <span className="text-xs text-text-3 italic">Unsaved changes</span>}
             <button className="btn btn-primary btn-sm" onClick={handleSave} disabled={!isDirty}>
               {saved ? "Saved ✓" : "Save"}
@@ -446,31 +531,54 @@ export default function GraphEditor() {
           <div className="absolute top-3 right-3 z-20 bg-white border border-border rounded-card p-3 shadow-md flex flex-col gap-2 w-[260px]">
             <div className="font-semibold text-sm text-text">New shared drive</div>
             <input
-              autoFocus className="input" placeholder="Drive name (no spaces)"
-              value={driveName} onChange={(e) => setDriveName(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter") handleCreateDrive(); if (e.key === "Escape") setShowDriveForm(false); }}
+              autoFocus
+              className="input"
+              placeholder="Drive name (no spaces)"
+              value={driveName}
+              onChange={(e) => setDriveName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") handleCreateDrive();
+                if (e.key === "Escape") setShowDriveForm(false);
+              }}
             />
             <textarea
-              className="input resize-none" rows={3} placeholder="Description (optional)"
-              value={driveDescription} onChange={(e) => setDriveDescription(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Escape") setShowDriveForm(false); }}
+              className="input resize-none"
+              rows={3}
+              placeholder="Description (optional)"
+              value={driveDescription}
+              onChange={(e) => setDriveDescription(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Escape") setShowDriveForm(false);
+              }}
             />
             <div className="flex gap-2 items-center">
-              <button className="btn btn-primary btn-sm" onClick={handleCreateDrive}>Create</button>
-              <button className="linkbtn" onClick={() => setShowDriveForm(false)}>Cancel</button>
+              <button className="btn btn-primary btn-sm" onClick={handleCreateDrive}>
+                Create
+              </button>
+              <button className="linkbtn" onClick={() => setShowDriveForm(false)}>
+                Cancel
+              </button>
             </div>
           </div>
         )}
         {ready && (
           <ReactFlow
-            nodes={nodes} edges={edges}
-            onNodesChange={onNodesChange} onEdgesChange={handleEdgesChange}
-            onConnect={onConnect} onNodeDragStop={onNodeDragStop} onNodeDoubleClick={onNodeDoubleClick}
+            nodes={nodes}
+            edges={edges}
+            onNodesChange={onNodesChange}
+            onEdgesChange={handleEdgesChange}
+            onConnect={onConnect}
+            onNodeDragStop={onNodeDragStop}
+            onNodeDoubleClick={onNodeDoubleClick}
             connectionMode={ConnectionMode.Loose}
             connectionLineComponent={FloatingConnectionLine}
-            nodeTypes={nodeTypes} edgeTypes={edgeTypes} fitView fitViewOptions={{ padding: 0.3, maxZoom: 1 }}
+            nodeTypes={nodeTypes}
+            edgeTypes={edgeTypes}
+            fitView
+            fitViewOptions={{ padding: 0.3, maxZoom: 1 }}
             nodeDragThreshold={4}
-            deleteKeyCode={["Backspace", "Delete"]} multiSelectionKeyCode="Shift"
+            deleteKeyCode={["Backspace", "Delete"]}
+            multiSelectionKeyCode="Shift"
           >
             <Background variant={BackgroundVariant.Dots} color="var(--color-border)" gap={24} size={1.2} />
             <Controls />
@@ -491,9 +599,15 @@ export default function GraphEditor() {
               You have unsaved changes to the agent network. What would you like to do?
             </p>
             <div className="flex gap-2.5 items-center flex-wrap">
-              <button className="btn btn-primary" onClick={handleSaveAndLeave}>Save &amp; leave</button>
-              <button className="btn" onClick={() => router.push("/")}>Leave without saving</button>
-              <button className="linkbtn" onClick={() => setShowUnsavedModal(false)}>Cancel</button>
+              <button className="btn btn-primary" onClick={handleSaveAndLeave}>
+                Save &amp; leave
+              </button>
+              <button className="btn" onClick={() => router.push("/")}>
+                Leave without saving
+              </button>
+              <button className="linkbtn" onClick={() => setShowUnsavedModal(false)}>
+                Cancel
+              </button>
             </div>
           </div>
         </div>

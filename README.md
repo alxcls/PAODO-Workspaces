@@ -2,7 +2,7 @@
 
 **PAODO turns coding agents into controlled, callable AI services.**
 
-Each *workspace* is an isolated Docker container running its own ReAct loop coding agent. Make it write scripts to run and instructions to follow, then call it through the workspace chat interface or an external API. Workspaces can be wired into a graph, so agents discover each other and delegate tasks. Think of it as multiple instances of VS Code + Claude Code, each in its own sandbox environment that can be wired together for collaboration.
+Each _workspace_ is an isolated Docker container running its own ReAct loop coding agent. Make it write scripts to run and instructions to follow, then call it through the workspace chat interface or an external API. Workspaces can be wired into a graph, so agents discover each other and delegate tasks. Think of it as multiple instances of VS Code + Claude Code, each in its own sandbox environment that can be wired together for collaboration.
 
 ![Workspace overview](doc/images/DEMO_OVERVIEW.png)
 
@@ -70,9 +70,9 @@ The agent runs a ReAct loop with the following tools:
 
 Workspaces can call each other. The network page connects them into a directed graph; an edge **A → B** lets A's agent invoke B's. Agents find their neighbors with `list_agents` and call them with `call_agent`.
 
-Calls are **contract-first**: each workspace publishes typed *skills* (`.skills/*.json`), and the platform validates the caller's input and the callee's output against the skill's schema. The callee runs in a fresh, isolated conversation. No graph edge, no call.
+Calls are **contract-first**: each workspace publishes typed _skills_ (`.skills/*.json`), and the platform validates the caller's input and the callee's output against the skill's schema. The callee runs in a fresh, isolated conversation. No graph edge, no call.
 
-*Example: a newsroom editor agent delegates research and writing to specialist agents that share a common drive.*
+_Example: a newsroom editor agent delegates research and writing to specialist agents that share a common drive._
 
 ![Agent Network](doc/images/NETWORK_EXAMPLE.png)
 

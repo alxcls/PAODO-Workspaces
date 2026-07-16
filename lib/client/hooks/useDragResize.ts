@@ -37,7 +37,9 @@ export function useDragResize({ onMove, cursor = "col-resize", onDragChange }: U
   });
 
   useEffect(() => {
-    const move = (e: MouseEvent) => { if (dragging.current) onMoveRef.current(e); };
+    const move = (e: MouseEvent) => {
+      if (dragging.current) onMoveRef.current(e);
+    };
     const up = () => {
       if (!dragging.current) return;
       dragging.current = false;

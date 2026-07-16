@@ -7,10 +7,7 @@ import { requireWorkspace } from "@/lib/api/guards";
 // hex / HEAD-relative refs keeps anything weird out of the diff command.
 const SHA = /^[0-9a-fA-F]{4,40}$/;
 
-export async function GET(
-  req: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
+export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const ws = requireWorkspace(id);
   if (ws instanceof NextResponse) return ws;

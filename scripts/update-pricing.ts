@@ -9,8 +9,7 @@
 import { writeFileSync } from "fs";
 import path from "path";
 
-const SOURCE =
-  "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json";
+const SOURCE = "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json";
 const PROVIDERS = new Set(["anthropic", "openai", "deepseek"]);
 const OUT = path.join(__dirname, "..", "lib", "workspace", "model-pricing.json");
 
@@ -44,15 +43,17 @@ async function main() {
       litellm_provider: e.litellm_provider,
       input_cost_per_token: e.input_cost_per_token,
       output_cost_per_token: e.output_cost_per_token,
-      ...(typeof e.cache_read_input_token_cost === "number" && { cache_read_input_token_cost: e.cache_read_input_token_cost }),
-      ...(typeof e.cache_creation_input_token_cost === "number" && { cache_creation_input_token_cost: e.cache_creation_input_token_cost }),
+      ...(typeof e.cache_read_input_token_cost === "number" && {
+        cache_read_input_token_cost: e.cache_read_input_token_cost,
+      }),
+      ...(typeof e.cache_creation_input_token_cost === "number" && {
+        cache_creation_input_token_cost: e.cache_creation_input_token_cost,
+      }),
     };
   }
 
   // Sort by id for a stable, diff-friendly file.
-  const sorted = Object.fromEntries(
-    Object.entries(out).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)),
-  );
+  const sorted = Object.fromEntries(Object.entries(out).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
 
   writeFileSync(OUT, JSON.stringify(sorted, null, 2) + "\n");
   console.log(`wrote ${Object.keys(sorted).length} models to ${path.relative(process.cwd(), OUT)}`);

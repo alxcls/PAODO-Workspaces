@@ -50,10 +50,9 @@ const defaultRequester: Requester = (url, pinnedIp, signal) =>
         // pinned. This is the whole point of the guard returning `ip`.
         lookup: (_hostname, opts, cb) => {
           if (opts && (opts as { all?: boolean }).all) {
-            (cb as unknown as (e: null, a: Array<{ address: string; family: number }>) => void)(
-              null,
-              [{ address: pinnedIp, family }],
-            );
+            (cb as unknown as (e: null, a: Array<{ address: string; family: number }>) => void)(null, [
+              { address: pinnedIp, family },
+            ]);
           } else {
             (cb as unknown as (e: null, a: string, f: number) => void)(null, pinnedIp, family);
           }
@@ -159,12 +158,11 @@ For GitHub repos/PRs/issues, prefer gh CLI via execute_command instead.`;
       let text = res.body;
       if (res.contentType.includes("text/html")) text = htmlToText(text);
       const MAX_CHARS = 20_000;
-      const capped = text.length > MAX_CHARS
-        ? text.slice(0, MAX_CHARS) + `\n\n[content truncated — showing first ${MAX_CHARS} chars]`
-        : text;
-      return prompt
-        ? `Fetched: ${finalUrl}\nPrompt: ${prompt}\n\n${capped}`
-        : `Fetched: ${finalUrl}\n\n${capped}`;
+      const capped =
+        text.length > MAX_CHARS
+          ? text.slice(0, MAX_CHARS) + `\n\n[content truncated — showing first ${MAX_CHARS} chars]`
+          : text;
+      return prompt ? `Fetched: ${finalUrl}\nPrompt: ${prompt}\n\n${capped}` : `Fetched: ${finalUrl}\n\n${capped}`;
     } catch (err: unknown) {
       return toolError(err);
     }

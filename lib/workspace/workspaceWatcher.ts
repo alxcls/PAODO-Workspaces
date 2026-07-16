@@ -24,7 +24,10 @@ class WorkspaceWatcher {
     awaitWriteFinish: { stabilityThreshold: 100, pollInterval: 50 },
   });
 
-  constructor(private workspaceId: string, private dir: string) {
+  constructor(
+    private workspaceId: string,
+    private dir: string,
+  ) {
     this.watcher.on("add", (absPath: string) => {
       this.pendingChanged.add(absPath);
       this.scheduleFlush();

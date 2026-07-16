@@ -31,7 +31,10 @@ export function anthropicThinkingConfig(model: string, effort: ReasoningEffort) 
   if (ANTHROPIC_ADAPTIVE_MODELS.has(model)) {
     // Anthropic effort accepts low…max; the none/minimal members of ReasoningEffort never reach here
     // because they aren't in anthropic's PROVIDER_METADATA list (so validation rejects them upstream).
-    return { thinking: { type: "adaptive" as const }, outputConfig: { effort: effort as Exclude<ReasoningEffort, "none" | "minimal"> } };
+    return {
+      thinking: { type: "adaptive" as const },
+      outputConfig: { effort: effort as Exclude<ReasoningEffort, "none" | "minimal"> },
+    };
   }
   return { thinking: { type: "enabled" as const, budget_tokens: ANTHROPIC_THINKING_BUDGET[effort] ?? 10_000 } };
 }
@@ -89,9 +92,12 @@ export const SUPPORTED_PROVIDERS = Object.keys(MODEL_BUILDERS);
 // per-turn usage to a model for cost tracking. Undefined only if the selected provider's model is unset.
 export function selectedModelId(config: LLMProviderConfig): string | undefined {
   switch (config.provider) {
-    case "anthropic": return config.anthropicModel;
-    case "deepseek":  return config.deepseekModel;
-    default:          return config.openaiModel;
+    case "anthropic":
+      return config.anthropicModel;
+    case "deepseek":
+      return config.deepseekModel;
+    default:
+      return config.openaiModel;
   }
 }
 
@@ -107,8 +113,8 @@ interface ProviderMetadata {
 
 const PROVIDER_METADATA: Record<string, ProviderMetadata> = {
   anthropic: { supportsPromptCaching: true, reasoningEfforts: ["low", "medium", "high", "xhigh", "max"] },
-  openai:    { supportsPromptCaching: false, reasoningEfforts: ["none", "minimal", "low", "medium", "high", "xhigh"] },
-  deepseek:  { supportsPromptCaching: false, reasoningEfforts: [] },
+  openai: { supportsPromptCaching: false, reasoningEfforts: ["none", "minimal", "low", "medium", "high", "xhigh"] },
+  deepseek: { supportsPromptCaching: false, reasoningEfforts: [] },
 };
 
 export function getProviderMetadata(provider: string): ProviderMetadata {

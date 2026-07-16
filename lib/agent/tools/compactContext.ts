@@ -13,12 +13,12 @@ const schema = z.object({
   level: z
     .enum(["light", "medium", "hard"])
     .describe(
-      "Levels in increasing aggressiveness. light = strip bulky re-derivable tool output (file reads, searches, command output) in place; keeps all reasoning and decisions — lossless and cheapest, the default between units of work. medium = summarize the older part of the conversation but keep the last few turns verbatim — use when the discussion itself (not just tool output) has grown large but you still need recent context. hard = replace the entire conversation with one short summary — a clean slate, for a clear boundary between independent units where nothing earlier is needed."
+      "Levels in increasing aggressiveness. light = strip bulky re-derivable tool output (file reads, searches, command output) in place; keeps all reasoning and decisions — lossless and cheapest, the default between units of work. medium = summarize the older part of the conversation but keep the last few turns verbatim — use when the discussion itself (not just tool output) has grown large but you still need recent context. hard = replace the entire conversation with one short summary — a clean slate, for a clear boundary between independent units where nothing earlier is needed.",
     ),
   next_step: z
     .string()
     .describe(
-      "REQUIRED. The very next concrete task to do after compaction, e.g. 'map batch 16'. This is the one thing guaranteed to survive even a hard compaction."
+      "REQUIRED. The very next concrete task to do after compaction, e.g. 'map batch 16'. This is the one thing guaranteed to survive even a hard compaction.",
     ),
 });
 

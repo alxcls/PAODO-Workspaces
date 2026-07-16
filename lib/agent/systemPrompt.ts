@@ -68,9 +68,7 @@ Always format responses using Markdown.
 # Instruction Precedence
 The workspace-specific instructions that follow below (the AGENTS.md section) are AUTHORITATIVE. When they conflict with any general guidance in this system prompt, follow the workspace instructions exactly as written — they override.
 
-`
-;
-
+`;
 // Structured-responder block injected per skill call by executeSkill — carries the target
 // skill's output schema so the callee knows the exact response contract. Appended to the
 // runner's userInput (not the system prompt) because it is call-specific, and direct user
@@ -88,7 +86,11 @@ If the call cannot be completed because input is missing or needs correction, re
 // guidance) via buildWorkspacePromptInputs and pass the whole object straight through. Taking the
 // bag rather than positional optionals means no call site can silently drop a piece, and any new
 // field added to WorkspacePromptInputs flows here automatically. Does no filesystem I/O of its own.
-export function buildSystemPrompt(workspaceDir: string, promptConfig: PromptConfig, inputs: WorkspacePromptInputs = {}): SystemMessage {
+export function buildSystemPrompt(
+  workspaceDir: string,
+  promptConfig: PromptConfig,
+  inputs: WorkspacePromptInputs = {},
+): SystemMessage {
   const { agentsContent, drivesInfo, secretsInfo, backgroundTasksInfo } = inputs;
   const date = new Date().toDateString();
 

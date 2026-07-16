@@ -4,7 +4,7 @@ Status: Accepted
 
 ## Context
 
-The app keeps its live coordination state in the memory of one Node.js process (attached to the `global` object so it survives Next.js hot-reload — see `adr-global-object-hot-reload-survival.md`). Slow-changing data is mirrored to disk as JSON, but the *live* state is process-local and has no shared backing store:
+The app keeps its live coordination state in the memory of one Node.js process (attached to the `global` object so it survives Next.js hot-reload — see `adr-global-object-hot-reload-survival.md`). Slow-changing data is mirrored to disk as JSON, but the _live_ state is process-local and has no shared backing store:
 
 - workspace registry — `global._workspaces` (`workspaceStore.ts`); registry metadata is persisted to `.workspaces.json`
 - conversation history + in-flight runs — `global._conversations` (`conversationStore.ts`) and `global._runBroker` (`runBroker.ts`); history is persisted to disk per conversation, but the live in-memory cache and the run's event buffer/subscribers are process-local
@@ -25,7 +25,7 @@ Running 2+ instances is explicitly out of scope. Doing so safely would require e
 ## Consequences
 
 - **Enables:** a simple, low-latency, easy-to-self-host architecture with no Redis/DB dependency for live state; container start-coalescing and idle-timeout logic that is correct because exactly one process owns each container.
-- **Costs / ceiling:** the only path to more capacity is a bigger VPS. Naively running multiple replicas will *appear* to work in a smoke test, then fail under real load:
+- **Costs / ceiling:** the only path to more capacity is a bigger VPS. Naively running multiple replicas will _appear_ to work in a smoke test, then fail under real load:
   - split-brain container lifecycle — two processes race on `docker run --name ws_X`; idle timers and `startLocks` are per-process, so the coalescing guarantee is lost
   - conversation amnesia — the live history cache and in-flight run buffers live in one process's `global._conversations` / `global._runBroker`; a turn or reconnect routed to a different instance sees no running run and only the last-persisted history
   - dropped console output — a browser's WebSocket lives in the process that accepted it, but the agent run (and its `broadcastToWorkspace` calls) may execute in another, which holds no socket for that workspace

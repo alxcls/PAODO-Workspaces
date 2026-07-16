@@ -22,8 +22,23 @@ function rec(over: Partial<LightTurnRecord> = {}): LightTurnRecord {
 describe("groupBySessions", () => {
   it("folds every turn of a run into one row, summing token + tool totals", () => {
     const sessions = groupBySessions([
-      rec({ id: "a", inputTokens: 100, outputTokens: 10, cachedInputTokens: 5, toolCalls: [{ name: "glob", status: "ok" }] }),
-      rec({ id: "b", inputTokens: 50, outputTokens: 20, cachedInputTokens: 5, toolCalls: [{ name: "exec", status: "error" }, { name: "read", status: "ok" }] }),
+      rec({
+        id: "a",
+        inputTokens: 100,
+        outputTokens: 10,
+        cachedInputTokens: 5,
+        toolCalls: [{ name: "glob", status: "ok" }],
+      }),
+      rec({
+        id: "b",
+        inputTokens: 50,
+        outputTokens: 20,
+        cachedInputTokens: 5,
+        toolCalls: [
+          { name: "exec", status: "error" },
+          { name: "read", status: "ok" },
+        ],
+      }),
     ]);
     expect(sessions).toHaveLength(1);
     expect(sessions[0]).toMatchObject({

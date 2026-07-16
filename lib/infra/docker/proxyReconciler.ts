@@ -48,18 +48,19 @@ async function tick(): Promise<void> {
 export function startProxyReconciler(): void {
   if (state.timer) return;
   const configuredTickMs = Number(process.env.PROXY_RECONCILE_TICK_MS);
-  const tickMs = Number.isFinite(configuredTickMs) && configuredTickMs > 0
-    ? configuredTickMs
-    : DEFAULT_TICK_MS;
+  const tickMs = Number.isFinite(configuredTickMs) && configuredTickMs > 0 ? configuredTickMs : DEFAULT_TICK_MS;
   state.timer = setInterval(tick, tickMs);
   state.timer.unref?.();
   // Compose starts credproxy after the app, so the boot-time reattach in server.ts can run before
   // the sidecar exists. Retry once shortly afterwards instead of leaving workspaces waiting for the
   // regular interval.
-  state.bootRetryTimer = setTimeout(() => {
-    state.bootRetryTimer = null;
-    void tick();
-  }, Math.min(BOOT_RETRY_MS, tickMs));
+  state.bootRetryTimer = setTimeout(
+    () => {
+      state.bootRetryTimer = null;
+      void tick();
+    },
+    Math.min(BOOT_RETRY_MS, tickMs),
+  );
   state.bootRetryTimer.unref?.();
   log.info({ tickMs }, "proxy reconciler started");
 }

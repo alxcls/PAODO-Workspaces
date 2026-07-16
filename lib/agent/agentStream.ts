@@ -31,12 +31,20 @@ type AgentStreamDeps = AgentRuntimeDeps & {
 // Keeps wire-format decisions out of the stream lifecycle.
 function toSsePayload(event: AgentEvent, state: SseState): object | null {
   switch (event.type) {
-    case "token":       state.response += event.content; return null;
-    case "tool_start":  return { type: "tool_start", name: event.name };
-    case "limit_reached": state.limitReached = true;     return null;
-    case "error":       return { type: "error", message: event.message };
-    case "turn_usage":  return null;
-    default:            return null;
+    case "token":
+      state.response += event.content;
+      return null;
+    case "tool_start":
+      return { type: "tool_start", name: event.name };
+    case "limit_reached":
+      state.limitReached = true;
+      return null;
+    case "error":
+      return { type: "error", message: event.message };
+    case "turn_usage":
+      return null;
+    default:
+      return null;
   }
 }
 
@@ -47,13 +55,15 @@ export function makeAgentStream(ws: Workspace, message: string, log: Logger, dep
   const encoder = new TextEncoder();
   const stream = new ReadableStream({
     async start(controller) {
-      const send = (event: object) =>
-        controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+      const send = (event: object) => controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
       const state: SseState = { response: "", limitReached: false };
       try {
         const inputs = buildWorkspacePromptInputs(ws.id, ws.dir);
         const isolatedMessages = [buildSystemPrompt(ws.dir, buildPromptConfig(loadAgentConfig(ws.id)), inputs)];
-        for await (const event of runAgent(isolatedMessages, message, ws.dir, ws.id, { maxIterations: ws.maxIterations, ...deps })) {
+        for await (const event of runAgent(isolatedMessages, message, ws.dir, ws.id, {
+          maxIterations: ws.maxIterations,
+          ...deps,
+        })) {
           if (event.type === "turn_usage") {
             recordTurnUsage(
               {

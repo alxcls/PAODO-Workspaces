@@ -19,7 +19,12 @@ describe("modelPricing", () => {
   it("returns undefined for unknown or missing models", () => {
     expect(getRate("not-a-real-model")).toBeUndefined();
     expect(getRate(undefined)).toBeUndefined();
-    expect(computeCost({ inputTokens: 100, outputTokens: 100, cachedInputTokens: 0, cacheCreationTokens: 0 }, "not-a-real-model")).toBeUndefined();
+    expect(
+      computeCost(
+        { inputTokens: 100, outputTokens: 100, cachedInputTokens: 0, cacheCreationTokens: 0 },
+        "not-a-real-model",
+      ),
+    ).toBeUndefined();
   });
 
   it("computes cost without double-charging cached input", () => {
@@ -36,8 +41,7 @@ describe("modelPricing", () => {
     // cache_creation. Only the 600 base should pay the plain input rate; the other buckets pay their
     // own rates. Without subtracting cache-creation, the 100 creation tokens would be billed twice.
     const tokens = { inputTokens: 1000, outputTokens: 500, cachedInputTokens: 300, cacheCreationTokens: 100 };
-    const expected =
-      600 * rate.input + 300 * rate.cachedInput + 100 * rate.cacheCreation + 500 * rate.output;
+    const expected = 600 * rate.input + 300 * rate.cachedInput + 100 * rate.cacheCreation + 500 * rate.output;
     expect(computeCost(tokens, "claude-opus-4-8")).toBeCloseTo(expected, 12);
   });
 });

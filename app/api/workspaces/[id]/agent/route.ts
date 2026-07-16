@@ -37,14 +37,26 @@ function apiConversationStream(req: NextRequest, workspaceId: string, conversati
         if (closed) return;
         closed = true;
         sub?.unsubscribe();
-        try { controller.close(); } catch { /* already closed */ }
+        try {
+          controller.close();
+        } catch {
+          /* already closed */
+        }
       };
       const handle = (event: AgentEvent) => {
         switch (event.type) {
-          case "token": response += event.content; break;
-          case "tool_start": send({ type: "tool_start", name: event.name }); break;
-          case "limit_reached": limitReached = true; break;
-          case "error": send({ type: "error", message: event.message }); break;
+          case "token":
+            response += event.content;
+            break;
+          case "tool_start":
+            send({ type: "tool_start", name: event.name });
+            break;
+          case "limit_reached":
+            limitReached = true;
+            break;
+          case "error":
+            send({ type: "error", message: event.message });
+            break;
           case "done":
             send({ type: "response", content: response, iterationLimitReached: limitReached, conversationId });
             send({ type: "done", conversationId });
@@ -70,10 +82,7 @@ function apiConversationStream(req: NextRequest, workspaceId: string, conversati
   return new Response(stream, { headers: { ...SSE_HEADERS, "X-Conversation-Id": conversationId } });
 }
 
-export async function POST(
-  req: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
+export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const limited = rateLimited(req, { logContext: { workspaceId: id } });
   if (limited) return limited;

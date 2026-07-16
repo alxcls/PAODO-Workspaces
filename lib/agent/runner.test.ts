@@ -22,7 +22,10 @@ function hasUnansweredToolCalls(messages: BaseMessage[]): boolean {
   return messages.some((m, i) => {
     if (!(m instanceof AIMessage) || !m.tool_calls?.length) return false;
     const answered = new Set(
-      messages.slice(i + 1).filter((t): t is ToolMessage => t instanceof ToolMessage).map((t) => t.tool_call_id),
+      messages
+        .slice(i + 1)
+        .filter((t): t is ToolMessage => t instanceof ToolMessage)
+        .map((t) => t.tool_call_id),
     );
     return !m.tool_calls.every((tc) => tc.id && answered.has(tc.id));
   });
@@ -55,7 +58,13 @@ const restoreHandler = buildSignalHandlers().workspace_restore;
 function toolCallsChunk(...calls: { id: string; args: string }[]): Chunk {
   return new AIMessageChunk({
     content: "",
-    tool_call_chunks: calls.map((c, index) => ({ index, id: c.id, name: "execute_command", args: c.args, type: "tool_call_chunk" })),
+    tool_call_chunks: calls.map((c, index) => ({
+      index,
+      id: c.id,
+      name: "execute_command",
+      args: c.args,
+      type: "tool_call_chunk",
+    })),
   });
 }
 
@@ -82,7 +91,10 @@ describe("runAgent — history stays consistent across aborts", () => {
 
     // Mimic escape mid-tool-call: stop iterating (break ⇒ gen.return()) at the first tool_start,
     // before any tool result. This is the point where the original bug left a dangling AIMessage.
-    for await (const event of runAgent(messages, "run the server", "/tmp/ws", "ws-1", { ...noopDeps, buildAgentTools })) {
+    for await (const event of runAgent(messages, "run the server", "/tmp/ws", "ws-1", {
+      ...noopDeps,
+      buildAgentTools,
+    })) {
       if (event.type === "tool_start") break;
     }
 
@@ -98,7 +110,10 @@ describe("runAgent — history stays consistent across aborts", () => {
 
     // Abandon at the first tool_result — which the runner yields only *after* committing the
     // AIMessage and both ToolMessages. A non-atomic commit would leave call_2 unanswered here.
-    for await (const event of runAgent(messages, "do two things", "/tmp/ws", "ws-1", { ...noopDeps, buildAgentTools })) {
+    for await (const event of runAgent(messages, "do two things", "/tmp/ws", "ws-1", {
+      ...noopDeps,
+      buildAgentTools,
+    })) {
       if (event.type === "tool_result") break;
     }
 
@@ -136,11 +151,15 @@ describe("runAgent — history stays consistent across aborts", () => {
         { index: 0, type: "thinking", thinking: "I should list the files.", signature: "sig" },
         { index: 1, type: "text", text: "Let me list the files." },
       ] as never,
-      tool_call_chunks: [{ index: 2, id: "call_1", name: "execute_command", args: '{"cmd":"ls"}', type: "tool_call_chunk" }],
+      tool_call_chunks: [
+        { index: 2, id: "call_1", name: "execute_command", args: '{"cmd":"ls"}', type: "tool_call_chunk" },
+      ],
     });
     const buildAgentTools = makeBuildTools([[reasoningToolChunk], [new AIMessageChunk({ content: "done" })]]);
 
-    for await (const _ of runAgent(messages, "list files", "/tmp/ws", "ws-1", { ...noopDeps, buildAgentTools })) { /* drain */ }
+    for await (const _ of runAgent(messages, "list files", "/tmp/ws", "ws-1", { ...noopDeps, buildAgentTools })) {
+      /* drain */
+    }
 
     const toolTurn = messages.find((m): m is AIMessage => m instanceof AIMessage && (m.tool_calls?.length ?? 0) > 0);
     expect(toolTurn).toBeDefined();
@@ -155,18 +174,31 @@ describe("runAgent — history stays consistent across aborts", () => {
 // and one result commit, with the expected summary, on each exit path.
 function makeVersioning() {
   const calls: { method: string; args: unknown[] }[] = [];
-  const rec = (method: string) => (...args: unknown[]) => { calls.push({ method, args }); };
+  const rec =
+    (method: string) =>
+    (...args: unknown[]) => {
+      calls.push({ method, args });
+    };
   return {
     calls,
     versioning: {
       initRepo: rec("initRepo") as never,
-      commitBaseline: (async (...a: unknown[]) => { calls.push({ method: "commitBaseline", args: a }); return { sha: "base" }; }) as never,
-      commitResult: (async (...a: unknown[]) => { calls.push({ method: "commitResult", args: a }); return { sha: "res", changed: true }; }) as never,
+      commitBaseline: (async (...a: unknown[]) => {
+        calls.push({ method: "commitBaseline", args: a });
+        return { sha: "base" };
+      }) as never,
+      commitResult: (async (...a: unknown[]) => {
+        calls.push({ method: "commitResult", args: a });
+        return { sha: "res", changed: true };
+      }) as never,
       history: rec("history") as never,
       diff: rec("diff") as never,
       versionStats: rec("versionStats") as never,
       versionDiff: rec("versionDiff") as never,
-      restore: (async (...a: unknown[]) => { calls.push({ method: "restore", args: a }); return true; }) as never,
+      restore: (async (...a: unknown[]) => {
+        calls.push({ method: "restore", args: a });
+        return true;
+      }) as never,
       deleteRepo: rec("deleteRepo") as never,
       isGitAvailable: (async () => true) as never,
     },
@@ -181,7 +213,9 @@ describe("runAgent — git versioning brackets every run", () => {
       [new AIMessageChunk({ content: "all done" })],
     ]);
 
-    for await (const _ of runAgent([], "list files", "/tmp/ws", "ws-1", { ...noopDeps, versioning, buildAgentTools })) { /* drain */ }
+    for await (const _ of runAgent([], "list files", "/tmp/ws", "ws-1", { ...noopDeps, versioning, buildAgentTools })) {
+      /* drain */
+    }
 
     const baseline = calls.filter((c) => c.method === "commitBaseline");
     const result = calls.filter((c) => c.method === "commitResult");
@@ -198,7 +232,11 @@ describe("runAgent — git versioning brackets every run", () => {
     const buildAgentTools = makeBuildTools([[toolCallsChunk({ id: "call_1", args: '{"cmd":"x"}' })]]);
 
     // Abort mid-run: break at tool_start abandons the generator, whose `finally` must still fire.
-    for await (const event of runAgent([], "do the thing", "/tmp/ws", "ws-1", { ...noopDeps, versioning, buildAgentTools })) {
+    for await (const event of runAgent([], "do the thing", "/tmp/ws", "ws-1", {
+      ...noopDeps,
+      versioning,
+      buildAgentTools,
+    })) {
       if (event.type === "tool_start") break;
     }
 
@@ -212,7 +250,14 @@ describe("runAgent — git versioning brackets every run", () => {
     // maxIterations:1 → first turn calls a tool, then the limit trips on the next loop.
     const buildAgentTools = makeBuildTools([[toolCallsChunk({ id: "call_1", args: '{"cmd":"y"}' })]]);
 
-    for await (const _ of runAgent([], "keep going", "/tmp/ws", "ws-1", { ...noopDeps, versioning, buildAgentTools, maxIterations: 1 })) { /* drain */ }
+    for await (const _ of runAgent([], "keep going", "/tmp/ws", "ws-1", {
+      ...noopDeps,
+      versioning,
+      buildAgentTools,
+      maxIterations: 1,
+    })) {
+      /* drain */
+    }
 
     expect(calls.filter((c) => c.method === "commitBaseline")).toHaveLength(1);
     expect(calls.filter((c) => c.method === "commitResult")).toHaveLength(1);
@@ -236,7 +281,14 @@ describe("runAgent — agent-initiated workspace_restore is runner-mediated", ()
       [new AIMessageChunk({ content: "done" })],
     ]);
 
-    for await (const _ of runAgent([], "fix it", "/tmp/ws", "ws-1", { ...noopDeps, versioning, buildAgentTools, signalHandlers: { workspace_restore: restoreHandler } })) { /* drain */ }
+    for await (const _ of runAgent([], "fix it", "/tmp/ws", "ws-1", {
+      ...noopDeps,
+      versioning,
+      buildAgentTools,
+      signalHandlers: { workspace_restore: restoreHandler },
+    })) {
+      /* drain */
+    }
 
     const restore = calls.filter((c) => c.method === "restore");
     expect(restore).toHaveLength(1);
@@ -250,7 +302,14 @@ describe("runAgent — agent-initiated workspace_restore is runner-mediated", ()
       [new AIMessageChunk({ content: "retried from clean state" })],
     ]);
 
-    for await (const _ of runAgent([], "fix it", "/tmp/ws", "ws-1", { ...noopDeps, versioning, buildAgentTools, signalHandlers: { workspace_restore: restoreHandler } })) { /* drain */ }
+    for await (const _ of runAgent([], "fix it", "/tmp/ws", "ws-1", {
+      ...noopDeps,
+      versioning,
+      buildAgentTools,
+      signalHandlers: { workspace_restore: restoreHandler },
+    })) {
+      /* drain */
+    }
 
     const restore = calls.filter((c) => c.method === "restore");
     expect(restore).toHaveLength(0);
@@ -275,10 +334,12 @@ describe("classifyToolStatus", () => {
     expect(classifyToolStatus("line1\nline2")).toBe("ok");
     expect(classifyToolStatus("Command executed successfully with no output.")).toBe("ok");
     expect(classifyToolStatus("Error: command exited with code 1\nbuild failed")).toBe("error");
-    expect(classifyToolStatus('Error (INPUT_VALIDATION_ERROR): missing field')).toBe("error");
-    expect(classifyToolStatus("Error: unknown tool \"foo\"")).toBe("error");
+    expect(classifyToolStatus("Error (INPUT_VALIDATION_ERROR): missing field")).toBe("error");
+    expect(classifyToolStatus('Error: unknown tool "foo"')).toBe("error");
     expect(classifyToolStatus("Permission denied: not connected")).toBe("error");
-    expect(classifyToolStatus('Needs input: the target agent needs different input: "which warehouse?"')).toBe("needs_input");
+    expect(classifyToolStatus('Needs input: the target agent needs different input: "which warehouse?"')).toBe(
+      "needs_input",
+    );
   });
 });
 
@@ -286,7 +347,9 @@ describe("classifyToolStatus", () => {
 // PostDispatchFn contract: each handler catches and logs its own errors so a side-effect failure
 // never escapes into the run loop.
 describe("buildSignalHandlers", () => {
-  function makeCtx(over: Partial<import("./interfaces").PostDispatchContext> = {}): import("./interfaces").PostDispatchContext {
+  function makeCtx(
+    over: Partial<import("./interfaces").PostDispatchContext> = {},
+  ): import("./interfaces").PostDispatchContext {
     return {
       messages: [],
       versioning: undefined,
@@ -302,7 +365,12 @@ describe("buildSignalHandlers", () => {
   it("workspace_restore restores and notifies on an ok result", async () => {
     const { calls, versioning } = makeVersioning();
     const notes: object[] = [];
-    const ctx = makeCtx({ versioning, notify: (m) => { notes.push(m); } });
+    const ctx = makeCtx({
+      versioning,
+      notify: (m) => {
+        notes.push(m);
+      },
+    });
     await buildSignalHandlers().workspace_restore({ sha: "abad1de" }, "restored", ctx);
     expect(calls.filter((c) => c.method === "restore")).toHaveLength(1);
     expect(notes).toEqual([{ type: "snapshot_restored", sha: "abad1de" }]);
@@ -317,16 +385,40 @@ describe("buildSignalHandlers", () => {
 
   it("workspace_restore swallows a thrown restore error", async () => {
     const warnings: object[] = [];
-    const versioning = { restore: async () => { throw new Error("git boom"); } } as never;
-    const ctx = makeCtx({ versioning, log: { warn: (o: object) => { warnings.push(o); }, debug: () => {} } });
+    const versioning = {
+      restore: async () => {
+        throw new Error("git boom");
+      },
+    } as never;
+    const ctx = makeCtx({
+      versioning,
+      log: {
+        warn: (o: object) => {
+          warnings.push(o);
+        },
+        debug: () => {},
+      },
+    });
     await expect(buildSignalHandlers().workspace_restore({ sha: "abad1de" }, "ok", ctx)).resolves.toBeUndefined();
     expect(warnings).toHaveLength(1);
   });
 
   it("compact_context swallows an applyCompaction error instead of throwing into the run", async () => {
     const warnings: object[] = [];
-    const model = { invoke: async () => { throw new Error("summarize boom"); } } as never;
-    const ctx = makeCtx({ model, log: { warn: (o: object) => { warnings.push(o); }, debug: () => {} } });
+    const model = {
+      invoke: async () => {
+        throw new Error("summarize boom");
+      },
+    } as never;
+    const ctx = makeCtx({
+      model,
+      log: {
+        warn: (o: object) => {
+          warnings.push(o);
+        },
+        debug: () => {},
+      },
+    });
     await expect(
       buildSignalHandlers().compact_context({ level: "hard", next_step: "carry on" }, "ok", ctx),
     ).resolves.toBeUndefined();

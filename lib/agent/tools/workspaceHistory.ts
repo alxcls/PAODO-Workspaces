@@ -16,21 +16,41 @@ const SHA = /^[0-9a-fA-F]{4,40}$/;
 const MAX_FILES_PER_VERSION = 6;
 const MAX_DIFF_LINES = 400;
 const OVERVIEW_LAST = z.union([
-  z.number().int().refine((n) => n !== 0, { message: "last must not be 0" }),
+  z
+    .number()
+    .int()
+    .refine((n) => n !== 0, { message: "last must not be 0" }),
   z.string().regex(/^-?[1-9]\d*$/),
 ]);
 
 const schema = z.object({
-  sha: z.string().optional()
-    .describe("Omit to list snapshots. Pass a sha from that list to view what changed in it."),
-  last: OVERVIEW_LAST.optional()
-    .describe("Overview mode only: limit to the newest N snapshots. Omit to list all snapshots. Accepts 10, -10, or \"-10\". Positive and negative mean the same thing here: the last N snapshots."),
-  path: z.string().optional()
-    .describe("Scope to one file/dir (relative to workspace root). In overview it filters the stats; in detail it narrows a large snapshot's diff."),
-  offset: z.number().int().min(0).optional()
-    .describe("Detail mode only: skip this many diff lines, to page through a diff too large to fit. Default 0. The output footer reports the visible range and total line count."),
-  limit: z.number().int().min(1).max(2000).optional()
-    .describe("Detail mode only: max diff lines to return (default 400). Pair with offset to page a single large file that path can't narrow further."),
+  sha: z.string().optional().describe("Omit to list snapshots. Pass a sha from that list to view what changed in it."),
+  last: OVERVIEW_LAST.optional().describe(
+    'Overview mode only: limit to the newest N snapshots. Omit to list all snapshots. Accepts 10, -10, or "-10". Positive and negative mean the same thing here: the last N snapshots.',
+  ),
+  path: z
+    .string()
+    .optional()
+    .describe(
+      "Scope to one file/dir (relative to workspace root). In overview it filters the stats; in detail it narrows a large snapshot's diff.",
+    ),
+  offset: z
+    .number()
+    .int()
+    .min(0)
+    .optional()
+    .describe(
+      "Detail mode only: skip this many diff lines, to page through a diff too large to fit. Default 0. The output footer reports the visible range and total line count.",
+    ),
+  limit: z
+    .number()
+    .int()
+    .min(1)
+    .max(2000)
+    .optional()
+    .describe(
+      "Detail mode only: max diff lines to return (default 400). Pair with offset to page a single large file that path can't narrow further.",
+    ),
 });
 
 function churn(add: number, del: number): string {
@@ -46,8 +66,7 @@ function formatOverview(versions: VersionStat[]): string {
     // (current) rides on the sha so it modifies the identity, never the free-text subject.
     const id = v.current ? `${v.sha} (current)` : v.sha;
     const header = `${id}  ${v.age}  ${nf} file${nf === 1 ? "" : "s"} ${churn(v.totalAdd, v.totalDel)}  ${v.subject}`;
-    const shown = v.files.slice(0, MAX_FILES_PER_VERSION)
-      .map((f) => `  ${f.path}  ${churn(f.add, f.del)}`);
+    const shown = v.files.slice(0, MAX_FILES_PER_VERSION).map((f) => `  ${f.path}  ${churn(f.add, f.del)}`);
     const more = nf - MAX_FILES_PER_VERSION;
     if (more > 0) shown.push(`  …+${more} more file${more === 1 ? "" : "s"}`);
     return [header, ...shown].join("\n");
@@ -87,7 +106,8 @@ function formatDetail(raw: string, offset = 0, limit = MAX_DIFF_LINES): string {
   const start = Math.min(Math.max(0, offset), total);
   const end = Math.min(start + limit, total);
   const slice = out.slice(start, end);
-  if (slice.length === 0) return `No diff lines at offset ${start} — this diff has ${total} line${total === 1 ? "" : "s"}.`;
+  if (slice.length === 0)
+    return `No diff lines at offset ${start} — this diff has ${total} line${total === 1 ? "" : "s"}.`;
   // Footer only when something is hidden (paged in from the start, or more remains).
   if (start > 0 || end < total) {
     slice.push(`… showing lines ${start + 1}-${end} of ${total}. Page with offset/limit, or narrow with path.`);
@@ -127,11 +147,11 @@ This is read-only: it never changes workspace files.`;
       relpath = normalized;
     }
 
-      try {
-        if (sha === undefined) {
-          let versions = await this.versioning.versionStats(this.workspaceId, this.workspaceDir, parseOverviewLast(last));
-          if (relpath) {
-            versions = versions
+    try {
+      if (sha === undefined) {
+        let versions = await this.versioning.versionStats(this.workspaceId, this.workspaceDir, parseOverviewLast(last));
+        if (relpath) {
+          versions = versions
             .map((v) => {
               const files = v.files.filter((f) => f.path === relpath || f.path.startsWith(`${relpath}/`));
               const totalAdd = files.reduce((s, f) => s + (f.add > 0 ? f.add : 0), 0);

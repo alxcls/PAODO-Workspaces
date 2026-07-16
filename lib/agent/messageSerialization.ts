@@ -79,9 +79,15 @@ export function messagesToTranscript(messages: BaseMessage[]): Message[] {
         if (toolCalls.length === 0) {
           // The terminal turn carries the run-cumulative usage on response_metadata; emit it just
           // before the final assistant bubble, matching the live stream's insertUsage placement.
-          const runUsage = (m.response_metadata as { runUsage?: { inputTokens?: number; outputTokens?: number } } | undefined)?.runUsage;
+          const runUsage = (
+            m.response_metadata as { runUsage?: { inputTokens?: number; outputTokens?: number } } | undefined
+          )?.runUsage;
           if (runUsage && ((runUsage.inputTokens ?? 0) > 0 || (runUsage.outputTokens ?? 0) > 0)) {
-            out.push({ role: "usage", inputTokens: runUsage.inputTokens ?? 0, outputTokens: runUsage.outputTokens ?? 0 });
+            out.push({
+              role: "usage",
+              inputTokens: runUsage.inputTokens ?? 0,
+              outputTokens: runUsage.outputTokens ?? 0,
+            });
           }
           if (text.trim()) out.push({ role: "assistant", content: text });
         } else {
@@ -106,7 +112,9 @@ export function messagesToTranscript(messages: BaseMessage[]): Message[] {
         // not a result body. The link was stashed on the ToolMessage's additional_kwargs at run
         // time (runner.ts) so it survives reload.
         if (idx !== undefined && out[idx].toolName === "call_agent") {
-          const kw = tm.additional_kwargs as { calleeConversationId?: unknown; calleeWorkspaceId?: unknown; calleeWorkspaceName?: unknown } | undefined;
+          const kw = tm.additional_kwargs as
+            | { calleeConversationId?: unknown; calleeWorkspaceId?: unknown; calleeWorkspaceName?: unknown }
+            | undefined;
           if (typeof kw?.calleeConversationId === "string" && typeof kw?.calleeWorkspaceId === "string") {
             out[idx] = {
               ...out[idx],

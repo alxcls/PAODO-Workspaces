@@ -66,11 +66,15 @@ export class BackgroundTaskManager {
 
     // Poll (in-container) up to ~2s for the self-reported pgid so a command that crashes on the
     // very first line still yields a pid we can report/track.
-    const read = await this.docker.exec(name, [
-      "/bin/bash",
-      "-c",
-      `for i in $(seq 1 20); do if [ -s ${pidFile} ]; then cat ${pidFile}; exit 0; fi; sleep 0.1; done; exit 1`,
-    ], { trimStdout: true });
+    const read = await this.docker.exec(
+      name,
+      [
+        "/bin/bash",
+        "-c",
+        `for i in $(seq 1 20); do if [ -s ${pidFile} ]; then cat ${pidFile}; exit 0; fi; sleep 0.1; done; exit 1`,
+      ],
+      { trimStdout: true },
+    );
     const pgid = parseInt(read.stdout, 10);
     if (!read.code && Number.isInteger(pgid)) {
       let tasks = this.tasks.get(workspaceId);
@@ -139,9 +143,7 @@ export class BackgroundTaskManager {
       const [taskId, pgidStr, cmdB64] = line.split("\t");
       const pgid = parseInt(pgidStr, 10);
       if (!taskId || !Number.isInteger(pgid)) continue;
-      const command = cmdB64
-        ? Buffer.from(cmdB64, "base64").toString("utf8")
-        : "(unknown — recovered after restart)";
+      const command = cmdB64 ? Buffer.from(cmdB64, "base64").toString("utf8") : "(unknown — recovered after restart)";
       tasks.set(taskId, { taskId, pgid, logFile: `${TASK_DIR}/${taskId}.output`, command });
     }
     if (tasks.size) {

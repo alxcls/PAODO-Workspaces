@@ -31,7 +31,19 @@ export type AgentEvent =
   | { type: "error"; message: string }
   | { type: "limit_reached" }
   | { type: "done" }
-  | { type: "turn_usage"; model?: string; inputTokens: number; outputTokens: number; reasoningTokens: number; cachedInputTokens: number; cacheCreationTokens: number; userInput?: string; reasoningText?: string; outputText?: string; toolCalls: Array<{ name: string; args: Record<string, unknown>; output: string; status: ToolStatus }> };
+  | {
+      type: "turn_usage";
+      model?: string;
+      inputTokens: number;
+      outputTokens: number;
+      reasoningTokens: number;
+      cachedInputTokens: number;
+      cacheCreationTokens: number;
+      userInput?: string;
+      reasoningText?: string;
+      outputText?: string;
+      toolCalls: Array<{ name: string; args: Record<string, unknown>; output: string; status: ToolStatus }>;
+    };
 
 export type RunAgentOptions = {
   signal?: AbortSignal;
@@ -196,15 +208,26 @@ function assembleToolCalls(partials: PartialTC[]): ResolvedToolCall[] {
     .filter((p) => p.name)
     .map((p, i) => {
       let args: Record<string, unknown> = {};
-      try { args = JSON.parse(p.args || "{}"); } catch { /* leave empty */ }
+      try {
+        args = JSON.parse(p.args || "{}");
+      } catch {
+        /* leave empty */
+      }
       return { id: p.id || `tc_${i}_${Date.now()}`, name: p.name, args };
     });
 }
 
 // Streams one model turn, yielding tokens and reasoning as they arrive, then a
 // turn_complete event with the assembled tool calls and accumulated chunk.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function* streamModelTurn(modelWithTools: any, messages: BaseMessage[], iteration: number, signal: AbortSignal | undefined, wlog: Logger): AsyncGenerator<TurnEvent> {
+/* eslint-disable @typescript-eslint/no-explicit-any */
+async function* streamModelTurn(
+  modelWithTools: any,
+  messages: BaseMessage[],
+  iteration: number,
+  signal: AbortSignal | undefined,
+  wlog: Logger,
+): AsyncGenerator<TurnEvent> {
+  /* eslint-enable @typescript-eslint/no-explicit-any */
   const partials: PartialTC[] = [];
   let fullText = "";
   let accumulatedChunk: AIMessageChunk | null = null;
@@ -218,13 +241,18 @@ async function* streamModelTurn(modelWithTools: any, messages: BaseMessage[], it
     accumulatedChunk = accumulatedChunk ? accumulatedChunk.concat(chunk) : chunk;
 
     const { tokens, reasoning } = extractContentFromChunk(chunk);
-    for (const text of tokens) { fullText += text; yield { type: "token", content: text }; }
-    for (const r of reasoning) { yield { type: "reasoning", content: r }; }
+    for (const text of tokens) {
+      fullText += text;
+      yield { type: "token", content: text };
+    }
+    for (const r of reasoning) {
+      yield { type: "reasoning", content: r };
+    }
 
     for (const tcc of chunk.tool_call_chunks ?? []) {
       const idx = tcc.index ?? 0;
       if (!partials[idx]) partials[idx] = { id: "", name: "", args: "" };
-      if (tcc.id)   partials[idx].id    = tcc.id;
+      if (tcc.id) partials[idx].id = tcc.id;
       if (tcc.name) partials[idx].name += tcc.name;
       if (tcc.args) partials[idx].args += tcc.args;
     }
@@ -236,21 +264,30 @@ async function* streamModelTurn(modelWithTools: any, messages: BaseMessage[], it
 
 // Streams a summary turn after the iteration limit is reached.
 // Mutates messages to append the summary so subsequent history is coherent.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function* synthesizeLimit(model: any, messages: BaseMessage[], signal: AbortSignal | undefined, wlog: Logger): AsyncGenerator<AgentEvent> {
+/* eslint-disable @typescript-eslint/no-explicit-any */
+async function* synthesizeLimit(
+  model: any,
+  messages: BaseMessage[],
+  signal: AbortSignal | undefined,
+  wlog: Logger,
+): AsyncGenerator<AgentEvent> {
+  /* eslint-enable @typescript-eslint/no-explicit-any */
   wlog.info("limit synthesis started");
   try {
     const synthMessages = [
       ...messages,
       new HumanMessage(
-        "You have reached the maximum number of steps. Briefly summarize what you accomplished and what still needs to be done. Do not attempt any tool calls."
+        "You have reached the maximum number of steps. Briefly summarize what you accomplished and what still needs to be done. Do not attempt any tool calls.",
       ),
     ];
     const synthStream = await model.stream(synthMessages, { signal });
     let synthText = "";
     for await (const chunk of synthStream as AsyncIterable<AIMessageChunk>) {
       const text = contentToText(chunk.content);
-      if (text) { synthText += text; yield { type: "token", content: text }; }
+      if (text) {
+        synthText += text;
+        yield { type: "token", content: text };
+      }
     }
     if (synthText) messages.push(new AIMessage(synthText));
     wlog.info({ chars: synthText.length }, "limit synthesis done");
@@ -261,22 +298,32 @@ async function* synthesizeLimit(model: any, messages: BaseMessage[], signal: Abo
 
 async function tryCommitBaseline(
   versioning: IWorkspaceVersioning | undefined,
-  workspaceId: string, workspaceDir: string, prompt: string,
+  workspaceId: string,
+  workspaceDir: string,
+  prompt: string,
   wlog: Logger,
 ): Promise<void> {
   if (!versioning) return;
-  try { await versioning.commitBaseline(workspaceId, workspaceDir, prompt); }
-  catch (err) { wlog.warn({ err }, "versioning baseline commit failed"); }
+  try {
+    await versioning.commitBaseline(workspaceId, workspaceDir, prompt);
+  } catch (err) {
+    wlog.warn({ err }, "versioning baseline commit failed");
+  }
 }
 
 async function tryCommitResult(
   versioning: IWorkspaceVersioning | undefined,
-  workspaceId: string, workspaceDir: string, prompt: string,
+  workspaceId: string,
+  workspaceDir: string,
+  prompt: string,
   wlog: Logger,
 ): Promise<void> {
   if (!versioning) return;
-  try { await versioning.commitResult(workspaceId, workspaceDir, prompt); }
-  catch (err) { wlog.warn({ err }, "versioning result commit failed"); }
+  try {
+    await versioning.commitResult(workspaceId, workspaceDir, prompt);
+  } catch (err) {
+    wlog.warn({ err }, "versioning result commit failed");
+  }
 }
 
 function createLinkQueue() {
@@ -287,17 +334,21 @@ function createLinkQueue() {
   return {
     emitLink(name: string, meta: CallAgentMeta) {
       queue.push({ name, meta });
-      wakeUp?.(); wakeUp = null;
+      wakeUp?.();
+      wakeUp = null;
     },
     notifySettled() {
       done = true;
-      wakeUp?.(); wakeUp = null;
+      wakeUp?.();
+      wakeUp = null;
     },
     async *drainUntilSettled(): AsyncGenerator<{ name: string; meta: CallAgentMeta }> {
       while (!done || queue.length) {
         while (queue.length) yield queue.shift()!;
         if (done) break;
-        await new Promise<void>(res => { wakeUp = res; });
+        await new Promise<void>((res) => {
+          wakeUp = res;
+        });
       }
     },
   };
@@ -308,18 +359,39 @@ export async function* runAgent(
   userInput: string,
   workspaceDir: string,
   workspaceId: string,
-  { signal, maxIterations = 30, notify, warmContainer, loadConfig, buildAgentTools, containers, store, versioning, signalHandlers: injectedHandlers }: RunAgentOptions = {},
+  {
+    signal,
+    maxIterations = 30,
+    notify,
+    warmContainer,
+    loadConfig,
+    buildAgentTools,
+    containers,
+    store,
+    versioning,
+    signalHandlers: injectedHandlers,
+  }: RunAgentOptions = {},
 ): AsyncGenerator<AgentEvent> {
   const wlog = log.child({ workspaceId });
   const config = (loadConfig ?? loadAgentConfig)(workspaceId);
   const modelId = selectedModelId(config);
   const resolvedContainers = containers ?? getContainers();
-  const { modelWithTools, model, toolMap, signalHandlers: builtHandlers } = (buildAgentTools ?? buildTools)(workspaceId, workspaceDir, config, { containers: resolvedContainers, store });
+  const {
+    modelWithTools,
+    model,
+    toolMap,
+    signalHandlers: builtHandlers,
+  } = (buildAgentTools ?? buildTools)(workspaceId, workspaceDir, config, { containers: resolvedContainers, store });
   const signalHandlers: Record<string, PostDispatchFn> = injectedHandlers ?? builtHandlers ?? {};
   const typedToolMap = toolMap as Record<string, AnyTool>;
 
   const resolvedNotify = notify ?? ((msg: object) => getWsForWorkspace(workspaceId)?.send(JSON.stringify(msg)));
-  const resolvedWarmContainer = warmContainer ?? (() => resolvedContainers.ensure(workspaceId, workspaceDir).catch((err: unknown) => { wlog.warn({ err }, "container pre-warm failed"); }));
+  const resolvedWarmContainer =
+    warmContainer ??
+    (() =>
+      resolvedContainers.ensure(workspaceId, workspaceDir).catch((err: unknown) => {
+        wlog.warn({ err }, "container pre-warm failed");
+      }));
   // Start spinning up the workspace container while the first LLM call is in flight.
   // ensureContainer is idempotent and coalesces concurrent calls, so execCommand calling
   // it again later is a no-op if the container is already running.
@@ -395,7 +467,12 @@ export async function* runAgent(
         yield { type: "turn_usage", ...usageBase, toolCalls: [] };
         // Stash the run-cumulative usage on the persisted message so messagesToTranscript can
         // replay the usage line on reload (response_metadata survives serialization).
-        messages.push(new AIMessage({ content: fullText, response_metadata: { runUsage: { inputTokens: runInputTokens, outputTokens: runOutputTokens } } }));
+        messages.push(
+          new AIMessage({
+            content: fullText,
+            response_metadata: { runUsage: { inputTokens: runInputTokens, outputTokens: runOutputTokens } },
+          }),
+        );
         wlog.info("agent run done");
         yield { type: "done" };
         break;
@@ -441,8 +518,10 @@ export async function* runAgent(
           // (a bound arrow property, so it can be called free-standing without a thisArg).
           const withMeta = tool?.callWithMeta;
           if (withMeta) {
-            const r = await withMeta(tc.args, (m) => lq.emitLink(tc.name, m), signal)
-              .catch((err) => ({ result: `Error: ${String(err)}`, meta: undefined }));
+            const r = await withMeta(tc.args, (m) => lq.emitLink(tc.name, m), signal).catch((err) => ({
+              result: `Error: ${String(err)}`,
+              meta: undefined,
+            }));
             resultStr = r.result;
             meta = r.meta;
           } else {
@@ -452,8 +531,11 @@ export async function* runAgent(
           }
           wlog.debug({ name: tc.name, toolMs: Date.now() - toolStart }, "tool timing");
           return { tc, resultStr, meta };
-        })
-      ).then((s) => { lq.notifySettled(); return s; });
+        }),
+      ).then((s) => {
+        lq.notifySettled();
+        return s;
+      });
 
       // Drain link events as they arrive; exits once all tools settled and queue is empty.
       // Suspends only before the atomic history-commit below — an abort during the wait can
@@ -472,11 +554,21 @@ export async function* runAgent(
       for (const { tc, resultStr, meta } of settled) {
         // Persist the callee deep-link on the ToolMessage so a reloaded caller conversation can
         // rebuild the link (the live `meta` event is gone by then). See messagesToTranscript.
-        messages.push(new ToolMessage({
-          tool_call_id: tc.id,
-          content: resultStr,
-          ...(meta ? { additional_kwargs: { calleeConversationId: meta.conversationId, calleeWorkspaceId: meta.workspaceId, calleeWorkspaceName: meta.workspaceName } } : {}),
-        }));
+        messages.push(
+          new ToolMessage({
+            tool_call_id: tc.id,
+            content: resultStr,
+            ...(meta
+              ? {
+                  additional_kwargs: {
+                    calleeConversationId: meta.conversationId,
+                    calleeWorkspaceId: meta.workspaceId,
+                    calleeWorkspaceName: meta.workspaceName,
+                  },
+                }
+              : {}),
+          }),
+        );
       }
 
       for (const { tc, resultStr, meta } of settled) {
@@ -491,7 +583,12 @@ export async function* runAgent(
       yield {
         type: "turn_usage",
         ...usageBase,
-        toolCalls: settled.map(({ tc, resultStr }) => ({ name: tc.name, args: tc.args, output: resultStr, status: classifyToolStatus(resultStr) })),
+        toolCalls: settled.map(({ tc, resultStr }) => ({
+          name: tc.name,
+          args: tc.args,
+          output: resultStr,
+          status: classifyToolStatus(resultStr),
+        })),
       };
 
       // User pressed escape: the tools above have already been killed and their results committed

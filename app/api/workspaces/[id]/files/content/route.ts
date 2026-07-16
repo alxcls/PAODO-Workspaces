@@ -34,12 +34,9 @@ function backend(ws: Workspace): FileBackend {
         "try{fs.ftruncateSync(fd,0);fs.writeFileSync(fd,fs.readFileSync(0,'utf8'),'utf8');}",
         "finally{fs.closeSync(fd);}",
       ].join("");
-      const r = await getContainers().exec(
-        ws.id,
-        ws.dir,
-        ["node", "-e", overwriteExisting, `/workspace/${relPath}`],
-        { stdin: content },
-      );
+      const r = await getContainers().exec(ws.id, ws.dir, ["node", "-e", overwriteExisting, `/workspace/${relPath}`], {
+        stdin: content,
+      });
       if (r.code !== 0) throw new Error(r.stderr || "docker write failed");
     },
     afterWrite: async (message) => {

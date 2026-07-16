@@ -12,10 +12,7 @@ import { WORKSPACES_ROOT } from "@/lib/infra/paths";
 import { SUPPORTED_PROVIDERS, getProviderMetadata } from "@/lib/agent/buildModel";
 import { DEFAULT_LLM, type ReasoningEffort } from "@/lib/agent/interfaces";
 
-export async function GET(
-  _req: Request,
-  { params }: { params: Promise<{ id: string }> }
-) {
+export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const ws = requireWorkspace(id);
   if (ws instanceof NextResponse) return ws;
@@ -32,10 +29,7 @@ export async function GET(
   });
 }
 
-export async function PATCH(
-  req: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
+export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const limited = rateLimited(req, { logContext: { workspaceId: id } });
   if (limited) return limited;
@@ -101,10 +95,7 @@ export async function PATCH(
   return NextResponse.json({ id, name: body.name.trim() });
 }
 
-export async function DELETE(
-  req: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
+export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const limited = rateLimited(req, { logContext: { workspaceId: id } });
   if (limited) return limited;

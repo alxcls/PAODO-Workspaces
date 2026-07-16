@@ -29,10 +29,10 @@ const okResponse = (body = "ok", contentType = "text/plain"): GuardedResponse =>
 // Literal private/internal addresses the guard must block. All are IP literals so assertPublicUrl
 // short-circuits before DNS — no network, fully deterministic.
 const BLOCKED = [
-  "https://127.0.0.1/",          // loopback
-  "https://169.254.169.254/",    // cloud metadata
-  "https://10.0.0.1/",           // RFC1918
-  "https://[::1]/",              // IPv6 loopback
+  "https://127.0.0.1/", // loopback
+  "https://169.254.169.254/", // cloud metadata
+  "https://10.0.0.1/", // RFC1918
+  "https://[::1]/", // IPv6 loopback
 ];
 
 describe("http_get wires the SSRF guard", () => {
@@ -69,7 +69,13 @@ describe("http_get wires the SSRF guard", () => {
   it("re-guards redirects and refuses one pointing at an internal address", async () => {
     const t = makeTool(async (target: string) => {
       if (target === "https://1.1.1.1/")
-        return { status: 302, statusText: "Found", contentType: "", location: "https://169.254.169.254/latest/meta-data", body: "" };
+        return {
+          status: 302,
+          statusText: "Found",
+          contentType: "",
+          location: "https://169.254.169.254/latest/meta-data",
+          body: "",
+        };
       return okResponse("SECRET");
     });
 

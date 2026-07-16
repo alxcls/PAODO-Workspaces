@@ -21,7 +21,6 @@ export { WORKSPACES_ROOT };
 
 const log = createLogger("store");
 
-
 export interface WorkspaceMetadata {
   id: string;
   name: string;
@@ -238,7 +237,6 @@ export class WorkspaceStore implements IWorkspaceStore {
     this.save();
     return true;
   }
-
 }
 
 // ---- Default production singleton ----
@@ -273,6 +271,11 @@ export const getWorkspaceByName = (name: string) => defaultWorkspaceStore.getWor
 export const listWorkspaces = () => defaultWorkspaceStore.listWorkspaces();
 export const renameWorkspace = (id: string, name: string) => defaultWorkspaceStore.renameWorkspace(id, name);
 export const deleteWorkspace = (id: string) => defaultWorkspaceStore.deleteWorkspace(id);
-export const setWorkspaceMaxIterations = (id: string, n: number) => defaultWorkspaceStore.setWorkspaceMaxIterations(id, n);
-export const setWorkspaceDescription = (id: string, description: string) => defaultWorkspaceStore.setWorkspaceDescription(id, description);
-export const setWorkspaceLlm = (id: string, sel: { provider: string; model: string; reasoningEffort: ReasoningEffort }) => defaultWorkspaceStore.setWorkspaceLlm(id, sel);
+export const setWorkspaceMaxIterations = (id: string, n: number) =>
+  defaultWorkspaceStore.setWorkspaceMaxIterations(id, n);
+export const setWorkspaceDescription = (id: string, description: string) =>
+  defaultWorkspaceStore.setWorkspaceDescription(id, description);
+export const setWorkspaceLlm = (
+  id: string,
+  sel: { provider: string; model: string; reasoningEffort: ReasoningEffort },
+) => defaultWorkspaceStore.setWorkspaceLlm(id, sel);

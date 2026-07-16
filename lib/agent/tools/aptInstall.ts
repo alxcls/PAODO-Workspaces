@@ -16,7 +16,7 @@ import type { PrivilegedRunner } from "../interfaces";
 const PKG_RE = /^[a-z0-9][a-z0-9+._-]*(=[a-zA-Z0-9+.:~-]+)?$/;
 
 const schema = z.object({
-  packages: z.array(z.string()).describe("apt package names to install, e.g. [\"ffmpeg\", \"imagemagick\"]"),
+  packages: z.array(z.string()).describe('apt package names to install, e.g. ["ffmpeg", "imagemagick"]'),
 });
 
 export class AptInstallTool extends StructuredTool<typeof schema> {
@@ -47,9 +47,7 @@ Node version managers (nvm) and Python (pyenv) and language package managers (np
       return `Error: apt-get update failed:\n${update.stderr || update.stdout}`;
     }
 
-    const install = await this.runner.execAsRoot([
-      "apt-get", "install", "-y", "--no-install-recommends", ...packages,
-    ]);
+    const install = await this.runner.execAsRoot(["apt-get", "install", "-y", "--no-install-recommends", ...packages]);
     if (install.code !== 0) {
       return `Error: apt-get install failed:\n${install.stderr || install.stdout}`;
     }

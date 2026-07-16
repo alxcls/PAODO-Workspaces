@@ -16,7 +16,9 @@ export default function ApiAccessBlock({ wsId }: { wsId: string }) {
     fetch(`/api/workspaces/${wsId}/api-key`)
       .then((r) => r.json())
       .then((d: { enabled: boolean; hasKey: boolean; publicBaseUrl: string | null }) => {
-        setEnabled(d.enabled); setHasKey(d.hasKey); setPublicBaseUrl(d.publicBaseUrl);
+        setEnabled(d.enabled);
+        setHasKey(d.hasKey);
+        setPublicBaseUrl(d.publicBaseUrl);
       })
       .catch(() => {});
   }, [wsId]);
@@ -39,13 +41,18 @@ export default function ApiAccessBlock({ wsId }: { wsId: string }) {
     try {
       const res = await fetch(`/api/workspaces/${wsId}/api-key`, { method: "POST" });
       const { plain } = (await res.json()) as { plain: string };
-      setNewKey(plain); setHasKey(true); setEnabled(true);
-    } finally { setLoading(false); }
+      setNewKey(plain);
+      setHasKey(true);
+      setEnabled(true);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const revoke = async () => {
     await fetch(`/api/workspaces/${wsId}/api-key`, { method: "DELETE" });
-    setHasKey(false); setNewKey(null);
+    setHasKey(false);
+    setNewKey(null);
   };
 
   const copyKey = (text: string) => {
@@ -97,8 +104,12 @@ export default function ApiAccessBlock({ wsId }: { wsId: string }) {
 
       {enabled && hasKey && !newKey && (
         <div className="flex items-center gap-2.5">
-          <button className="linkbtn" onClick={generate} disabled={loading}>Rotate</button>
-          <button className="linkbtn text-danger" onClick={revoke}>Revoke</button>
+          <button className="linkbtn" onClick={generate} disabled={loading}>
+            Rotate
+          </button>
+          <button className="linkbtn text-danger" onClick={revoke}>
+            Revoke
+          </button>
         </div>
       )}
 
@@ -109,9 +120,13 @@ export default function ApiAccessBlock({ wsId }: { wsId: string }) {
             <code className="font-mono text-xs leading-[1.4] text-text bg-bg-tint px-2 py-1 rounded border border-border flex-1 min-w-0 break-all">
               {newKey}
             </code>
-            <button className="btn btn-sm" onClick={() => copyKey(newKey)}>{copied ? "Copied!" : "Copy"}</button>
+            <button className="btn btn-sm" onClick={() => copyKey(newKey)}>
+              {copied ? "Copied!" : "Copy"}
+            </button>
           </div>
-          <button className="linkbtn" onClick={() => setNewKey(null)}>Close</button>
+          <button className="linkbtn" onClick={() => setNewKey(null)}>
+            Close
+          </button>
         </div>
       )}
     </div>

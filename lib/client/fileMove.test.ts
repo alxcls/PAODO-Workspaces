@@ -1,18 +1,20 @@
 import { describe, expect, it } from "vitest";
 import {
-  canMoveAllToDirectory, canMoveToDirectory, collapseToRoots, isPathWithinRoot, remapMovedPath,
+  canMoveAllToDirectory,
+  canMoveToDirectory,
+  collapseToRoots,
+  isPathWithinRoot,
+  remapMovedPath,
 } from "./fileMove";
 
 describe("remapMovedPath", () => {
   it("remaps the moved item and its descendants", () => {
     expect(remapMovedPath("/ws/src", "/ws/src", "/ws/archive/src")).toBe("/ws/archive/src");
-    expect(remapMovedPath("/ws/src/index.ts", "/ws/src", "/ws/archive/src"))
-      .toBe("/ws/archive/src/index.ts");
+    expect(remapMovedPath("/ws/src/index.ts", "/ws/src", "/ws/archive/src")).toBe("/ws/archive/src/index.ts");
   });
 
   it("does not remap similarly prefixed siblings", () => {
-    expect(remapMovedPath("/ws/src-old/index.ts", "/ws/src", "/ws/archive/src"))
-      .toBe("/ws/src-old/index.ts");
+    expect(remapMovedPath("/ws/src-old/index.ts", "/ws/src", "/ws/archive/src")).toBe("/ws/src-old/index.ts");
   });
 });
 
@@ -32,18 +34,19 @@ describe("canMoveToDirectory", () => {
 
 describe("collapseToRoots", () => {
   it("drops paths that already travel with a selected ancestor", () => {
-    expect(collapseToRoots(["/ws/src", "/ws/src/index.ts", "/ws/src/lib", "/ws/src/lib/a.ts"]))
-      .toEqual(["/ws/src"]);
+    expect(collapseToRoots(["/ws/src", "/ws/src/index.ts", "/ws/src/lib", "/ws/src/lib/a.ts"])).toEqual(["/ws/src"]);
   });
 
   it("keeps unrelated roots, including similarly prefixed siblings", () => {
-    expect(collapseToRoots(["/ws/src", "/ws/src-old/a.ts", "/ws/docs"]))
-      .toEqual(["/ws/src", "/ws/src-old/a.ts", "/ws/docs"]);
+    expect(collapseToRoots(["/ws/src", "/ws/src-old/a.ts", "/ws/docs"])).toEqual([
+      "/ws/src",
+      "/ws/src-old/a.ts",
+      "/ws/docs",
+    ]);
   });
 
   it("keeps a nested path when its ancestor is not itself selected", () => {
-    expect(collapseToRoots(["/ws/src/index.ts", "/ws/docs"]))
-      .toEqual(["/ws/src/index.ts", "/ws/docs"]);
+    expect(collapseToRoots(["/ws/src/index.ts", "/ws/docs"])).toEqual(["/ws/src/index.ts", "/ws/docs"]);
   });
 
   it("handles the empty selection", () => {

@@ -18,10 +18,7 @@ import { createLogger } from "@/lib/infra/logger";
 import { assertInsideWorkspace } from "@/lib/infra/workspaceContainment";
 import { lexicalFilePath, type FileBackend } from "./fileBackend";
 
-type FileClass =
-  | { type: "image"; mimeType: string }
-  | { type: "text"; content: string }
-  | { type: "binary" };
+type FileClass = { type: "image"; mimeType: string } | { type: "text"; content: string } | { type: "binary" };
 
 async function classifyBuffer(buf: Buffer): Promise<FileClass> {
   const { fileTypeFromBuffer } = await import("file-type");
@@ -111,10 +108,7 @@ export async function putFileContent(req: Request, be: FileBackend): Promise<Res
   } catch (err) {
     log.warn({ err, path: body.path }, "PUT file failed");
     if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-      return NextResponse.json(
-        { error: "File was moved or deleted before it could be saved" },
-        { status: 409 },
-      );
+      return NextResponse.json({ error: "File was moved or deleted before it could be saved" }, { status: 409 });
     }
     const msg = err instanceof Error ? err.message : "Unknown error";
     return NextResponse.json({ error: msg }, { status: 400 });

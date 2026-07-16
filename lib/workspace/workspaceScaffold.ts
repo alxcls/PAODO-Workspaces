@@ -27,15 +27,48 @@ const SKILL_TEMPLATE = `${JSON.stringify(
       type: "object",
       properties: {
         string_field: { type: "string", description: "Replace with a domain-specific string field." },
-        number_field: { type: "number", minimum: 0, maximum: 1, description: "Replace with a domain-specific number and real bounds, or remove the bounds." },
-        integer_field: { type: "integer", minimum: 1, maximum: 100, description: "Replace with a domain-specific integer and real bounds, or remove the bounds." },
+        number_field: {
+          type: "number",
+          minimum: 0,
+          maximum: 1,
+          description: "Replace with a domain-specific number and real bounds, or remove the bounds.",
+        },
+        integer_field: {
+          type: "integer",
+          minimum: 1,
+          maximum: 100,
+          description: "Replace with a domain-specific integer and real bounds, or remove the bounds.",
+        },
         boolean_field: { type: "boolean", description: "Replace with a domain-specific boolean field." },
-        enum_field: { type: "string", enum: ["option-a", "option-b"], description: "Replace with a domain-specific closed choice." },
-        array_field: { type: "array", description: "Replace with a domain-specific collection.", items: { type: "string" } },
-        object_field: { type: "object", description: "Replace with a domain-specific structured object.", properties: { string_field: { type: "string" } } },
+        enum_field: {
+          type: "string",
+          enum: ["option-a", "option-b"],
+          description: "Replace with a domain-specific closed choice.",
+        },
+        array_field: {
+          type: "array",
+          description: "Replace with a domain-specific collection.",
+          items: { type: "string" },
+        },
+        object_field: {
+          type: "object",
+          description: "Replace with a domain-specific structured object.",
+          properties: { string_field: { type: "string" } },
+        },
       },
       required: ["string_field", "integer_field", "boolean_field"],
-      examples: [{ string_field: "string", integer_field: 10, boolean_field: true }, { string_field: "string", number_field: 0.5, integer_field: 10, boolean_field: true, enum_field: "option-a", array_field: ["string"], object_field: { string_field: "string" } }],
+      examples: [
+        { string_field: "string", integer_field: 10, boolean_field: true },
+        {
+          string_field: "string",
+          number_field: 0.5,
+          integer_field: 10,
+          boolean_field: true,
+          enum_field: "option-a",
+          array_field: ["string"],
+          object_field: { string_field: "string" },
+        },
+      ],
     },
     output: {
       type: "object",
@@ -45,15 +78,32 @@ const SKILL_TEMPLATE = `${JSON.stringify(
         number_field: { type: "number", description: "Replace with a domain-specific number field." },
         integer_field: { type: "integer", description: "Replace with a domain-specific integer field." },
         boolean_field: { type: "boolean", description: "Replace with a domain-specific boolean field." },
-        array_field: { type: "array", description: "Replace with a domain-specific collection.", items: { type: "string" } },
-        object_field: { type: "object", description: "Replace with a domain-specific structured object.", properties: { string_field: { type: "string" } } },
+        array_field: {
+          type: "array",
+          description: "Replace with a domain-specific collection.",
+          items: { type: "string" },
+        },
+        object_field: {
+          type: "object",
+          description: "Replace with a domain-specific structured object.",
+          properties: { string_field: { type: "string" } },
+        },
       },
       required: ["string_field", "array_field", "object_field"],
-      examples: [{ string_field: "string", number_field: 0.5, integer_field: 10, boolean_field: true, array_field: ["string"], object_field: { string_field: "string" } }],
+      examples: [
+        {
+          string_field: "string",
+          number_field: 0.5,
+          integer_field: 10,
+          boolean_field: true,
+          array_field: ["string"],
+          object_field: { string_field: "string" },
+        },
+      ],
     },
   },
   null,
-  2
+  2,
 )}\n`;
 
 export async function scaffoldWorkspaceDir(dir: string): Promise<void> {

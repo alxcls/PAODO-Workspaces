@@ -80,17 +80,22 @@ export function startRun(params: StartRunParams): { alreadyRunning: boolean } {
 
   const run = params.run ?? runAgent;
   const sessionId = crypto.randomUUID();
-  const origin = params.origin ?? (conversations.getMeta(params.workspaceId, params.conversationId)?.kind === "scheduled" ? "scheduled" : "chat");
+  const origin =
+    params.origin ??
+    (conversations.getMeta(params.workspaceId, params.conversationId)?.kind === "scheduled" ? "scheduled" : "chat");
   const recordUsage =
     params.onTurnUsage ??
     ((sid, event) =>
-      recordTurnUsage({
-        sessionId: sid,
-        conversationId: params.conversationId,
-        workspaceId: params.workspaceId,
-        workspaceName: params.workspaceName,
-        origin,
-      }, event));
+      recordTurnUsage(
+        {
+          sessionId: sid,
+          conversationId: params.conversationId,
+          workspaceId: params.workspaceId,
+          workspaceName: params.workspaceName,
+          origin,
+        },
+        event,
+      ));
   const persist = params.onPersist ?? (() => conversations.persist(params.workspaceId, params.conversationId));
 
   const runOptions: RunAgentOptions = {
@@ -105,10 +110,20 @@ export function startRun(params: StartRunParams): { alreadyRunning: boolean } {
   // Detached: not awaited, not tied to any request. Errors are surfaced as events by runAgent.
   void (async () => {
     try {
-      for await (const event of run(params.messages, params.userInput, params.workspaceDir, params.workspaceId, runOptions)) {
+      for await (const event of run(
+        params.messages,
+        params.userInput,
+        params.workspaceDir,
+        params.workspaceId,
+        runOptions,
+      )) {
         session.buffer.push(event);
         for (const sub of session.subscribers) {
-          try { sub(event); } catch (err) { log.warn({ err }, "subscriber threw"); }
+          try {
+            sub(event);
+          } catch (err) {
+            log.warn({ err }, "subscriber threw");
+          }
         }
         if (event.type === "turn_usage") recordUsage(sessionId, event);
         if (event.type === "done") break;
@@ -117,7 +132,11 @@ export function startRun(params: StartRunParams): { alreadyRunning: boolean } {
       log.error({ err, workspaceId: params.workspaceId, conversationId: params.conversationId }, "detached run failed");
     } finally {
       session.status = "done";
-      try { persist(); } catch (err) { log.error({ err }, "persist on run end failed"); }
+      try {
+        persist();
+      } catch (err) {
+        log.error({ err }, "persist on run end failed");
+      }
       setTimeout(() => {
         // Only evict if no newer run took this slot.
         if (sessions.get(k) === session) sessions.delete(k);
@@ -173,7 +192,11 @@ export function startExternalRun(workspaceId: string, conversationId: string, us
     publish: (event) => {
       session.buffer.push(event);
       for (const sub of session.subscribers) {
-        try { sub(event); } catch (err) { log.warn({ err }, "subscriber threw"); }
+        try {
+          sub(event);
+        } catch (err) {
+          log.warn({ err }, "subscriber threw");
+        }
       }
     },
     finish: () => {

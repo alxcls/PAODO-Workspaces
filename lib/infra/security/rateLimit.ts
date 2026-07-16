@@ -24,7 +24,10 @@ export class RateLimiter {
       return { ok: true, retryAfter: 0 };
     }
     if (entry.count >= max) {
-      log.warn({ ip, bucket: opts?.bucket, retryAfter: Math.ceil((entry.resetAt - now) / 1000) }, "rate limit exceeded");
+      log.warn(
+        { ip, bucket: opts?.bucket, retryAfter: Math.ceil((entry.resetAt - now) / 1000) },
+        "rate limit exceeded",
+      );
       return { ok: false, retryAfter: Math.ceil((entry.resetAt - now) / 1000) };
     }
     entry.count++;
@@ -36,7 +39,7 @@ const _limiter = new RateLimiter();
 
 export function checkRateLimit(
   ip: string,
-  opts?: { max?: number; bucket?: string }
+  opts?: { max?: number; bucket?: string },
 ): { ok: boolean; retryAfter: number } {
   return _limiter.check(ip, opts);
 }

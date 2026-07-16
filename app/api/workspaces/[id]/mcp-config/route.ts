@@ -20,7 +20,7 @@ async function guard(req: NextRequest, id: string): Promise<Workspace | Response
 async function jsonBody(req: NextRequest): Promise<Record<string, unknown> | null> {
   try {
     const body: unknown = await req.json();
-    return body && typeof body === "object" && !Array.isArray(body) ? body as Record<string, unknown> : null;
+    return body && typeof body === "object" && !Array.isArray(body) ? (body as Record<string, unknown>) : null;
   } catch {
     return null;
   }
@@ -37,9 +37,17 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     description: s.description,
   }));
   const publicBaseUrl = process.env.WORKSPACE_API_DOMAIN?.trim()
-    ? `https://${process.env.WORKSPACE_API_DOMAIN.trim().replace(/^https?:\/\//, "").replace(/\/+$/, "")}`
+    ? `https://${process.env.WORKSPACE_API_DOMAIN.trim()
+        .replace(/^https?:\/\//, "")
+        .replace(/\/+$/, "")}`
     : null;
-  return NextResponse.json({ enabled, hasSecret: secretHash !== null, selectedSkillIds, availableSkills, publicBaseUrl });
+  return NextResponse.json({
+    enabled,
+    hasSecret: secretHash !== null,
+    selectedSkillIds,
+    availableSkills,
+    publicBaseUrl,
+  });
 }
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -86,6 +94,9 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
   }
   // Only persist ids that currently exist as skills, so a stale selection can't linger.
   const existing = new Set((await loadSkills(ws.dir)).map((s) => s.id));
-  setSelectedSkills(id, (selectedSkillIds as string[]).filter((s) => existing.has(s)));
+  setSelectedSkills(
+    id,
+    (selectedSkillIds as string[]).filter((s) => existing.has(s)),
+  );
   return NextResponse.json({ ok: true });
 }

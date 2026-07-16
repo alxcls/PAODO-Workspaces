@@ -1,18 +1,16 @@
 import { describe, it, expect } from "vitest";
 import { HumanMessage, AIMessage, ToolMessage, SystemMessage } from "@langchain/core/messages";
-import {
-  serializeMessages,
-  deserializeMessages,
-  setSystemPrompt,
-  messagesToTranscript,
-} from "./messageSerialization";
+import { serializeMessages, deserializeMessages, setSystemPrompt, messagesToTranscript } from "./messageSerialization";
 
 describe("message serialization round-trip", () => {
   it("preserves message classes, tool_calls and tool_call_id, dropping the system prompt", () => {
     const messages = [
       new SystemMessage("system prompt"),
       new HumanMessage("do the thing"),
-      new AIMessage({ content: "calling", tool_calls: [{ id: "tc1", name: "file_read", args: { file_path: "a.txt" } }] }),
+      new AIMessage({
+        content: "calling",
+        tool_calls: [{ id: "tc1", name: "file_read", args: { file_path: "a.txt" } }],
+      }),
       new ToolMessage({ tool_call_id: "tc1", content: "file body" }),
       new AIMessage("done"),
     ];
@@ -47,7 +45,10 @@ describe("messagesToTranscript", () => {
   it("projects a history into the client transcript shape", () => {
     const messages = [
       new HumanMessage("read a file"),
-      new AIMessage({ content: "let me look", tool_calls: [{ id: "t1", name: "file_read", args: { file_path: "a.txt" } }] }),
+      new AIMessage({
+        content: "let me look",
+        tool_calls: [{ id: "t1", name: "file_read", args: { file_path: "a.txt" } }],
+      }),
       new ToolMessage({ tool_call_id: "t1", content: "secret" }),
       new AIMessage("here is the answer"),
     ];
@@ -83,7 +84,9 @@ describe("messagesToTranscript", () => {
   });
 
   it("preserves response_metadata.runUsage across a serialize round-trip", () => {
-    const messages = [new AIMessage({ content: "answer", response_metadata: { runUsage: { inputTokens: 5, outputTokens: 6 } } })];
+    const messages = [
+      new AIMessage({ content: "answer", response_metadata: { runUsage: { inputTokens: 5, outputTokens: 6 } } }),
+    ];
     const back = deserializeMessages(serializeMessages(messages));
     const t = messagesToTranscript(back);
     expect(t[0]).toEqual({ role: "usage", inputTokens: 5, outputTokens: 6 });
@@ -95,7 +98,11 @@ describe("messagesToTranscript", () => {
       new ToolMessage({
         tool_call_id: "c1",
         content: "neighbor reply",
-        additional_kwargs: { calleeConversationId: "conv-9", calleeWorkspaceId: "ws-b", calleeWorkspaceName: "Agent B" },
+        additional_kwargs: {
+          calleeConversationId: "conv-9",
+          calleeWorkspaceId: "ws-b",
+          calleeWorkspaceName: "Agent B",
+        },
       }),
     ];
     const t = messagesToTranscript(messages);

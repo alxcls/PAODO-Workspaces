@@ -9,15 +9,12 @@ import JSZip from "jszip";
 import { createLogger } from "@/lib/infra/logger";
 import { addSelectedToZip, zipToStreamResponse } from "@/lib/workspace/zipDownload";
 
-export async function POST(
-  req: Request,
-  { params }: { params: Promise<{ id: string }> }
-) {
+export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const ws = requireWorkspace(id);
   if (ws instanceof NextResponse) return ws;
 
-  const body = await req.json() as { paths?: string[] };
+  const body = (await req.json()) as { paths?: string[] };
   if (!Array.isArray(body.paths) || body.paths.length === 0) {
     return NextResponse.json({ error: "paths required" }, { status: 400 });
   }

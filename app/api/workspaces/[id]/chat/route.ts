@@ -15,10 +15,7 @@ import * as conversations from "@/lib/workspace/conversationStore";
 import * as broker from "@/lib/agent/runBroker";
 import { createLogger } from "@/lib/infra/logger";
 
-export async function POST(
-  req: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
+export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const log = createLogger("api").child({ workspaceId: id, route: "chat" });
   const ws = requireWorkspace(id);
@@ -65,7 +62,11 @@ export async function POST(
         if (closed) return;
         closed = true;
         sub?.unsubscribe();
-        try { controller.close(); } catch { /* already closed */ }
+        try {
+          controller.close();
+        } catch {
+          /* already closed */
+        }
       };
 
       // Live events arrive here; 'done' ends the stream for this viewer.

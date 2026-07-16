@@ -11,7 +11,10 @@ import { resolveDrivePath } from "../driveAccess";
 import { toolError } from "../toolUtils";
 
 const schema = z.object({
-  drive_name: z.string().optional().describe("Drive to browse, by name or id. Omit to list the drives connected to this workspace."),
+  drive_name: z
+    .string()
+    .optional()
+    .describe("Drive to browse, by name or id. Omit to list the drives connected to this workspace."),
   path: z.string().optional().describe("Directory path within the drive. Omit for the drive root."),
 });
 

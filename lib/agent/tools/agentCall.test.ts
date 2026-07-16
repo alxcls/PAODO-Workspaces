@@ -49,10 +49,7 @@ describe("AgentCallTool — input-failure streak", () => {
   it("resets the streak on a NEEDS_INPUT in between (args were schema-valid)", async () => {
     // bad → NEEDS_INPUT (valid args) → bad. The middle call breaks the consecutive streak,
     // so the third failure is the FIRST of a new streak, not the terminal second.
-    mockedExecute
-      .mockResolvedValueOnce(INPUT_ERR)
-      .mockResolvedValueOnce(NEEDS_INPUT)
-      .mockResolvedValueOnce(INPUT_ERR);
+    mockedExecute.mockResolvedValueOnce(INPUT_ERR).mockResolvedValueOnce(NEEDS_INPUT).mockResolvedValueOnce(INPUT_ERR);
     const tool = makeTool();
 
     await call(tool);
@@ -105,7 +102,11 @@ describe("AgentCallTool — callWithMeta surfaces the callee session link", () =
     const onLink = vi.fn();
 
     await tool.callWithMeta({ workspace: CALLEE.name, skill: "check-stock", args: { sku: "X" } }, onLink);
-    expect(onLink).toHaveBeenCalledWith({ conversationId: "conv-live", workspaceId: CALLEE.id, workspaceName: CALLEE.name });
+    expect(onLink).toHaveBeenCalledWith({
+      conversationId: "conv-live",
+      workspaceId: CALLEE.id,
+      workspaceName: CALLEE.name,
+    });
   });
 
   it("omits meta when the callee never ran (pre-run rejection, no conversationId)", async () => {
@@ -128,7 +129,11 @@ describe("AgentCallTool — caller cancel cascades into the callee", () => {
     const tool = makeTool();
     const caller = new AbortController();
 
-    await tool.callWithMeta({ workspace: CALLEE.name, skill: "check-stock", args: { sku: "X" } }, undefined, caller.signal);
+    await tool.callWithMeta(
+      { workspace: CALLEE.name, skill: "check-stock", args: { sku: "X" } },
+      undefined,
+      caller.signal,
+    );
     expect(seenSignal).toBeDefined();
     expect(seenSignal!.aborted).toBe(false);
     caller.abort();
@@ -147,7 +152,11 @@ describe("AgentCallTool — caller cancel cascades into the callee", () => {
     });
     const tool = makeTool();
 
-    const res = await tool.callWithMeta({ workspace: CALLEE.name, skill: "check-stock", args: { sku: "X" } }, undefined, caller.signal);
+    const res = await tool.callWithMeta(
+      { workspace: CALLEE.name, skill: "check-stock", args: { sku: "X" } },
+      undefined,
+      caller.signal,
+    );
     expect(res.result).toContain("cancelled");
     expect(res.result).not.toContain("timed out");
   });

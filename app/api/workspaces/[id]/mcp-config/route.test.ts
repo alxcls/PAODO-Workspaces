@@ -31,14 +31,21 @@ vi.mock("@/lib/workspace/skillStore", () => ({ loadSkills: h.loadSkills }));
 import { DELETE, GET, PATCH, POST, PUT } from "./route";
 
 const ctx = () => ({ params: Promise.resolve({ id: "ws-1" }) });
-const request = (method: string, body?: string) => new Request("http://x/api/workspaces/ws-1/mcp-config", {
-  method, headers: body ? { "content-type": "application/json" } : {}, body,
-}) as never;
+const request = (method: string, body?: string) =>
+  new Request("http://x/api/workspaces/ws-1/mcp-config", {
+    method,
+    headers: body ? { "content-type": "application/json" } : {},
+    body,
+  }) as never;
 
 beforeEach(() => {
   h.limited = null;
   h.state = { enabled: false, secretHash: null, selectedSkillIds: [] };
-  h.setEnabled.mockClear(); h.mintSecret.mockClear(); h.revokeSecret.mockClear(); h.setSelectedSkills.mockClear(); h.loadSkills.mockClear();
+  h.setEnabled.mockClear();
+  h.mintSecret.mockClear();
+  h.revokeSecret.mockClear();
+  h.setSelectedSkills.mockClear();
+  h.loadSkills.mockClear();
 });
 
 describe("workspace MCP configuration route", () => {
@@ -47,7 +54,10 @@ describe("workspace MCP configuration route", () => {
     const body = await (await GET(request("GET"), ctx())).json();
     expect(body).toMatchObject({ enabled: true, hasSecret: true, selectedSkillIds: ["read_orders"] });
     expect(body).not.toHaveProperty("secretHash");
-    expect(body.availableSkills).toEqual([{ id: "read_orders", description: "Read orders" }, { id: "create_order", description: "Create an order" }]);
+    expect(body.availableSkills).toEqual([
+      { id: "read_orders", description: "Read orders" },
+      { id: "create_order", description: "Create an order" },
+    ]);
   });
 
   it("validates PATCH bodies, including malformed JSON", async () => {
@@ -67,8 +77,13 @@ describe("workspace MCP configuration route", () => {
 
   it("validates selected IDs and persists only skills that exist", async () => {
     expect((await PUT(request("PUT", "bad json"), ctx())).status).toBe(400);
-    expect((await PUT(request("PUT", JSON.stringify({ selectedSkillIds: ["read_orders", 3] })), ctx())).status).toBe(400);
-    const res = await PUT(request("PUT", JSON.stringify({ selectedSkillIds: ["read_orders", "missing", "read_orders"] })), ctx());
+    expect((await PUT(request("PUT", JSON.stringify({ selectedSkillIds: ["read_orders", 3] })), ctx())).status).toBe(
+      400,
+    );
+    const res = await PUT(
+      request("PUT", JSON.stringify({ selectedSkillIds: ["read_orders", "missing", "read_orders"] })),
+      ctx(),
+    );
     expect(res.status).toBe(200);
     expect(h.setSelectedSkills).toHaveBeenCalledWith("ws-1", ["read_orders", "read_orders"]);
   });

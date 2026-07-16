@@ -15,11 +15,7 @@ export interface ResolvedDrivePath {
 }
 
 // Returns a resolved path, or an "Error: ..." string suitable for returning straight from a tool.
-export function resolveDrivePath(
-  workspaceId: string,
-  driveName: string,
-  relPath?: string,
-): ResolvedDrivePath | string {
+export function resolveDrivePath(workspaceId: string, driveName: string, relPath?: string): ResolvedDrivePath | string {
   const resolved = resolveDriveDir(workspaceId, driveName);
   if (!resolved) return `Error: no drive named "${driveName}" is connected to this workspace`;
 

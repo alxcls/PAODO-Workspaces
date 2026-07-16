@@ -13,7 +13,15 @@ import { useFileContent } from "@/lib/client/hooks/useFileContent";
 const CodeMirrorEditor = dynamic(() => import("./CodeMirrorEditor"), { ssr: false });
 
 const CloseIcon = () => (
-  <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round">
+  <svg
+    viewBox="0 0 16 16"
+    width="14"
+    height="14"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.6"
+    strokeLinecap="round"
+  >
     <path d="M4 4l8 8M12 4l-8 8" />
   </svg>
 );
@@ -27,24 +35,37 @@ export interface FileViewerHandle {
 }
 
 interface Props {
-  workspaceId: string; filePath: string | null;
-  onClose: () => void; onSelfWrite?: (path: string) => void;
+  workspaceId: string;
+  filePath: string | null;
+  onClose: () => void;
+  onSelfWrite?: (path: string) => void;
   /** API base for file routes. Defaults to the workspace path; drives pass /api/drives/<id>. */
   apiBase?: string;
 }
 
 const FileViewer = forwardRef<FileViewerHandle, Props>(function FileViewer(
   { workspaceId, filePath, onClose, onSelfWrite, apiBase },
-  ref
+  ref,
 ) {
   const base = apiBase ?? `/api/workspaces/${workspaceId}`;
   const {
-    fileType, content, draft, setDraft,
-    loading, error, saving, deleting, moving,
+    fileType,
+    content,
+    draft,
+    setDraft,
+    loading,
+    error,
+    saving,
+    deleting,
+    moving,
     isDirty,
-    handleSave, deleteFile,
-    notifyFilesChanged, notifyFilesDeleted,
-    notifyFileMoveStarted, notifyFileMoveCancelled, notifyFileMoved,
+    handleSave,
+    deleteFile,
+    notifyFilesChanged,
+    notifyFilesDeleted,
+    notifyFileMoveStarted,
+    notifyFileMoveCancelled,
+    notifyFileMoved,
   } = useFileContent(workspaceId, filePath, { onClose, onSelfWrite, apiBase: base });
 
   // Markdown files can toggle a rendered preview; all other files are source-only.
@@ -52,22 +73,23 @@ const FileViewer = forwardRef<FileViewerHandle, Props>(function FileViewer(
 
   const [showPreview, setShowPreview] = useState(false);
   useEffect(() => {
+    // The viewer stays mounted across file changes (including moves), so its local mode must follow
+    // the newly selected file type instead of relying on mount-time state.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setShowPreview(isMarkdown);
   }, [isMarkdown]);
 
-  useImperativeHandle(ref, () => ({
-    notifyFilesChanged,
-    notifyFilesDeleted,
-    notifyFileMoveStarted,
-    notifyFileMoveCancelled,
-    notifyFileMoved,
-  }), [
-    notifyFilesChanged,
-    notifyFilesDeleted,
-    notifyFileMoveStarted,
-    notifyFileMoveCancelled,
-    notifyFileMoved,
-  ]);
+  useImperativeHandle(
+    ref,
+    () => ({
+      notifyFilesChanged,
+      notifyFilesDeleted,
+      notifyFileMoveStarted,
+      notifyFileMoveCancelled,
+      notifyFileMoved,
+    }),
+    [notifyFilesChanged, notifyFilesDeleted, notifyFileMoveStarted, notifyFileMoveCancelled, notifyFileMoved],
+  );
 
   async function handleDelete() {
     if (!filePath || !confirm(`Delete ${filePath.split("/").pop()}?`)) return;
@@ -75,9 +97,7 @@ const FileViewer = forwardRef<FileViewerHandle, Props>(function FileViewer(
   }
 
   const displayPath = filePath ? filePath.split("/").slice(-3).join("/") : "";
-  const rawUrl = filePath
-    ? `${base}/files/content?path=${encodeURIComponent(filePath)}&raw=1`
-    : "";
+  const rawUrl = filePath ? `${base}/files/content?path=${encodeURIComponent(filePath)}&raw=1` : "";
 
   const closeBtn = (
     <button className="iconbtn" onClick={onClose} title="Close viewer" aria-label="Close viewer">
@@ -89,7 +109,9 @@ const FileViewer = forwardRef<FileViewerHandle, Props>(function FileViewer(
     return (
       <div className="flex flex-col min-h-0 flex-1">
         <div className="flex items-center gap-2.5 px-4 min-h-[44px] border-b border-border bg-bg flex-shrink-0">
-          <span className="font-mono text-ms text-text-3 flex-1 min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">No file open</span>
+          <span className="font-mono text-ms text-text-3 flex-1 min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">
+            No file open
+          </span>
           {closeBtn}
         </div>
         <div className="flex-1 grid place-items-center text-text-3 text-sm bg-bg-tint p-6 text-center">
@@ -108,8 +130,11 @@ const FileViewer = forwardRef<FileViewerHandle, Props>(function FileViewer(
         {!loading && !error && fileType !== null && (
           <>
             {fileType === "text" && isMarkdown && (
-              <button className="btn btn-sm" onClick={() => setShowPreview(v => !v)}
-                title={showPreview ? "Switch to editor" : "Switch to preview"}>
+              <button
+                className="btn btn-sm"
+                onClick={() => setShowPreview((v) => !v)}
+                title={showPreview ? "Switch to editor" : "Switch to preview"}
+              >
                 {showPreview ? "Code" : "Preview"}
               </button>
             )}
@@ -122,11 +147,7 @@ const FileViewer = forwardRef<FileViewerHandle, Props>(function FileViewer(
                 {saving ? "Saving…" : moving ? "Moving…" : "Save"}
               </button>
             )}
-            <button
-              className="btn btn-sm text-danger"
-              onClick={handleDelete}
-              disabled={deleting || saving || moving}
-            >
+            <button className="btn btn-sm text-danger" onClick={handleDelete} disabled={deleting || saving || moving}>
               {deleting ? "Deleting…" : "Delete"}
             </button>
           </>
@@ -134,11 +155,17 @@ const FileViewer = forwardRef<FileViewerHandle, Props>(function FileViewer(
         {closeBtn}
       </div>
 
-      {loading && <div className="flex-1 grid place-items-center text-text-3 text-sm bg-bg-tint p-6 text-center">Loading…</div>}
-      {error && <div className="flex-1 grid place-items-center text-sm bg-bg-tint p-6 text-center text-danger">{error}</div>}
+      {loading && (
+        <div className="flex-1 grid place-items-center text-text-3 text-sm bg-bg-tint p-6 text-center">Loading…</div>
+      )}
+      {error && (
+        <div className="flex-1 grid place-items-center text-sm bg-bg-tint p-6 text-center text-danger">{error}</div>
+      )}
 
       {!loading && !error && fileType === "image" && (
         <div className="flex-1 grid place-items-center bg-bg-tint overflow-auto p-4">
+          {/* The authenticated raw-file endpoint is intentionally rendered directly. */}
+          {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src={rawUrl} alt={filePath.split("/").pop()} className="max-w-full object-contain rounded" />
         </div>
       )}

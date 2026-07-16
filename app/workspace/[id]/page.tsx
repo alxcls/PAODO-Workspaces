@@ -118,7 +118,15 @@ function WorkspacePageInner({ params }: { params: Promise<{ id: string }> }) {
               title="Back to workspaces"
               className="w-[34px] h-[34px] rounded-[10px] overflow-hidden flex-shrink-0 inline-flex items-center justify-center bg-gradient-to-br from-primary to-primary-2 border-0 p-0 cursor-pointer"
             >
-              <Image src="/paodo-logo.svg" alt="Paodo logo" width={34} height={34} draggable={false} className="block w-full h-full object-cover pointer-events-none" unoptimized />
+              <Image
+                src="/paodo-logo.svg"
+                alt="Paodo logo"
+                width={34}
+                height={34}
+                draggable={false}
+                className="block w-full h-full object-cover pointer-events-none"
+                unoptimized
+              />
             </Link>
             <span className="font-semibold tracking-[-0.01em] text-lg leading-none inline-flex items-center">
               PAODO WS agents
@@ -144,68 +152,80 @@ function WorkspacePageInner({ params }: { params: Promise<{ id: string }> }) {
         {isDragging && <div style={{ position: "fixed", inset: 0, zIndex: 9999 }} />}
 
         <FileTreePanel
-        workspaceId={id} workspaceName={workspaceName}
-        selectedPath={selectedFile}
-        onFileSelect={(path) => { setSelectedFile(path); setViewerOpen(true); }}
-        onDeletedPaths={(paths) => {
-          if (selectedFile && paths.includes(selectedFile)) { setSelectedFile(null); setViewerOpen(false); }
-        }}
-        onMoveStarted={(sourcePath) => viewerRef.current?.notifyFileMoveStarted(sourcePath)}
-        onMoveCancelled={(sourcePath) => viewerRef.current?.notifyFileMoveCancelled(sourcePath)}
-        onMovedPath={(sourcePath, destinationPath) => {
-          viewerRef.current?.notifyFileMoved(sourcePath, destinationPath);
-          setSelectedFile((current) => remapMovedPath(current, sourcePath, destinationPath));
-        }}
-        style={{ width: leftWidth, minWidth: 220, flex: "none" }}
-        refreshKey={treeRefreshKey}
-      />
+          workspaceId={id}
+          workspaceName={workspaceName}
+          selectedPath={selectedFile}
+          onFileSelect={(path) => {
+            setSelectedFile(path);
+            setViewerOpen(true);
+          }}
+          onDeletedPaths={(paths) => {
+            if (selectedFile && paths.includes(selectedFile)) {
+              setSelectedFile(null);
+              setViewerOpen(false);
+            }
+          }}
+          onMoveStarted={(sourcePath) => viewerRef.current?.notifyFileMoveStarted(sourcePath)}
+          onMoveCancelled={(sourcePath) => viewerRef.current?.notifyFileMoveCancelled(sourcePath)}
+          onMovedPath={(sourcePath, destinationPath) => {
+            viewerRef.current?.notifyFileMoved(sourcePath, destinationPath);
+            setSelectedFile((current) => remapMovedPath(current, sourcePath, destinationPath));
+          }}
+          style={{ width: leftWidth, minWidth: 220, flex: "none" }}
+          refreshKey={treeRefreshKey}
+        />
 
-      {viewerOpen && (
-        <>
-          <div className="ws-divider" onMouseDown={startLeftDrag} />
-          <section className="flex-1 flex flex-col min-w-0 min-h-0 bg-bg">
-            <Suspense fallback={<div className="flex-1 grid place-items-center text-text-3 text-sm bg-bg-tint p-6 text-center">Loading viewer…</div>}>
-              <FileViewer
-                ref={viewerRef}
-                workspaceId={id} filePath={selectedFile}
-                onClose={() => setViewerOpen(false)}
-                onSelfWrite={(path) => sendMessage({ type: "self_write", path })}
-              />
-            </Suspense>
-          </section>
-        </>
-      )}
+        {viewerOpen && (
+          <>
+            <div className="ws-divider" onMouseDown={startLeftDrag} />
+            <section className="flex-1 flex flex-col min-w-0 min-h-0 bg-bg">
+              <Suspense
+                fallback={
+                  <div className="flex-1 grid place-items-center text-text-3 text-sm bg-bg-tint p-6 text-center">
+                    Loading viewer…
+                  </div>
+                }
+              >
+                <FileViewer
+                  ref={viewerRef}
+                  workspaceId={id}
+                  filePath={selectedFile}
+                  onClose={() => setViewerOpen(false)}
+                  onSelfWrite={(path) => sendMessage({ type: "self_write", path })}
+                />
+              </Suspense>
+            </section>
+          </>
+        )}
 
-      <div className="ws-divider" onMouseDown={viewerOpen ? startRightDrag : startLeftDrag} />
+        <div className="ws-divider" onMouseDown={viewerOpen ? startRightDrag : startLeftDrag} />
 
-      <aside
-        ref={rightRef}
-        className="flex flex-col bg-bg overflow-hidden relative"
-        style={viewerOpen
-          ? { width: rightWidth, minWidth: 300, flex: "none" }
-          : { flex: 1, width: "auto", minWidth: 0 }
-        }
-      >
-        <div className="flex flex-col min-h-0 overflow-hidden" style={{ flex: chatRatio }}>
-          <ConversationBar
-            conversations={conversations}
-            activeId={activeId}
-            onSelect={setActiveId}
-            onNew={create}
-          />
-          <ChatPanel
-            workspaceId={id}
-            conversationId={activeId}
-            initialConversation={initial}
-            onRunStart={refresh}
-            onAgentTurnComplete={() => { setTreeRefreshKey((k) => k + 1); refresh(); }}
-          />
-        </div>
-        <div className="ws-right-handle" onMouseDown={startRowDrag} />
-        <div className="flex flex-col min-h-0 overflow-hidden" style={{ flex: 1 - chatRatio }}>
-          <ConsolePanel workspaceId={id} />
-        </div>
-      </aside>
+        <aside
+          ref={rightRef}
+          className="flex flex-col bg-bg overflow-hidden relative"
+          style={
+            viewerOpen ? { width: rightWidth, minWidth: 300, flex: "none" } : { flex: 1, width: "auto", minWidth: 0 }
+          }
+        >
+          <div className="flex flex-col min-h-0 overflow-hidden" style={{ flex: chatRatio }}>
+            <ConversationBar conversations={conversations} activeId={activeId} onSelect={setActiveId} onNew={create} />
+            <ChatPanel
+              key={activeId ?? "no-conversation"}
+              workspaceId={id}
+              conversationId={activeId}
+              initialConversation={initial}
+              onRunStart={refresh}
+              onAgentTurnComplete={() => {
+                setTreeRefreshKey((k) => k + 1);
+                refresh();
+              }}
+            />
+          </div>
+          <div className="ws-right-handle" onMouseDown={startRowDrag} />
+          <div className="flex flex-col min-h-0 overflow-hidden" style={{ flex: 1 - chatRatio }}>
+            <ConsolePanel workspaceId={id} />
+          </div>
+        </aside>
       </div>
     </div>
   );

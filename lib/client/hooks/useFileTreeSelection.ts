@@ -19,7 +19,10 @@ export function useFileTreeSelection() {
     setAnchorPath(paths[0] ?? null);
     setSelected((prev) => {
       const next = new Set(prev);
-      for (const p of paths) { if (on) next.add(p); else next.delete(p); }
+      for (const p of paths) {
+        if (on) next.add(p);
+        else next.delete(p);
+      }
       return next;
     });
   };
@@ -34,11 +37,7 @@ export function useFileTreeSelection() {
     });
   };
 
-  const selectRangeTo = (
-    tree: TreeNode[],
-    expanded: Record<string, boolean>,
-    targetPath: string,
-  ) => {
+  const selectRangeTo = (tree: TreeNode[], expanded: Record<string, boolean>, targetPath: string) => {
     const rows = flattenVisible(tree, expanded);
     const range = selectionRange(rows, anchorPath, targetPath);
     if (range.length === 0) return;
@@ -54,9 +53,9 @@ export function useFileTreeSelection() {
   };
 
   const remapSelection = (sourceRoot: string, destinationRoot: string) => {
-    setSelected((prev) => new Set(
-      Array.from(prev, (path) => remapMovedPath(path, sourceRoot, destinationRoot) ?? path),
-    ));
+    setSelected(
+      (prev) => new Set(Array.from(prev, (path) => remapMovedPath(path, sourceRoot, destinationRoot) ?? path)),
+    );
     setAnchorPath((current) => remapMovedPath(current, sourceRoot, destinationRoot));
   };
 

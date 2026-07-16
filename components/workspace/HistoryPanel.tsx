@@ -16,8 +16,18 @@ interface Commit {
 }
 
 const ClockIcon = () => (
-  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-    <circle cx="12" cy="12" r="9" /><polyline points="12 7 12 12 15 14" />
+  <svg
+    viewBox="0 0 24 24"
+    width="16"
+    height="16"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+  >
+    <circle cx="12" cy="12" r="9" />
+    <polyline points="12 7 12 12 15 14" />
   </svg>
 );
 
@@ -25,7 +35,10 @@ function formatTime(iso: string): string {
   const d = new Date(iso);
   if (isNaN(d.getTime())) return "";
   return d.toLocaleString("en-US", {
-    month: "short", day: "numeric", hour: "2-digit", minute: "2-digit",
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
   });
 }
 
@@ -58,7 +71,9 @@ export default function HistoryPanel({ workspaceId, refreshKey, onRestored }: Pr
 
   // Refetch whenever the panel opens, and whenever a run completes while it's open.
   useEffect(() => {
-    if (open) fetchHistory();
+    // fetchHistory owns the loading/error state shared with the explicit post-restore refresh.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (open) void fetchHistory();
   }, [open, refreshKey, fetchHistory]);
 
   // Dismiss on outside click / Escape.
@@ -67,10 +82,15 @@ export default function HistoryPanel({ workspaceId, refreshKey, onRestored }: Pr
     const onDown = (e: MouseEvent) => {
       if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpen(false);
     };
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
     window.addEventListener("mousedown", onDown);
     window.addEventListener("keydown", onKey);
-    return () => { window.removeEventListener("mousedown", onDown); window.removeEventListener("keydown", onKey); };
+    return () => {
+      window.removeEventListener("mousedown", onDown);
+      window.removeEventListener("keydown", onKey);
+    };
   }, [open]);
 
   const restore = async (sha: string) => {
@@ -105,7 +125,8 @@ export default function HistoryPanel({ workspaceId, refreshKey, onRestored }: Pr
         onClick={() => setOpen((v) => !v)}
         className={`btn btn-ghost btn-sm ${open ? "bg-black/[.06]" : ""}`}
       >
-        <ClockIcon /><span>History</span>
+        <ClockIcon />
+        <span>History</span>
       </button>
 
       {open && (

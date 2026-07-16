@@ -26,6 +26,7 @@ Let published workspace MCP skills return files created during a call.
 - File access is temporary.
 - Large files are retrieved separately from the skill response.
 - Internal PAODO agent calls can continue to use a drive and file path.
+
 ```
 
 ## Non-goals
@@ -39,3 +40,4 @@ Let published workspace MCP skills return files created during a call.
 - A caller can download an Excel or PDF file produced by a published MCP skill.
 - The download link cannot be used to access another file.
 - An expired link no longer works.
+```

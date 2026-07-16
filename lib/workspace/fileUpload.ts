@@ -12,7 +12,7 @@ import path from "path";
 import JSZip from "jszip";
 import { createLogger } from "@/lib/infra/logger";
 
-const MAX_BYTES = 100 * 1024 * 1024;         // 100 MB — single file
+const MAX_BYTES = 100 * 1024 * 1024; // 100 MB — single file
 const MAX_ARCHIVE_BYTES = 500 * 1024 * 1024; // 500 MB — ZIP archive
 
 export interface UploadBackend {

@@ -42,11 +42,18 @@ function StatusDot({ status }: { status: ToolStatus }) {
 
 // Wrap markdown tables so wide tables scroll instead of overflowing the drawer (matches ChatPanel).
 const mdComponents: Components = {
-  table: ({ node: _n, ...props }) => <div className="table-wrap"><table {...props} /></div>,
+  table: ({ node: _n, ...props }) => (
+    <div className="table-wrap">
+      <table {...props} />
+    </div>
+  ),
 };
 
 // A tool execution located within the fetched session detail (which turn, which call).
-interface ToolRef { turnIdx: number; toolIdx: number; }
+interface ToolRef {
+  turnIdx: number;
+  toolIdx: number;
+}
 
 // Right-side detail drawer. Turn mode (selected === null) shows the user input + a list of every
 // tool execution in the session. Clicking a tool switches to tool mode: reasoning + args + output.
@@ -84,7 +91,9 @@ function DetailDrawer({ session, onClose, width }: { session: LightSession; onCl
           {selected && selTool && <StatusDot status={selTool.status} />}
           {selected ? toolLabel(selTool?.name ?? "") : session.workspaceName}
         </span>
-        <button onClick={onClose} className="text-text-3 hover:text-text-1 text-[16px] leading-none">×</button>
+        <button onClick={onClose} className="text-text-3 hover:text-text-1 text-[16px] leading-none">
+          ×
+        </button>
       </div>
 
       {!detail ? (
@@ -92,17 +101,23 @@ function DetailDrawer({ session, onClose, width }: { session: LightSession; onCl
       ) : selected && selTool ? (
         // ── tool mode ───────────────────────────────────────────────────────────────
         <div className="flex-1 overflow-auto px-5 py-4 flex flex-col gap-4">
-          <button onClick={() => setSelected(null)} className="text-xs text-primary self-start hover:underline">← back to turn</button>
+          <button onClick={() => setSelected(null)} className="text-xs text-primary self-start hover:underline">
+            ← back to turn
+          </button>
           {selReasoning && (
             <Section title="Reasoning">
               <p className="text-xs text-text-2 whitespace-pre-wrap leading-relaxed">{selReasoning}</p>
             </Section>
           )}
           <Section title="Input args">
-            <pre className="text-xs font-mono text-text-2 whitespace-pre-wrap break-words">{JSON.stringify(selTool.args, null, 2)}</pre>
+            <pre className="text-xs font-mono text-text-2 whitespace-pre-wrap break-words">
+              {JSON.stringify(selTool.args, null, 2)}
+            </pre>
           </Section>
           <Section title="Output result">
-            <pre className="text-xs font-mono text-text-2 whitespace-pre-wrap break-words max-h-[50vh] overflow-auto">{selTool.output || "—"}</pre>
+            <pre className="text-xs font-mono text-text-2 whitespace-pre-wrap break-words max-h-[50vh] overflow-auto">
+              {selTool.output || "—"}
+            </pre>
           </Section>
         </div>
       ) : (
@@ -133,14 +148,16 @@ function DetailDrawer({ session, onClose, width }: { session: LightSession; onCl
                         <span className="flex flex-col min-w-0 flex-1">
                           <span className="text-xs font-mono text-primary">{toolLabel(tc.name)}</span>
                           {toolArgSummary(tc.name, tc.args) && (
-                            <span className="text-2xs text-text-3 font-mono truncate">{toolArgSummary(tc.name, tc.args)}</span>
+                            <span className="text-2xs text-text-3 font-mono truncate">
+                              {toolArgSummary(tc.name, tc.args)}
+                            </span>
                           )}
                         </span>
                         {/* Same static dim-chevron affordance as the turn rows. */}
                         <span className="flex-none text-text-3 text-sm leading-none opacity-40">›</span>
                       </button>
                     </li>
-                  ))
+                  )),
                 )}
               </ul>
             )}
@@ -148,7 +165,9 @@ function DetailDrawer({ session, onClose, width }: { session: LightSession; onCl
           {agentResponse && (
             <Section title="Agent response">
               <div className="md-prose md-drawer text-text-1">
-                <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>{agentResponse}</ReactMarkdown>
+                <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
+                  {agentResponse}
+                </ReactMarkdown>
               </div>
             </Section>
           )}
@@ -196,7 +215,9 @@ function SystemPromptSection({ workspaceId }: { workspaceId: string }) {
             <p className="text-xs text-text-3">Loading…</p>
           ) : prompt ? (
             <div className="md-prose md-drawer text-text-1 max-h-[50vh] overflow-auto">
-              <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>{prompt}</ReactMarkdown>
+              <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
+                {prompt}
+              </ReactMarkdown>
             </div>
           ) : (
             <p className="text-xs text-text-3">—</p>
@@ -239,7 +260,9 @@ export default function DashboardPage() {
   useEffect(() => {
     loadUsage();
     const onPageShow = () => loadUsage();
-    const onVisible = () => { if (document.visibilityState === "visible") loadUsage(); };
+    const onVisible = () => {
+      if (document.visibilityState === "visible") loadUsage();
+    };
     window.addEventListener("pageshow", onPageShow);
     document.addEventListener("visibilitychange", onVisible);
     return () => {
@@ -260,7 +283,15 @@ export default function DashboardPage() {
               title="Back to workspaces"
               className="w-[34px] h-[34px] rounded-[10px] overflow-hidden flex-shrink-0 inline-flex items-center justify-center bg-gradient-to-br from-primary to-primary-2 border-0 p-0 cursor-pointer"
             >
-              <Image src="/paodo-logo.svg" alt="Paodo logo" width={34} height={34} draggable={false} className="block w-full h-full object-cover pointer-events-none" unoptimized />
+              <Image
+                src="/paodo-logo.svg"
+                alt="Paodo logo"
+                width={34}
+                height={34}
+                draggable={false}
+                className="block w-full h-full object-cover pointer-events-none"
+                unoptimized
+              />
             </Link>
             <span className="font-semibold tracking-[-0.01em] text-lg leading-none inline-flex items-center">
               PAODO WS agents
@@ -328,7 +359,9 @@ export default function DashboardPage() {
                           {s.conversationId.slice(0, 8)} ↗
                         </a>
                       ) : (
-                        <span className="text-text-3" title="No conversation (external agent run)">—</span>
+                        <span className="text-text-3" title="No conversation (external agent run)">
+                          —
+                        </span>
                       )}
                     </td>
                     {/* Session id = the per-run identifier (plain text). */}
@@ -337,14 +370,25 @@ export default function DashboardPage() {
                     <td className="px-6 py-2.5 text-text-2">{originLabel(s.origin)}</td>
                     {/* Model(s) the run's turns used. Usually one; multiple are joined. "—" when no
                         turn carried a model (records written before the field existed). */}
-                    <td className="px-6 py-2.5 font-mono text-text-2 truncate" title={s.models.join(", ")}>{s.models.length ? s.models.join(", ") : "—"}</td>
+                    <td className="px-6 py-2.5 font-mono text-text-2 truncate" title={s.models.join(", ")}>
+                      {s.models.length ? s.models.join(", ") : "—"}
+                    </td>
                     <td className="px-6 py-2.5 text-text-3">{formatDateTime(s.timestamp)}</td>
                     <td className="px-6 py-2.5 text-right font-mono text-text-1">{formatTokens(s.inputTokens)}</td>
-                    <td className="px-6 py-2.5 text-right font-mono text-text-3">{formatTokens(s.cachedInputTokens)}</td>
+                    <td className="px-6 py-2.5 text-right font-mono text-text-3">
+                      {formatTokens(s.cachedInputTokens)}
+                    </td>
                     <td className="px-6 py-2.5 text-right font-mono text-text-1">{formatTokens(s.outputTokens)}</td>
-                    <td className="px-6 py-2.5 text-right font-mono text-text-1" title={s.cost !== undefined ? `$${s.cost.toFixed(6)}` : "No pricing for this session's model(s)"}>{formatCost(s.cost)}</td>
+                    <td
+                      className="px-6 py-2.5 text-right font-mono text-text-1"
+                      title={s.cost !== undefined ? `$${s.cost.toFixed(6)}` : "No pricing for this session's model(s)"}
+                    >
+                      {formatCost(s.cost)}
+                    </td>
                     {/* Static dim chevron hints the row opens a detail drawer; the row's bg tint is the hover cue. */}
-                    <td className="px-4 py-2.5 align-middle text-right text-text-3 text-[15px] leading-none opacity-40">›</td>
+                    <td className="px-4 py-2.5 align-middle text-right text-text-3 text-[15px] leading-none opacity-40">
+                      ›
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -355,7 +399,12 @@ export default function DashboardPage() {
         {openSession && (
           <>
             <div className="ws-divider" onMouseDown={startDrag} />
-            <DetailDrawer key={openSession.sessionId} session={openSession} onClose={() => setOpenSession(null)} width={drawerWidth} />
+            <DetailDrawer
+              key={openSession.sessionId}
+              session={openSession}
+              onClose={() => setOpenSession(null)}
+              width={drawerWidth}
+            />
           </>
         )}
       </div>

@@ -13,7 +13,10 @@ function deferred() {
 
 // Minimal StartRunParams with the disk/usage/services seams stubbed out.
 let counter = 0;
-function params(run: typeof import("./runner").runAgent, extra: Partial<broker.StartRunParams> = {}): broker.StartRunParams {
+function params(
+  run: typeof import("./runner").runAgent,
+  extra: Partial<broker.StartRunParams> = {},
+): broker.StartRunParams {
   const n = counter++;
   return {
     workspaceId: `ws-${n}`,
@@ -33,11 +36,11 @@ function params(run: typeof import("./runner").runAgent, extra: Partial<broker.S
 describe("runBroker", () => {
   it("replays buffered events to a late subscriber, then streams live ones", async () => {
     const gate = deferred();
-    const run = (async function* () {
+    const run = async function* () {
       yield { type: "token", content: "a" } as AgentEvent;
       await gate.promise;
       yield { type: "done" } as AgentEvent;
-    }) as unknown as typeof import("./runner").runAgent;
+    } as unknown as typeof import("./runner").runAgent;
 
     const p = params(run);
     broker.startRun(p);
@@ -57,11 +60,11 @@ describe("runBroker", () => {
 
   it("fans the same live events out to multiple subscribers", async () => {
     const gate = deferred();
-    const run = (async function* () {
+    const run = async function* () {
       await gate.promise;
       yield { type: "token", content: "x" } as AgentEvent;
       yield { type: "done" } as AgentEvent;
-    }) as unknown as typeof import("./runner").runAgent;
+    } as unknown as typeof import("./runner").runAgent;
 
     const p = params(run);
     broker.startRun(p);
@@ -77,13 +80,13 @@ describe("runBroker", () => {
   });
 
   it("rejects a second run for the same conversation, and stop() aborts the first", async () => {
-    const run = (async function* (_m: unknown, _u: unknown, _d: unknown, _id: unknown, opts: RunAgentOptions) {
+    const run = async function* (_m: unknown, _u: unknown, _d: unknown, _id: unknown, opts: RunAgentOptions) {
       await new Promise<void>((res) => {
         if (opts.signal?.aborted) return res();
         opts.signal?.addEventListener("abort", () => res());
       });
       yield { type: "done" } as AgentEvent;
-    }) as unknown as typeof import("./runner").runAgent;
+    } as unknown as typeof import("./runner").runAgent;
 
     const p = params(run);
     expect(broker.startRun(p).alreadyRunning).toBe(false);

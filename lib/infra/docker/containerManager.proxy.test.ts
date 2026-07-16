@@ -43,8 +43,7 @@ const connectCalls = (calls: string[][]) => calls.filter((c) => c[0] === "networ
 // Isolate the ensure() wrapper: stub the container bring-up so only verifyProxyAttached runs.
 function makeManager(docker: IDockerClient) {
   const mgr = new ContainerManager(docker);
-  (mgr as unknown as { _ensureContainer(id: string, dir: string): Promise<void> })._ensureContainer =
-    async () => {};
+  (mgr as unknown as { _ensureContainer(id: string, dir: string): Promise<void> })._ensureContainer = async () => {};
   return mgr;
 }
 

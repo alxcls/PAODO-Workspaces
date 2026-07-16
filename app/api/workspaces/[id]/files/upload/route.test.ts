@@ -13,7 +13,9 @@ import JSZip from "jszip";
 // Real workspace dir on disk (the route calls fs.realpath on it), with a sibling location OUTSIDE
 // it where a successful zip-slip would deposit its payload.
 const { ROOT, WS_DIR } = vi.hoisted(() => {
-  const os = require("os"); const fs = require("fs"); const path = require("path");
+  const os = require("os");
+  const fs = require("fs");
+  const path = require("path");
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "ws-upload-test-"));
   const wsDir = path.join(root, "ws");
   fs.mkdirSync(wsDir);

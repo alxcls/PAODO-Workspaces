@@ -36,6 +36,7 @@ Let users create shared drives, connect them to multiple workspaces, and let age
 ### Must have
 
 **Shared drive management (UI)**
+
 - Create a drive with a name and optional description
 - Connect / disconnect a drive from a workspace
 - Delete a drive
@@ -43,23 +44,25 @@ Let users create shared drives, connect them to multiple workspaces, and let age
 
 **Agent tools — injected only when ≥1 drive is connected**
 
-| Tool | What it does |
-|---|---|
-| `drive_ls` | No args: list connected drives. With drive + path: list directory contents |
-| `drive_read` | Read a file's text content into agent context |
-| `drive_delete` | Delete a file or folder |
+| Tool             | What it does                                                                   |
+| ---------------- | ------------------------------------------------------------------------------ |
+| `drive_ls`       | No args: list connected drives. With drive + path: list directory contents     |
+| `drive_read`     | Read a file's text content into agent context                                  |
+| `drive_delete`   | Delete a file or folder                                                        |
 | `drive_download` | Copy a file from a drive into the workspace at `downloads/<drive-name>/<path>` |
-| `drive_upload` | Copy a file from the workspace into a drive |
+| `drive_upload`   | Copy a file from the workspace into a drive                                    |
 
 **Conflict behavior**
 
 A drive is a plain live filesystem: one file per path, newest wins. Agents act freely — they overwrite and delete without confirmation, the same as working on a real disk. The one concession to it being shared: `drive_upload` over an existing path overwrites it and the tool result **signals** the overwrite (`overwrote existing file`), so a clobber is never silent. There is no version history in v1 — once overwritten or deleted, the old content is gone (future work, see [prd-workspace-git-versioning](prd-workspace-git-versioning.md)).
 
 **Drive file browser (UI)**
+
 - Drives appear as folder-style nodes in the graph; clicking a drive node opens a file browser that reuses the workspace file tree + viewer (view, edit, upload, download).
 - Drives are passive storage — never mounted into a container — so all drive file operations run host-side.
 
 **System prompt injection**
+
 - When a workspace has connected drives, inject their names, descriptions, and most recent file activity so the agent knows what to look for without exploring blindly.
 - Frame it as: "Your workspace is your local machine. Drives are shared spaces — pull files to work on them, push results back."
 

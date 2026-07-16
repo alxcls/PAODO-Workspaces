@@ -77,7 +77,10 @@ async function main(): Promise<void> {
     assert(result.includes("hello from fake container"), "tool returned the fake's canned output");
 
     console.log("3. Production global state is untouched");
-    assert(defaultWorkspaceStore.getWorkspace(wsId) === undefined, "default global store never saw the smoke workspace");
+    assert(
+      defaultWorkspaceStore.getWorkspace(wsId) === undefined,
+      "default global store never saw the smoke workspace",
+    );
   } finally {
     resetServices();
   }

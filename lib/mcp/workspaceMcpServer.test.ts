@@ -4,7 +4,12 @@
 
 import { describe, it, expect, vi } from "vitest";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
-import { buildWorkspaceMcpServer, listWorkspaceMcpTools, callWorkspaceMcpTool, type WorkspaceMcpDeps } from "./workspaceMcpServer";
+import {
+  buildWorkspaceMcpServer,
+  listWorkspaceMcpTools,
+  callWorkspaceMcpTool,
+  type WorkspaceMcpDeps,
+} from "./workspaceMcpServer";
 import type { SkillDefinition } from "../workspace/skillTypes";
 
 const CHECK_STOCK: SkillDefinition = {
@@ -55,16 +60,27 @@ describe("listWorkspaceMcpTools", () => {
 describe("callWorkspaceMcpTool", () => {
   it("rejects a skill that exists but is not selected — without invoking executeSkill", async () => {
     const executeSkillFn = vi.fn();
-    const res = await callWorkspaceMcpTool("ws1", "place_order", { sku: "x" }, deps(["check_stock"], { executeSkillFn: executeSkillFn as never }));
+    const res = await callWorkspaceMcpTool(
+      "ws1",
+      "place_order",
+      { sku: "x" },
+      deps(["check_stock"], { executeSkillFn: executeSkillFn as never }),
+    );
     expect(res.isError).toBe(true);
-    expect(res.content[0]).toMatchObject({ type: "text", text: 'Unknown tool "place_order". Published tools: "check_stock".' });
+    expect(res.content[0]).toMatchObject({
+      type: "text",
+      text: 'Unknown tool "place_order". Published tools: "check_stock".',
+    });
     expect(executeSkillFn).not.toHaveBeenCalled();
   });
 
   it("explains when the workspace exposes no MCP tools", async () => {
     const res = await callWorkspaceMcpTool("ws1", "weather", {}, deps([]));
     expect(res.isError).toBe(true);
-    expect(res.content[0]).toMatchObject({ type: "text", text: 'Unknown tool "weather". This workspace currently exposes no MCP tools.' });
+    expect(res.content[0]).toMatchObject({
+      type: "text",
+      text: 'Unknown tool "weather". This workspace currently exposes no MCP tools.',
+    });
   });
 
   it("maps a completed skill result to structuredContent + text, bypassing the graph check", async () => {
@@ -72,12 +88,21 @@ describe("callWorkspaceMcpTool", () => {
       expect(caller).toBe("mcp:ws1");
       return { state: "completed" as const, output: { in_stock: true } };
     });
-    const res = await callWorkspaceMcpTool("ws1", "check_stock", { sku: "x" }, deps(["check_stock"], { executeSkillFn: executeSkillFn as never }));
+    const res = await callWorkspaceMcpTool(
+      "ws1",
+      "check_stock",
+      { sku: "x" },
+      deps(["check_stock"], { executeSkillFn: executeSkillFn as never }),
+    );
     expect(res.isError).toBeFalsy();
     expect(res.structuredContent).toEqual({ in_stock: true });
     expect(res.content[0]).toEqual({ type: "text", text: JSON.stringify({ in_stock: true }) });
     expect(executeSkillFn).toHaveBeenCalledWith(
-      "ws1", "mcp:ws1", "check_stock", { sku: "x" }, expect.objectContaining({
+      "ws1",
+      "mcp:ws1",
+      "check_stock",
+      { sku: "x" },
+      expect.objectContaining({
         origin: "mcp",
         resolvedSkill: CHECK_STOCK,
       }),
@@ -85,35 +110,72 @@ describe("callWorkspaceMcpTool", () => {
   });
 
   it("surfaces a failed skill result (incl. NEEDS_INPUT) as an MCP tool error with the code", async () => {
-    const executeSkillFn = vi.fn(async () => ({ state: "failed" as const, code: "NEEDS_INPUT" as const, message: "which warehouse?" }));
-    const res = await callWorkspaceMcpTool("ws1", "check_stock", { sku: "x" }, deps(["check_stock"], { executeSkillFn: executeSkillFn as never }));
+    const executeSkillFn = vi.fn(async () => ({
+      state: "failed" as const,
+      code: "NEEDS_INPUT" as const,
+      message: "which warehouse?",
+    }));
+    const res = await callWorkspaceMcpTool(
+      "ws1",
+      "check_stock",
+      { sku: "x" },
+      deps(["check_stock"], { executeSkillFn: executeSkillFn as never }),
+    );
     expect(res.isError).toBe(true);
     expect(res.content[0]).toMatchObject({ type: "text", text: "[NEEDS_INPUT] which warehouse?" });
   });
 
   it("returns a tool error when skill execution throws instead of dropping the MCP response", async () => {
-    const executeSkillFn = vi.fn(async () => { throw new Error("directory lookup failed"); });
-    const res = await callWorkspaceMcpTool("ws1", "check_stock", { sku: "x" }, deps(["check_stock"], { executeSkillFn: executeSkillFn as never }));
-    expect(res).toEqual({ isError: true, content: [{ type: "text", text: "[EXECUTION_ERROR] The skill could not be completed." }] });
+    const executeSkillFn = vi.fn(async () => {
+      throw new Error("directory lookup failed");
+    });
+    const res = await callWorkspaceMcpTool(
+      "ws1",
+      "check_stock",
+      { sku: "x" },
+      deps(["check_stock"], { executeSkillFn: executeSkillFn as never }),
+    );
+    expect(res).toEqual({
+      isError: true,
+      content: [{ type: "text", text: "[EXECUTION_ERROR] The skill could not be completed." }],
+    });
   });
 
   it("serializes an execution exception as a JSON-RPC tool result", async () => {
-    const server = buildWorkspaceMcpServer("ws1", deps(["check_stock"], {
-      executeSkillFn: (async () => { throw new Error("directory lookup failed"); }) as never,
-    }));
-    const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
+    const server = buildWorkspaceMcpServer(
+      "ws1",
+      deps(["check_stock"], {
+        executeSkillFn: (async () => {
+          throw new Error("directory lookup failed");
+        }) as never,
+      }),
+    );
+    const transport = new WebStandardStreamableHTTPServerTransport({
+      sessionIdGenerator: undefined,
+      enableJsonResponse: true,
+    });
     await server.connect(transport);
     try {
-      const response = await transport.handleRequest(new Request("http://localhost/mcp", {
-        method: "POST",
-        headers: { "content-type": "application/json", accept: "application/json, text/event-stream" },
-        body: JSON.stringify({ jsonrpc: "2.0", id: 42, method: "tools/call", params: { name: "check_stock", arguments: { sku: "x" } } }),
-      }));
+      const response = await transport.handleRequest(
+        new Request("http://localhost/mcp", {
+          method: "POST",
+          headers: { "content-type": "application/json", accept: "application/json, text/event-stream" },
+          body: JSON.stringify({
+            jsonrpc: "2.0",
+            id: 42,
+            method: "tools/call",
+            params: { name: "check_stock", arguments: { sku: "x" } },
+          }),
+        }),
+      );
       expect(response.status).toBe(200);
       expect(await response.json()).toEqual({
         jsonrpc: "2.0",
         id: 42,
-        result: { isError: true, content: [{ type: "text", text: "[EXECUTION_ERROR] The skill could not be completed." }] },
+        result: {
+          isError: true,
+          content: [{ type: "text", text: "[EXECUTION_ERROR] The skill could not be completed." }],
+        },
       });
     } finally {
       await transport.close();

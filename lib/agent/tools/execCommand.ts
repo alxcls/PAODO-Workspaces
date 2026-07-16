@@ -27,9 +27,11 @@ function diagnoseStderr(stderr: string): string {
   if (!trimmed) return "";
   let out = `[stderr]: ${trimmed}`;
   if (trimmed.includes("no matching entries in passwd file")) {
-    out += "\n[setup] The workspace container is stale. The user needs to run: docker rmi paodo-workspace && docker rm ws_<id> — the server will rebuild automatically on the next command.";
+    out +=
+      "\n[setup] The workspace container is stale. The user needs to run: docker rmi paodo-workspace && docker rm ws_<id> — the server will rebuild automatically on the next command.";
   } else if (trimmed.includes("Permission denied")) {
-    out += "\n[permission] You run as a non-root user and cannot modify system paths (e.g. /etc, /root, /usr). For workspace files, check ownership; to install system packages use the apt_install tool instead of apt-get.";
+    out +=
+      "\n[permission] You run as a non-root user and cannot modify system paths (e.g. /etc, /root, /usr). For workspace files, check ownership; to install system packages use the apt_install tool instead of apt-get.";
   }
   return out;
 }
@@ -78,7 +80,9 @@ You run as a NON-ROOT user, confined to the workspace. apt-get/sudo are NOT avai
     if (run_in_background) {
       try {
         const { taskId, logFile } = await this.backgroundExec(command);
-        this.broadcast(JSON.stringify({ type: "stdout", data: `\n[background] started task ${taskId} → ${logFile}\n` }));
+        this.broadcast(
+          JSON.stringify({ type: "stdout", data: `\n[background] started task ${taskId} → ${logFile}\n` }),
+        );
         return (
           `Command running in background with task ID: ${taskId}\n` +
           `Output is being written to: ${logFile}\n` +
@@ -114,8 +118,8 @@ You run as a NON-ROOT user, confined to the workspace. apt-get/sudo are NOT avai
         if (settled) return;
         this.log.warn({ command, reason }, "command killed");
         this.broadcast(JSON.stringify({ type: "stdout", data: `\n[killed] ${reason}\n` }));
-        ctrl.abort();                              // real kill: streamExec tears down the process group
-        finish(`[killed] ${reason}`);              // unblock the agent immediately
+        ctrl.abort(); // real kill: streamExec tears down the process group
+        finish(`[killed] ${reason}`); // unblock the agent immediately
       };
 
       const heartbeat = setInterval(() => {
@@ -158,26 +162,26 @@ You run as a NON-ROOT user, confined to the workspace. apt-get/sudo are NOT avai
           stderr += text;
           this.broadcast(JSON.stringify({ type: "stderr", data: text }));
         },
-      }).then(({ code }) => {
-        if (settled) return;
-        this.broadcast(JSON.stringify({ type: "exec_done", exitCode: code }));
-        const stderrOut = diagnoseStderr(stderr);
-        // Lead a non-zero exit with an explicit Error line so both the agent and the usage
-        // dashboard can tell the command failed — the combined output alone hides exit status.
-        // (code 0 and null/unknown exits are left as plain output, as before.)
-        const failed = typeof code === "number" && code !== 0;
-        const parts = [
-          failed ? `Error: command exited with code ${code}` : "",
-          stdout.trim(),
-          stderrOut,
-        ].filter(Boolean);
-        finish(parts.join("\n") || "Command executed successfully with no output.");
-      }).catch((err) => {
-        if (settled) return;
-        // Lead with "Error:" so runner.classifyToolStatus tags this as a failure (red dot) —
-        // same convention as the non-zero exit path above.
-        finish(`Error: command execution failed\n${String(err)}`);
-      });
+      })
+        .then(({ code }) => {
+          if (settled) return;
+          this.broadcast(JSON.stringify({ type: "exec_done", exitCode: code }));
+          const stderrOut = diagnoseStderr(stderr);
+          // Lead a non-zero exit with an explicit Error line so both the agent and the usage
+          // dashboard can tell the command failed — the combined output alone hides exit status.
+          // (code 0 and null/unknown exits are left as plain output, as before.)
+          const failed = typeof code === "number" && code !== 0;
+          const parts = [failed ? `Error: command exited with code ${code}` : "", stdout.trim(), stderrOut].filter(
+            Boolean,
+          );
+          finish(parts.join("\n") || "Command executed successfully with no output.");
+        })
+        .catch((err) => {
+          if (settled) return;
+          // Lead with "Error:" so runner.classifyToolStatus tags this as a failure (red dot) —
+          // same convention as the non-zero exit path above.
+          finish(`Error: command execution failed\n${String(err)}`);
+        });
     });
   }
 }

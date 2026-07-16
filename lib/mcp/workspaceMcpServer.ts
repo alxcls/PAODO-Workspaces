@@ -35,10 +35,7 @@ function selectedSkills(workspaceId: string, deps: WorkspaceMcpDeps): Promise<Sk
 }
 
 /** The workspace's selected skills as MCP tool descriptors (id → name, plus schemas). */
-export async function listWorkspaceMcpTools(
-  workspaceId: string,
-  deps: WorkspaceMcpDeps = {},
-): Promise<Tool[]> {
+export async function listWorkspaceMcpTools(workspaceId: string, deps: WorkspaceMcpDeps = {}): Promise<Tool[]> {
   const skills = await selectedSkills(workspaceId, deps);
   return skills.map((s) => ({
     name: s.id,

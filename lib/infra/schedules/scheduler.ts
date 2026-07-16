@@ -74,7 +74,12 @@ function fire(entry: ScheduleEntry, now: Date): void {
   } catch (err) {
     log.error({ err, workspaceId: ws.id }, "schedule fire failed to start");
     inflight.delete(entry.workspaceId);
-    recordRun(entry.workspaceId, { at: now.toISOString(), status: "error", snippet: String(err).slice(0, SNIPPET_MAX), nextRunAt: nextRunIso(entry, new Date()) });
+    recordRun(entry.workspaceId, {
+      at: now.toISOString(),
+      status: "error",
+      snippet: String(err).slice(0, SNIPPET_MAX),
+      nextRunAt: nextRunIso(entry, new Date()),
+    });
     return;
   }
 
@@ -90,14 +95,21 @@ function fire(entry: ScheduleEntry, now: Date): void {
     const snippet = (response.trim() || (errored ? "run failed" : "")).slice(0, SNIPPET_MAX);
     // Recompute from the latest stored schedule in case it was edited mid-run.
     const latest = getSchedule(entry.workspaceId) ?? entry;
-    recordRun(entry.workspaceId, { at: new Date().toISOString(), status, snippet, nextRunAt: nextRunIso(latest, new Date()) });
+    recordRun(entry.workspaceId, {
+      at: new Date().toISOString(),
+      status,
+      snippet,
+      nextRunAt: nextRunIso(latest, new Date()),
+    });
     sub?.unsubscribe();
   };
 
   const sub = broker.subscribe(ws.id, conversationId, (event) => {
     if (event.type === "token") response += event.content;
-    else if (event.type === "error") { errored = true; if (!response) response = event.message; }
-    else if (event.type === "done") finish();
+    else if (event.type === "error") {
+      errored = true;
+      if (!response) response = event.message;
+    } else if (event.type === "done") finish();
   });
 
   // The run may have already finished between startRun and subscribe (e.g. an immediate error).

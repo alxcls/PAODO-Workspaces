@@ -123,9 +123,7 @@ describe("CredentialProxy SSRF guard", () => {
     cleanups.push(() => client.destroy());
     await once(client, "connect");
 
-    client.write(
-      `GET http://127.0.0.1:6379/ HTTP/1.1\r\nHost: 127.0.0.1:6379\r\n\r\n`,
-    );
+    client.write(`GET http://127.0.0.1:6379/ HTTP/1.1\r\nHost: 127.0.0.1:6379\r\n\r\n`);
     const received = await readUntil(client, (s) => s.includes("\r\n"));
     expect(received).toContain("403");
     expect(received).not.toContain("200");
@@ -239,9 +237,7 @@ describe("CredentialProxy MITM response redaction", () => {
     await once(tlsSock, "secureConnect");
 
     tlsSock.write(
-      `GET /echo HTTP/1.1\r\n` +
-        `Host: 127.0.0.1:${stubPort}\r\n` +
-        `Authorization: Bearer ${TOKEN}\r\n\r\n`,
+      `GET /echo HTTP/1.1\r\n` + `Host: 127.0.0.1:${stubPort}\r\n` + `Authorization: Bearer ${TOKEN}\r\n\r\n`,
     );
     // Response is connection-close delimited — read until the socket ends.
     return await readUntil(tlsSock, () => false);
@@ -323,9 +319,7 @@ describe("CredentialProxy header cap", () => {
     const good = net.connect(proxyPort, "127.0.0.1");
     cleanups.push(() => good.destroy());
     await once(good, "connect");
-    good.write(
-      `GET http://127.0.0.1:${upstream.port}/ HTTP/1.1\r\nHost: 127.0.0.1:${upstream.port}\r\n\r\n`,
-    );
+    good.write(`GET http://127.0.0.1:${upstream.port}/ HTTP/1.1\r\nHost: 127.0.0.1:${upstream.port}\r\n\r\n`);
     const received = await readUntil(good, (s) => s.includes("200"));
     expect(received).toContain("200");
   });

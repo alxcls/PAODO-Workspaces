@@ -8,10 +8,10 @@ network policy, or operating system that fits your environment.
 
 In this reference profile, the responsibilities are:
 
-| Component | Role |
-|---|---|
-| VPS | Runs Docker and PAODO. Its public IPv4 is used only when you deliberately enable the public API gateway. |
-| Tailscale | Private administrator access to the VPS (SSH) and a private HTTPS URL for the full app. Only tailnet devices can use it. |
+| Component    | Role                                                                                                                                       |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| VPS          | Runs Docker and PAODO. Its public IPv4 is used only when you deliberately enable the public API gateway.                                   |
+| Tailscale    | Private administrator access to the VPS (SSH) and a private HTTPS URL for the full app. Only tailnet devices can use it.                   |
 | DNS provider | Creates a public API hostname, such as `api.example.com`, when you opt into the direct Caddy API gateway. This is separate from Tailscale. |
 
 The public API gateway is optional. It exposes one Bearer-key-protected route
@@ -93,29 +93,29 @@ chmod 600 .env
 nano .env
 ```
 
-| Variable | Required | Description |
-|---|---|---|
-| `LLM_PROVIDER` | Yes | `openai`, `anthropic`, or `deepseek` (default: `openai`) |
-| `OPENAI_API_KEY` | If using OpenAI | Your OpenAI API key |
-| `OPENAI_MODEL` | If using OpenAI | Model name, e.g. `gpt-5-mini` |
-| `ANTHROPIC_API_KEY` | If using Anthropic | Your Anthropic API key |
-| `ANTHROPIC_MODEL` | If using Anthropic | Model name, e.g. `claude-haiku-4-5` |
-| `DEEPSEEK_API_KEY` | If using DeepSeek | Your DeepSeek API key |
-| `DEEPSEEK_MODEL` | If using DeepSeek | Model name, e.g. `deepseek-v4-pro` |
-| `REASONING_EFFORT` | No | `low` / `medium` / `high`; maps to OpenAI effort or Anthropic thinking budget (default: `low`) |
-| `USERNAME` | Yes | Login username |
-| `PASSWORD` | Yes | Login password |
-| `PORT` | No | Port the server listens on (default: `3000`) |
-| `LOG_LEVEL` | No | `trace` / `debug` / `info` / `warn` / `error` / `fatal` (default: `info`) |
-| `GRAPH_ENABLED` | No | Multi-agent graph and `/graph` UI; on by default — set `false` to disable agent-to-agent calls (default: `true`) |
-| `SKILL_INPUT_MAX_RETRIES` | No | Consecutive input-schema failures for one (callee, skill) before `call_agent` returns a terminal error (default: `2`) |
-| `SKILL_OUTPUT_MAX_RETRIES` | No | Output-schema correction passes before a call fails with `OUTPUT_VALIDATION_ERROR` (default: `2`) |
-| `SKILL_NEEDS_INPUT_MAX_ROUNDS` | No | How many `NEEDS_INPUT` rounds a callee may ask for one (callee, skill) before the caller is told to stop (default: `2`) |
-| `CONTAINER_MEMORY` | No | Memory cap per workspace container (default: `1g`) |
-| `CONTAINER_CPUS` | No | CPU cap per workspace container (default: `1.0`) |
-| `CONTAINER_IDLE_MS` | No | Idle timeout before a workspace container stops (default: `600000` = 10 min) |
-| `EXEC_SILENCE_TIMEOUT_MS` | No | Kills a shell command if it produces no output for this long (default: `60000` = 1 min) |
-| `EXEC_MAX_TIMEOUT_MS` | No | Kills a shell command after this total elapsed time regardless of output (default: `1800000` = 30 min) |
+| Variable                       | Required           | Description                                                                                                             |
+| ------------------------------ | ------------------ | ----------------------------------------------------------------------------------------------------------------------- |
+| `LLM_PROVIDER`                 | Yes                | `openai`, `anthropic`, or `deepseek` (default: `openai`)                                                                |
+| `OPENAI_API_KEY`               | If using OpenAI    | Your OpenAI API key                                                                                                     |
+| `OPENAI_MODEL`                 | If using OpenAI    | Model name, e.g. `gpt-5-mini`                                                                                           |
+| `ANTHROPIC_API_KEY`            | If using Anthropic | Your Anthropic API key                                                                                                  |
+| `ANTHROPIC_MODEL`              | If using Anthropic | Model name, e.g. `claude-haiku-4-5`                                                                                     |
+| `DEEPSEEK_API_KEY`             | If using DeepSeek  | Your DeepSeek API key                                                                                                   |
+| `DEEPSEEK_MODEL`               | If using DeepSeek  | Model name, e.g. `deepseek-v4-pro`                                                                                      |
+| `REASONING_EFFORT`             | No                 | `low` / `medium` / `high`; maps to OpenAI effort or Anthropic thinking budget (default: `low`)                          |
+| `USERNAME`                     | Yes                | Login username                                                                                                          |
+| `PASSWORD`                     | Yes                | Login password                                                                                                          |
+| `PORT`                         | No                 | Port the server listens on (default: `3000`)                                                                            |
+| `LOG_LEVEL`                    | No                 | `trace` / `debug` / `info` / `warn` / `error` / `fatal` (default: `info`)                                               |
+| `GRAPH_ENABLED`                | No                 | Multi-agent graph and `/graph` UI; on by default — set `false` to disable agent-to-agent calls (default: `true`)        |
+| `SKILL_INPUT_MAX_RETRIES`      | No                 | Consecutive input-schema failures for one (callee, skill) before `call_agent` returns a terminal error (default: `2`)   |
+| `SKILL_OUTPUT_MAX_RETRIES`     | No                 | Output-schema correction passes before a call fails with `OUTPUT_VALIDATION_ERROR` (default: `2`)                       |
+| `SKILL_NEEDS_INPUT_MAX_ROUNDS` | No                 | How many `NEEDS_INPUT` rounds a callee may ask for one (callee, skill) before the caller is told to stop (default: `2`) |
+| `CONTAINER_MEMORY`             | No                 | Memory cap per workspace container (default: `1g`)                                                                      |
+| `CONTAINER_CPUS`               | No                 | CPU cap per workspace container (default: `1.0`)                                                                        |
+| `CONTAINER_IDLE_MS`            | No                 | Idle timeout before a workspace container stops (default: `600000` = 10 min)                                            |
+| `EXEC_SILENCE_TIMEOUT_MS`      | No                 | Kills a shell command if it produces no output for this long (default: `60000` = 1 min)                                 |
+| `EXEC_MAX_TIMEOUT_MS`          | No                 | Kills a shell command after this total elapsed time regardless of output (default: `1800000` = 30 min)                  |
 
 ---
 
@@ -177,6 +177,7 @@ POST /api/workspaces/<workspace-id>/mcp
    The record must send traffic directly to the VPS, not through a tunnel or
    another reverse proxy: Caddy must receive ports 80 and 443 to obtain and
    renew its certificate.
+
 2. Set the public hostname and the VPS's public IPv4 address in `.env`:
 
    ```env
@@ -187,6 +188,7 @@ POST /api/workspaces/<workspace-id>/mcp
    Replace both placeholders with your own values; they are not shared defaults.
    The gateway binds only that public address. This lets Tailscale Serve keep
    using HTTPS on the VPS's Tailscale address for the private app.
+
 3. Allow ports 80 and 443 through the firewall so Caddy can obtain and renew
    the TLS certificate:
 
@@ -241,7 +243,7 @@ docker compose up -d
 > container**. Scoping the deploy to `app` rebuilds the image and recreates only the app,
 > leaving `credproxy` running stale code indefinitely. That silently breaks per-workspace
 > secret injection (e.g. `gh`/GitHub auth) whenever the proxy code changes. `docker compose
-> up --build -d` with no service filter recreates the sidecar from the fresh image too.
+up --build -d` with no service filter recreates the sidecar from the fresh image too.
 
 ---
 

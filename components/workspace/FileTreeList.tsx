@@ -35,19 +35,47 @@ interface Props {
 }
 
 const FileIcon = () => (
-  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14 2 14 8 20 8" />
+  <svg
+    viewBox="0 0 24 24"
+    width="14"
+    height="14"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.8"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+  >
+    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+    <polyline points="14 2 14 8 20 8" />
   </svg>
 );
 
 const FolderIcon = () => (
-  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+  <svg
+    viewBox="0 0 24 24"
+    width="14"
+    height="14"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.8"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+  >
     <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
   </svg>
 );
 
 const ChevIcon = () => (
-  <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+  <svg
+    viewBox="0 0 24 24"
+    width="12"
+    height="12"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2.5"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+  >
     <polyline points="9 18 15 12 9 6" />
   </svg>
 );
@@ -61,7 +89,16 @@ const Checkbox = ({ state, onClick }: { state: CheckState; onClick: (event: Mous
     aria-checked={state === "all" ? "true" : state === "some" ? "mixed" : "false"}
   >
     {state === "all" && (
-      <svg viewBox="0 0 16 16" width="10" height="10" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+      <svg
+        viewBox="0 0 16 16"
+        width="10"
+        height="10"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2.4"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
         <polyline points="3 9 6.5 12.5 13 4" />
       </svg>
     )}
@@ -71,8 +108,7 @@ const Checkbox = ({ state, onClick }: { state: CheckState; onClick: (event: Mous
 function nodeCheckState(node: TreeNode, selected: Set<string>): CheckState {
   if (selected.has(node.path)) return "all";
   if (node.type === "file") return "none";
-  const hasSelectedDescendant = (node.children ?? []).some((child) =>
-    nodeCheckState(child, selected) !== "none");
+  const hasSelectedDescendant = (node.children ?? []).some((child) => nodeCheckState(child, selected) !== "none");
   return hasSelectedDescendant ? "some" : "none";
 }
 
@@ -125,9 +161,7 @@ export function FileTreeList({
         if (node.type === "directory") {
           const isOpen = expanded[node.path] ?? false;
           const checkState = nodeCheckState(node, selection.selected);
-          const canDrop = move.draggedNodes
-            ? canMoveAllToDirectory(move.draggedNodes, node.path)
-            : false;
+          const canDrop = move.draggedNodes ? canMoveAllToDirectory(move.draggedNodes, node.path) : false;
           const isDropTarget = canDrop && move.dropTargetPath === node.path;
 
           return (
@@ -159,11 +193,18 @@ export function FileTreeList({
                     else selection.select(pathWithDescendants(node), checkState === "none");
                   }}
                 />
-                <div className="flex items-center gap-1.5 flex-1 min-w-0 overflow-hidden" style={{ marginLeft: 6 + depth * 14 }}>
-                  <span className={`inline-flex items-center justify-center w-3 h-3 flex-shrink-0 transition-transform duration-[150ms] text-text-3 ${isOpen ? "rotate-90" : ""}`}>
+                <div
+                  className="flex items-center gap-1.5 flex-1 min-w-0 overflow-hidden"
+                  style={{ marginLeft: 6 + depth * 14 }}
+                >
+                  <span
+                    className={`inline-flex items-center justify-center w-3 h-3 flex-shrink-0 transition-transform duration-[150ms] text-text-3 ${isOpen ? "rotate-90" : ""}`}
+                  >
                     <ChevIcon />
                   </span>
-                  <span className="text-text-2 inline-flex flex-shrink-0"><FolderIcon /></span>
+                  <span className="text-text-2 inline-flex flex-shrink-0">
+                    <FolderIcon />
+                  </span>
                   <span className="flex-1 whitespace-nowrap overflow-hidden text-ellipsis">{node.name}</span>
                 </div>
               </button>
@@ -184,17 +225,19 @@ export function FileTreeList({
 
         const isActive = node.path === selection.activePath;
         const isSelected = selection.selected.has(node.path);
-        const canDrop = move.draggedNodes && parentDirectory !== null
-          ? canMoveAllToDirectory(move.draggedNodes, parentDirectory)
-          : move.draggedNodes !== null;
+        const canDrop =
+          move.draggedNodes && parentDirectory !== null
+            ? canMoveAllToDirectory(move.draggedNodes, parentDirectory)
+            : move.draggedNodes !== null;
 
         return (
           <button
             key={node.path}
             className={`flex items-center w-full border-0 border-l-[3px] bg-transparent py-[5px] pl-2 pr-2 text-[13.5px] cursor-pointer text-left transition-[background,border-color,color] duration-[120ms]
-              ${isActive
-                ? "bg-primary-tint border-l-primary text-primary"
-                : `border-l-transparent text-text hover:bg-black/[.04] ${isSelected ? "bg-select-tint" : ""}`
+              ${
+                isActive
+                  ? "bg-primary-tint border-l-primary text-primary"
+                  : `border-l-transparent text-text hover:bg-black/[.04] ${isSelected ? "bg-select-tint" : ""}`
               }
               ${move.movingPaths.has(node.path) ? "opacity-50" : ""}`}
             onClick={(event) => {
@@ -219,8 +262,13 @@ export function FileTreeList({
                 else selection.select([node.path], !isSelected);
               }}
             />
-            <div className="flex items-center gap-1.5 flex-1 min-w-0 overflow-hidden" style={{ marginLeft: 6 + depth * 14 + 14 }}>
-              <span className={`inline-flex flex-shrink-0 ${isActive ? "text-primary" : "text-text-2"}`}><FileIcon /></span>
+            <div
+              className="flex items-center gap-1.5 flex-1 min-w-0 overflow-hidden"
+              style={{ marginLeft: 6 + depth * 14 + 14 }}
+            >
+              <span className={`inline-flex flex-shrink-0 ${isActive ? "text-primary" : "text-text-2"}`}>
+                <FileIcon />
+              </span>
               <span className="flex-1 whitespace-nowrap overflow-hidden text-ellipsis">{node.name}</span>
             </div>
           </button>

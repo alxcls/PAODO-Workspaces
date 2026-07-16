@@ -14,7 +14,11 @@ import {
   toolLabel,
 } from "./agentTranscript";
 
-const state = (messages: Message[], totalInput = 0, totalOutput = 0): TranscriptState => ({ messages, totalInput, totalOutput });
+const state = (messages: Message[], totalInput = 0, totalOutput = 0): TranscriptState => ({
+  messages,
+  totalInput,
+  totalOutput,
+});
 
 describe("markAllToolsDone", () => {
   // On abort, every still-spinning tool row is switched to done (no spinner left running).
@@ -97,11 +101,20 @@ describe("applyDiscreteEvent", () => {
   it("tool_result attaches the callee session link only for call_agent", () => {
     const start = state([{ role: "tool_start", toolName: "call_agent", toolDone: false }]);
     const event: AgentEvent = {
-      type: "tool_result", name: "call_agent", result: "sub-answer",
+      type: "tool_result",
+      name: "call_agent",
+      result: "sub-answer",
       meta: { conversationId: "conv-1", workspaceId: "ws-b", workspaceName: "Agent B" },
     };
     expect(applyDiscreteEvent(start, event).messages).toEqual([
-      { role: "tool_start", toolName: "call_agent", toolDone: true, calleeWorkspaceId: "ws-b", calleeWorkspaceName: "Agent B", calleeConversationId: "conv-1" },
+      {
+        role: "tool_start",
+        toolName: "call_agent",
+        toolDone: true,
+        calleeWorkspaceId: "ws-b",
+        calleeWorkspaceName: "Agent B",
+        calleeConversationId: "conv-1",
+      },
     ]);
   });
 
@@ -109,9 +122,20 @@ describe("applyDiscreteEvent", () => {
   // gains the deep-link but keeps spinning (toolDone stays false) until its tool_result lands.
   it("tool_link attaches the callee session link to the still-open call_agent bubble", () => {
     const start = state([{ role: "tool_start", toolName: "call_agent", toolDone: false }]);
-    const event: AgentEvent = { type: "tool_link", name: "call_agent", meta: { conversationId: "conv-2", workspaceId: "ws-c", workspaceName: "Agent C" } };
+    const event: AgentEvent = {
+      type: "tool_link",
+      name: "call_agent",
+      meta: { conversationId: "conv-2", workspaceId: "ws-c", workspaceName: "Agent C" },
+    };
     expect(applyDiscreteEvent(start, event).messages).toEqual([
-      { role: "tool_start", toolName: "call_agent", toolDone: false, calleeWorkspaceId: "ws-c", calleeWorkspaceName: "Agent C", calleeConversationId: "conv-2" },
+      {
+        role: "tool_start",
+        toolName: "call_agent",
+        toolDone: false,
+        calleeWorkspaceId: "ws-c",
+        calleeWorkspaceName: "Agent C",
+        calleeConversationId: "conv-2",
+      },
     ]);
   });
 
@@ -127,8 +151,13 @@ describe("applyDiscreteEvent", () => {
   // Token usage from each turn adds onto the running input/output totals.
   it("turn_usage accumulates token totals", () => {
     const event: AgentEvent = {
-      type: "turn_usage", inputTokens: 10, outputTokens: 4,
-      reasoningTokens: 0, cachedInputTokens: 0, cacheCreationTokens: 0, toolCalls: [],
+      type: "turn_usage",
+      inputTokens: 10,
+      outputTokens: 4,
+      reasoningTokens: 0,
+      cachedInputTokens: 0,
+      cacheCreationTokens: 0,
+      toolCalls: [],
     };
     const once = applyDiscreteEvent(emptyTranscript(), event);
     expect([once.totalInput, once.totalOutput]).toEqual([10, 4]);
@@ -153,7 +182,9 @@ describe("applyDiscreteEvent", () => {
 
   // Limit-reached and error events each append their own notice bubble.
   it("limit_reached and error append notices", () => {
-    expect(applyDiscreteEvent(emptyTranscript(), { type: "limit_reached" }).messages).toEqual([{ role: "limit_notice" }]);
+    expect(applyDiscreteEvent(emptyTranscript(), { type: "limit_reached" }).messages).toEqual([
+      { role: "limit_notice" },
+    ]);
     expect(applyDiscreteEvent(emptyTranscript(), { type: "error", message: "boom" }).messages).toEqual([
       { role: "error", content: "boom" },
     ]);

@@ -5,6 +5,7 @@
 ## Context
 
 Scheduled agent triggers need a scheduling primitive inside the server process. Key constraints:
+
 - Single Node.js process; no external datastore (see ADR `metadata-storage-json-vs-db.md`).
 - Job definitions must live outside workspace containers — containers can be recreated and the scheduler runs in the server process, not inside any container.
 - The agent must have no access to job management; scheduling is a platform-only concern.

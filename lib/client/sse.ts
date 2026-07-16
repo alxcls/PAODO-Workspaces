@@ -20,7 +20,9 @@ export async function* parseSseStream<T>(body: ReadableStream<Uint8Array>): Asyn
       if (!line.startsWith("data: ")) continue;
       try {
         yield JSON.parse(line.slice(6)) as T;
-      } catch { /* skip malformed lines */ }
+      } catch {
+        /* skip malformed lines */
+      }
     }
   }
 }

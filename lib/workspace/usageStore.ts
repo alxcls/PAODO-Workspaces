@@ -73,7 +73,10 @@ export interface TurnRecord {
 // The fields the agent loop produces per turn (everything except the storage identity and
 // the workspace/session context). Shared by all three call sites that fold turn_usage events
 // into the store (chat route, agent stream, nested skill calls) so the mapping can't drift.
-export type TurnUsageFields = Omit<TurnRecord, "id" | "timestamp" | "sessionId" | "conversationId" | "workspaceId" | "workspaceName">;
+export type TurnUsageFields = Omit<
+  TurnRecord,
+  "id" | "timestamp" | "sessionId" | "conversationId" | "workspaceId" | "workspaceName"
+>;
 
 export interface UsageContext {
   sessionId: string;
@@ -149,7 +152,9 @@ const records = g._usage;
 function compact() {
   try {
     mkdirSync(path.dirname(FILE), { recursive: true });
-    const lines = readFileSync(FILE, "utf-8").split("\n").filter((l) => l.trim());
+    const lines = readFileSync(FILE, "utf-8")
+      .split("\n")
+      .filter((l) => l.trim());
     const kept = lines.slice(-MAX_RECORDS);
     const tmp = FILE + ".tmp";
     writeFileSync(tmp, kept.length ? kept.join("\n") + "\n" : "");

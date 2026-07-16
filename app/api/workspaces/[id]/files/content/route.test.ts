@@ -16,7 +16,9 @@ import path from "path";
 // This mirrors the real attack: an agent inside its container plants a symlink
 // in its own workspace, then a host-side HTTP request tries to read it.
 const { WS_DIR, ESCAPE } = vi.hoisted(() => {
-  const os = require("os"); const fs = require("fs"); const path = require("path");
+  const os = require("os");
+  const fs = require("fs");
+  const path = require("path");
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "ws-content-test-"));
   const wsDir = path.join(root, "ws");
   fs.mkdirSync(wsDir);
@@ -30,9 +32,7 @@ const { WS_DIR, ESCAPE } = vi.hoisted(() => {
 
 // A spy, so the batch tests can pin how many snapshots a multi-item move actually costs.
 const { commitResult } = vi.hoisted(() => ({
-  commitResult: vi.fn(
-    async (_workspaceId: string, _dir: string, _label: string) => ({ sha: "test", changed: true }),
-  ),
+  commitResult: vi.fn(async (_workspaceId: string, _dir: string, _label: string) => ({ sha: "test", changed: true })),
 }));
 
 vi.mock("@/lib/infra/services", () => ({
@@ -45,26 +45,30 @@ import { GET, PUT, PATCH } from "./route";
 import { buildTree } from "@/lib/workspace/fileTree";
 
 const ctx = { params: Promise.resolve({ id: "ws" }) };
-const getFile = (p: string) =>
-  GET(new Request(`http://x/api/files/content?path=${encodeURIComponent(p)}`), ctx);
+const getFile = (p: string) => GET(new Request(`http://x/api/files/content?path=${encodeURIComponent(p)}`), ctx);
 
 const patchMove = (body: unknown) =>
-  PATCH(new Request("http://x/api/files/content", {
-    method: "PATCH",
-    headers: { "content-type": "application/json" },
-    body: typeof body === "string" ? body : JSON.stringify(body),
-  }), ctx);
+  PATCH(
+    new Request("http://x/api/files/content", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: typeof body === "string" ? body : JSON.stringify(body),
+    }),
+    ctx,
+  );
 
 const putFile = (filePath: string, content: string) =>
-  PUT(new Request("http://x/api/files/content", {
-    method: "PUT",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ path: filePath, content }),
-  }), ctx);
+  PUT(
+    new Request("http://x/api/files/content", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ path: filePath, content }),
+    }),
+    ctx,
+  );
 
 /** The path the browser actually holds for a top-level entry: what buildTree serves. */
-const treePathOf = async (name: string) =>
-  (await buildTree(WS_DIR)).find((n) => n.name === name)!.path;
+const treePathOf = async (name: string) => (await buildTree(WS_DIR)).find((n) => n.name === name)!.path;
 
 afterAll(() => fs.rmSync(path.dirname(WS_DIR), { recursive: true, force: true }));
 
@@ -112,11 +116,14 @@ describe("files/content PATCH — move", () => {
     fs.writeFileSync(source, "move me");
     fs.mkdirSync(destinationDirectory);
 
-    const res = await PATCH(new Request("http://x/api/files/content", {
-      method: "PATCH",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ sourcePaths: [source], destinationDirectory }),
-    }), ctx);
+    const res = await PATCH(
+      new Request("http://x/api/files/content", {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ sourcePaths: [source], destinationDirectory }),
+      }),
+      ctx,
+    );
 
     expect(res.status).toBe(200);
     expect(fs.existsSync(source)).toBe(false);
@@ -149,8 +156,7 @@ describe("files/content PATCH — move", () => {
 
     expect(res.status).toBe(200);
     expect(fs.existsSync(source)).toBe(false);
-    expect(fs.readFileSync(path.join(destinationDirectory, "move-folder", "nested.txt"), "utf8"))
-      .toBe("nested");
+    expect(fs.readFileSync(path.join(destinationDirectory, "move-folder", "nested.txt"), "utf8")).toBe("nested");
   });
 
   it("rejects moving a folder into one of its descendants", async () => {
@@ -158,11 +164,14 @@ describe("files/content PATCH — move", () => {
     const descendant = path.join(source, "child");
     fs.mkdirSync(descendant, { recursive: true });
 
-    const res = await PATCH(new Request("http://x/api/files/content", {
-      method: "PATCH",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ sourcePaths: [source], destinationDirectory: descendant }),
-    }), ctx);
+    const res = await PATCH(
+      new Request("http://x/api/files/content", {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ sourcePaths: [source], destinationDirectory: descendant }),
+      }),
+      ctx,
+    );
 
     expect(res.status).toBe(400);
     expect((await res.json()).error).toMatch(/into itself/i);
@@ -179,11 +188,14 @@ describe("files/content PATCH — move", () => {
     fs.writeFileSync(source, "source");
     fs.writeFileSync(destination, "destination");
 
-    const res = await PATCH(new Request("http://x/api/files/content", {
-      method: "PATCH",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ sourcePaths: [source], destinationDirectory }),
-    }), ctx);
+    const res = await PATCH(
+      new Request("http://x/api/files/content", {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ sourcePaths: [source], destinationDirectory }),
+      }),
+      ctx,
+    );
 
     expect(res.status).toBe(409);
     expect(fs.readFileSync(source, "utf8")).toBe("source");
@@ -247,11 +259,14 @@ describe("files/content PATCH — move", () => {
     const source = path.join(WS_DIR, "stay-put.txt");
     fs.writeFileSync(source, "safe");
 
-    const res = await PATCH(new Request("http://x/api/files/content", {
-      method: "PATCH",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ sourcePaths: [source], destinationDirectory: path.dirname(WS_DIR) }),
-    }), ctx);
+    const res = await PATCH(
+      new Request("http://x/api/files/content", {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ sourcePaths: [source], destinationDirectory: path.dirname(WS_DIR) }),
+      }),
+      ctx,
+    );
 
     expect(res.status).toBe(400);
     expect((await res.json()).error).toMatch(/outside workspace/i);
@@ -422,8 +437,7 @@ describe("files/content PATCH — move", () => {
 
     expect(fs.existsSync(path.join(destinationDirectory, "partial-first.txt"))).toBe(true);
     expect(fs.readFileSync(blocked, "utf8")).toBe("x");
-    expect(fs.readFileSync(path.join(destinationDirectory, "partial-blocked.txt"), "utf8"))
-      .toBe("occupied");
+    expect(fs.readFileSync(path.join(destinationDirectory, "partial-blocked.txt"), "utf8")).toBe("occupied");
     // The item after the failure was never attempted and must be exactly where it was.
     expect(fs.readFileSync(never, "utf8")).toBe("x");
   });
@@ -436,8 +450,8 @@ describe("files/content PATCH — move", () => {
     const mover = path.join(WS_DIR, "mixed-mover.txt");
     fs.writeFileSync(mover, "moves");
     const settled = (await buildTree(WS_DIR))
-      .find((n) => n.name === "mixed-dest")!.children!
-      .find((n) => n.name === "settled.txt")!.path;
+      .find((n) => n.name === "mixed-dest")!
+      .children!.find((n) => n.name === "settled.txt")!.path;
 
     const res = await patchMove({ sourcePaths: [settled, mover], destinationDirectory });
 
@@ -465,7 +479,6 @@ describe("files/content PATCH — move", () => {
 
     expect(res.status).toBe(409);
     expect(fs.readFileSync(path.join(source, "source.txt"), "utf8")).toBe("source");
-    expect(fs.readFileSync(path.join(destination, "destination.txt"), "utf8"))
-      .toBe("destination");
+    expect(fs.readFileSync(path.join(destination, "destination.txt"), "utf8")).toBe("destination");
   });
 });

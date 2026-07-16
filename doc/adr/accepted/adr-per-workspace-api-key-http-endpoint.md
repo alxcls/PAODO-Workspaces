@@ -9,10 +9,12 @@ Decision
 Expose an HTTP endpoint `POST /api/workspaces/<id>/agent` authenticated with a per-workspace API key (Bearer token). Keys are shown once at generation, revocable, and can be enabled/disabled. Rate-limit calls by client IP.
 
 Consequences
+
 - Fine-grained revocation and limited blast radius for leaked keys.
 - Each call is stateless: the server always starts from a fresh context with no conversation history.
 - Requires secure key management and UI for generation/revocation.
 
 Alternatives considered
-- Platform-wide API key (too coarse).  
+
+- Platform-wide API key (too coarse).
 - OAuth/JWT-based integration (more complexity than needed for initial self-hosted use).

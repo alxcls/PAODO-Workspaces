@@ -16,8 +16,11 @@ import { z } from "zod";
 const SHA = /^[0-9a-fA-F]{4,40}$/;
 
 const schema = z.object({
-  sha: z.string()
-    .describe("Target snapshot, a sha from workspace_history. Always list history first, then restore the exact snapshot you chose."),
+  sha: z
+    .string()
+    .describe(
+      "Target snapshot, a sha from workspace_history. Always list history first, then restore the exact snapshot you chose.",
+    ),
 });
 
 export class WorkspaceRestoreTool extends StructuredTool<typeof schema> {

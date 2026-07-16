@@ -6,17 +6,18 @@ export type DockerResult = { stdout: string; stderr: string; code: number };
 
 export interface IDockerClient {
   cmd(...args: string[]): Promise<DockerResult>;
-  exec(containerName: string, cmdArgs: string[], opts?: { stdin?: string; asRoot?: boolean; cwd?: string; trimStdout?: boolean }): Promise<DockerResult>;
+  exec(
+    containerName: string,
+    cmdArgs: string[],
+    opts?: { stdin?: string; asRoot?: boolean; cwd?: string; trimStdout?: boolean },
+  ): Promise<DockerResult>;
   build(buildArgs: string[], dockerfile: Buffer): Promise<void>;
 }
 
 export class DockerClient implements IDockerClient {
   // Single spawn+collect implementation used by all methods.
   // trimStdout=false preserves exact content (trailing newlines matter for file reads).
-  private _spawn(
-    args: string[],
-    opts: { stdin?: string; trimStdout?: boolean } = {},
-  ): Promise<DockerResult> {
+  private _spawn(args: string[], opts: { stdin?: string; trimStdout?: boolean } = {}): Promise<DockerResult> {
     return new Promise((resolve) => {
       let stdout = "";
       let stderr = "";

@@ -7,7 +7,16 @@ import { useState, useRef, useEffect } from "react";
 import type { ConversationMeta } from "@/lib/client/hooks/useConversations";
 
 const ChevronIcon = () => (
-  <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+  <svg
+    viewBox="0 0 24 24"
+    width="13"
+    height="13"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+  >
     <polyline points="6 9 12 15 18 9" />
   </svg>
 );
@@ -42,7 +51,10 @@ export default function ConversationBar({
   const active = conversations.find((c) => c.id === activeId);
 
   return (
-    <div ref={ref} className="relative flex items-center gap-1 px-4 min-h-[44px] border-b border-border bg-bg flex-shrink-0">
+    <div
+      ref={ref}
+      className="relative flex items-center gap-1 px-4 min-h-[44px] border-b border-border bg-bg flex-shrink-0"
+    >
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
@@ -51,14 +63,19 @@ export default function ConversationBar({
       >
         {active?.running && <RunningDot />}
         <span className="truncate font-medium">{active?.title ?? "Conversation"}</span>
-        <span className="text-text-3 flex-none"><ChevronIcon /></span>
+        <span className="text-text-3 flex-none">
+          <ChevronIcon />
+        </span>
       </button>
 
       {open && (
         <div className="absolute left-2 top-[calc(100%-2px)] z-20 w-[min(320px,calc(100%-1rem))] max-h-[280px] overflow-auto rounded-lg border border-border bg-bg shadow-lg py-1">
           <button
             type="button"
-            onClick={() => { onNew(); setOpen(false); }}
+            onClick={() => {
+              onNew();
+              setOpen(false);
+            }}
             className="flex items-center gap-2 w-full text-left px-3 py-1.5 text-[12.5px] text-text-2 hover:bg-bg-2 cursor-pointer border-b border-border"
           >
             <span className="text-text-3 flex-none text-base leading-none">+</span>
@@ -68,7 +85,10 @@ export default function ConversationBar({
             <button
               key={c.id}
               type="button"
-              onClick={() => { onSelect(c.id); setOpen(false); }}
+              onClick={() => {
+                onSelect(c.id);
+                setOpen(false);
+              }}
               className={`flex items-center gap-2 w-full text-left px-3 py-1.5 text-[12.5px] hover:bg-bg-2 cursor-pointer ${c.id === activeId ? "text-primary-2 font-medium" : "text-text-2"}`}
             >
               {c.running ? <RunningDot /> : <span className="w-1.5 flex-none" />}

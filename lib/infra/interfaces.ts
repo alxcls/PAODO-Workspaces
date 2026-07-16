@@ -95,12 +95,7 @@ export interface IContainerLifecycle {
 
 /** Foreground command execution inside a workspace container. */
 export interface IContainerExec {
-  exec(
-    workspaceId: string,
-    workspaceDir: string,
-    cmdArgs: string[],
-    opts?: { stdin?: string },
-  ): Promise<DockerResult>;
+  exec(workspaceId: string, workspaceDir: string, cmdArgs: string[], opts?: { stdin?: string }): Promise<DockerResult>;
   execStreaming(
     workspaceId: string,
     workspaceDir: string,
@@ -113,7 +108,11 @@ export interface IContainerExec {
 /** Detached, long-lived background processes (dev servers etc.) tracked across turns. */
 export interface IBackgroundTasks {
   /** Launch a command detached from the exec kill path (dev servers etc.); returns its taskId + log path. */
-  startBackground(workspaceId: string, workspaceDir: string, command: string): Promise<{ taskId: string; logFile: string }>;
+  startBackground(
+    workspaceId: string,
+    workspaceDir: string,
+    command: string,
+  ): Promise<{ taskId: string; logFile: string }>;
   /** Kill a tracked background process by taskId; false if none tracked for the workspace. */
   stopBackground(workspaceId: string, taskId: string): Promise<boolean>;
   /** Running background tasks for a workspace (for context surfacing / management across turns). */

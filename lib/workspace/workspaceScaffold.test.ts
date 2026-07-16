@@ -49,5 +49,4 @@ describe("scaffoldWorkspaceDir", () => {
     await scaffoldWorkspaceDir(dir);
     expect(fs.readFileSync(template, "utf-8")).toBe("edited-by-user");
   });
-
 });

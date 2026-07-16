@@ -34,7 +34,7 @@ describe("formatSkill", () => {
       "  → summarize-document(drive: string, path: string, format?: string) — Summarizes a document\n" +
         "    returns: { summary: string, word_count: number }\n" +
         '    example input: {"drive":"product-docs","path":"brief.md","format":"bullet"}\n' +
-        '    example output: {"summary":"A concise brief.","word_count":3}'
+        '    example output: {"summary":"A concise brief.","word_count":3}',
     );
   });
 

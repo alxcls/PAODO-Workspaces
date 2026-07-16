@@ -40,7 +40,7 @@ Long-running or active sessions accumulate conversation turns until the model's 
    - `medium` — summarize the older head into a single brief, keep a recent verbatim tail. The tail boundary snaps to an assistant-message boundary so kept tool calls retain their results.
    - `hard` — summarize the whole history into one brief: a clean slate.
 
-3. **History stays provider-valid** — compaction only ever keeps or wipes complete turns, so every kept `tool_call` retains its `tool_result`. The tool is a signal only; the surgery runs in the agent runner *after* the requesting turn is committed, so nothing is orphaned.
+3. **History stays provider-valid** — compaction only ever keeps or wipes complete turns, so every kept `tool_call` retains its `tool_result`. The tool is a signal only; the surgery runs in the agent runner _after_ the requesting turn is committed, so nothing is orphaned.
 
 4. **Provider-agnostic summarization** — the summary is one tool-less call to the workspace's configured chat model, not a hard-coded provider.
 

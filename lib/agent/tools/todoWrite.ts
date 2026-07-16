@@ -8,13 +8,17 @@ import { setTodos } from "../../workspace/todoStore";
 import type { Todo } from "../../workspace/todoStore";
 
 const schema = z.object({
-  todos: z.array(z.object({
-    id: z.string().describe("Unique task ID"),
-    content: z.string().describe('Imperative form e.g. "Fix the login bug"'),
-    displayText: z.string().describe('Present continuous form e.g. "Fixing the login bug"'),
-    status: z.enum(["pending", "in_progress", "completed"]),
-    priority: z.enum(["low", "medium", "high"]),
-  })).describe("Complete updated todo list — replaces current list"),
+  todos: z
+    .array(
+      z.object({
+        id: z.string().describe("Unique task ID"),
+        content: z.string().describe('Imperative form e.g. "Fix the login bug"'),
+        displayText: z.string().describe('Present continuous form e.g. "Fixing the login bug"'),
+        status: z.enum(["pending", "in_progress", "completed"]),
+        priority: z.enum(["low", "medium", "high"]),
+      }),
+    )
+    .describe("Complete updated todo list — replaces current list"),
 });
 
 export class TodoWriteTool extends StructuredTool<typeof schema> {
@@ -42,8 +46,9 @@ Rules:
     setTodos(this.workspaceId, todos as Todo[]);
     const statusIcon: Record<string, string> = { completed: "✓", in_progress: "▶", pending: "○" };
     const priorityTag: Record<string, string> = { high: "!", medium: "~", low: " " };
-    const lines = todos.map((t) =>
-      `${statusIcon[t.status] ?? "○"} [${priorityTag[t.priority] ?? " "}] ${t.status === "in_progress" ? t.displayText : t.content}`
+    const lines = todos.map(
+      (t) =>
+        `${statusIcon[t.status] ?? "○"} [${priorityTag[t.priority] ?? " "}] ${t.status === "in_progress" ? t.displayText : t.content}`,
     );
     return lines.join("\n") || "(empty)";
   }

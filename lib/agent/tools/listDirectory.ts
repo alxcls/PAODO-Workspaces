@@ -12,7 +12,10 @@ import { toolError } from "../toolUtils";
 import type { ExecRunner } from "../interfaces";
 
 const schema = z.object({
-  dir_path: z.string().optional().describe("Directory path relative to workspace root. Omit or use '.' for the workspace root."),
+  dir_path: z
+    .string()
+    .optional()
+    .describe("Directory path relative to workspace root. Omit or use '.' for the workspace root."),
 });
 
 function formatLines(lines: number): string {
@@ -60,14 +63,24 @@ Use this instead of ls. For recursive or pattern-based search use glob instead.`
       // and can be tallied into a child count. Fields: depth, type, mtime(epoch),
       // parent dir, name. Only depth-1 rows become entries; depth-2 rows are counted.
       const r = await this.runner.exec([
-        "find", containerDir,
-        "-mindepth", "1",
-        "-maxdepth", "2",
-        "-printf", "%d\t%y\t%T@\t%h\t%f\n",
+        "find",
+        containerDir,
+        "-mindepth",
+        "1",
+        "-maxdepth",
+        "2",
+        "-printf",
+        "%d\t%y\t%T@\t%h\t%f\n",
       ]);
       if (r.code !== 0) return `Error: ${r.stderr || "directory not found or unreadable"}`;
 
-      interface Entry { type: string; name: string; mtime: number; lineCount?: number; childCount?: number }
+      interface Entry {
+        type: string;
+        name: string;
+        mtime: number;
+        lineCount?: number;
+        childCount?: number;
+      }
       const entries: Entry[] = [];
       const childCounts = new Map<string, number>();
       for (const line of r.stdout.split("\n").filter(Boolean)) {

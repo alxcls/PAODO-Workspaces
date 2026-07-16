@@ -21,11 +21,15 @@ const h = vi.hoisted(() => ({
 
 vi.mock("../services", () => ({
   getStore: () => ({
-    getWorkspace: (id: string) => (id === "w1" ? { id: "w1", name: "WS", dir: "/tmp/w1", maxIterations: 10 } : undefined),
+    getWorkspace: (id: string) =>
+      id === "w1" ? { id: "w1", name: "WS", dir: "/tmp/w1", maxIterations: 10 } : undefined,
   }),
 }));
 vi.mock("../../agent/runBroker", () => ({
-  startRun: (p: unknown) => { h.startRun(p); return { alreadyRunning: false }; },
+  startRun: (p: unknown) => {
+    h.startRun(p);
+    return { alreadyRunning: false };
+  },
   subscribe: (_w: string, _c: string, cb: (e: { type: string }) => void) => {
     h.subCb = cb;
     return { replay: [], userInput: "", status: h.subStatus, unsubscribe: h.unsubscribe };
@@ -93,7 +97,11 @@ describe("scheduler tick", () => {
     scheduler._tick();
     expect(h.createConversation).toHaveBeenCalledWith("w1", { kind: "scheduled" });
     expect(h.startRun).toHaveBeenCalledTimes(1);
-    expect(h.startRun.mock.calls[0][0]).toMatchObject({ workspaceId: "w1", userInput: "do the thing", origin: "scheduled" });
+    expect(h.startRun.mock.calls[0][0]).toMatchObject({
+      workspaceId: "w1",
+      userInput: "do the thing",
+      origin: "scheduled",
+    });
 
     // Run still in flight -> a second tick must be a no-op (reentrancy guard).
     scheduler._tick();

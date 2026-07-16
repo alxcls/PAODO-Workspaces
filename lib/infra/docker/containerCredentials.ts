@@ -55,9 +55,7 @@ export function buildCredentialEnv(workspaceId: string): CredentialEnv {
   // second identical -e would just be a duplicate arg.
   const ghSecretName = selectGithubTokenSecret(secrets);
   const ghEnvArgs =
-    ghSecretName && ghSecretName !== "GH_TOKEN"
-      ? ["-e", `GH_TOKEN=${proxyToken(workspaceId, ghSecretName)}`]
-      : [];
+    ghSecretName && ghSecretName !== "GH_TOKEN" ? ["-e", `GH_TOKEN=${proxyToken(workspaceId, ghSecretName)}`] : [];
 
   const proxyReady = hasProxyCA();
   // Prod (containerized app): reach the proxy sidecar by its network alias. Local dev (app on the
@@ -67,47 +65,58 @@ export function buildCredentialEnv(workspaceId: string): CredentialEnv {
     : `host.docker.internal:${CREDENTIAL_PROXY_PORT}`;
   // The password is the workspace's derived proxy secret, so the proxy can verify this container is
   // who it claims to be — a container that knows another workspace's id still can't forge its identity.
-  const proxyUrl = proxyReady
-    ? `http://${workspaceId}:${deriveProxySecret(workspaceId)}@${proxyHost}`
-    : "";
-  const proxyEnvArgs = proxyReady ? [
-    // --add-host makes host.docker.internal resolve to the host gateway on Linux Docker
-    "--add-host=host.docker.internal:host-gateway",
-    "-e", `HTTP_PROXY=${proxyUrl}`,
-    "-e", `HTTPS_PROXY=${proxyUrl}`,
-    // Some CLI tools (notably git-remote-https/libcurl) only honor lowercase proxy env vars.
-    // Set both cases so every runtime routes through the credential proxy.
-    "-e", `http_proxy=${proxyUrl}`,
-    "-e", `https_proxy=${proxyUrl}`,
-    // Exempt loopback so the workspace reaches its OWN server (e.g. a dev server on
-    // 0.0.0.0:8080) directly instead of routing `curl http://localhost:8080` through the
-    // proxy — which returns an empty reply and makes the agent flail. This never weakens
-    // secret injection: real values are only substituted for HTTPS to an exact configured
-    // external domain (see credentialProxy.ts), never for loopback. Both cases, since tools
-    // vary on which they honor.
-    "-e", "no_proxy=localhost,127.0.0.1,0.0.0.0,::1",
-    "-e", "NO_PROXY=localhost,127.0.0.1,0.0.0.0,::1",
-    // NODE_EXTRA_CA_CERTS is additive (appended to Node's built-in roots), so it can point
-    // at the proxy CA alone. REQUESTS_CA_BUNDLE / CURL_CA_BUNDLE / SSL_CERT_FILE / GIT_SSL_CAINFO
-    // are *replacement* trust stores — pointing them at the proxy CA alone drops the public
-    // roots, so TLS to tunneled (non-MITM'd) hosts like pypi.org fails with "unable to get
-    // local issuer certificate". They instead point at a combined bundle (system roots +
-    // proxy CA) that installProxyCA builds.
-    "-e", "NODE_EXTRA_CA_CERTS=/etc/proxy-ca.crt",
-    "-e", `REQUESTS_CA_BUNDLE=${COMBINED_CA_BUNDLE}`,
-    "-e", `CURL_CA_BUNDLE=${COMBINED_CA_BUNDLE}`,
-    "-e", `SSL_CERT_FILE=${COMBINED_CA_BUNDLE}`,
-    // git's HTTPS transport (git-remote-https → libcurl) verifies against libcurl's compiled-in
-    // CA path only; it ignores CURL_CA_BUNDLE (that's the curl CLI) and SSL_CERT_FILE. Without
-    // this, git rejects the proxy's MITM cert on secret-scoped hosts (github.com) with an
-    // "unable to get local issuer certificate" TLS error before auth substitution is reached.
-    "-e", `GIT_SSL_CAINFO=${COMBINED_CA_BUNDLE}`,
-    // The CA is NOT bind-mounted: the Docker daemon resolves -v sources as HOST paths, but
-    // CA_CERT_PATH (/app/data/…) is the app CONTAINER's volume mount — a -v of it would make Docker
-    // create an empty dir on the host and mount that, so /etc/proxy-ca.crt would be an unreadable
-    // directory and no MITM cert would ever verify. Instead installProxyCA writes the PEM into the
-    // container over stdin (same host-vs-container-path reason as buildVolumeArg).
-  ] : [];
+  const proxyUrl = proxyReady ? `http://${workspaceId}:${deriveProxySecret(workspaceId)}@${proxyHost}` : "";
+  const proxyEnvArgs = proxyReady
+    ? [
+        // --add-host makes host.docker.internal resolve to the host gateway on Linux Docker
+        "--add-host=host.docker.internal:host-gateway",
+        "-e",
+        `HTTP_PROXY=${proxyUrl}`,
+        "-e",
+        `HTTPS_PROXY=${proxyUrl}`,
+        // Some CLI tools (notably git-remote-https/libcurl) only honor lowercase proxy env vars.
+        // Set both cases so every runtime routes through the credential proxy.
+        "-e",
+        `http_proxy=${proxyUrl}`,
+        "-e",
+        `https_proxy=${proxyUrl}`,
+        // Exempt loopback so the workspace reaches its OWN server (e.g. a dev server on
+        // 0.0.0.0:8080) directly instead of routing `curl http://localhost:8080` through the
+        // proxy — which returns an empty reply and makes the agent flail. This never weakens
+        // secret injection: real values are only substituted for HTTPS to an exact configured
+        // external domain (see credentialProxy.ts), never for loopback. Both cases, since tools
+        // vary on which they honor.
+        "-e",
+        "no_proxy=localhost,127.0.0.1,0.0.0.0,::1",
+        "-e",
+        "NO_PROXY=localhost,127.0.0.1,0.0.0.0,::1",
+        // NODE_EXTRA_CA_CERTS is additive (appended to Node's built-in roots), so it can point
+        // at the proxy CA alone. REQUESTS_CA_BUNDLE / CURL_CA_BUNDLE / SSL_CERT_FILE / GIT_SSL_CAINFO
+        // are *replacement* trust stores — pointing them at the proxy CA alone drops the public
+        // roots, so TLS to tunneled (non-MITM'd) hosts like pypi.org fails with "unable to get
+        // local issuer certificate". They instead point at a combined bundle (system roots +
+        // proxy CA) that installProxyCA builds.
+        "-e",
+        "NODE_EXTRA_CA_CERTS=/etc/proxy-ca.crt",
+        "-e",
+        `REQUESTS_CA_BUNDLE=${COMBINED_CA_BUNDLE}`,
+        "-e",
+        `CURL_CA_BUNDLE=${COMBINED_CA_BUNDLE}`,
+        "-e",
+        `SSL_CERT_FILE=${COMBINED_CA_BUNDLE}`,
+        // git's HTTPS transport (git-remote-https → libcurl) verifies against libcurl's compiled-in
+        // CA path only; it ignores CURL_CA_BUNDLE (that's the curl CLI) and SSL_CERT_FILE. Without
+        // this, git rejects the proxy's MITM cert on secret-scoped hosts (github.com) with an
+        // "unable to get local issuer certificate" TLS error before auth substitution is reached.
+        "-e",
+        `GIT_SSL_CAINFO=${COMBINED_CA_BUNDLE}`,
+        // The CA is NOT bind-mounted: the Docker daemon resolves -v sources as HOST paths, but
+        // CA_CERT_PATH (/app/data/…) is the app CONTAINER's volume mount — a -v of it would make Docker
+        // create an empty dir on the host and mount that, so /etc/proxy-ca.crt would be an unreadable
+        // directory and no MITM cert would ever verify. Instead installProxyCA writes the PEM into the
+        // container over stdin (same host-vs-container-path reason as buildVolumeArg).
+      ]
+    : [];
 
   return { envArgs: [...proxyEnvArgs, ...secretEnvArgs, ...ghEnvArgs], hasProxyCA: proxyReady };
 }
@@ -120,19 +129,18 @@ export function buildCredentialEnv(workspaceId: string): CredentialEnv {
 // CA doesn't exist. Non-fatal: failures are logged, never thrown (a broken bundle must not fail the
 // container create). git's preemptive proxy Basic auth (http.proxyAuthMethod) is baked into the
 // image — see Dockerfile.workspace — since it is an image-wide constant, not per-container.
-export async function installProxyCA(
-  docker: IDockerClient,
-  containerName: string,
-  workspaceId: string,
-): Promise<void> {
+export async function installProxyCA(docker: IDockerClient, containerName: string, workspaceId: string): Promise<void> {
   if (!hasProxyCA()) return;
   const caPem = readFileSync(CA_CERT_PATH, "utf-8");
   const caSetup = await docker.exec(
     containerName,
-    ["sh", "-c",
+    [
+      "sh",
+      "-c",
       `cat > /etc/proxy-ca.crt && chmod 644 /etc/proxy-ca.crt && ` +
-      `(cat /etc/ssl/certs/ca-certificates.crt /etc/proxy-ca.crt > ${COMBINED_CA_BUNDLE} 2>/dev/null || ` +
-      `cp /etc/proxy-ca.crt ${COMBINED_CA_BUNDLE})`],
+        `(cat /etc/ssl/certs/ca-certificates.crt /etc/proxy-ca.crt > ${COMBINED_CA_BUNDLE} 2>/dev/null || ` +
+        `cp /etc/proxy-ca.crt ${COMBINED_CA_BUNDLE})`,
+    ],
     { asRoot: true, stdin: caPem, trimStdout: true },
   );
   if (caSetup.code !== 0)

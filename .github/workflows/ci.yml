@@ -16,8 +16,8 @@ jobs:
           node-version: 20
           cache: npm
       - run: npm ci
+      - run: npm run lint
+      - run: npm run format:check
       # Unit tests only — `npm test` excludes the Docker-backed integration tier
       # (vitest.integration.config.ts), keeping CI fast and self-contained.
-      # No lint step: `next lint` was removed in Next.js 16, so the package.json
-      # "lint" script is currently broken (tracked separately).
       - run: npm test

@@ -1,33 +1,33 @@
 @import "tailwindcss";
 
 @theme {
-  --color-bg:           #ffffff;
-  --color-bg-tint:      #f5f5f7;
-  --color-bg-deep:      #ececef;
-  --color-primary:      #3b1f6e;
-  --color-primary-2:    #6d4ab5;
+  --color-bg: #ffffff;
+  --color-bg-tint: #f5f5f7;
+  --color-bg-deep: #ececef;
+  --color-primary: #3b1f6e;
+  --color-primary-2: #6d4ab5;
   --color-primary-soft: #ede6fa;
   --color-primary-tint: #f3eefb;
-  --color-text:         #1a1a1a;
-  --color-text-2:       #6b6b6b;
-  --color-text-3:       #9aa0a6;
-  --color-border:       #e0e0e0;
-  --color-border-soft:  #ececec;
-  --color-danger:       #c0392b;
-  --color-danger-soft:  #fbeae7;
-  --color-select:       #1f8a5b;
-  --color-select-tint:  rgba(31, 138, 91, 0.10);
-  --color-select-soft:  rgba(31, 138, 91, 0.18);
-  --color-console-bg:   #1e1e1e;
-  --color-console-fg:   #e6e6e6;
+  --color-text: #1a1a1a;
+  --color-text-2: #6b6b6b;
+  --color-text-3: #9aa0a6;
+  --color-border: #e0e0e0;
+  --color-border-soft: #ececec;
+  --color-danger: #c0392b;
+  --color-danger-soft: #fbeae7;
+  --color-select: #1f8a5b;
+  --color-select-tint: rgba(31, 138, 91, 0.1);
+  --color-select-soft: rgba(31, 138, 91, 0.18);
+  --color-console-bg: #1e1e1e;
+  --color-console-fg: #e6e6e6;
   --color-console-call: #c9a8ff;
-  --color-console-res:  #9aa0a6;
-  --color-console-err:  #ff6b5b;
+  --color-console-res: #9aa0a6;
+  --color-console-err: #ff6b5b;
 
   --radius-card: 8px;
   --radius-ctrl: 6px;
-  --shadow-sm:   0 1px 2px rgba(15, 10, 30, .06), 0 1px 3px rgba(15, 10, 30, .04);
-  --shadow-md:   0 4px 12px rgba(15, 10, 30, .08), 0 1px 3px rgba(15, 10, 30, .04);
+  --shadow-sm: 0 1px 2px rgba(15, 10, 30, 0.06), 0 1px 3px rgba(15, 10, 30, 0.04);
+  --shadow-md: 0 4px 12px rgba(15, 10, 30, 0.08), 0 1px 3px rgba(15, 10, 30, 0.04);
 
   --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
@@ -38,19 +38,28 @@
      are font-size only (no paired --text-*--line-height) to render identically
      to the arbitraries they replace. */
   --text-2xs: 11px;
-  --text-ms:  13px;
+  --text-ms: 13px;
 }
 
 @layer base {
-  * { box-sizing: border-box; }
-  html, body { margin: 0; height: 100%; }
+  * {
+    box-sizing: border-box;
+  }
+  html,
+  body {
+    margin: 0;
+    height: 100%;
+  }
   body {
     font: 14px/1.45 var(--font-sans);
     color: var(--color-text);
     background: var(--color-bg-tint);
     -webkit-font-smoothing: antialiased;
   }
-  button { font: inherit; color: inherit; }
+  button {
+    font: inherit;
+    color: inherit;
+  }
 }
 
 /* ============================================================
@@ -66,57 +75,111 @@
     border-radius: var(--radius-ctrl);
     border-color: var(--color-border);
     color: var(--color-text);
-    transition: background .14s, border-color .14s, color .14s, box-shadow .14s;
-    &:hover { background: var(--color-bg-tint); }
-    &:focus-visible { outline: 2px solid var(--color-primary-2); outline-offset: 2px; }
-    &:disabled { opacity: .55; cursor: not-allowed; }
+    transition:
+      background 0.14s,
+      border-color 0.14s,
+      color 0.14s,
+      box-shadow 0.14s;
+    &:hover {
+      background: var(--color-bg-tint);
+    }
+    &:focus-visible {
+      outline: 2px solid var(--color-primary-2);
+      outline-offset: 2px;
+    }
+    &:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+    }
   }
-  .btn .icon { font-weight: 600; }
+  .btn .icon {
+    font-weight: 600;
+  }
   .btn-primary {
     background: var(--color-primary);
     border-color: var(--color-primary);
     color: #fff;
-    &:hover:not(:disabled) { background: var(--color-primary-2); border-color: var(--color-primary-2); }
-    &.is-active { background: var(--color-primary-2); }
+    &:hover:not(:disabled) {
+      background: var(--color-primary-2);
+      border-color: var(--color-primary-2);
+    }
+    &.is-active {
+      background: var(--color-primary-2);
+    }
   }
   .btn-ghost {
     background: transparent;
-    &:hover { background: var(--color-bg-tint); color: var(--color-primary); }
+    &:hover {
+      background: var(--color-bg-tint);
+      color: var(--color-primary);
+    }
   }
   .btn-danger {
     background: #fff;
     border-color: var(--color-border);
     color: var(--color-danger);
-    &:hover { background: var(--color-danger-soft); border-color: var(--color-danger); }
+    &:hover {
+      background: var(--color-danger-soft);
+      border-color: var(--color-danger);
+    }
   }
-  .btn-sm  { @apply h-[26px] px-[10px] text-ms; }
-  .btn-lg  { @apply h-10 px-[18px] text-[15px]; }
-  .btn-block { @apply w-full; }
+  .btn-sm {
+    @apply h-[26px] px-[10px] text-ms;
+  }
+  .btn-lg {
+    @apply h-10 px-[18px] text-[15px];
+  }
+  .btn-block {
+    @apply w-full;
+  }
 
   .linkbtn {
-    background: none; border: 0; padding: 4px 6px; cursor: pointer;
-    color: var(--color-text-2); font-size: 13px;
-    &:hover { color: var(--color-primary); text-decoration: underline; }
+    background: none;
+    border: 0;
+    padding: 4px 6px;
+    cursor: pointer;
+    color: var(--color-text-2);
+    font-size: 13px;
+    &:hover {
+      color: var(--color-primary);
+      text-decoration: underline;
+    }
   }
 
-  .input, .textarea {
+  .input,
+  .textarea {
     @apply w-full border bg-white outline-none;
     border-radius: var(--radius-ctrl);
     border-color: var(--color-border);
     padding: 8px 10px;
     font: 14px var(--font-sans);
     color: var(--color-text);
-    transition: border-color .14s, box-shadow .14s;
-    &:focus { border-color: var(--color-primary-2); box-shadow: 0 0 0 3px var(--color-primary-soft); }
+    transition:
+      border-color 0.14s,
+      box-shadow 0.14s;
+    &:focus {
+      border-color: var(--color-primary-2);
+      box-shadow: 0 0 0 3px var(--color-primary-soft);
+    }
   }
-  .textarea { @apply resize-none leading-[1.45]; }
-  .input-sm  { height: 32px; padding-top: 0; padding-bottom: 0; font-size: 14px; }
+  .textarea {
+    @apply resize-none leading-[1.45];
+  }
+  .input-sm {
+    height: 32px;
+    padding-top: 0;
+    padding-bottom: 0;
+    font-size: 14px;
+  }
 
   .iconbtn {
     @apply inline-flex items-center justify-center w-7 h-7 border-0 bg-transparent cursor-pointer;
     border-radius: 6px;
     color: var(--color-text-2);
-    &:hover { background: var(--color-bg-tint); color: var(--color-primary); }
+    &:hover {
+      background: var(--color-bg-tint);
+      color: var(--color-primary);
+    }
   }
 }
 
@@ -126,35 +189,66 @@
   scrollbar-width: thin;
   scrollbar-color: var(--color-border) transparent;
 }
-.workspace-list::-webkit-scrollbar { width: 8px; }
-.workspace-list::-webkit-scrollbar-track { background: transparent; }
+.workspace-list::-webkit-scrollbar {
+  width: 8px;
+}
+.workspace-list::-webkit-scrollbar-track {
+  background: transparent;
+}
 .workspace-list::-webkit-scrollbar-thumb {
   background: var(--color-border);
   border: 2px solid transparent;
   background-clip: padding-box;
   border-radius: 999px;
 }
-.workspace-list::-webkit-scrollbar-thumb:hover { background-color: var(--color-text-3); }
+.workspace-list::-webkit-scrollbar-thumb:hover {
+  background-color: var(--color-text-3);
+}
 
 /* ============================================================
    Resizable dividers
    ============================================================ */
 
 .ws-divider {
-  flex: 0 0 1px; width: 1px;
+  flex: 0 0 1px;
+  width: 1px;
   background: var(--color-border);
-  cursor: col-resize; user-select: none;
-  position: relative; z-index: 1;
-  transition: background .15s;
-  &::before { content: ''; position: absolute; inset: 0 -5px; cursor: col-resize; }
-  &:hover { background: var(--color-primary-2); }
+  cursor: col-resize;
+  user-select: none;
+  position: relative;
+  z-index: 1;
+  transition: background 0.15s;
+  &::before {
+    content: "";
+    position: absolute;
+    inset: 0 -5px;
+    cursor: col-resize;
+  }
+  &:hover {
+    background: var(--color-primary-2);
+  }
 }
 
 .ws-right-handle {
-  height: 6px; flex: 0 0 6px; cursor: row-resize; user-select: none;
-  background: linear-gradient(to bottom, transparent 40%, var(--color-border) 40%, var(--color-border) 60%, transparent 60%);
+  height: 6px;
+  flex: 0 0 6px;
+  cursor: row-resize;
+  user-select: none;
+  background: linear-gradient(
+    to bottom,
+    transparent 40%,
+    var(--color-border) 40%,
+    var(--color-border) 60%,
+    transparent 60%
+  );
   &:hover {
-    background: linear-gradient(to bottom, transparent 35%, var(--color-primary-2) 35%, var(--color-primary-2) 65%, transparent 65%);
+    background: linear-gradient(
+      to bottom,
+      transparent 35%,
+      var(--color-primary-2) 35%,
+      var(--color-primary-2) 65%,
+      transparent 65%
+    );
   }
 }
 
@@ -163,18 +257,30 @@
    ============================================================ */
 
 .empty-illo {
-  width: 96px; height: 96px;
+  width: 96px;
+  height: 96px;
   margin: 0 auto 20px;
   border-radius: 16px;
   background: var(--color-bg-tint);
   position: relative;
   border: 1px dashed var(--color-border);
-  &::before, &::after {
-    content: ""; position: absolute; left: 22px; right: 22px;
-    height: 8px; border-radius: 4px; background: var(--color-border);
+  &::before,
+  &::after {
+    content: "";
+    position: absolute;
+    left: 22px;
+    right: 22px;
+    height: 8px;
+    border-radius: 4px;
+    background: var(--color-border);
   }
-  &::before { top: 28px; }
-  &::after  { top: 46px; right: 36px; }
+  &::before {
+    top: 28px;
+  }
+  &::after {
+    top: 46px;
+    right: 36px;
+  }
 }
 
 /* ============================================================
@@ -182,36 +288,71 @@
    ============================================================ */
 
 .status-dot {
-  width: 8px; height: 8px; border-radius: 50%;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
   background: var(--color-text-3);
-  display: inline-block; flex-shrink: 0;
+  display: inline-block;
+  flex-shrink: 0;
   &.is-running {
     background: var(--color-primary);
-    box-shadow: 0 0 0 0 rgba(59, 31, 110, .5);
+    box-shadow: 0 0 0 0 rgba(59, 31, 110, 0.5);
     animation: pulse 1.4s infinite;
   }
 }
 @keyframes pulse {
-  0%   { box-shadow: 0 0 0 0   rgba(59, 31, 110, .5); }
-  70%  { box-shadow: 0 0 0 8px rgba(59, 31, 110, 0);  }
-  100% { box-shadow: 0 0 0 0   rgba(59, 31, 110, 0);  }
+  0% {
+    box-shadow: 0 0 0 0 rgba(59, 31, 110, 0.5);
+  }
+  70% {
+    box-shadow: 0 0 0 8px rgba(59, 31, 110, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(59, 31, 110, 0);
+  }
 }
 
-.typing { padding: 10px 14px; display: inline-flex; gap: 4px; }
+.typing {
+  padding: 10px 14px;
+  display: inline-flex;
+  gap: 4px;
+}
 .typing span {
-  width: 6px; height: 6px; border-radius: 50%;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
   background: var(--color-text-3);
   animation: typing-dot 1.2s infinite ease-in-out;
 }
-.typing span:nth-child(2) { animation-delay: .15s; }
-.typing span:nth-child(3) { animation-delay: .3s; }
+.typing span:nth-child(2) {
+  animation-delay: 0.15s;
+}
+.typing span:nth-child(3) {
+  animation-delay: 0.3s;
+}
 @keyframes typing-dot {
-  0%, 60%, 100% { opacity: .3; transform: translateY(0); }
-  30%           { opacity: 1;  transform: translateY(-2px); }
+  0%,
+  60%,
+  100% {
+    opacity: 0.3;
+    transform: translateY(0);
+  }
+  30% {
+    opacity: 1;
+    transform: translateY(-2px);
+  }
 }
 
-@keyframes tool-spin { to { transform: rotate(360deg); } }
-@keyframes spin      { to { transform: rotate(360deg); } }
+@keyframes tool-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
 
 /* ============================================================
    Shared markdown prose rules (child selectors, must stay CSS)
@@ -219,16 +360,48 @@
    ============================================================ */
 
 .md-prose {
-  & p:last-child { margin-bottom: 0; }
-  & code { font: 12px var(--font-mono); background: var(--color-bg-deep); border-radius: 3px; padding: 1px 4px; }
-  & pre code { background: transparent; padding: 0; }
-  & table { border-collapse: collapse; width: 100%; font-size: 13px; }
-  & .table-wrap { overflow-x: auto; }
-  & th { background: var(--color-bg-deep); font-weight: 600; text-align: left; padding: 6px 10px; border: 1px solid var(--color-border); }
-  & td { padding: 5px 10px; border: 1px solid var(--color-border); vertical-align: top; }
-  & tr:nth-child(even) td { background: rgba(0,0,0,.02); }
-  & strong { font-weight: 600; }
-  & em { font-style: italic; }
+  & p:last-child {
+    margin-bottom: 0;
+  }
+  & code {
+    font: 12px var(--font-mono);
+    background: var(--color-bg-deep);
+    border-radius: 3px;
+    padding: 1px 4px;
+  }
+  & pre code {
+    background: transparent;
+    padding: 0;
+  }
+  & table {
+    border-collapse: collapse;
+    width: 100%;
+    font-size: 13px;
+  }
+  & .table-wrap {
+    overflow-x: auto;
+  }
+  & th {
+    background: var(--color-bg-deep);
+    font-weight: 600;
+    text-align: left;
+    padding: 6px 10px;
+    border: 1px solid var(--color-border);
+  }
+  & td {
+    padding: 5px 10px;
+    border: 1px solid var(--color-border);
+    vertical-align: top;
+  }
+  & tr:nth-child(even) td {
+    background: rgba(0, 0, 0, 0.02);
+  }
+  & strong {
+    font-weight: 600;
+  }
+  & em {
+    font-style: italic;
+  }
 }
 
 /* ============================================================
@@ -246,24 +419,65 @@
   font-size: 14px;
   line-height: 1.45;
   word-wrap: break-word;
-  & p { margin: 0 0 8px; }
-  & ul { margin: 4px 0 8px; padding-left: 20px; list-style-type: disc; }
-  & ol { margin: 4px 0 8px; padding-left: 20px; list-style-type: decimal; }
-  & li { margin: 2px 0; }
-  & h1, & h2, & h3 { font-weight: 600; margin: 10px 0 4px; }
-  & h1 { font-size: 17px; }
-  & h2 { font-size: 15px; }
-  & h3 { font-size: 14px; }
-  & pre {
-    background: transparent; color: var(--color-text);
-    border-radius: 0; border: none; box-shadow: none;
-    padding: 0; overflow-x: auto; margin: 6px 0;
-    font: 13px var(--font-mono); white-space: pre;
+  & p {
+    margin: 0 0 8px;
   }
-  & pre code { font-size: inherit; color: inherit; }
-  & table { margin: 6px 0; }
-  & th { white-space: nowrap; }
-  & blockquote { border-left: 3px solid var(--color-border); margin: 6px 0; padding: 4px 10px; color: var(--color-text-2); }
+  & ul {
+    margin: 4px 0 8px;
+    padding-left: 20px;
+    list-style-type: disc;
+  }
+  & ol {
+    margin: 4px 0 8px;
+    padding-left: 20px;
+    list-style-type: decimal;
+  }
+  & li {
+    margin: 2px 0;
+  }
+  & h1,
+  & h2,
+  & h3 {
+    font-weight: 600;
+    margin: 10px 0 4px;
+  }
+  & h1 {
+    font-size: 17px;
+  }
+  & h2 {
+    font-size: 15px;
+  }
+  & h3 {
+    font-size: 14px;
+  }
+  & pre {
+    background: transparent;
+    color: var(--color-text);
+    border-radius: 0;
+    border: none;
+    box-shadow: none;
+    padding: 0;
+    overflow-x: auto;
+    margin: 6px 0;
+    font: 13px var(--font-mono);
+    white-space: pre;
+  }
+  & pre code {
+    font-size: inherit;
+    color: inherit;
+  }
+  & table {
+    margin: 6px 0;
+  }
+  & th {
+    white-space: nowrap;
+  }
+  & blockquote {
+    border-left: 3px solid var(--color-border);
+    margin: 6px 0;
+    padding: 4px 10px;
+    color: var(--color-text-2);
+  }
 }
 
 /* ============================================================
@@ -271,18 +485,57 @@
    ============================================================ */
 
 .md-preview {
-  flex: 1; overflow: auto; padding: 20px 24px;
-  font-size: 14px; line-height: 1.6;
-  color: var(--color-text); background: var(--color-bg-tint);
-  & p { margin: 0 0 10px; }
-  & ul, & ol { margin: 4px 0 10px; padding-left: 22px; }
-  & li { margin: 3px 0; }
-  & h1 { font-size: 20px; font-weight: 700; margin: 12px 0 6px; }
-  & h2 { font-size: 17px; font-weight: 600; margin: 10px 0 5px; }
-  & h3 { font-size: 15px; font-weight: 600; margin: 8px 0 4px; }
-  & pre { background: var(--color-bg-deep); border-radius: 6px; padding: 12px 14px; overflow-x: auto; margin: 8px 0; font: 13px var(--font-mono); white-space: pre-wrap; }
-  & table { margin: 8px 0; }
-  & blockquote { border-left: 3px solid var(--color-border); margin: 8px 0; padding: 4px 12px; color: var(--color-text-2); }
+  flex: 1;
+  overflow: auto;
+  padding: 20px 24px;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--color-text);
+  background: var(--color-bg-tint);
+  & p {
+    margin: 0 0 10px;
+  }
+  & ul,
+  & ol {
+    margin: 4px 0 10px;
+    padding-left: 22px;
+  }
+  & li {
+    margin: 3px 0;
+  }
+  & h1 {
+    font-size: 20px;
+    font-weight: 700;
+    margin: 12px 0 6px;
+  }
+  & h2 {
+    font-size: 17px;
+    font-weight: 600;
+    margin: 10px 0 5px;
+  }
+  & h3 {
+    font-size: 15px;
+    font-weight: 600;
+    margin: 8px 0 4px;
+  }
+  & pre {
+    background: var(--color-bg-deep);
+    border-radius: 6px;
+    padding: 12px 14px;
+    overflow-x: auto;
+    margin: 8px 0;
+    font: 13px var(--font-mono);
+    white-space: pre-wrap;
+  }
+  & table {
+    margin: 8px 0;
+  }
+  & blockquote {
+    border-left: 3px solid var(--color-border);
+    margin: 8px 0;
+    padding: 4px 12px;
+    color: var(--color-text-2);
+  }
 }
 
 /* ============================================================
@@ -292,19 +545,59 @@
    ============================================================ */
 
 .md-drawer {
-  font-size: 13px; line-height: 1.6; color: var(--color-text);
-  & p { margin: 0 0 8px; }
-  & p:last-child { margin-bottom: 0; }
-  & ul, & ol { margin: 4px 0 8px; padding-left: 20px; }
-  & ul { list-style-type: disc; }
-  & ol { list-style-type: decimal; }
-  & li { margin: 2px 0; }
-  & h1, & h2, & h3 { font-weight: 600; margin: 10px 0 4px; }
-  & h1 { font-size: 15px; }
-  & h2 { font-size: 14px; }
-  & h3 { font-size: 13px; }
-  & pre { background: var(--color-bg-deep); border-radius: 6px; padding: 10px 12px; overflow-x: auto; margin: 6px 0; font: 12px var(--font-mono); white-space: pre-wrap; }
-  & blockquote { border-left: 3px solid var(--color-border); margin: 6px 0; padding: 4px 10px; color: var(--color-text-2); }
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--color-text);
+  & p {
+    margin: 0 0 8px;
+  }
+  & p:last-child {
+    margin-bottom: 0;
+  }
+  & ul,
+  & ol {
+    margin: 4px 0 8px;
+    padding-left: 20px;
+  }
+  & ul {
+    list-style-type: disc;
+  }
+  & ol {
+    list-style-type: decimal;
+  }
+  & li {
+    margin: 2px 0;
+  }
+  & h1,
+  & h2,
+  & h3 {
+    font-weight: 600;
+    margin: 10px 0 4px;
+  }
+  & h1 {
+    font-size: 15px;
+  }
+  & h2 {
+    font-size: 14px;
+  }
+  & h3 {
+    font-size: 13px;
+  }
+  & pre {
+    background: var(--color-bg-deep);
+    border-radius: 6px;
+    padding: 10px 12px;
+    overflow-x: auto;
+    margin: 6px 0;
+    font: 12px var(--font-mono);
+    white-space: pre-wrap;
+  }
+  & blockquote {
+    border-left: 3px solid var(--color-border);
+    margin: 6px 0;
+    padding: 4px 10px;
+    color: var(--color-text-2);
+  }
 }
 
 /* ============================================================
@@ -319,34 +612,62 @@
   font: 13px/1.6 var(--font-sans);
   color: var(--color-text-2);
   white-space: pre-wrap;
-  & h1, & h2, & h3, & h4, & h5 { margin: 0 0 4px; color: var(--color-text); font-weight: 600; }
-  & p { margin: 0; }
-  & ul { margin: 4px 0 0 18px; }
-  & li { margin-bottom: 2px; }
-  & code { font-family: var(--font-mono); background: rgba(0,0,0,.05); padding: 2px 4px; border-radius: 4px; }
+  & h1,
+  & h2,
+  & h3,
+  & h4,
+  & h5 {
+    margin: 0 0 4px;
+    color: var(--color-text);
+    font-weight: 600;
+  }
+  & p {
+    margin: 0;
+  }
+  & ul {
+    margin: 4px 0 0 18px;
+  }
+  & li {
+    margin-bottom: 2px;
+  }
+  & code {
+    font-family: var(--font-mono);
+    background: rgba(0, 0, 0, 0.05);
+    padding: 2px 4px;
+    border-radius: 4px;
+  }
 }
 
 /* ============================================================
    Code editor — flex container for the CodeMirror editor
    ============================================================ */
 
-.code-editor-wrap  { flex: 1; display: flex; overflow: hidden; background: var(--color-bg-tint); }
+.code-editor-wrap {
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+  background: var(--color-bg-tint);
+}
 
 /* ============================================================
    File previews
    ============================================================ */
-
 
 /* ============================================================
    React Flow overrides
    ============================================================ */
 
 .react-flow__handle {
-  width: 8px !important; height: 8px !important;
+  width: 8px !important;
+  height: 8px !important;
   background: var(--color-text-3) !important;
   border: 2px solid #fff !important;
-  transition: background-color .12s, border-color .12s;
-  &:hover { background: var(--color-primary) !important; }
+  transition:
+    background-color 0.12s,
+    border-color 0.12s;
+  &:hover {
+    background: var(--color-primary) !important;
+  }
 }
 .react-flow__controls {
   box-shadow: var(--shadow-sm) !important;
@@ -359,8 +680,18 @@
   border-bottom: 1px solid var(--color-border) !important;
   color: var(--color-text-2) !important;
   background: #fff !important;
-  &:last-child { border-bottom: 0 !important; }
-  &:hover { background: var(--color-bg-tint) !important; color: var(--color-primary) !important; }
+  &:last-child {
+    border-bottom: 0 !important;
+  }
+  &:hover {
+    background: var(--color-bg-tint) !important;
+    color: var(--color-primary) !important;
+  }
 }
-.react-flow__edge-path { stroke: var(--color-text-3); stroke-width: 1.5; }
-.react-flow__edge.selected .react-flow__edge-path { stroke: var(--color-text-2); }
+.react-flow__edge-path {
+  stroke: var(--color-text-3);
+  stroke-width: 1.5;
+}
+.react-flow__edge.selected .react-flow__edge-path {
+  stroke: var(--color-text-2);
+}

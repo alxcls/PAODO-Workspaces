@@ -1,28 +1,31 @@
 // Home page block for editing a persisted workspace description.
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 
-export default function DescriptionBlock({
-  value,
-  onChange,
-}: {
-  value: string;
-  onChange: (d: string) => void;
-}) {
+export default function DescriptionBlock({ value, onChange }: { value: string; onChange: (d: string) => void }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(value);
 
-  useEffect(() => setDraft(value), [value]);
-
-  const save = () => { onChange(draft); setEditing(false); };
-  const cancel = () => { setDraft(value); setEditing(false); };
+  const save = () => {
+    onChange(draft);
+    setEditing(false);
+  };
+  const cancel = () => {
+    setDraft(value);
+    setEditing(false);
+  };
 
   return (
     <div
       className={`relative flex flex-col border rounded-card p-[16px_18px] transition-[border-color,background] duration-[140ms] ${editing ? "border-primary-2 bg-bg" : "border-border bg-bg-tint cursor-text hover:border-primary-2 hover:bg-bg group"}`}
       style={{ height: 240 }}
-      onClick={() => { if (!editing) setEditing(true); }}
+      onClick={() => {
+        if (!editing) {
+          setDraft(value);
+          setEditing(true);
+        }
+      }}
     >
       {editing ? (
         <>
@@ -32,11 +35,17 @@ export default function DescriptionBlock({
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
             placeholder="What is this workspace for?"
-            onKeyDown={(e) => { if (e.key === "Escape") cancel(); }}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") cancel();
+            }}
           />
           <div className="mt-2 flex gap-2 items-center">
-            <button className="btn btn-primary btn-sm" onClick={save}>Save</button>
-            <button className="linkbtn" onClick={cancel}>Cancel</button>
+            <button className="btn btn-primary btn-sm" onClick={save}>
+              Save
+            </button>
+            <button className="linkbtn" onClick={cancel}>
+              Cancel
+            </button>
           </div>
         </>
       ) : value ? (

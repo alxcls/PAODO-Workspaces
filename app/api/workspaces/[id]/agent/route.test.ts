@@ -71,11 +71,13 @@ describe("POST /api/workspaces/[id]/agent — Bearer key auth & per-workspace sc
     expect(reachedAgent(res)).toBe(true);
     expect(res.headers.get("x-conversation-id")).toBe("conv-created");
     expect(h.createConversation).toHaveBeenCalledWith("ws-a");
-    expect(h.startRun).toHaveBeenCalledWith(expect.objectContaining({
-      conversationId: "conv-created",
-      userInput: "hi",
-      origin: "api",
-    }));
+    expect(h.startRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        conversationId: "conv-created",
+        userInput: "hi",
+        origin: "api",
+      }),
+    );
   });
 
   it("continues an explicitly supplied conversation instead of creating another", async () => {

@@ -64,10 +64,7 @@ export interface GuardedTarget {
 // the validated `ip` and having the caller PIN the connection to it (see
 // webFetch.ts) — the address validated is the address dialed. TLS SNI/cert
 // validation still run against the hostname, so pinning does not weaken TLS.
-export async function assertPublicUrl(
-  rawUrl: string,
-  resolve: HostnameResolver = lookup,
-): Promise<GuardedTarget> {
+export async function assertPublicUrl(rawUrl: string, resolve: HostnameResolver = lookup): Promise<GuardedTarget> {
   const finalUrl = rawUrl.startsWith("http://") ? rawUrl.replace("http://", "https://") : rawUrl;
   let parsed: URL;
   try {

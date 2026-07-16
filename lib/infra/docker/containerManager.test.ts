@@ -10,9 +10,7 @@ const OK: DockerResult = { stdout: "", stderr: "", code: 0 };
 // Records every exec() invocation and answers the pidfile poll with a canned pgid, so we can assert
 // on the exact in-container commands startBackground/stopBackground issue. `scanOut` answers the
 // rehydration scan (the exec whose script does the `kill -0` liveness check over the pidfiles).
-function makeDocker(
-  opts: { pgid?: string; scanOut?: string } = {},
-): { docker: IDockerClient; execCalls: string[][] } {
+function makeDocker(opts: { pgid?: string; scanOut?: string } = {}): { docker: IDockerClient; execCalls: string[][] } {
   const { pgid = "4242", scanOut } = opts;
   const execCalls: string[][] = [];
   const docker: IDockerClient = {
@@ -67,8 +65,8 @@ describe("ContainerManager background tasks", () => {
     const launch = execCalls.find((c) => c.join(" ").includes("setsid"))!;
     const launchScript = launch[2];
     expect(launchScript).toContain("setsid");
-    expect(launchScript).toContain(logFile);            // output redirected to the log file
-    expect(launchScript).toMatch(/&\s*$/);              // backgrounded so the exec returns at once
+    expect(launchScript).toContain(logFile); // output redirected to the log file
+    expect(launchScript).toMatch(/&\s*$/); // backgrounded so the exec returns at once
     // The user command is passed as an argv positional ($1), never string-interpolated (no injection).
     expect(launch).toContain("python3 -m http.server 8080");
     expect(launchScript).not.toContain("python3 -m http.server 8080");
@@ -87,7 +85,7 @@ describe("ContainerManager background tasks", () => {
 
     expect(stopped).toBe(true);
     const kill = execCalls.find((c) => c.join(" ").includes("kill -KILL"))!;
-    expect(kill[2]).toContain("kill -KILL -4242");      // negative pgid → kills the whole group
+    expect(kill[2]).toContain("kill -KILL -4242"); // negative pgid → kills the whole group
     expect(mgr.listBackground("ws1")).toHaveLength(0);
   });
 
@@ -96,7 +94,7 @@ describe("ContainerManager background tasks", () => {
   });
 
   it("does not track a task when the pid was never captured", async () => {
-    const { mgr: m } = makeManager({ pgid: "" });       // poll returns empty → no pgid
+    const { mgr: m } = makeManager({ pgid: "" }); // poll returns empty → no pgid
     await m.startBackground("ws1", "/w", "false");
     expect(m.listBackground("ws1")).toHaveLength(0);
   });

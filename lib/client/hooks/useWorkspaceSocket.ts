@@ -13,10 +13,7 @@ export interface WorkspaceSocketHandle {
   sendMessage: (msg: object) => void;
 }
 
-export function useWorkspaceSocket(
-  workspaceId: string,
-  handlers: HandlerMap
-): WorkspaceSocketHandle {
+export function useWorkspaceSocket(workspaceId: string, handlers: HandlerMap): WorkspaceSocketHandle {
   const wsRef = useRef<WebSocket | null>(null);
   const handlersRef = useRef<HandlerMap>(handlers);
   const reconnectRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -37,7 +34,9 @@ export function useWorkspaceSocket(
     cancelledRef.current = false;
 
     function connect() {
-      const ws = new WebSocket(`${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}/ws?workspaceId=${workspaceId}`);
+      const ws = new WebSocket(
+        `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}/ws?workspaceId=${workspaceId}`,
+      );
       wsRef.current = ws;
 
       ws.onopen = () => {
@@ -50,11 +49,16 @@ export function useWorkspaceSocket(
         try {
           const msg = JSON.parse(event.data as string) as WsMessage;
           handlersRef.current[msg.type]?.(msg);
-        } catch { /* ignore malformed */ }
+        } catch {
+          /* ignore malformed */
+        }
       };
 
       ws.onclose = () => {
-        if (pingRef.current) { clearInterval(pingRef.current); pingRef.current = null; }
+        if (pingRef.current) {
+          clearInterval(pingRef.current);
+          pingRef.current = null;
+        }
         // wsRef.current === ws guards against reconnects from a stale socket after workspaceId change.
         if (!cancelledRef.current && wsRef.current === ws) {
           reconnectRef.current = setTimeout(connect, 2_000);
@@ -66,8 +70,14 @@ export function useWorkspaceSocket(
 
     return () => {
       cancelledRef.current = true;
-      if (reconnectRef.current) { clearTimeout(reconnectRef.current); reconnectRef.current = null; }
-      if (pingRef.current) { clearInterval(pingRef.current); pingRef.current = null; }
+      if (reconnectRef.current) {
+        clearTimeout(reconnectRef.current);
+        reconnectRef.current = null;
+      }
+      if (pingRef.current) {
+        clearInterval(pingRef.current);
+        pingRef.current = null;
+      }
       const ws = wsRef.current;
       if (ws) {
         // Null the ref first so onclose (which fires async) sees wsRef.current !== ws and skips reconnect.

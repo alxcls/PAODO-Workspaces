@@ -22,8 +22,10 @@ export class ImageManager {
     if (check.code === 0) {
       if (!hash) return; // can't read Dockerfile — assume image is current
       const label = await this.docker.cmd(
-        "image", "inspect",
-        "--format", `{{index .Config.Labels "${HASH_LABEL}"}}`,
+        "image",
+        "inspect",
+        "--format",
+        `{{index .Config.Labels "${HASH_LABEL}"}}`,
         imageName,
       );
       if (label.stdout === hash) return;
@@ -45,12 +47,7 @@ export class ImageManager {
 
   // Returns the hash label from an existing container, or null if not present.
   async getContainerImageHash(containerName: string): Promise<string | null> {
-    const r = await this.docker.cmd(
-      "inspect",
-      "--format",
-      `{{index .Config.Labels "${HASH_LABEL}"}}`,
-      containerName,
-    );
+    const r = await this.docker.cmd("inspect", "--format", `{{index .Config.Labels "${HASH_LABEL}"}}`, containerName);
     return r.code === 0 ? r.stdout : null;
   }
 

@@ -35,10 +35,7 @@ describe("substituteHeaderValue", () => {
 
   it("substitutes a Basic token used as the username (token:)", () => {
     const header = "Basic " + Buffer.from(`${TOKEN}:`).toString("base64");
-    const decoded = Buffer.from(
-      substituteHeaderValue(header, tokenMap).replace(/^Basic /, ""),
-      "base64",
-    ).toString();
+    const decoded = Buffer.from(substituteHeaderValue(header, tokenMap).replace(/^Basic /, ""), "base64").toString();
     expect(decoded).toBe(`${REAL}:`);
   });
 

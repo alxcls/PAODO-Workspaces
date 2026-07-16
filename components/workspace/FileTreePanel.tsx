@@ -1,12 +1,6 @@
 "use client";
 
-import {
-  useRef,
-  useState,
-  type ChangeEvent,
-  type CSSProperties,
-  type DragEvent,
-} from "react";
+import { useRef, useState, type ChangeEvent, type CSSProperties, type DragEvent } from "react";
 import { readDroppedEntries } from "@/lib/client/dropEntries";
 import { useFileOperations } from "@/lib/client/hooks/useFileOperations";
 import { useFileTreeMove } from "@/lib/client/hooks/useFileTreeMove";
@@ -15,8 +9,19 @@ import { useFileUpload } from "@/lib/client/hooks/useFileUpload";
 import { FileTreeList } from "./FileTreeList";
 
 const UploadIcon = () => (
-  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="17 8 12 3 7 8" /><line x1="12" y1="3" x2="12" y2="15" />
+  <svg
+    viewBox="0 0 24 24"
+    width="16"
+    height="16"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+  >
+    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+    <polyline points="17 8 12 3 7 8" />
+    <line x1="12" y1="3" x2="12" y2="15" />
   </svg>
 );
 
@@ -46,7 +51,8 @@ const UploadMenu = ({
           type="button"
           className={`btn btn-ghost btn-sm flex-1 justify-center relative ${busy ? "pointer-events-none opacity-50" : ""}`}
         >
-          <UploadIcon /><span>Files</span>
+          <UploadIcon />
+          <span>Files</span>
           <input
             type="file"
             multiple
@@ -58,7 +64,8 @@ const UploadMenu = ({
           type="button"
           className={`btn btn-ghost btn-sm flex-1 justify-center relative ${busy ? "pointer-events-none opacity-50" : ""}`}
         >
-          <UploadIcon /><span>Folder</span>
+          <UploadIcon />
+          <span>Folder</span>
           <input
             type="file"
             multiple
@@ -183,7 +190,10 @@ export default function FileTreePanel({
       onDrop={handleExternalDrop}
     >
       <div className="flex items-center gap-2 p-[14px_14px_8px]">
-        <span className="font-semibold text-[15px] tracking-[-0.01em] whitespace-nowrap overflow-hidden text-ellipsis flex-1" title={workspaceName}>
+        <span
+          className="font-semibold text-[15px] tracking-[-0.01em] whitespace-nowrap overflow-hidden text-ellipsis flex-1"
+          title={workspaceName}
+        >
           {workspaceName}
         </span>
       </div>
@@ -239,8 +249,12 @@ export default function FileTreePanel({
           }}
         />
         {draggingUpload && (
-          <div className={`absolute inset-0 z-10 flex items-center justify-center pointer-events-none border-2 border-dashed ${uploadBusy ? "border-border bg-bg/80" : "border-primary bg-primary-tint/80"}`}>
-            <div className={`flex flex-col items-center gap-2 text-[13.5px] font-medium ${uploadBusy ? "text-text-3" : "text-primary"}`}>
+          <div
+            className={`absolute inset-0 z-10 flex items-center justify-center pointer-events-none border-2 border-dashed ${uploadBusy ? "border-border bg-bg/80" : "border-primary bg-primary-tint/80"}`}
+          >
+            <div
+              className={`flex flex-col items-center gap-2 text-[13.5px] font-medium ${uploadBusy ? "text-text-3" : "text-primary"}`}
+            >
               <UploadIcon />
               <span>{uploadBusy ? "Upload in progress — please wait" : "Drop files or folders to upload"}</span>
             </div>
@@ -248,11 +262,11 @@ export default function FileTreePanel({
         )}
       </div>
 
-      {(selection.selected.size > 0
-        || operations.deleteError
-        || operations.moveError
-        || treeMove.moveNote
-        || treeMove.movingPaths.size > 0) && (
+      {(selection.selected.size > 0 ||
+        operations.deleteError ||
+        operations.moveError ||
+        treeMove.moveNote ||
+        treeMove.movingPaths.size > 0) && (
         <div className="border-t border-border p-[10px_12px] bg-bg">
           <div className="flex gap-1">
             <button
@@ -274,25 +288,17 @@ export default function FileTreePanel({
             </button>
           </div>
           {operations.deleteError && (
-            <div className="text-xs text-danger whitespace-pre-wrap mt-2 px-1">
-              {operations.deleteError}
-            </div>
+            <div className="text-xs text-danger whitespace-pre-wrap mt-2 px-1">{operations.deleteError}</div>
           )}
           {treeMove.movingPaths.size > 0 && (
             <div className="text-xs text-text-3 mt-2 px-1">
-              {treeMove.movingPaths.size > 1
-                ? `Moving ${treeMove.movingPaths.size} items…`
-                : "Moving…"}
+              {treeMove.movingPaths.size > 1 ? `Moving ${treeMove.movingPaths.size} items…` : "Moving…"}
             </div>
           )}
           {operations.moveError && (
-            <div className="text-xs text-danger whitespace-pre-wrap mt-2 px-1">
-              {operations.moveError}
-            </div>
+            <div className="text-xs text-danger whitespace-pre-wrap mt-2 px-1">{operations.moveError}</div>
           )}
-          {treeMove.moveNote && (
-            <div className="text-xs text-text-3 mt-2 px-1">{treeMove.moveNote}</div>
-          )}
+          {treeMove.moveNote && <div className="text-xs text-text-3 mt-2 px-1">{treeMove.moveNote}</div>}
         </div>
       )}
     </aside>

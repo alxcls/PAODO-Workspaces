@@ -26,7 +26,10 @@ export default function EnvVarsBlock({ wsId }: { wsId: string }) {
   }, [wsId]);
 
   const resetForm = () => {
-    setName(""); setValue(""); setDomains([""]); setError(null);
+    setName("");
+    setValue("");
+    setDomains([""]);
+    setError(null);
   };
 
   const setDomainValue = (idx: number, val: string) => {
@@ -57,7 +60,7 @@ export default function EnvVarsBlock({ wsId }: { wsId: string }) {
       }
       resetForm();
       setShowForm(false);
-      const updated = await fetch(`/api/workspaces/${wsId}/env-vars`).then((r) => r.json()) as SecretMeta[];
+      const updated = (await fetch(`/api/workspaces/${wsId}/env-vars`).then((r) => r.json())) as SecretMeta[];
       setSecrets(updated);
     } finally {
       setAdding(false);
@@ -80,7 +83,10 @@ export default function EnvVarsBlock({ wsId }: { wsId: string }) {
       {secrets.length > 0 && (
         <div className="flex flex-col gap-1.5">
           {secrets.map((s) => (
-            <div key={s.name} className="flex items-center justify-between gap-2 text-ms bg-white border border-border rounded-ctrl px-2.5 py-1.5">
+            <div
+              key={s.name}
+              className="flex items-center justify-between gap-2 text-ms bg-white border border-border rounded-ctrl px-2.5 py-1.5"
+            >
               <div className="flex items-center gap-2 min-w-0">
                 <code className="font-mono text-xs text-text shrink-0">{s.name}</code>
                 {s.domains?.length ? (
@@ -89,8 +95,12 @@ export default function EnvVarsBlock({ wsId }: { wsId: string }) {
               </div>
               {confirmDelete === s.name ? (
                 <div className="flex items-center gap-2 shrink-0">
-                  <button className="btn btn-danger btn-sm" onClick={() => remove(s.name)}>Delete</button>
-                  <button className="linkbtn" onClick={() => setConfirmDelete(null)}>Cancel</button>
+                  <button className="btn btn-danger btn-sm" onClick={() => remove(s.name)}>
+                    Delete
+                  </button>
+                  <button className="linkbtn" onClick={() => setConfirmDelete(null)}>
+                    Cancel
+                  </button>
                 </div>
               ) : (
                 <button className="linkbtn text-danger shrink-0" onClick={() => setConfirmDelete(s.name)}>
@@ -103,7 +113,13 @@ export default function EnvVarsBlock({ wsId }: { wsId: string }) {
       )}
 
       {!showForm ? (
-        <button className="btn btn-sm self-start" onClick={() => { resetForm(); setShowForm(true); }}>
+        <button
+          className="btn btn-sm self-start"
+          onClick={() => {
+            resetForm();
+            setShowForm(true);
+          }}
+        >
           Add a secret
         </button>
       ) : (
@@ -166,7 +182,15 @@ export default function EnvVarsBlock({ wsId }: { wsId: string }) {
             >
               {adding ? "Saving…" : "Save secret"}
             </button>
-            <button className="linkbtn" onClick={() => { setShowForm(false); resetForm(); }}>Cancel</button>
+            <button
+              className="linkbtn"
+              onClick={() => {
+                setShowForm(false);
+                resetForm();
+              }}
+            >
+              Cancel
+            </button>
           </div>
         </div>
       )}

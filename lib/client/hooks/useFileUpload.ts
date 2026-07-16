@@ -34,10 +34,10 @@ export function useFileUpload(apiBase: string, onUploaded: () => void) {
       const worker = async () => {
         while (queue.length > 0) {
           const file = queue.shift()!;
-          const res = await fetch(
-            `${apiBase}/files/upload?path=${encodeURIComponent(file.name)}`,
-            { method: "POST", body: file }
-          );
+          const res = await fetch(`${apiBase}/files/upload?path=${encodeURIComponent(file.name)}`, {
+            method: "POST",
+            body: file,
+          });
           if (!res.ok) throw new Error(`Failed to upload ${file.name}`);
         }
       };
@@ -72,7 +72,7 @@ export function useFileUpload(apiBase: string, onUploaded: () => void) {
       setStatus("Compressing 0%");
       const blob = await zip.generateAsync(
         { type: "blob", compression: "DEFLATE", compressionOptions: { level: 1 } },
-        (meta) => setStatus(`Compressing ${Math.round(meta.percent)}%`)
+        (meta) => setStatus(`Compressing ${Math.round(meta.percent)}%`),
       );
       setStatus("Uploading archive…");
       const res = await fetch(`${apiBase}/files/upload`, {

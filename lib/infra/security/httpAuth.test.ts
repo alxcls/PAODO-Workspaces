@@ -106,8 +106,12 @@ describe("checkAuth", () => {
     const r = req({ method: "POST", pathname: "/api/workspaces/ws1/agent" });
     expect(checkAuth("ip", r, CREDS, tracker)).toBe("ok");
     // ...but only for that exact route, and only for POST
-    expect(checkAuth("ip", req({ method: "GET", pathname: "/api/workspaces/ws1/agent" }), CREDS, tracker)).toBe("challenge");
-    expect(checkAuth("ip", req({ method: "POST", pathname: "/api/workspaces/ws1/agent/extra" }), CREDS, tracker)).toBe("challenge");
+    expect(checkAuth("ip", req({ method: "GET", pathname: "/api/workspaces/ws1/agent" }), CREDS, tracker)).toBe(
+      "challenge",
+    );
+    expect(checkAuth("ip", req({ method: "POST", pathname: "/api/workspaces/ws1/agent/extra" }), CREDS, tracker)).toBe(
+      "challenge",
+    );
   });
 
   it("exempts the Workspace MCP endpoint (own Bearer secret) for every method", () => {
@@ -115,10 +119,13 @@ describe("checkAuth", () => {
       expect(checkAuth("ip", req({ method, pathname: "/api/workspaces/ws1/mcp" }), CREDS, tracker)).toBe("ok");
     }
     // ...but not the management route or a sub-path
-    expect(checkAuth("ip", req({ method: "GET", pathname: "/api/workspaces/ws1/mcp-config" }), CREDS, tracker)).toBe("challenge");
-    expect(checkAuth("ip", req({ method: "POST", pathname: "/api/workspaces/ws1/mcp/extra" }), CREDS, tracker)).toBe("challenge");
+    expect(checkAuth("ip", req({ method: "GET", pathname: "/api/workspaces/ws1/mcp-config" }), CREDS, tracker)).toBe(
+      "challenge",
+    );
+    expect(checkAuth("ip", req({ method: "POST", pathname: "/api/workspaces/ws1/mcp/extra" }), CREDS, tracker)).toBe(
+      "challenge",
+    );
   });
-
 });
 
 describe("isCsrf", () => {
@@ -143,7 +150,6 @@ describe("isCsrf", () => {
   it("allows requests with no Sec-Fetch-Site header (non-browser clients)", () => {
     expect(isCsrf({ method: "POST", pathname: "/api/x", secFetchSite: undefined })).toBe(false);
   });
-
 });
 
 describe("authRequestFromIncoming / getClientIp", () => {
@@ -157,7 +163,9 @@ describe("authRequestFromIncoming / getClientIp", () => {
   });
 
   it("prefers x-real-ip, falling back to the socket peer", () => {
-    expect(getClientIp({ headers: { "x-real-ip": "9.9.9.9" }, socket: { remoteAddress: "1.2.3.4" } } as never)).toBe("9.9.9.9");
+    expect(getClientIp({ headers: { "x-real-ip": "9.9.9.9" }, socket: { remoteAddress: "1.2.3.4" } } as never)).toBe(
+      "9.9.9.9",
+    );
     expect(getClientIp({ headers: {}, socket: { remoteAddress: "1.2.3.4" } } as never)).toBe("1.2.3.4");
     expect(getClientIp({ headers: {}, socket: {} } as never)).toBe("unknown");
   });

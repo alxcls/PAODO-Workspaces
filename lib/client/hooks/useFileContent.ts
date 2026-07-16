@@ -18,7 +18,7 @@ interface Options {
 export function useFileContent(
   workspaceId: string,
   filePath: string | null,
-  { onClose, onSelfWrite, apiBase }: Options
+  { onClose, onSelfWrite, apiBase }: Options,
 ) {
   const base = apiBase ?? `/api/workspaces/${workspaceId}`;
   const [fileType, setFileType] = useState<FileType>(null);
@@ -56,49 +56,78 @@ export function useFileContent(
     isDirtyRef.current = isDirty;
   });
 
-  const fetchContent = useCallback(async (path: string, silent = false) => {
-    if (!silent) { setLoading(true); setFileType(null); setContent(null); setDraft(""); }
-    setError(null);
-    try {
-      const res = await fetch(`${base}/files/content?path=${encodeURIComponent(path)}`);
-      if (res.status === 404) { onCloseRef.current(); return; }
-      if (!res.ok) { if (!silent) setError("Cannot load file"); return; }
-      const data = (await res.json()) as { type: "text" | "image" | "binary"; content?: string };
-      setFileType(data.type);
-      setContent(data.content ?? null);
-      setDraft(data.content ?? "");
-    } catch {
-      if (!silent) setError("Failed to fetch file");
-    } finally {
-      if (!silent) setLoading(false);
-    }
-  }, [base]);
+  const fetchContent = useCallback(
+    async (path: string, silent = false) => {
+      if (!silent) {
+        setLoading(true);
+        setFileType(null);
+        setContent(null);
+        setDraft("");
+      }
+      setError(null);
+      try {
+        const res = await fetch(`${base}/files/content?path=${encodeURIComponent(path)}`);
+        if (res.status === 404) {
+          onCloseRef.current();
+          return;
+        }
+        if (!res.ok) {
+          if (!silent) setError("Cannot load file");
+          return;
+        }
+        const data = (await res.json()) as { type: "text" | "image" | "binary"; content?: string };
+        setFileType(data.type);
+        setContent(data.content ?? null);
+        setDraft(data.content ?? "");
+      } catch {
+        if (!silent) setError("Failed to fetch file");
+      } finally {
+        if (!silent) setLoading(false);
+      }
+    },
+    [base],
+  );
 
+  // This effect is the file-selection state machine: it must clear stale content synchronously when
+  // selection disappears, while preserving a dirty draft across an in-flight rename.
+  /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
     if (filePath && preservedMovedPathRef.current === filePath) {
       // A rename does not change the file's contents. Keep the current editor state — especially a
       // dirty draft — instead of clearing it and reloading the last saved content from disk.
       preservedMovedPathRef.current = null;
     } else if (filePath) fetchContent(filePath);
-    else { setFileType(null); setContent(null); setDraft(""); }
+    else {
+      setFileType(null);
+      setContent(null);
+      setDraft("");
+    }
   }, [filePath, fetchContent]);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   const handleSave = useCallback(async () => {
     const path = filePathRef.current;
     if (!path) return;
     const currentDraft = draftRef.current;
-    setSaving(true); setError(null);
+    setSaving(true);
+    setError(null);
     try {
       const res = await fetch(`${base}/files/content`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ path, content: currentDraft }),
       });
-      if (!res.ok) { setError("Save failed"); return; }
+      if (!res.ok) {
+        setError("Save failed");
+        return;
+      }
       setContent(currentDraft);
       onSelfWriteRef.current?.(path);
-    } catch { setError("Save failed"); }
-    finally { setSaving(false); }
+    } catch {
+      setError("Save failed");
+    } finally {
+      setSaving(false);
+    }
   }, [base]);
 
   const deleteFile = useCallback(async () => {
@@ -106,26 +135,29 @@ export function useFileContent(
     if (!path) return;
     setDeleting(true);
     try {
-      const res = await fetch(
-        `${base}/files/content?path=${encodeURIComponent(path)}`,
-        { method: "DELETE" }
-      );
+      const res = await fetch(`${base}/files/content?path=${encodeURIComponent(path)}`, { method: "DELETE" });
       if (!res.ok) {
-        const body = await res.json().catch(() => ({} as { error?: string; message?: string }));
+        const body = await res.json().catch(() => ({}) as { error?: string; message?: string });
         setError(`Delete failed: ${body.error || body.message || `${res.status} ${res.statusText}`}`);
       } else {
         onCloseRef.current();
       }
-    } catch { setError("Delete failed"); }
-    finally { setDeleting(false); }
+    } catch {
+      setError("Delete failed");
+    } finally {
+      setDeleting(false);
+    }
   }, [base]);
 
   // Reload the open file after an agent-side edit, but never overwrite a local draft.
-  const notifyFilesChanged = useCallback((paths: string[]) => {
-    if (isDirtyRef.current) return;
-    const currentPath = filePathRef.current ?? "";
-    if (paths.includes(currentPath)) fetchContent(currentPath, true);
-  }, [fetchContent]);
+  const notifyFilesChanged = useCallback(
+    (paths: string[]) => {
+      if (isDirtyRef.current) return;
+      const currentPath = filePathRef.current ?? "";
+      if (paths.includes(currentPath)) fetchContent(currentPath, true);
+    },
+    [fetchContent],
+  );
 
   const notifyFilesDeleted = useCallback((paths: string[]) => {
     const currentPath = filePathRef.current ?? "";
@@ -162,11 +194,22 @@ export function useFileContent(
   }, []);
 
   return {
-    fileType, content, draft, setDraft,
-    loading, error, saving, deleting, moving,
+    fileType,
+    content,
+    draft,
+    setDraft,
+    loading,
+    error,
+    saving,
+    deleting,
+    moving,
     isDirty,
-    handleSave, deleteFile,
-    notifyFilesChanged, notifyFilesDeleted,
-    notifyFileMoveStarted, notifyFileMoveCancelled, notifyFileMoved,
+    handleSave,
+    deleteFile,
+    notifyFilesChanged,
+    notifyFilesDeleted,
+    notifyFileMoveStarted,
+    notifyFileMoveCancelled,
+    notifyFileMoved,
   };
 }

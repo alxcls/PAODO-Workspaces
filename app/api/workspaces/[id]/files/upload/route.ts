@@ -9,10 +9,7 @@ import { requireWorkspace, rateLimited } from "@/lib/api/guards";
 import { snapshotWorkspace } from "@/lib/infra/git/snapshotWorkspace";
 import { handleUpload } from "@/lib/workspace/fileUpload";
 
-export async function POST(
-  req: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
+export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const limited = rateLimited(req, { max: 200, bucket: "upload", logContext: { workspaceId: id } });
   if (limited) return limited;

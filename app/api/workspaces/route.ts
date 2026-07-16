@@ -6,7 +6,9 @@ import { createLogger } from "@/lib/infra/logger";
 import { rateLimited } from "@/lib/api/guards";
 
 export async function GET() {
-  const list = getStore().listWorkspaces().map(({ id, name, createdAt, description }) => ({ id, name, createdAt, description: description ?? "" }));
+  const list = getStore()
+    .listWorkspaces()
+    .map(({ id, name, createdAt, description }) => ({ id, name, createdAt, description: description ?? "" }));
   return NextResponse.json(list);
 }
 
@@ -15,7 +17,7 @@ export async function POST(req: NextRequest) {
   const limited = rateLimited(req, { logContext: { route: "workspaces" } });
   if (limited) return limited;
 
-  const body = await req.json() as { name?: string };
+  const body = (await req.json()) as { name?: string };
   if (!body.name?.trim()) {
     return NextResponse.json({ error: "name is required" }, { status: 400 });
   }
@@ -23,7 +25,7 @@ export async function POST(req: NextRequest) {
     const workspace = await getStore().createWorkspace(body.name.trim());
     return NextResponse.json(
       { id: workspace.id, name: workspace.name, createdAt: workspace.createdAt },
-      { status: 201 }
+      { status: 201 },
     );
   } catch (err) {
     log.error({ err, name: body.name }, "failed to create workspace");

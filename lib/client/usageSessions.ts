@@ -77,7 +77,9 @@ export function formatCost(cost: number | undefined): string {
   return "$" + cost.toFixed(cost < 1 ? 3 : 2);
 }
 
-function pad(n: number): string { return String(n).padStart(2, "0"); }
+function pad(n: number): string {
+  return String(n).padStart(2, "0");
+}
 
 export function formatDateTime(iso: string): string {
   const d = new Date(iso);
@@ -86,12 +88,18 @@ export function formatDateTime(iso: string): string {
 
 export function originLabel(origin: SessionOrigin): string {
   switch (origin) {
-    case "chat": return "Workspace chat";
-    case "api": return "API";
-    case "mcp": return "Workspace MCP";
-    case "scheduled": return "Scheduled";
-    case "agent": return "Agent network";
+    case "chat":
+      return "Workspace chat";
+    case "api":
+      return "API";
+    case "mcp":
+      return "Workspace MCP";
+    case "scheduled":
+      return "Scheduled";
+    case "agent":
+      return "Agent network";
     // Records created before explicit source tracking used `manual`.
-    case "manual": return "Workspace chat";
+    case "manual":
+      return "Workspace chat";
   }
 }

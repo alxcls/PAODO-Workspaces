@@ -47,12 +47,17 @@ export function useAgentStream(workspaceId: string, conversationId: string | nul
   }, []);
 
   const onTurnCompleteRef = useRef(onTurnComplete);
-  useEffect(() => { onTurnCompleteRef.current = onTurnComplete; });
+  useEffect(() => {
+    onTurnCompleteRef.current = onTurnComplete;
+  });
 
   // Replace the whole transcript with a loaded conversation's saved history.
-  const hydrate = useCallback((loaded: Message[]) => {
-    commit({ messages: loaded, totalInput: 0, totalOutput: 0 });
-  }, [commit]);
+  const hydrate = useCallback(
+    (loaded: Message[]) => {
+      commit({ messages: loaded, totalInput: 0, totalOutput: 0 });
+    },
+    [commit],
+  );
 
   const reset = useCallback(() => {
     commit(emptyTranscript());
@@ -74,90 +79,122 @@ export function useAgentStream(workspaceId: string, conversationId: string | nul
 
   // Shared SSE pump for both send and attach. `userBubble`, when given, is appended before the
   // stream opens (the user's own message echo).
-  const consume = useCallback(async (body: object, userBubble?: string) => {
-    if (userBubble !== undefined) {
-      commit({ ...transcriptRef.current, messages: [...transcriptRef.current.messages, { role: "user", content: userBubble }], totalInput: 0, totalOutput: 0 });
-    }
-    setStreaming(true);
-
-    let assistantContent = "";
-    let reasoningContent = "";
-    let wasAborted = false;
-
-    try {
-      abortRef.current = new AbortController();
-      const res = await fetch(`/api/workspaces/${workspaceId}/chat`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-        signal: abortRef.current.signal,
-      });
-
-      if (!res.ok || !res.body) {
-        if (res.status !== 409) {
-          commit({ ...transcriptRef.current, messages: [...transcriptRef.current.messages, { role: "error", content: "Failed to reach server." }] });
-        }
-        return;
+  const consume = useCallback(
+    async (body: object, userBubble?: string) => {
+      if (userBubble !== undefined) {
+        commit({
+          ...transcriptRef.current,
+          messages: [...transcriptRef.current.messages, { role: "user", content: userBubble }],
+          totalInput: 0,
+          totalOutput: 0,
+        });
       }
+      setStreaming(true);
 
-      for await (const event of parseSseStream<AgentEvent>(res.body)) {
-        if (event.type === "token") {
-          assistantContent += event.content;
-          pendingTokenRef.current = assistantContent;
-          if (!tokenRafRef.current) {
-            tokenRafRef.current = requestAnimationFrame(() => { tokenRafRef.current = null; flushToken(); });
+      let assistantContent = "";
+      let reasoningContent = "";
+      let wasAborted = false;
+
+      try {
+        abortRef.current = new AbortController();
+        const res = await fetch(`/api/workspaces/${workspaceId}/chat`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+          signal: abortRef.current.signal,
+        });
+
+        if (!res.ok || !res.body) {
+          if (res.status !== 409) {
+            commit({
+              ...transcriptRef.current,
+              messages: [...transcriptRef.current.messages, { role: "error", content: "Failed to reach server." }],
+            });
           }
-        } else if (event.type === "reasoning") {
-          reasoningContent += event.content;
-          pendingReasoningRef.current = reasoningContent;
-          if (!reasoningRafRef.current) {
-            reasoningRafRef.current = requestAnimationFrame(() => { reasoningRafRef.current = null; flushReasoning(); });
+          return;
+        }
+
+        for await (const event of parseSseStream<AgentEvent>(res.body)) {
+          if (event.type === "token") {
+            assistantContent += event.content;
+            pendingTokenRef.current = assistantContent;
+            if (!tokenRafRef.current) {
+              tokenRafRef.current = requestAnimationFrame(() => {
+                tokenRafRef.current = null;
+                flushToken();
+              });
+            }
+          } else if (event.type === "reasoning") {
+            reasoningContent += event.content;
+            pendingReasoningRef.current = reasoningContent;
+            if (!reasoningRafRef.current) {
+              reasoningRafRef.current = requestAnimationFrame(() => {
+                reasoningRafRef.current = null;
+                flushReasoning();
+              });
+            }
+          } else if (event.type === "tool_start") {
+            assistantContent = "";
+            reasoningContent = "";
+            setPendingTools((n) => n + 1);
+            commit(applyDiscreteEvent(transcriptRef.current, event));
+          } else if (event.type === "tool_result") {
+            setPendingTools((n) => Math.max(0, n - 1));
+            commit(applyDiscreteEvent(transcriptRef.current, event));
+          } else {
+            // turn_usage, done, limit_reached, error — pure folds with no hook-side bookkeeping.
+            commit(applyDiscreteEvent(transcriptRef.current, event));
           }
-        } else if (event.type === "tool_start") {
-          assistantContent = "";
-          reasoningContent = "";
-          setPendingTools((n) => n + 1);
-          commit(applyDiscreteEvent(transcriptRef.current, event));
-        } else if (event.type === "tool_result") {
-          setPendingTools((n) => Math.max(0, n - 1));
-          commit(applyDiscreteEvent(transcriptRef.current, event));
+        }
+      } catch (err) {
+        if (err instanceof DOMException && err.name === "AbortError") {
+          wasAborted = true;
         } else {
-          // turn_usage, done, limit_reached, error — pure folds with no hook-side bookkeeping.
-          commit(applyDiscreteEvent(transcriptRef.current, event));
+          commit({
+            ...transcriptRef.current,
+            messages: [...transcriptRef.current.messages, { role: "error", content: "Failed to reach server." }],
+          });
         }
+      } finally {
+        if (tokenRafRef.current) {
+          cancelAnimationFrame(tokenRafRef.current);
+          tokenRafRef.current = null;
+        }
+        if (reasoningRafRef.current) {
+          cancelAnimationFrame(reasoningRafRef.current);
+          reasoningRafRef.current = null;
+        }
+        flushToken();
+        flushReasoning();
+        // Finalize any tool row still spinning — on detach the stream is torn down before its
+        // tool_result arrives, so without this a tool bubble's spinner would run forever.
+        commit({ ...transcriptRef.current, messages: markAllToolsDone(transcriptRef.current.messages) });
+        abortRef.current = null;
+        setStreaming(false);
+        setPendingTools(0);
+        if (!wasAborted) onTurnCompleteRef.current?.();
       }
-    } catch (err) {
-      if (err instanceof DOMException && err.name === "AbortError") {
-        wasAborted = true;
-      } else {
-        commit({ ...transcriptRef.current, messages: [...transcriptRef.current.messages, { role: "error", content: "Failed to reach server." }] });
-      }
-    } finally {
-      if (tokenRafRef.current) { cancelAnimationFrame(tokenRafRef.current); tokenRafRef.current = null; }
-      if (reasoningRafRef.current) { cancelAnimationFrame(reasoningRafRef.current); reasoningRafRef.current = null; }
-      flushToken();
-      flushReasoning();
-      // Finalize any tool row still spinning — on detach the stream is torn down before its
-      // tool_result arrives, so without this a tool bubble's spinner would run forever.
-      commit({ ...transcriptRef.current, messages: markAllToolsDone(transcriptRef.current.messages) });
-      abortRef.current = null;
-      setStreaming(false);
-      setPendingTools(0);
-      if (!wasAborted) onTurnCompleteRef.current?.();
-    }
-  }, [workspaceId, commit, flushToken, flushReasoning]);
+    },
+    [workspaceId, commit, flushToken, flushReasoning],
+  );
 
-  const sendMessage = useCallback(async (userMessage: string) => {
-    if (!conversationId) return;
-    await consume({ message: userMessage, conversationId }, userMessage);
-  }, [conversationId, consume]);
+  const sendMessage = useCallback(
+    async (userMessage: string) => {
+      if (!conversationId) return;
+      await consume({ message: userMessage, conversationId }, userMessage);
+    },
+    [conversationId, consume],
+  );
 
   // Reconnect to a conversation's in-flight run. `userInput` (the message that started it) is
   // echoed as the user bubble since the saved history does not yet include this run.
-  const attachLive = useCallback(async (userInput?: string | null) => {
-    if (!conversationId) return;
-    await consume({ conversationId }, userInput ?? undefined);
-  }, [conversationId, consume]);
+  const attachLive = useCallback(
+    async (userInput?: string | null) => {
+      if (!conversationId) return;
+      await consume({ conversationId }, userInput ?? undefined);
+    },
+    [conversationId, consume],
+  );
 
   // Detach this viewer (stop reading the stream); the server-side run is unaffected.
   const detach = useCallback(() => abortRef.current?.abort(), []);

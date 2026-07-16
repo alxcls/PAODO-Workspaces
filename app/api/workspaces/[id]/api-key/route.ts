@@ -4,41 +4,31 @@ export const runtime = "nodejs";
 
 import { generateKey, setKey, revokeKey, setEnabled, getState } from "@/lib/infra/security/apiKeyStore";
 
-export async function GET(
-  _req: Request,
-  { params }: { params: Promise<{ id: string }> }
-) {
+export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const { keyHash, enabled } = getState(id);
   const publicBaseUrl = process.env.WORKSPACE_API_DOMAIN?.trim()
-    ? `https://${process.env.WORKSPACE_API_DOMAIN.trim().replace(/^https?:\/\//, "").replace(/\/+$/, "")}`
+    ? `https://${process.env.WORKSPACE_API_DOMAIN.trim()
+        .replace(/^https?:\/\//, "")
+        .replace(/\/+$/, "")}`
     : null;
   return Response.json({ enabled, hasKey: keyHash !== null, publicBaseUrl });
 }
 
-export async function POST(
-  _req: Request,
-  { params }: { params: Promise<{ id: string }> }
-) {
+export async function POST(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const { plain, hash } = generateKey();
   setKey(id, hash);
   return Response.json({ plain });
 }
 
-export async function DELETE(
-  _req: Request,
-  { params }: { params: Promise<{ id: string }> }
-) {
+export async function DELETE(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   revokeKey(id);
   return Response.json({ ok: true });
 }
 
-export async function PATCH(
-  req: Request,
-  { params }: { params: Promise<{ id: string }> }
-) {
+export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const { enabled } = (await req.json()) as { enabled: boolean };
   setEnabled(id, enabled);

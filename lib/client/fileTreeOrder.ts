@@ -17,14 +17,9 @@ export function flattenTree(nodes: TreeNode[]): TreeNode[] {
 }
 
 /** The rows currently on screen, top to bottom: a collapsed folder hides its subtree. */
-export function flattenVisible(
-  nodes: TreeNode[],
-  expanded: Record<string, boolean>,
-): TreeNode[] {
+export function flattenVisible(nodes: TreeNode[], expanded: Record<string, boolean>): TreeNode[] {
   return sortTreeNodes(nodes).flatMap((n) =>
-    n.type === "directory" && (expanded[n.path] ?? false)
-      ? [n, ...flattenVisible(n.children ?? [], expanded)]
-      : [n],
+    n.type === "directory" && (expanded[n.path] ?? false) ? [n, ...flattenVisible(n.children ?? [], expanded)] : [n],
   );
 }
 
@@ -39,20 +34,12 @@ export function pathWithDescendants(node: TreeNode): string[] {
  * below it. Falls back to the clicked row alone when the anchor is no longer on screen — collapsing
  * its folder can take it away between the two clicks.
  */
-export function selectionRange(
-  visibleRows: TreeNode[],
-  anchorPath: string | null,
-  targetPath: string,
-): string[] {
+export function selectionRange(visibleRows: TreeNode[], anchorPath: string | null, targetPath: string): string[] {
   const targetIndex = visibleRows.findIndex((n) => n.path === targetPath);
   if (targetIndex === -1) return [];
-  const anchorIndex = anchorPath === null
-    ? -1
-    : visibleRows.findIndex((n) => n.path === anchorPath);
+  const anchorIndex = anchorPath === null ? -1 : visibleRows.findIndex((n) => n.path === anchorPath);
   if (anchorIndex === -1) return pathWithDescendants(visibleRows[targetIndex]);
 
-  const [start, end] = anchorIndex <= targetIndex
-    ? [anchorIndex, targetIndex]
-    : [targetIndex, anchorIndex];
+  const [start, end] = anchorIndex <= targetIndex ? [anchorIndex, targetIndex] : [targetIndex, anchorIndex];
   return visibleRows.slice(start, end + 1).flatMap(pathWithDescendants);
 }

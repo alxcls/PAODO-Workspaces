@@ -51,18 +51,21 @@ Without these capabilities the agent either reasons from stale or incomplete inf
 ### Must have
 
 **Reading the workspace**
+
 - The agent can read any file, with support for reading large files in sections
 - The agent can list the contents of a directory
 - The agent can search for files by name pattern across the whole workspace
 - Every read result indicates whether the file is locked or editable
 
 **Writing to the workspace**
+
 - The agent can create a new file or fully overwrite an existing one
 - The agent can make a targeted edit — replacing an exact passage in a file — without touching the rest
 - Write operations are blocked on locked files and cannot escape the workspace directory
 - The agent must read a file before editing it
 
 **Running commands**
+
 - The agent can run any shell command inside the workspace
 - Output streams live to the browser console as it runs, not buffered until exit
 - A heartbeat appears in the console every 5 seconds during silence so the user knows long-running commands are alive
@@ -71,15 +74,18 @@ Without these capabilities the agent either reasons from stale or incomplete inf
 - When the workspace is globally locked, commands run as a restricted user with no write access
 
 **Web access**
+
 - The agent can fetch the content of any public URL as plain text
 - HTML pages are stripped of scripts, styles, and markup — only readable text is returned
 - Output is capped at 20 000 characters with a notice if truncated
 
 **Task tracking**
+
 - The agent can maintain a checklist of pending, in-progress, and completed tasks
 - The checklist is visible to the user in the UI alongside the console
 
 **Context management**
+
 - The agent can compact its own conversation history mid-run, choosing how aggressively (light / medium / hard)
 - Every compaction carries forward a next-step note so the agent does not lose the thread after trimming
 - Compaction never orphans history: the turn that requested it is committed first, so a later resume always sees a valid conversation

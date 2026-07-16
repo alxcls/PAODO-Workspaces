@@ -21,8 +21,7 @@ beforeAll(() => {
 });
 
 vi.mock("@/lib/workspace/driveStore", () => ({
-  getDrive: (id: string) =>
-    (id === "drive-1" ? { id: "drive-1", name: "shared", createdAt: "" } : undefined),
+  getDrive: (id: string) => (id === "drive-1" ? { id: "drive-1", name: "shared", createdAt: "" } : undefined),
   driveContentDir: () => fixture.driveDir,
 }));
 
@@ -30,11 +29,14 @@ import { PATCH } from "./route";
 import { buildTree } from "@/lib/workspace/fileTree";
 
 const patchMove = (body: unknown, id = "drive-1") =>
-  PATCH(new Request("http://x/api/drives/files/content", {
-    method: "PATCH",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
-  }), { params: Promise.resolve({ id }) });
+  PATCH(
+    new Request("http://x/api/drives/files/content", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+    { params: Promise.resolve({ id }) },
+  );
 
 afterAll(() => fs.rmSync(path.dirname(DRIVE_DIR), { recursive: true, force: true }));
 
@@ -49,8 +51,7 @@ describe("drives files/content PATCH — move", () => {
 
     expect(res.status).toBe(200);
     // Drives are passive storage with no snapshot hook — the move still completes without one.
-    expect((await res.json()).results[0].path)
-      .toBe(path.join(destinationDirectory, "report.csv"));
+    expect((await res.json()).results[0].path).toBe(path.join(destinationDirectory, "report.csv"));
     expect(fs.readFileSync(path.join(destinationDirectory, "report.csv"), "utf8")).toBe("a,b");
     expect(fs.existsSync(sourcePath)).toBe(false);
   });

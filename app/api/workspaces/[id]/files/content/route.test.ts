@@ -97,6 +97,21 @@ describe("files/content PATCH — move", () => {
     expect(fs.readFileSync(path.join(destinationDirectory, "move-me.txt"), "utf8")).toBe("move me");
   });
 
+  it("moves a folder into another folder without merging", async () => {
+    const source = path.join(WS_DIR, "move-folder");
+    const destinationDirectory = path.join(WS_DIR, "folder-archive");
+    fs.mkdirSync(source);
+    fs.mkdirSync(destinationDirectory);
+    fs.writeFileSync(path.join(source, "nested.txt"), "nested");
+
+    const res = await patchMove({ sourcePath: source, destinationDirectory });
+
+    expect(res.status).toBe(200);
+    expect(fs.existsSync(source)).toBe(false);
+    expect(fs.readFileSync(path.join(destinationDirectory, "move-folder", "nested.txt"), "utf8"))
+      .toBe("nested");
+  });
+
   it("rejects moving a folder into one of its descendants", async () => {
     const source = path.join(WS_DIR, "parent");
     const descendant = path.join(source, "child");
@@ -132,6 +147,59 @@ describe("files/content PATCH — move", () => {
     expect(res.status).toBe(409);
     expect(fs.readFileSync(source, "utf8")).toBe("source");
     expect(fs.readFileSync(destination, "utf8")).toBe("destination");
+  });
+
+  // The mkdir reservation carries this case alone: rename(2) replaces an empty directory happily,
+  // so without the reservation an empty same-named folder is silently clobbered and the 409 never
+  // fires. A non-empty one is caught by rename's own ENOTEMPTY, which is why it can't pin this.
+  it("returns a conflict rather than replacing an empty same-named folder", async () => {
+    const sourceDirectory = path.join(WS_DIR, "empty-from");
+    const destinationDirectory = path.join(WS_DIR, "empty-to");
+    const source = path.join(sourceDirectory, "dup");
+    const destination = path.join(destinationDirectory, "dup");
+    fs.mkdirSync(source, { recursive: true });
+    fs.mkdirSync(destination, { recursive: true });
+    fs.writeFileSync(path.join(source, "mine.txt"), "mine");
+
+    const res = await patchMove({ sourcePath: source, destinationDirectory });
+
+    expect(res.status).toBe(409);
+    expect(fs.readFileSync(path.join(source, "mine.txt"), "utf8")).toBe("mine");
+    expect(fs.readdirSync(destination)).toEqual([]);
+  });
+
+  // Folders take the mkdir-reserve-then-rename path rather than the files' link-then-unlink one,
+  // so a same-named folder at the destination has to be rejected outright: merging the two trees
+  // would be a silent, unrecoverable mix of the user's files.
+  it("returns a conflict without merging into a same-named folder", async () => {
+    const sourceDirectory = path.join(WS_DIR, "merge-from");
+    const destinationDirectory = path.join(WS_DIR, "merge-to");
+    const source = path.join(sourceDirectory, "dup");
+    const destination = path.join(destinationDirectory, "dup");
+    fs.mkdirSync(source, { recursive: true });
+    fs.mkdirSync(destination, { recursive: true });
+    fs.writeFileSync(path.join(source, "mine.txt"), "mine");
+    fs.writeFileSync(path.join(destination, "theirs.txt"), "theirs");
+
+    const res = await patchMove({ sourcePath: source, destinationDirectory });
+
+    expect(res.status).toBe(409);
+    expect(fs.readFileSync(path.join(source, "mine.txt"), "utf8")).toBe("mine");
+    expect(fs.readFileSync(path.join(destination, "theirs.txt"), "utf8")).toBe("theirs");
+    expect(fs.existsSync(path.join(destination, "mine.txt"))).toBe(false);
+  });
+
+  it("returns a conflict when a file collides with a same-named folder", async () => {
+    const destinationDirectory = path.join(WS_DIR, "clash-to");
+    fs.mkdirSync(path.join(destinationDirectory, "clash"), { recursive: true });
+    const source = path.join(WS_DIR, "clash");
+    fs.writeFileSync(source, "filedata");
+
+    const res = await patchMove({ sourcePath: source, destinationDirectory });
+
+    expect(res.status).toBe(409);
+    expect(fs.readFileSync(source, "utf8")).toBe("filedata");
+    expect(fs.statSync(path.join(destinationDirectory, "clash")).isDirectory()).toBe(true);
   });
 
   it("rejects a destination outside the workspace", async () => {
@@ -220,6 +288,35 @@ describe("files/content PATCH — move", () => {
 
   it("rejects a malformed body without throwing", async () => {
     expect((await patchMove("{not json")).status).toBe(400);
+    expect((await patchMove(null)).status).toBe(400);
     expect((await patchMove({ destinationDirectory: WS_DIR })).status).toBe(400);
+  });
+
+  it("rejects an invalid destination type instead of treating it as the workspace root", async () => {
+    const source = path.join(WS_DIR, "typed-destination.txt");
+    fs.writeFileSync(source, "stay");
+
+    const res = await patchMove({ sourcePath: source, destinationDirectory: false });
+
+    expect(res.status).toBe(400);
+    expect(fs.readFileSync(source, "utf8")).toBe("stay");
+  });
+
+  it("does not replace an existing directory", async () => {
+    const sourceParent = path.join(WS_DIR, "dir-from");
+    const destinationParent = path.join(WS_DIR, "dir-to");
+    const source = path.join(sourceParent, "same-dir");
+    const destination = path.join(destinationParent, "same-dir");
+    fs.mkdirSync(source, { recursive: true });
+    fs.mkdirSync(destination, { recursive: true });
+    fs.writeFileSync(path.join(source, "source.txt"), "source");
+    fs.writeFileSync(path.join(destination, "destination.txt"), "destination");
+
+    const res = await patchMove({ sourcePath: source, destinationDirectory: destinationParent });
+
+    expect(res.status).toBe(409);
+    expect(fs.readFileSync(path.join(source, "source.txt"), "utf8")).toBe("source");
+    expect(fs.readFileSync(path.join(destination, "destination.txt"), "utf8"))
+      .toBe("destination");
   });
 });

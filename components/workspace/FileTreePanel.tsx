@@ -117,11 +117,11 @@ const TreeNodeList = ({
                   e.preventDefault();
                   e.stopPropagation();
                   e.dataTransfer.dropEffect = canDrop ? "move" : "none";
-                  onDropTargetChange(canDrop ? node.path : "");
+                  onDropTargetChange(canDrop ? node.path : null);
                 }}
                 onDragLeave={(e) => {
                   if (e.currentTarget.contains(e.relatedTarget as Node | null)) return;
-                  if (dropTargetPath === node.path) onDropTargetChange("");
+                  if (dropTargetPath === node.path) onDropTargetChange(null);
                 }}
                 onDrop={(e) => {
                   if (!draggedNode) return;
@@ -184,15 +184,16 @@ const TreeNodeList = ({
               e.preventDefault();
               e.stopPropagation();
               e.dataTransfer.dropEffect = canDropBesideFile ? "move" : "none";
-              onDropTargetChange(canDropBesideFile ? (parentDirectory ?? "") : "");
+              onDropTargetChange(canDropBesideFile ? (parentDirectory ?? "") : null);
             }}
             onDragLeave={() => {
-              if (dropTargetPath === (parentDirectory ?? "")) onDropTargetChange("");
+              if (dropTargetPath === (parentDirectory ?? "")) onDropTargetChange(null);
             }}
             onDrop={(e) => {
               if (!draggedNode) return;
               e.preventDefault();
               e.stopPropagation();
+              onDropTargetChange(null);
               if (canDropBesideFile) onMove(draggedNode.path, parentDirectory);
             }}
           >
@@ -272,6 +273,8 @@ interface Props {
   selectedPath: string | null;
   onFileSelect: (path: string) => void;
   onDeletedPaths?: (paths: string[]) => void;
+  onMoveStarted?: (sourcePath: string) => void;
+  onMoveCancelled?: (sourcePath: string) => void;
   onMovedPath?: (sourcePath: string, destinationPath: string) => void;
   style?: React.CSSProperties;
   refreshKey?: number;
@@ -281,10 +284,13 @@ interface Props {
 
 export default function FileTreePanel({
   workspaceId, workspaceName, selectedPath,
-  onFileSelect, onDeletedPaths, onMovedPath, style, refreshKey, apiBase,
+  onFileSelect, onDeletedPaths, onMoveStarted, onMoveCancelled, onMovedPath,
+  style, refreshKey, apiBase,
 }: Props) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [draggedNode, setDraggedNode] = useState<DraggedTreeNode | null>(null);
+  // "" is the tree root, null is no target at all — a hover the drop would reject must use null,
+  // or the root lights up as though it were about to receive the item.
   const [dropTargetPath, setDropTargetPath] = useState<string | null>(null);
   const base = apiBase ?? `/api/workspaces/${workspaceId}`;
 
@@ -355,10 +361,14 @@ export default function FileTreePanel({
   };
 
   const moveNode = async (sourcePath: string, destinationDirectory: string | null) => {
+    onMoveStarted?.(sourcePath);
     const moved = await handleMove(sourcePath, destinationDirectory);
     setDraggedNode(null);
     setDropTargetPath(null);
-    if (!moved || moved.unchanged) return;
+    if (!moved || moved.unchanged) {
+      onMoveCancelled?.(sourcePath);
+      return;
+    }
     const destinationPath = moved.path;
 
     remapSelection(sourcePath, destinationPath);

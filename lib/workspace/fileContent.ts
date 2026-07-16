@@ -163,7 +163,11 @@ interface MoveTarget {
   unchanged: boolean;
   /** Directory label relative to the workspace root, for the git snapshot message. */
   destinationLabel: string;
+  /** Source metadata captured during validation, used to choose a no-clobber move strategy. */
+  sourceStat: Awaited<ReturnType<typeof fs.stat>>;
 }
+
+class DestinationConflictError extends Error {}
 
 /**
  * Validate a move request, resolving both ends and every rule that can reject one: containment,
@@ -210,19 +214,86 @@ async function resolveMoveTarget(be: FileBackend, body: MoveBody): Promise<MoveT
     clientDestination: path.join(lexicalDirectory, name),
     unchanged: destination === source,
     destinationLabel: path.relative(workspaceRoot, destinationDirectory) || "workspace root",
+    sourceStat,
   };
 }
 
-export async function moveFileContent(req: Request, be: FileBackend): Promise<Response> {
-  let body: { sourcePath?: string; destinationDirectory?: string | null };
+/**
+ * Move without ever replacing an existing destination.
+ *
+ * Files use an exclusive hard-link followed by unlinking the source. Directories first reserve the
+ * destination name with mkdir, then atomically rename over that empty reservation. If another
+ * writer populates the reservation, rename fails and both the original source and new destination
+ * are preserved.
+ */
+async function moveWithoutOverwrite(target: MoveTarget): Promise<void> {
+  if (!target.sourceStat.isDirectory()) {
+    try {
+      await fs.link(target.source, target.destination);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "EEXIST") {
+        throw new DestinationConflictError();
+      }
+      throw err;
+    }
+
+    try {
+      await fs.unlink(target.source);
+    } catch (err) {
+      // Roll back the link if removing the source fails. Both names reference the same inode, so
+      // removing our destination cannot discard a distinct file created by another writer.
+      await fs.unlink(target.destination).catch(() => undefined);
+      throw err;
+    }
+    return;
+  }
+
   try {
-    body = (await req.json()) as typeof body;
+    await fs.mkdir(target.destination);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "EEXIST") {
+      throw new DestinationConflictError();
+    }
+    throw err;
+  }
+
+  try {
+    await fs.rename(target.source, target.destination);
+  } catch (err) {
+    // Only remove our still-empty reservation. If another writer added anything, rmdir fails and
+    // deliberately leaves their destination intact.
+    await fs.rmdir(target.destination).catch(() => undefined);
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === "EEXIST" || code === "ENOTEMPTY") throw new DestinationConflictError();
+    throw err;
+  }
+}
+
+export async function moveFileContent(req: Request, be: FileBackend): Promise<Response> {
+  let parsedBody: unknown;
+  try {
+    parsedBody = await req.json();
   } catch {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
-  if (!body.sourcePath) {
+  if (!parsedBody || typeof parsedBody !== "object" || Array.isArray(parsedBody)) {
+    return NextResponse.json({ error: "JSON body must be an object" }, { status: 400 });
+  }
+  const candidate = parsedBody as Record<string, unknown>;
+  if (typeof candidate.sourcePath !== "string" || candidate.sourcePath.length === 0) {
     return NextResponse.json({ error: "sourcePath required" }, { status: 400 });
   }
+  if (
+    candidate.destinationDirectory !== undefined
+    && candidate.destinationDirectory !== null
+    && (typeof candidate.destinationDirectory !== "string" || candidate.destinationDirectory.length === 0)
+  ) {
+    return NextResponse.json({ error: "destinationDirectory must be a non-empty string or null" }, { status: 400 });
+  }
+  const body: MoveBody = {
+    sourcePath: candidate.sourcePath,
+    destinationDirectory: candidate.destinationDirectory as string | null | undefined,
+  };
 
   const log = createLogger("api").child(be.logContext);
   try {
@@ -236,20 +307,17 @@ export async function moveFileContent(req: Request, be: FileBackend): Promise<Re
     }
 
     try {
-      await fs.lstat(target.destination);
-      return NextResponse.json(
-        { error: `An item named ${path.basename(target.destination)} already exists in that folder` },
-        { status: 409 },
-      );
+      await moveWithoutOverwrite(target);
     } catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
-    }
+      if (err instanceof DestinationConflictError) {
+        return NextResponse.json(
+          { error: `An item named ${path.basename(target.destination)} already exists in that folder` },
+          { status: 409 },
+        );
+      }
 
-    try {
-      await fs.rename(target.source, target.destination);
-    } catch (err) {
-      // Legacy root-owned files (see the workspace backend's writeFallback) cannot be renamed by
-      // the host process. Unlike a write, a rename has no container fallback, so report it plainly
+      // Legacy root-owned files (see the workspace backend's writeFallback) may not be movable by
+      // the host process. Unlike a write, a move has no container fallback, so report it plainly
       // rather than leaking the raw errno string.
       const code = (err as NodeJS.ErrnoException).code;
       if (code !== "EACCES" && code !== "EPERM") throw err;

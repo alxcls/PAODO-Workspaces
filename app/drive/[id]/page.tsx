@@ -75,9 +75,13 @@ export default function DrivePage({ params }: { params: Promise<{ id: string }> 
             if (selectedFile && paths.includes(selectedFile)) { setSelectedFile(null); setViewerOpen(false); }
             refreshTree();
           }}
+          onMoveStarted={(sourcePath) => viewerRef.current?.notifyFileMoveStarted(sourcePath)}
+          onMoveCancelled={(sourcePath) => viewerRef.current?.notifyFileMoveCancelled(sourcePath)}
+          // No refreshTree here: unlike a delete, the panel has already refetched the tree itself
+          // by the time it reports the move.
           onMovedPath={(sourcePath, destinationPath) => {
+            viewerRef.current?.notifyFileMoved(sourcePath, destinationPath);
             setSelectedFile((current) => remapMovedPath(current, sourcePath, destinationPath));
-            refreshTree();
           }}
           refreshKey={treeRefreshKey}
           style={{ width: leftWidth, borderRight: "1px solid var(--color-border)" }}

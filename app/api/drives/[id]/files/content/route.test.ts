@@ -3,24 +3,27 @@
 // These tests pin the drive-specific wiring — that PATCH is reachable, stays contained, and does
 // not depend on the workspace-only hooks.
 
-import { describe, it, expect, vi, afterAll } from "vitest";
+import { describe, it, expect, vi, beforeAll, afterAll } from "vitest";
 import fs from "fs";
+import os from "os";
 import path from "path";
 
 // Same shape as the workspace fixture: a drive content dir with a host secret next to it.
-const { DRIVE_DIR } = vi.hoisted(() => {
-  const os = require("os"); const fs = require("fs"); const path = require("path");
+const fixture = vi.hoisted(() => ({ driveDir: "" }));
+let DRIVE_DIR: string;
+
+beforeAll(() => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "drive-content-test-"));
-  const driveDir = path.join(root, "drive-1");
-  fs.mkdirSync(driveDir);
+  DRIVE_DIR = path.join(root, "drive-1");
+  fixture.driveDir = DRIVE_DIR;
+  fs.mkdirSync(DRIVE_DIR);
   fs.writeFileSync(path.join(root, "secret.txt"), "TOPSECRET");
-  return { DRIVE_DIR: driveDir };
 });
 
 vi.mock("@/lib/workspace/driveStore", () => ({
   getDrive: (id: string) =>
     (id === "drive-1" ? { id: "drive-1", name: "shared", createdAt: "" } : undefined),
-  driveContentDir: () => DRIVE_DIR,
+  driveContentDir: () => fixture.driveDir,
 }));
 
 import { PATCH } from "./route";

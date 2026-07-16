@@ -4,6 +4,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
+import { remapMovedPath } from "../fileMove";
 
 export type FileType = "text" | "image" | "binary" | null;
 
@@ -34,6 +35,8 @@ export function useFileContent(
   const onCloseRef = useRef(onClose);
   const onSelfWriteRef = useRef(onSelfWrite);
   const draftRef = useRef(draft);
+  const pendingMoveRootRef = useRef<string | null>(null);
+  const preservedMovedPathRef = useRef<string | null>(null);
 
   const isDirty = fileType === "text" && draft !== content;
 
@@ -67,7 +70,11 @@ export function useFileContent(
   }, [base]);
 
   useEffect(() => {
-    if (filePath) fetchContent(filePath);
+    if (filePath && preservedMovedPathRef.current === filePath) {
+      // A rename does not change the file's contents. Keep the current editor state — especially a
+      // dirty draft — instead of clearing it and reloading the last saved content from disk.
+      preservedMovedPathRef.current = null;
+    } else if (filePath) fetchContent(filePath);
     else { setFileType(null); setContent(null); setDraft(""); }
   }, [filePath, fetchContent]);
 
@@ -116,7 +123,34 @@ export function useFileContent(
   }, [fetchContent]);
 
   const notifyFilesDeleted = useCallback((paths: string[]) => {
-    if (paths.includes(filePathRef.current ?? "")) onCloseRef.current();
+    const currentPath = filePathRef.current ?? "";
+    // A local move is observed by chokidar as a source deletion plus a destination addition. The
+    // deletion can arrive before the PATCH response, so do not close the viewer while that move is
+    // pending; completion remaps the path, while cancellation clears this exception.
+    if (pendingMoveRootRef.current && paths.includes(currentPath)) return;
+    if (paths.includes(currentPath)) onCloseRef.current();
+  }, []);
+
+  const notifyFileMoveStarted = useCallback((sourceRoot: string) => {
+    const currentPath = filePathRef.current;
+    if (currentPath === sourceRoot || currentPath?.startsWith(sourceRoot + "/")) {
+      pendingMoveRootRef.current = sourceRoot;
+    }
+  }, []);
+
+  const notifyFileMoveCancelled = useCallback((sourceRoot: string) => {
+    if (pendingMoveRootRef.current === sourceRoot) pendingMoveRootRef.current = null;
+  }, []);
+
+  const notifyFileMoved = useCallback((sourceRoot: string, destinationRoot: string) => {
+    if (pendingMoveRootRef.current !== sourceRoot) return;
+    pendingMoveRootRef.current = null;
+    const currentPath = filePathRef.current;
+    const movedPath = remapMovedPath(currentPath, sourceRoot, destinationRoot);
+    if (movedPath === null || movedPath === currentPath) return;
+    // Update the imperative callbacks immediately, before React commits the parent path update.
+    filePathRef.current = movedPath;
+    preservedMovedPathRef.current = movedPath;
   }, []);
 
   return {
@@ -125,5 +159,6 @@ export function useFileContent(
     isDirty,
     handleSave, deleteFile,
     notifyFilesChanged, notifyFilesDeleted,
+    notifyFileMoveStarted, notifyFileMoveCancelled, notifyFileMoved,
   };
 }

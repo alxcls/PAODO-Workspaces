@@ -150,7 +150,10 @@ function WorkspacePageInner({ params }: { params: Promise<{ id: string }> }) {
         onDeletedPaths={(paths) => {
           if (selectedFile && paths.includes(selectedFile)) { setSelectedFile(null); setViewerOpen(false); }
         }}
+        onMoveStarted={(sourcePath) => viewerRef.current?.notifyFileMoveStarted(sourcePath)}
+        onMoveCancelled={(sourcePath) => viewerRef.current?.notifyFileMoveCancelled(sourcePath)}
         onMovedPath={(sourcePath, destinationPath) => {
+          viewerRef.current?.notifyFileMoved(sourcePath, destinationPath);
           setSelectedFile((current) => remapMovedPath(current, sourcePath, destinationPath));
         }}
         style={{ width: leftWidth, minWidth: 220, flex: "none" }}

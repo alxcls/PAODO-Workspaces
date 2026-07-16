@@ -588,6 +588,7 @@ export default function GraphEditor() {
         }
         right={
           <div className="flex items-center gap-2.5">
+            {isDirty && <span className="text-xs text-text-3 italic">Unsaved changes</span>}
             <button className="btn btn-ghost btn-sm" onClick={() => setShowDriveForm((v) => !v)}>
               Add drive
             </button>
@@ -600,7 +601,6 @@ export default function GraphEditor() {
                 Delete
               </button>
             )}
-            {isDirty && <span className="text-xs text-text-3 italic">Unsaved changes</span>}
             <button className="btn btn-primary btn-sm" onClick={handleSave} disabled={!isDirty}>
               {saved ? "Saved ✓" : "Save"}
             </button>

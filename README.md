@@ -4,7 +4,7 @@
 
 Each _workspace_ is an isolated Docker container running its own ReAct loop coding agent. Make it write scripts to run and instructions to follow, then call it through the workspace chat interface or an external API. Workspaces can be wired into a graph, so agents discover each other and delegate tasks. Think of it as multiple instances of VS Code + Claude Code, each in its own sandbox environment that can be wired together for collaboration.
 
-![Workspace overview](doc/images/DEMO_OVERVIEW.png)
+[![Workspace overview](https://img.youtube.com/vi/4nZ7X05ot4w/maxresdefault.jpg)](https://www.youtube.com/watch?v=4nZ7X05ot4w)
 
 ## Features
 
@@ -36,7 +36,7 @@ Each _workspace_ is an isolated Docker container running its own ReAct loop codi
 git clone https://github.com/alxcls/PAODO_WS.git
 cd PAODO_WS
 npm install
-cp .env.example .env          # set LLM_PROVIDER and the matching API key
+cp .env.example .env          # set the API key for your provider
 npm run dev
 ```
 

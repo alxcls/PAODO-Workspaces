@@ -79,17 +79,27 @@ export interface WorkspaceStoreOptions {
    * leaf module free of the services-layer import cycle.
    */
   initRepo?: (workspaceId: string, workspaceDir: string) => Promise<void>;
+  /**
+   * Tear down every per-workspace resource owned by other subsystems (conversations, secrets, MCP
+   * config, credential-proxy rules…) on deletion. Defaults to a no-op (tests). The production
+   * singleton wires the concrete cleanups. Injected — rather than importing those stores here — so
+   * this leaf registry stays free of their concrete implementations (DIP) and adding a new
+   * per-workspace resource means editing the singleton wiring, not this class (OCP).
+   */
+  onDelete?: (workspaceId: string) => void | Promise<void>;
 }
 
 export class WorkspaceStore implements IWorkspaceStore {
   private workspaces: Map<string, Workspace>;
   private persistFn: PersistFn;
   private initRepoFn: (workspaceId: string, workspaceDir: string) => Promise<void>;
+  private onDeleteFn: (workspaceId: string) => void | Promise<void>;
 
   constructor(opts: WorkspaceStoreOptions = {}) {
     this.workspaces = opts.map ?? new Map();
     this.persistFn = opts.persist ?? (() => {});
     this.initRepoFn = opts.initRepo ?? (async () => {});
+    this.onDeleteFn = opts.onDelete ?? (() => {});
     // A hot-reloaded server can reuse workspace objects created by an older module version. Fill
     // the new field in-place so those live objects do not accidentally create a zero-delay timer.
     for (const workspace of this.workspaces.values()) {
@@ -211,10 +221,7 @@ export class WorkspaceStore implements IWorkspaceStore {
     const ws = this.workspaces.get(id);
     if (!ws) return false;
     this.workspaces.delete(id);
-    deleteWorkspaceConversations(id);
-    deleteAllForWorkspace(id);
-    deleteMcpConfig(id);
-    getCredentialProxy().clearRules(id);
+    await this.onDeleteFn(id);
     try {
       this.save();
     } catch (err) {
@@ -281,6 +288,15 @@ export const defaultWorkspaceStore = new WorkspaceStore({
   persist: (records) => atomicSaveJson(REGISTRY_FILE, records),
   load: defaultLoad,
   initRepo: (id, dir) => defaultWorkspaceVersioning.initRepo(id, dir),
+  // Cascade deletion to every subsystem that keys resources by workspace id. Wired here — the
+  // services-layer boundary that's already allowed to know all of them — rather than inside the
+  // store, which stays free of these concrete implementations. Add new per-workspace cleanups here.
+  onDelete: (id) => {
+    deleteWorkspaceConversations(id);
+    deleteAllForWorkspace(id);
+    deleteMcpConfig(id);
+    getCredentialProxy().clearRules(id);
+  },
 });
 
 // Back-compat free-function exports — thin delegations to the default singleton so call sites

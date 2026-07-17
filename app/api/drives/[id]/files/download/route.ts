@@ -22,8 +22,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
   const driveDir = path.resolve(driveContentDir(id));
   const zip = new JSZip();
-  await addSelectedToZip(zip, driveDir, body.paths, (filePath, err) =>
-    createLogger("api").warn({ driveId: id, filePath, err }, "skipping unreadable path in drive download"),
+  await addSelectedToZip(
+    zip,
+    driveDir,
+    body.paths,
+    (filePath, err) =>
+      createLogger("api").warn({ driveId: id, filePath, err }, "skipping unreadable path in drive download"),
+    drive.name,
   );
 
   return zipToStreamResponse(zip, drive.name);

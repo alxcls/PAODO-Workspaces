@@ -23,9 +23,9 @@ afterAll(() => fs.rmSync(ROOT, { recursive: true, force: true }));
 const noSkip = () => {};
 
 /** Directory (`dir: true`) and file entry names present in the generated archive. */
-async function zipEntries(paths: string[]) {
+async function zipEntries(paths: string[], rootFolder?: string) {
   const zip = new JSZip();
-  await addSelectedToZip(zip, WS_DIR, paths, noSkip);
+  await addSelectedToZip(zip, WS_DIR, paths, noSkip, rootFolder);
   await zip.generateAsync({ type: "nodebuffer" });
   const files: string[] = [];
   const dirs: string[] = [];
@@ -54,5 +54,20 @@ describe("addSelectedToZip", () => {
     const { files } = await zipEntries([path.join(WS_DIR, "root.txt"), path.join(WS_DIR, "src")]);
     expect(files).toContain("root.txt");
     expect(files).toContain("src/index.ts");
+  });
+
+  it("nests every entry under rootFolder so a single file extracts inside a named folder", async () => {
+    fs.writeFileSync(path.join(WS_DIR, "root.txt"), "a");
+    const { files } = await zipEntries([path.join(WS_DIR, "root.txt")], "My Workspace");
+    expect(files).toContain("My Workspace/root.txt");
+    expect(files).not.toContain("root.txt");
+  });
+
+  it("nests directory trees under rootFolder", async () => {
+    fs.mkdirSync(path.join(WS_DIR, "src"));
+    fs.writeFileSync(path.join(WS_DIR, "src", "index.ts"), "b");
+    const { files, dirs } = await zipEntries([path.join(WS_DIR, "src")], "My Workspace");
+    expect(files).toContain("My Workspace/src/index.ts");
+    expect(dirs).toContain("My Workspace/");
   });
 });

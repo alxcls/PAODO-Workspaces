@@ -61,12 +61,19 @@ async function addDirToZip(zip: JSZip, sem: Semaphore, dirPath: string, zipPath:
 // Add each caller-selected path to the zip, recursing into directories. Paths are validated to stay
 // within `baseDir` (anything outside is ignored); unreadable paths are reported via `onSkip` and
 // left out rather than aborting the whole archive.
+//
+// When `rootFolder` is given, every entry is nested under a single top-level folder of that name, so
+// extracting the archive yields one tidy `<rootFolder>/` directory (GitHub-style) instead of spilling
+// the selected files loose into the download location — the natural shape when the name matches the
+// zip filename. Callers pass a validated name (no path separators), so folder() resolves to a scope.
 export async function addSelectedToZip(
   zip: JSZip,
   baseDir: string,
   paths: string[],
   onSkip: (filePath: string, err: unknown) => void,
+  rootFolder?: string,
 ) {
+  const target = rootFolder ? (zip.folder(rootFolder) ?? zip) : zip;
   const sem = new Semaphore(MAX_OPEN_FILES);
   await Promise.all(
     paths.map(async (filePath) => {
@@ -75,8 +82,8 @@ export async function addSelectedToZip(
       try {
         const stat = await sem.run(() => fs.stat(resolved));
         const relative = path.relative(baseDir, resolved);
-        if (stat.isDirectory()) await addDirToZip(zip, sem, resolved, relative);
-        else zip.file(relative, await sem.run(() => fs.readFile(resolved)));
+        if (stat.isDirectory()) await addDirToZip(target, sem, resolved, relative);
+        else target.file(relative, await sem.run(() => fs.readFile(resolved)));
       } catch (err) {
         onSkip(filePath, err);
       }

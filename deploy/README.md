@@ -14,7 +14,7 @@ In this reference profile, the responsibilities are:
 | Tailscale    | Private administrator access to the VPS (SSH) and a private HTTPS URL for the full app. Only tailnet devices can use it.                   |
 | DNS provider | Creates a public API hostname, such as `api.example.com`, when you opt into the direct Caddy API gateway. This is separate from Tailscale. |
 
-The public API gateway is optional. It exposes one Bearer-key-protected route
+The public API gateway is optional. It exposes two Bearer-key-protected routes
 and no UI. The normal app UI remains private on Tailscale.
 
 ---
@@ -95,14 +95,10 @@ nano .env
 
 | Variable                       | Required           | Description                                                                                                             |
 | ------------------------------ | ------------------ | ----------------------------------------------------------------------------------------------------------------------- |
-| `LLM_PROVIDER`                 | Yes                | `openai`, `anthropic`, or `deepseek` (default: `openai`)                                                                |
 | `OPENAI_API_KEY`               | If using OpenAI    | Your OpenAI API key                                                                                                     |
-| `OPENAI_MODEL`                 | If using OpenAI    | Model name, e.g. `gpt-5-mini`                                                                                           |
 | `ANTHROPIC_API_KEY`            | If using Anthropic | Your Anthropic API key                                                                                                  |
-| `ANTHROPIC_MODEL`              | If using Anthropic | Model name, e.g. `claude-haiku-4-5`                                                                                     |
 | `DEEPSEEK_API_KEY`             | If using DeepSeek  | Your DeepSeek API key                                                                                                   |
-| `DEEPSEEK_MODEL`               | If using DeepSeek  | Model name, e.g. `deepseek-v4-pro`                                                                                      |
-| `REASONING_EFFORT`             | No                 | `low` / `medium` / `high`; maps to OpenAI effort or Anthropic thinking budget (default: `low`)                          |
+| `ANTHROPIC_CACHE_TTL_1H`       | No                 | Opt into Anthropic's 1-hour prompt cache TTL; leave unset for the default cache behavior                                |
 | `USERNAME`                     | Yes                | Login username                                                                                                          |
 | `PASSWORD`                     | Yes                | Login password                                                                                                          |
 | `PORT`                         | No                 | Port the server listens on (default: `3000`)                                                                            |
@@ -116,6 +112,8 @@ nano .env
 | `CONTAINER_IDLE_MS`            | No                 | Idle timeout before a workspace container stops (default: `600000` = 10 min)                                            |
 | `EXEC_SILENCE_TIMEOUT_MS`      | No                 | Kills a shell command if it produces no output for this long (default: `60000` = 1 min)                                 |
 | `EXEC_MAX_TIMEOUT_MS`          | No                 | Kills a shell command after this total elapsed time regardless of output (default: `1800000` = 30 min)                  |
+
+Provider, model, and reasoning effort are not set here — each workspace picks them in the UI's Model block.
 
 ---
 
@@ -152,9 +150,11 @@ First, enable Tailscale Serve in the admin console:
 Then run:
 
 ```bash
-tailscale serve --bg http://localhost:<your-port>   # <your-port> must match PORT in your .env (default: 3000)
+tailscale serve --bg http://127.0.0.1:<your-port>   # <your-port> must match PORT in your .env (default: 3000)
 tailscale serve status   # prints your HTTPS URL, e.g. https://your-machine.tail-xxxx.ts.net
 ```
+
+Use `127.0.0.1`, not `localhost`: the app is published on IPv4 only, and `localhost` resolves to `::1` first — the fallback hides the failed dial until it surfaces under load as intermittent 502s.
 
 Open that URL on any device in your tailnet, enter your `USERNAME` and `PASSWORD`, and you're in. Devices outside your tailnet cannot reach it.
 
@@ -189,8 +189,9 @@ POST /api/workspaces/<workspace-id>/mcp
    The gateway binds only that public address. This lets Tailscale Serve keep
    using HTTPS on the VPS's Tailscale address for the private app.
 
-3. Allow ports 80 and 443 through the firewall so Caddy can obtain and renew
-   the TLS certificate:
+3. Allow ports 80 and 443 through the firewall so Caddy can serve the API and
+   renew its certificate. Both rules accept traffic from any source, so the
+   gateway is reachable at the VPS's public IPv4, not only at your hostname:
 
    ```bash
    ufw allow 80/tcp

@@ -9,6 +9,7 @@ import fsAsync from "fs/promises";
 import { createLogger } from "../infra/logger";
 import { atomicSaveJson, readJson } from "../infra/jsonPersist";
 import { scaffoldWorkspaceDir } from "./workspaceScaffold";
+import { validateWorkspaceName, normalizeForUniqueness, WorkspaceNameError } from "./workspaceName";
 import { defaultWorkspaceVersioning } from "../infra/git";
 import { WORKSPACES_ROOT } from "../infra/paths";
 import { deleteWorkspaceConversations } from "./conversationStore";
@@ -87,6 +88,12 @@ export interface WorkspaceStoreOptions {
    * per-workspace resource means editing the singleton wiring, not this class (OCP).
    */
   onDelete?: (workspaceId: string) => void | Promise<void>;
+  /**
+   * Bootstrap a new workspace's on-disk directory. Defaults to the real {@link scaffoldWorkspaceDir}
+   * (production and dev). Injected so unit tests can exercise createWorkspace's uniqueness/serialization
+   * logic without touching the filesystem.
+   */
+  scaffold?: (dir: string) => Promise<void>;
 }
 
 export class WorkspaceStore implements IWorkspaceStore {
@@ -94,12 +101,19 @@ export class WorkspaceStore implements IWorkspaceStore {
   private persistFn: PersistFn;
   private initRepoFn: (workspaceId: string, workspaceDir: string) => Promise<void>;
   private onDeleteFn: (workspaceId: string) => void | Promise<void>;
+  private scaffoldFn: (dir: string) => Promise<void>;
+  // Serializes name-mutating operations (create + rename) so a uniqueness check and the write that
+  // relies on it can't be interleaved by a concurrent request — the check-then-act would otherwise
+  // race (two identical creates could both pass the check). Nothing else in the repo provides
+  // call-level ordering, so we chain here rather than reaching for an async-mutex dependency.
+  private mutationChain: Promise<unknown> = Promise.resolve();
 
   constructor(opts: WorkspaceStoreOptions = {}) {
     this.workspaces = opts.map ?? new Map();
     this.persistFn = opts.persist ?? (() => {});
     this.initRepoFn = opts.initRepo ?? (async () => {});
     this.onDeleteFn = opts.onDelete ?? (() => {});
+    this.scaffoldFn = opts.scaffold ?? scaffoldWorkspaceDir;
     // A hot-reloaded server can reuse workspace objects created by an older module version. Fill
     // the new field in-place so those live objects do not accidentally create a zero-delay timer.
     for (const workspace of this.workspaces.values()) {
@@ -149,38 +163,65 @@ export class WorkspaceStore implements IWorkspaceStore {
     this.persistFn(records);
   }
 
-  async createWorkspace(name: string): Promise<Workspace> {
-    assertSafeWorkspaceName(name);
-    const id = crypto.randomUUID();
-    log.info({ name }, "creating workspace");
-    const dir = path.join(WORKSPACES_ROOT, name);
-    await scaffoldWorkspaceDir(dir);
+  // Runs a name-mutating operation as the sole writer at a time. The chain is kept alive regardless
+  // of how fn settles (errors are swallowed on the stored tail) so one failed mutation can't poison
+  // later ones; the caller still sees fn's real result or rejection.
+  private serializeMutation<T>(fn: () => Promise<T>): Promise<T> {
+    const result = this.mutationChain.then(fn, fn);
+    this.mutationChain = result.then(
+      () => {},
+      () => {},
+    );
+    return result;
+  }
 
-    // Start the versioning repo over the scaffolded files. Best-effort: a missing git binary (or
-    // any git failure) must not block workspace creation — versioning is strictly additive.
-    try {
-      await this.initRepoFn(id, dir);
-    } catch (err) {
-      log.warn({ err, id, name }, "versioning initRepo failed; workspace created without it");
+  // Throws WORKSPACE_NAME_CONFLICT if any *other* workspace already uses an equivalent name. Names
+  // are compared on their folded key so case- and Unicode-equivalent spellings can't coexist while
+  // agent routing is still name-based. Callers must hold the mutation lock.
+  private assertNameAvailable(name: string, exceptId?: string): void {
+    const key = normalizeForUniqueness(name);
+    for (const ws of this.workspaces.values()) {
+      if (ws.id !== exceptId && normalizeForUniqueness(ws.name) === key) {
+        throw new WorkspaceNameError("WORKSPACE_NAME_CONFLICT", `A workspace named "${name}" already exists.`);
+      }
     }
+  }
 
-    const workspace: Workspace = {
-      id,
-      name,
-      dir,
-      createdAt: new Date(),
-      maxIterations: 30,
-      maxRunMinutes: DEFAULT_MAX_RUN_MINUTES,
-    };
+  async createWorkspace(rawName: string): Promise<Workspace> {
+    return this.serializeMutation(async () => {
+      const name = validateWorkspaceName(rawName);
+      this.assertNameAvailable(name);
+      const id = crypto.randomUUID();
+      log.info({ name }, "creating workspace");
+      const dir = path.join(WORKSPACES_ROOT, name);
+      await this.scaffoldFn(dir);
 
-    this.workspaces.set(id, workspace);
-    try {
-      this.save();
-    } catch (err) {
-      log.error({ err, id, name }, "failed to save registry after createWorkspace");
-      throw err;
-    }
-    return workspace;
+      // Start the versioning repo over the scaffolded files. Best-effort: a missing git binary (or
+      // any git failure) must not block workspace creation — versioning is strictly additive.
+      try {
+        await this.initRepoFn(id, dir);
+      } catch (err) {
+        log.warn({ err, id, name }, "versioning initRepo failed; workspace created without it");
+      }
+
+      const workspace: Workspace = {
+        id,
+        name,
+        dir,
+        createdAt: new Date(),
+        maxIterations: 30,
+        maxRunMinutes: DEFAULT_MAX_RUN_MINUTES,
+      };
+
+      this.workspaces.set(id, workspace);
+      try {
+        this.save();
+      } catch (err) {
+        log.error({ err, id, name }, "failed to save registry after createWorkspace");
+        throw err;
+      }
+      return workspace;
+    });
   }
 
   getWorkspace(id: string): Workspace | undefined {
@@ -195,26 +236,28 @@ export class WorkspaceStore implements IWorkspaceStore {
     return Array.from(this.workspaces.values());
   }
 
-  async renameWorkspace(id: string, name: string): Promise<boolean> {
-    const ws = this.workspaces.get(id);
-    if (!ws) return false;
-    const trimmed = name.trim();
-    assertSafeWorkspaceName(trimmed);
-    const newDir = path.join(WORKSPACES_ROOT, trimmed);
-    try {
-      if (ws.dir !== newDir) {
-        await fsAsync.rename(ws.dir, newDir);
-        ws.dir = newDir;
-        // Conversations are keyed by the stable workspace id and stored outside the workspace dir,
-        // so a rename leaves them intact — nothing to reset here.
+  async renameWorkspace(id: string, rawName: string): Promise<boolean> {
+    return this.serializeMutation(async () => {
+      const ws = this.workspaces.get(id);
+      if (!ws) return false;
+      const name = validateWorkspaceName(rawName);
+      this.assertNameAvailable(name, id);
+      const newDir = path.join(WORKSPACES_ROOT, name);
+      try {
+        if (ws.dir !== newDir) {
+          await fsAsync.rename(ws.dir, newDir);
+          ws.dir = newDir;
+          // Conversations are keyed by the stable workspace id and stored outside the workspace dir,
+          // so a rename leaves them intact — nothing to reset here.
+        }
+        ws.name = name;
+        this.save();
+      } catch (err) {
+        log.error({ err, id, name }, "failed to rename workspace");
+        throw err;
       }
-      ws.name = trimmed;
-      this.save();
-    } catch (err) {
-      log.error({ err, id, name: trimmed }, "failed to rename workspace");
-      throw err;
-    }
-    return true;
+      return true;
+    });
   }
 
   async deleteWorkspace(id: string): Promise<boolean> {

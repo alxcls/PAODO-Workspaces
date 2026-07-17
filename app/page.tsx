@@ -31,6 +31,16 @@ function countFiles(nodes: TreeNode[]): number {
   return n;
 }
 
+/** Pull the server's `{ error }` message off a failed response, falling back to a generic message. */
+async function readErrorMessage(res: Response, fallback: string): Promise<string> {
+  try {
+    const body = (await res.json()) as { error?: string };
+    return body.error || fallback;
+  } catch {
+    return fallback;
+  }
+}
+
 function formatDate(iso: string) {
   try {
     return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
@@ -46,11 +56,13 @@ export default function HomePage() {
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [newName, setNewName] = useState("");
   const [isCreating, setIsCreating] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
   const [fileCount, setFileCount] = useState<number | null>(null);
   const [description, setDescription] = useState("");
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [renaming, setRenaming] = useState(false);
   const [renameDraft, setRenameDraft] = useState("");
+  const [renameError, setRenameError] = useState<string | null>(null);
   const [graphEnabled, setGraphEnabled] = useState(false);
 
   const fetchWorkspaces = useCallback(async () => {
@@ -134,11 +146,13 @@ export default function HomePage() {
     setSelectedId(id);
     setConfirmDeleteId(null);
     setRenaming(false);
+    setRenameError(null);
   };
 
   const handleCreate = async () => {
     const name = newName.trim() || `workspace-${workspaces.length + 1}`;
     setIsCreating(true);
+    setCreateError(null);
     try {
       const res = await fetch("/api/workspaces", {
         method: "POST",
@@ -153,6 +167,9 @@ export default function HomePage() {
         setFileCount(null);
         setDescription("");
         setSelectedId(ws.id);
+      } else {
+        // Keep the form open so the user can fix the name (e.g. a duplicate or invalid name).
+        setCreateError(await readErrorMessage(res, "Failed to create workspace."));
       }
     } finally {
       setIsCreating(false);
@@ -161,11 +178,17 @@ export default function HomePage() {
 
   const handleRename = async () => {
     if (!selectedId || !renameDraft.trim()) return;
-    await fetch(`/api/workspaces/${selectedId}`, {
+    setRenameError(null);
+    const res = await fetch(`/api/workspaces/${selectedId}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name: renameDraft.trim() }),
     });
+    if (!res.ok) {
+      // Keep the rename input open so the user can correct the name.
+      setRenameError(await readErrorMessage(res, "Failed to rename workspace."));
+      return;
+    }
     setRenaming(false);
     await fetchWorkspaces();
   };
@@ -271,15 +294,24 @@ export default function HomePage() {
                 className="input"
                 placeholder="Workspace name"
                 value={newName}
-                onChange={(e) => setNewName(e.target.value)}
+                onChange={(e) => {
+                  setNewName(e.target.value);
+                  if (createError) setCreateError(null);
+                }}
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && newName.trim()) handleCreate();
                   if (e.key === "Escape") {
                     setShowCreateForm(false);
                     setNewName("");
+                    setCreateError(null);
                   }
                 }}
               />
+              {createError && (
+                <div role="alert" className="text-xs text-danger">
+                  {createError}
+                </div>
+              )}
               <div className="flex gap-2 items-center">
                 <button
                   className="btn btn-primary btn-sm"
@@ -293,6 +325,7 @@ export default function HomePage() {
                   onClick={() => {
                     setShowCreateForm(false);
                     setNewName("");
+                    setCreateError(null);
                   }}
                 >
                   Cancel
@@ -332,24 +365,43 @@ export default function HomePage() {
               <div className="uppercase text-2xs tracking-[.12em] text-text-3 font-semibold">Workspace</div>
 
               {renaming ? (
-                <div style={{ display: "flex", gap: 8, alignItems: "center", margin: "6px 0 6px" }}>
-                  <input
-                    autoFocus
-                    className="input"
-                    style={{ fontSize: 20, fontWeight: 600, height: 44 }}
-                    value={renameDraft}
-                    onChange={(e) => setRenameDraft(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") handleRename();
-                      if (e.key === "Escape") setRenaming(false);
-                    }}
-                  />
-                  <button className="btn btn-primary" onClick={handleRename}>
-                    Done
-                  </button>
-                  <button className="linkbtn" onClick={() => setRenaming(false)}>
-                    Cancel
-                  </button>
+                <div style={{ margin: "6px 0 6px" }}>
+                  <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                    <input
+                      autoFocus
+                      className="input"
+                      style={{ fontSize: 20, fontWeight: 600, height: 44 }}
+                      value={renameDraft}
+                      onChange={(e) => {
+                        setRenameDraft(e.target.value);
+                        if (renameError) setRenameError(null);
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") handleRename();
+                        if (e.key === "Escape") {
+                          setRenaming(false);
+                          setRenameError(null);
+                        }
+                      }}
+                    />
+                    <button className="btn btn-primary" onClick={handleRename}>
+                      Done
+                    </button>
+                    <button
+                      className="linkbtn"
+                      onClick={() => {
+                        setRenaming(false);
+                        setRenameError(null);
+                      }}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                  {renameError && (
+                    <div role="alert" className="text-xs text-danger mt-1">
+                      {renameError}
+                    </div>
+                  )}
                 </div>
               ) : (
                 <h1 className="text-[34px] font-semibold tracking-[-0.02em] my-1.5 text-text">{selected.name}</h1>
@@ -368,6 +420,7 @@ export default function HomePage() {
                   className="btn btn-ghost btn-lg"
                   onClick={() => {
                     setRenameDraft(selected.name);
+                    setRenameError(null);
                     setRenaming(true);
                   }}
                 >

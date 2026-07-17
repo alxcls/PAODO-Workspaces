@@ -2,7 +2,7 @@
 // GET returns its metadata; DELETE removes it from the registry and deletes its directory from disk.
 import { type NextRequest, NextResponse } from "next/server";
 import { getStore, getContainers, getVersioning } from "@/lib/infra/services";
-import { requireWorkspace, notFound } from "@/lib/api/guards";
+import { requireWorkspace, notFound, workspaceNameErrorResponse } from "@/lib/api/guards";
 import { disconnectWorkspace } from "@/lib/workspace/driveStore";
 import { removeWorkspaceFromGraph } from "@/lib/workspace/workspaceGraph";
 import { deleteKey } from "@/lib/infra/security/apiKeyStore";
@@ -109,11 +109,18 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   }
 
   if (!body.name?.trim()) return NextResponse.json({ error: "name required" }, { status: 400 });
-  const ok = await getStore().renameWorkspace(id, body.name);
-  if (!ok) return notFound();
+  try {
+    const ok = await getStore().renameWorkspace(id, body.name);
+    if (!ok) return notFound();
+  } catch (err) {
+    const nameError = workspaceNameErrorResponse(err);
+    if (nameError) return nameError;
+    throw err;
+  }
   // Container bind mount is baked in at creation time — must recreate with new dir on next use.
   await getContainers().remove(id);
-  return NextResponse.json({ id, name: body.name.trim() });
+  // Return the canonical stored name (trimmed + NFC-normalized), not the raw request value.
+  return NextResponse.json({ id, name: getStore().getWorkspace(id)?.name ?? body.name.trim() });
 }
 
 export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {

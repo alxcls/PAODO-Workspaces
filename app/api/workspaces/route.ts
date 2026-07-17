@@ -3,6 +3,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getStore } from "@/lib/infra/services";
 import { createLogger } from "@/lib/infra/logger";
+import { workspaceNameErrorResponse } from "@/lib/api/guards";
 
 export async function GET() {
   const list = getStore()
@@ -24,6 +25,8 @@ export async function POST(req: NextRequest) {
       { status: 201 },
     );
   } catch (err) {
+    const nameError = workspaceNameErrorResponse(err);
+    if (nameError) return nameError;
     log.error({ err, name: body.name }, "failed to create workspace");
     return NextResponse.json({ error: "failed to create workspace" }, { status: 500 });
   }

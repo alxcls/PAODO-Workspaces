@@ -21,10 +21,22 @@ import {
 } from "@/lib/infra/security/rateLimit";
 import { getClientIp } from "@/lib/infra/realtime/clientIp";
 import { createLogger } from "@/lib/infra/logger";
+import { WorkspaceNameError } from "@/lib/workspace/workspaceName";
 
 /** The one and only "not found" body every route returns for a missing resource. */
 export function notFound(): NextResponse {
   return NextResponse.json({ error: "not found" }, { status: 404 });
+}
+
+/**
+ * Map a WorkspaceNameError to its HTTP response — 409 for a name conflict, 400 for a malformed name —
+ * or null if `err` is something else the caller should handle itself. Keeps the create/rename routes'
+ * error contract (status + machine-readable `code`) in one place.
+ */
+export function workspaceNameErrorResponse(err: unknown): NextResponse | null {
+  if (!(err instanceof WorkspaceNameError)) return null;
+  const status = err.code === "WORKSPACE_NAME_CONFLICT" ? 409 : 400;
+  return NextResponse.json({ error: err.message, code: err.code }, { status });
 }
 
 /** Resolve a workspace by id, or a standard 404 Response to short-circuit the handler. */

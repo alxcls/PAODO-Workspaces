@@ -15,7 +15,7 @@ import { getStore, getContainers, getVersioning } from "../infra/services";
 import { recordRunError, recordTurnUsage, type RunErrorRecord, type SessionOrigin } from "../workspace/usageStore";
 import * as conversations from "../workspace/conversationStore";
 import { createLogger } from "../infra/logger";
-import { createWorkspaceRunTimeout } from "./runTimeout";
+import { createWorkspaceRunTimeout, USER_STOPPED_CONVERSATION_MESSAGE } from "./runTimeout";
 
 const log = createLogger("runBroker");
 
@@ -149,7 +149,13 @@ export function startRun(params: StartRunParams): { alreadyRunning: boolean } {
       if (event.type === "done") sentDone = true;
     };
     const publishTimeout = () => {
+      if (sentDone) return;
       publish({ type: "error", code: "TIMEOUT", message: runTimeout.error.message });
+      publish({ type: "done" });
+    };
+    const publishUserStop = () => {
+      if (sentDone) return;
+      publish({ type: "error", code: "CANCELLED", message: USER_STOPPED_CONVERSATION_MESSAGE });
       publish({ type: "done" });
     };
     try {
@@ -166,6 +172,13 @@ export function startRun(params: StartRunParams): { alreadyRunning: boolean } {
           publishTimeout();
           break;
         }
+        // Explicit Stop uses the same low-level AbortSignal as provider cancellation. Hide the
+        // provider's AbortError and expose one stable, user-facing explanation instead.
+        if (session.abort.signal.aborted && event.type === "error") continue;
+        if (session.abort.signal.aborted && event.type === "done") {
+          publishUserStop();
+          break;
+        }
         publish(event);
         if (event.type === "done") break;
       }
@@ -179,6 +192,8 @@ export function startRun(params: StartRunParams): { alreadyRunning: boolean } {
           },
           "detached run timed out",
         );
+      } else if (session.abort.signal.aborted) {
+        log.info({ workspaceId: params.workspaceId, conversationId: params.conversationId }, "run stopped by user");
       } else {
         log.error(
           { err, workspaceId: params.workspaceId, conversationId: params.conversationId },
@@ -187,6 +202,7 @@ export function startRun(params: StartRunParams): { alreadyRunning: boolean } {
       }
     } finally {
       if (runTimeout.didTimeout() && !sentDone) publishTimeout();
+      else if (session.abort.signal.aborted && !sentDone) publishUserStop();
       runTimeout.dispose();
       session.status = "done";
       try {

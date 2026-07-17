@@ -31,7 +31,7 @@ import { buildSystemPrompt, buildPromptConfig, buildStructuredResponderBlock } f
 import { buildWorkspacePromptInputs } from "../promptContext";
 import { createLogger } from "../../infra/logger";
 import type { runAgent, AgentEvent } from "../runner";
-import { createWorkspaceRunTimeout, WorkspaceRunTimeoutError } from "../runTimeout";
+import { createWorkspaceRunTimeout, USER_STOPPED_CONVERSATION_MESSAGE, WorkspaceRunTimeoutError } from "../runTimeout";
 // runner (and runBroker, which pulls in runner) are imported dynamically inside executeSkill to
 // avoid the circular:
 // tools/index → AgentCallTool → executeSkill → runner → buildTools → tools/index
@@ -286,11 +286,6 @@ ${buildStructuredResponderBlock(skill)}`;
   // finally below, after persist, so a correction retry never prematurely closes a subscriber.
   const { startExternalRun } = await import("../runBroker");
   const liveRun = startExternalRun(callee.id, conv.id, firstInput);
-  const publish = liveRun
-    ? (event: AgentEvent) => {
-        if (event.type !== "done") liveRun.publish(event);
-      }
-    : undefined;
 
   // The signal the callee actually runs under: whichever of these fires first halts it.
   //   - opts.signal      — the caller's remaining deadline or explicit Stop (cascades recursively)
@@ -300,6 +295,14 @@ ${buildStructuredResponderBlock(skill)}`;
   // also becomes the opts.signal of any deeper nested call_agent, so the cascade is recursive.
   const runTimeout = createWorkspaceRunTimeout(callee, [opts.signal, liveRun?.signal]);
   const calleeSignal = runTimeout.signal;
+  const publish = liveRun
+    ? (event: AgentEvent) => {
+        // Abort errors are provider-specific and often read as raw "AbortError" noise. The
+        // classified timeout/cancellation branch below publishes one stable explanation instead.
+        if (event.type === "error" && calleeSignal.aborted) return;
+        if (event.type !== "done") liveRun.publish(event);
+      }
+    : undefined;
 
   // Announce the session only now — after the broker run is registered — so a caller that clicks
   // the "View session" link the instant it appears finds a live run to attach to, not an empty
@@ -325,6 +328,7 @@ ${buildStructuredResponderBlock(skill)}`;
       // can produce `done` without an error, while a model-stream abort usually produces an error.
       if (runTimeout.didTimeout()) {
         elog.warn({ attempt, maxRunMinutes: callee.maxRunMinutes }, "skill call timed out");
+        liveRun?.publish({ type: "error", code: "TIMEOUT", message: runTimeout.error.message });
         return fail("TIMEOUT", runTimeout.error.message);
       }
       if (calleeSignal.aborted) {
@@ -333,7 +337,10 @@ ${buildStructuredResponderBlock(skill)}`;
         const message =
           parentReason instanceof WorkspaceRunTimeoutError
             ? `Workspace "${callee.name}" was cancelled because caller workspace "${parentReason.workspaceName}" timed out.`
-            : `Workspace "${callee.name}" was cancelled before it finished.`;
+            : liveRun?.signal.aborted
+              ? USER_STOPPED_CONVERSATION_MESSAGE
+              : `Workspace "${callee.name}" was cancelled before it finished.`;
+        liveRun?.publish({ type: "error", code: "CANCELLED", message });
         return fail("CANCELLED", message);
       }
       if ("error" in turn) {

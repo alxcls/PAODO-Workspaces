@@ -1,3 +1,5 @@
+export const USER_STOPPED_CONVERSATION_MESSAGE = "Conversation stopped by the user.";
+
 export class WorkspaceRunTimeoutError extends Error {
   readonly code = "TIMEOUT" as const;
 

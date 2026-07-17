@@ -87,6 +87,7 @@ describe("runBroker", () => {
         if (opts.signal?.aborted) return res();
         opts.signal?.addEventListener("abort", () => res());
       });
+      yield { type: "error", message: "AbortError: This operation was aborted" } as AgentEvent;
       yield { type: "done" } as AgentEvent;
     } as unknown as typeof import("./runner").runAgent;
 
@@ -94,10 +95,20 @@ describe("runBroker", () => {
     expect(broker.startRun(p).alreadyRunning).toBe(false);
     expect(broker.isRunning(p.workspaceId, p.conversationId)).toBe(true);
     expect(broker.startRun(p).alreadyRunning).toBe(true);
+    const received: AgentEvent[] = [];
+    broker.subscribe(p.workspaceId, p.conversationId, (event) => received.push(event));
 
     expect(broker.stop(p.workspaceId, p.conversationId)).toBe(true);
     await tick();
     expect(broker.isRunning(p.workspaceId, p.conversationId)).toBe(false);
+    expect(received).toEqual([
+      { type: "error", code: "CANCELLED", message: "Conversation stopped by the user." },
+      { type: "done" },
+    ]);
+    expect(p.onRunError).toHaveBeenCalledWith(expect.any(String), {
+      code: "CANCELLED",
+      message: "Conversation stopped by the user.",
+    });
   });
 
   it("emits a stable timeout error before done when the workspace limit expires", async () => {

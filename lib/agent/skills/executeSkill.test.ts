@@ -515,6 +515,7 @@ describe("executeSkill — callee run and output contract", () => {
     // wiring stop() aborts a controller no one observes and the callee runs on regardless.
     const CONV = "conv-callee-stop";
     let sawAbort = false;
+    const received: AgentEvent[] = [];
     const run = async function* (
       _m: unknown,
       _u: unknown,
@@ -540,6 +541,9 @@ describe("executeSkill — callee run and output contract", () => {
         {
           createConversationFn: () => ({ id: CONV, title: "", createdAt: "", updatedAt: "", lastMessageAt: "" }),
           getMessagesFn: () => [],
+          onConversationStart: () => {
+            broker.subscribe(CALLEE.id, CONV, (event) => received.push(event));
+          },
         },
       ),
     );
@@ -552,7 +556,11 @@ describe("executeSkill — callee run and output contract", () => {
     const res = await call;
     expect(sawAbort).toBe(true);
     expect(res).toMatchObject({ state: "failed", code: "CANCELLED", conversationId: CONV });
-    expect((res as { message: string }).message).toContain("cancelled");
+    expect((res as { message: string }).message).toBe("Conversation stopped by the user.");
+    expect(received).toEqual([
+      { type: "error", code: "CANCELLED", message: "Conversation stopped by the user." },
+      { type: "done" },
+    ]);
   });
 
   it("names a parent abort as cancellation instead of leaking the runner's raw error", async () => {

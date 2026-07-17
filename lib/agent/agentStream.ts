@@ -85,7 +85,7 @@ export function makeAgentStream(ws: Workspace, message: string, log: Logger, dep
       };
       try {
         const inputs = buildWorkspacePromptInputs(ws.id, ws.dir);
-        const isolatedMessages = [buildSystemPrompt(ws.dir, buildPromptConfig(loadAgentConfig(ws.id)), inputs)];
+        const isolatedMessages = [buildSystemPrompt(ws.name, buildPromptConfig(loadAgentConfig(ws.id)), inputs)];
         for await (const event of runAgent(isolatedMessages, message, ws.dir, ws.id, {
           maxIterations: ws.maxIterations,
           ...deps,

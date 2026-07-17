@@ -20,7 +20,8 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   return NextResponse.json({
     id: ws.id,
     name: ws.name,
-    dir: ws.dir,
+    // `dir` is deliberately omitted: it is now an internal id-keyed filesystem path (WORKSPACES_ROOT/
+    // <id>) the UI never consumes, and leaking a server path serves no purpose.
     createdAt: ws.createdAt,
     maxIterations: ws.maxIterations,
     maxRunMinutes: ws.maxRunMinutes,
@@ -117,8 +118,9 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     if (nameError) return nameError;
     throw err;
   }
-  // Container bind mount is baked in at creation time — must recreate with new dir on next use.
-  await getContainers().remove(id);
+  // A rename is metadata-only now: the container's bind mount is keyed by the immutable workspace id,
+  // so it survives a rename untouched — no need to recreate the container (which would interrupt a
+  // running agent for a mere relabel).
   // Return the canonical stored name (trimmed + NFC-normalized), not the raw request value.
   return NextResponse.json({ id, name: getStore().getWorkspace(id)?.name ?? body.name.trim() });
 }

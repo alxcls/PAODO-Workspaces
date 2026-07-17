@@ -5,7 +5,6 @@
 // NOTE — conversation history lives in conversationStore.ts, persisted to disk per workspace and
 // surviving across restarts/disconnects. A workspace no longer carries any message history.
 import path from "path";
-import fsAsync from "fs/promises";
 import { createLogger } from "../infra/logger";
 import { atomicSaveJson, readJson } from "../infra/jsonPersist";
 import { scaffoldWorkspaceDir } from "./workspaceScaffold";
@@ -56,13 +55,6 @@ interface WorkspaceRecord {
 }
 
 const REGISTRY_FILE = path.join(WORKSPACES_ROOT, ".workspaces.json");
-
-function assertSafeWorkspaceName(name: string): void {
-  const dir = path.join(WORKSPACES_ROOT, name);
-  if (!dir.startsWith(WORKSPACES_ROOT + path.sep)) {
-    throw new Error(`Invalid workspace name: "${name}"`);
-  }
-}
 
 type PersistFn = (records: WorkspaceRecord[]) => void;
 type LoadFn = () => WorkspaceRecord[] | null;
@@ -123,16 +115,13 @@ export class WorkspaceStore implements IWorkspaceStore {
     if (records) this.hydrate(records);
   }
 
-  // Populates the map from persisted records, skipping any with an unsafe (poisoned) name.
+  // Populates the map from persisted records. The on-disk directory is keyed by the immutable id,
+  // so a legacy or malformed name can no longer poison a path — names are a display/routing concern
+  // only now, and every entry is kept (dropping one would hide a workspace whose id-keyed data is
+  // still on disk).
   private hydrate(records: WorkspaceRecord[]): void {
     for (const r of records) {
-      try {
-        assertSafeWorkspaceName(r.name);
-      } catch {
-        log.warn({ name: r.name, id: r.id }, "skipping poisoned registry entry");
-        continue;
-      }
-      const dir = path.join(WORKSPACES_ROOT, r.name);
+      const dir = path.join(WORKSPACES_ROOT, r.id);
       this.workspaces.set(r.id, {
         id: r.id,
         name: r.name,
@@ -193,7 +182,7 @@ export class WorkspaceStore implements IWorkspaceStore {
       this.assertNameAvailable(name);
       const id = crypto.randomUUID();
       log.info({ name }, "creating workspace");
-      const dir = path.join(WORKSPACES_ROOT, name);
+      const dir = path.join(WORKSPACES_ROOT, id);
       await this.scaffoldFn(dir);
 
       // Start the versioning repo over the scaffolded files. Best-effort: a missing git binary (or
@@ -242,20 +231,11 @@ export class WorkspaceStore implements IWorkspaceStore {
       if (!ws) return false;
       const name = validateWorkspaceName(rawName);
       this.assertNameAvailable(name, id);
-      const newDir = path.join(WORKSPACES_ROOT, name);
-      try {
-        if (ws.dir !== newDir) {
-          await fsAsync.rename(ws.dir, newDir);
-          ws.dir = newDir;
-          // Conversations are keyed by the stable workspace id and stored outside the workspace dir,
-          // so a rename leaves them intact — nothing to reset here.
-        }
-        ws.name = name;
-        this.save();
-      } catch (err) {
-        log.error({ err, id, name }, "failed to rename workspace");
-        throw err;
-      }
+      // Metadata-only: the directory is keyed by the immutable id, so nothing moves on disk and a
+      // running agent's container mount is untouched. Conversations, versioning, and secrets are all
+      // id-keyed too, so only the display name changes.
+      ws.name = name;
+      this.save();
       return true;
     });
   }

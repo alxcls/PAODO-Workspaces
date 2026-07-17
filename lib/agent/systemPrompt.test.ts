@@ -16,14 +16,21 @@ function text(msg: ReturnType<typeof buildSystemPrompt>): string {
 
 describe("buildSystemPrompt", () => {
   it("always includes the static environment instructions", () => {
-    const out = text(buildSystemPrompt("/workspace/ws1", NO_CACHE));
+    const out = text(buildSystemPrompt("ws1", NO_CACHE));
     expect(out).toContain("# Environment");
     expect(out).toContain("ws1"); // workspace name line
   });
 
+  it("renders the display name verbatim (not derived from a path)", () => {
+    // The directory is keyed by an opaque id now, so the name is passed in directly; a value with a
+    // space would be impossible if the prompt were still basename-ing a filesystem path.
+    const out = text(buildSystemPrompt("Invoice Agent", NO_CACHE));
+    expect(out).toContain("Workspace name: Invoice Agent");
+  });
+
   it("renders every dynamic piece passed in (AGENTS.md, drives, secrets)", () => {
     const out = text(
-      buildSystemPrompt("/workspace/ws1", NO_CACHE, {
+      buildSystemPrompt("ws1", NO_CACHE, {
         agentsContent: "# House rules",
         drivesInfo: "# Connected drives\n- shared (id: shared-id)",
         secretsInfo: "# Available Secrets\n- TOKEN → example.com",

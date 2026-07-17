@@ -248,7 +248,7 @@ export async function executeSkill(
     kind: "skill-call",
   });
   const messages = (opts.getMessagesFn ?? getMessages)(callee.id, conv.id) ?? ([] as BaseMessage[]);
-  setSystemPrompt(messages, buildSystemPrompt(callee.dir, buildPromptConfig(config), inputs));
+  setSystemPrompt(messages, buildSystemPrompt(callee.name, buildPromptConfig(config), inputs));
 
   // Keep the call metadata and arguments in one machine-readable envelope. This is a normal
   // user message to the callee agent, but JSON makes the protocol boundary clear when reviewing

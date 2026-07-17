@@ -2,8 +2,9 @@
 //
 // Uses a real temp WORKSPACES_ROOT (the established pattern for filesystem-touching store tests, see
 // scheduleStore.test.ts) with vi.resetModules() so paths.ts picks up the temp root. The store is
-// built with its default scaffold, so createWorkspace lays down real dirs and renameWorkspace does a
-// real directory move — letting us assert both the in-memory registry and the on-disk effect.
+// built with its default scaffold, so createWorkspace lays down a real id-keyed directory — letting
+// us assert both the in-memory registry and the on-disk effect (a rename is metadata-only and moves
+// nothing, since the directory is keyed by the immutable id).
 //
 // Errors are asserted on their { name, code } shape rather than `instanceof`, because the store and
 // its WorkspaceNameError come from the freshly re-imported module graph, not this file's imports.
@@ -32,11 +33,22 @@ const conflict = { name: "WorkspaceNameError", code: "WORKSPACE_NAME_CONFLICT" }
 const invalid = { name: "WorkspaceNameError", code: "WORKSPACE_NAME_INVALID" };
 
 describe("createWorkspace — name policy", () => {
-  it("stores the trimmed, normalized name and scaffolds its directory", async () => {
+  it("stores the trimmed, normalized name and scaffolds an id-keyed directory", async () => {
     const ws = await store.createWorkspace("  Invoice Agent  ");
     expect(ws.name).toBe("Invoice Agent");
-    expect(fs.existsSync(path.join(ROOT, "Invoice Agent"))).toBe(true);
+    // The directory is keyed by the opaque id, never the (mutable, user-controlled) name.
+    expect(ws.dir).toBe(path.join(ROOT, ws.id));
+    expect(fs.existsSync(path.join(ROOT, ws.id))).toBe(true);
+    expect(fs.existsSync(path.join(ROOT, "Invoice Agent"))).toBe(false);
     expect(store.getWorkspaceByName("Invoice Agent")?.id).toBe(ws.id);
+  });
+
+  it("gives two workspaces structurally distinct id-based directories", async () => {
+    const a = await store.createWorkspace("alpha");
+    const b = await store.createWorkspace("beta");
+    expect(a.dir).toBe(path.join(ROOT, a.id));
+    expect(b.dir).toBe(path.join(ROOT, b.id));
+    expect(a.dir).not.toBe(b.dir);
   });
 
   it("rejects an exact duplicate name", async () => {
@@ -74,21 +86,25 @@ describe("createWorkspace — concurrency", () => {
 });
 
 describe("renameWorkspace — name policy", () => {
-  it("renames to a new unique name and moves the directory", async () => {
+  it("renames to a new unique name without moving the id-keyed directory", async () => {
     const ws = await store.createWorkspace("old-name");
+    const dirBefore = ws.dir;
     await expect(store.renameWorkspace(ws.id, "new-name")).resolves.toBe(true);
     expect(store.getWorkspace(ws.id)?.name).toBe("new-name");
-    expect(fs.existsSync(path.join(ROOT, "new-name"))).toBe(true);
+    // Metadata-only: nothing moves on disk — the directory stays at ROOT/<id>.
+    expect(store.getWorkspace(ws.id)?.dir).toBe(dirBefore);
+    expect(fs.existsSync(path.join(ROOT, ws.id))).toBe(true);
     expect(fs.existsSync(path.join(ROOT, "old-name"))).toBe(false);
+    expect(fs.existsSync(path.join(ROOT, "new-name"))).toBe(false);
   });
 
   it("rejects renaming onto another workspace's name and leaves both intact", async () => {
-    await store.createWorkspace("alpha");
+    const alpha = await store.createWorkspace("alpha");
     const beta = await store.createWorkspace("beta");
     await expect(store.renameWorkspace(beta.id, "alpha")).rejects.toMatchObject(conflict);
     expect(store.getWorkspace(beta.id)?.name).toBe("beta");
-    expect(fs.existsSync(path.join(ROOT, "alpha"))).toBe(true);
-    expect(fs.existsSync(path.join(ROOT, "beta"))).toBe(true);
+    expect(fs.existsSync(path.join(ROOT, alpha.id))).toBe(true);
+    expect(fs.existsSync(path.join(ROOT, beta.id))).toBe(true);
   });
 
   it("rejects a case-insensitive collision on rename", async () => {
@@ -103,10 +119,11 @@ describe("renameWorkspace — name policy", () => {
     expect(store.getWorkspace(ws.id)?.name).toBe("same");
   });
 
-  it("rejects an invalid rename target before touching the filesystem", async () => {
+  it("rejects an invalid rename target and leaves the workspace intact", async () => {
     const ws = await store.createWorkspace("valid");
     await expect(store.renameWorkspace(ws.id, "bad/name")).rejects.toMatchObject(invalid);
-    expect(fs.existsSync(path.join(ROOT, "valid"))).toBe(true);
+    expect(store.getWorkspace(ws.id)?.name).toBe("valid");
+    expect(fs.existsSync(path.join(ROOT, ws.id))).toBe(true);
   });
 
   it("returns false for an unknown workspace id", async () => {

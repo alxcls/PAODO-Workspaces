@@ -122,7 +122,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   if (!messages) return new Response("Conversation not found", { status: 404 });
 
   const inputs = buildWorkspacePromptInputs(ws.id, ws.dir);
-  setSystemPrompt(messages, buildSystemPrompt(ws.dir, buildPromptConfig(loadAgentConfig(ws.id)), inputs));
+  setSystemPrompt(messages, buildSystemPrompt(ws.name, buildPromptConfig(loadAgentConfig(ws.id)), inputs));
   const { alreadyRunning } = broker.startRun({
     workspaceId: ws.id,
     workspaceName: ws.name,

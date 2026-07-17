@@ -2,7 +2,6 @@
 // Also exports buildStructuredResponderBlock, appended per skill call by executeSkill.
 
 import { SystemMessage } from "@langchain/core/messages";
-import path from "path";
 import { getProviderMetadata } from "./buildModel";
 import type { LLMProviderConfig } from "./interfaces";
 import { NEEDS_INPUT_KEY, type SkillDefinition } from "../workspace/skillTypes";
@@ -86,8 +85,10 @@ If the call cannot be completed because input is missing or needs correction, re
 // guidance) via buildWorkspacePromptInputs and pass the whole object straight through. Taking the
 // bag rather than positional optionals means no call site can silently drop a piece, and any new
 // field added to WorkspacePromptInputs flows here automatically. Does no filesystem I/O of its own.
+// Takes the display name explicitly (rather than deriving it from the directory) because the on-disk
+// directory is keyed by the opaque workspace id — basename(dir) would surface a UUID to the model.
 export function buildSystemPrompt(
-  workspaceDir: string,
+  workspaceName: string,
   promptConfig: PromptConfig,
   inputs: WorkspacePromptInputs = {},
 ): SystemMessage {
@@ -105,7 +106,7 @@ ${agentsSection}
     : "";
 
   // Platform guidance (drives, secrets) leads; the user's AGENTS.md follows and is authoritative.
-  const dynamicContext = `${drivesInfo ? drivesInfo + "\n\n" : ""}${secretsInfo ? secretsInfo + "\n\n" : ""}${backgroundTasksInfo ? backgroundTasksInfo + "\n\n" : ""}${agentsBlock}Workspace name: ${path.basename(workspaceDir)} — your working directory inside the container is /workspace
+  const dynamicContext = `${drivesInfo ? drivesInfo + "\n\n" : ""}${secretsInfo ? secretsInfo + "\n\n" : ""}${backgroundTasksInfo ? backgroundTasksInfo + "\n\n" : ""}${agentsBlock}Workspace name: ${workspaceName} — your working directory inside the container is /workspace
 Today's date: ${date}`;
 
   return new SystemMessage({

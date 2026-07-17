@@ -59,7 +59,7 @@ function fire(entry: ScheduleEntry, now: Date): void {
     conversationId = conv.id;
     const messages = conversations.getMessages(ws.id, conversationId) ?? [];
     const inputs = buildWorkspacePromptInputs(ws.id, ws.dir);
-    setSystemPrompt(messages, buildSystemPrompt(ws.dir, buildPromptConfig(loadAgentConfig(ws.id)), inputs));
+    setSystemPrompt(messages, buildSystemPrompt(ws.name, buildPromptConfig(loadAgentConfig(ws.id)), inputs));
     broker.startRun({
       workspaceId: ws.id,
       workspaceName: ws.name,

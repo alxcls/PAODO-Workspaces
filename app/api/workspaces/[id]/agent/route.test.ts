@@ -15,9 +15,9 @@ const h = vi.hoisted(() => ({
 const KEYS: Record<string, string> = { "ws-a": "key-a", "ws-b": "key-b", "ws-orphan": "key-orphan" };
 // Note: ws-orphan has a valid key but no workspace record — used to reach the 404 branch, which
 // sits AFTER the auth check.
-const WORKSPACES: Record<string, { id: string; name: string }> = {
-  "ws-a": { id: "ws-a", name: "alpha" },
-  "ws-b": { id: "ws-b", name: "beta" },
+const WORKSPACES: Record<string, { id: string; name: string; maxRunMinutes: number }> = {
+  "ws-a": { id: "ws-a", name: "alpha", maxRunMinutes: 25 },
+  "ws-b": { id: "ws-b", name: "beta", maxRunMinutes: 10 },
 };
 
 vi.mock("@/lib/infra/security/apiKeyStore", () => ({
@@ -78,6 +78,7 @@ describe("POST /api/workspaces/[id]/agent — Bearer key auth & per-workspace sc
       expect.objectContaining({
         conversationId: "conv-created",
         userInput: "hi",
+        maxRunMinutes: 25,
         origin: "api",
       }),
     );

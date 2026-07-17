@@ -12,9 +12,10 @@ import type { BaseMessage } from "@langchain/core/messages";
 import { runAgent, type AgentEvent } from "./runner";
 import type { RunAgentOptions } from "./runner";
 import { getStore, getContainers, getVersioning } from "../infra/services";
-import { recordTurnUsage, type SessionOrigin } from "../workspace/usageStore";
+import { recordRunError, recordTurnUsage, type RunErrorRecord, type SessionOrigin } from "../workspace/usageStore";
 import * as conversations from "../workspace/conversationStore";
 import { createLogger } from "../infra/logger";
+import { createWorkspaceRunTimeout } from "./runTimeout";
 
 const log = createLogger("runBroker");
 
@@ -49,12 +50,14 @@ export interface StartRunParams {
   messages: BaseMessage[];
   userInput: string;
   maxIterations: number;
+  maxRunMinutes: number;
   /** Explicit initiation path for dashboard provenance. */
   origin?: SessionOrigin;
   // Test seams — production defaults wire the real runner, services, usage, and persistence.
   run?: typeof runAgent;
   runOptions?: Partial<RunAgentOptions>;
   onTurnUsage?: (sessionId: string, event: Extract<AgentEvent, { type: "turn_usage" }>) => void;
+  onRunError?: (sessionId: string, error: RunErrorRecord) => void;
   onPersist?: () => void;
 }
 
@@ -96,19 +99,59 @@ export function startRun(params: StartRunParams): { alreadyRunning: boolean } {
         },
         event,
       ));
+  const recordError =
+    params.onRunError ??
+    ((sid, error) =>
+      recordRunError(
+        {
+          sessionId: sid,
+          conversationId: params.conversationId,
+          workspaceId: params.workspaceId,
+          workspaceName: params.workspaceName,
+          origin,
+        },
+        error,
+        params.userInput,
+      ));
   const persist = params.onPersist ?? (() => conversations.persist(params.workspaceId, params.conversationId));
 
+  const runTimeout = createWorkspaceRunTimeout(
+    { id: params.workspaceId, name: params.workspaceName, maxRunMinutes: params.maxRunMinutes },
+    [session.abort.signal, params.runOptions?.signal],
+  );
   const runOptions: RunAgentOptions = {
-    signal: session.abort.signal,
     maxIterations: params.maxIterations,
     store: getStore(),
     containers: getContainers(),
     versioning: getVersioning(),
     ...params.runOptions,
+    signal: runTimeout.signal,
   };
 
   // Detached: not awaited, not tied to any request. Errors are surfaced as events by runAgent.
   void (async () => {
+    let sentDone = false;
+    let recordedError = false;
+    const publish = (event: AgentEvent) => {
+      session.buffer.push(event);
+      for (const sub of session.subscribers) {
+        try {
+          sub(event);
+        } catch (err) {
+          log.warn({ err }, "subscriber threw");
+        }
+      }
+      if (event.type === "turn_usage") recordUsage(sessionId, event);
+      if (event.type === "error" && !recordedError) {
+        recordedError = true;
+        recordError(sessionId, { code: event.code, message: event.message });
+      }
+      if (event.type === "done") sentDone = true;
+    };
+    const publishTimeout = () => {
+      publish({ type: "error", code: "TIMEOUT", message: runTimeout.error.message });
+      publish({ type: "done" });
+    };
     try {
       for await (const event of run(
         params.messages,
@@ -117,20 +160,34 @@ export function startRun(params: StartRunParams): { alreadyRunning: boolean } {
         params.workspaceId,
         runOptions,
       )) {
-        session.buffer.push(event);
-        for (const sub of session.subscribers) {
-          try {
-            sub(event);
-          } catch (err) {
-            log.warn({ err }, "subscriber threw");
-          }
+        // Replace provider-specific abort errors with one stable workspace timeout event.
+        if (runTimeout.didTimeout() && event.type === "error") continue;
+        if (runTimeout.didTimeout() && event.type === "done") {
+          publishTimeout();
+          break;
         }
-        if (event.type === "turn_usage") recordUsage(sessionId, event);
+        publish(event);
         if (event.type === "done") break;
       }
     } catch (err) {
-      log.error({ err, workspaceId: params.workspaceId, conversationId: params.conversationId }, "detached run failed");
+      if (runTimeout.didTimeout()) {
+        log.warn(
+          {
+            workspaceId: params.workspaceId,
+            conversationId: params.conversationId,
+            maxRunMinutes: params.maxRunMinutes,
+          },
+          "detached run timed out",
+        );
+      } else {
+        log.error(
+          { err, workspaceId: params.workspaceId, conversationId: params.conversationId },
+          "detached run failed",
+        );
+      }
     } finally {
+      if (runTimeout.didTimeout() && !sentDone) publishTimeout();
+      runTimeout.dispose();
       session.status = "done";
       try {
         persist();

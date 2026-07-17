@@ -11,6 +11,7 @@ import path from "path";
 import { WORKSPACES_ROOT } from "@/lib/infra/paths";
 import { SUPPORTED_PROVIDERS, getProviderMetadata } from "@/lib/agent/buildModel";
 import { DEFAULT_LLM, type ReasoningEffort } from "@/lib/agent/interfaces";
+import { MAX_MAX_RUN_MINUTES, MIN_MAX_RUN_MINUTES } from "@/lib/workspace/workspaceLimits";
 
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -22,6 +23,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     dir: ws.dir,
     createdAt: ws.createdAt,
     maxIterations: ws.maxIterations,
+    maxRunMinutes: ws.maxRunMinutes,
     description: ws.description ?? "",
     llmProvider: ws.llmProvider,
     llmModel: ws.llmModel,
@@ -34,6 +36,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   const body = (await req.json()) as {
     name?: string;
     maxIterations?: number;
+    maxRunMinutes?: number;
     llmProvider?: string;
     llmModel?: string;
     reasoningEffort?: string;
@@ -67,12 +70,33 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     return NextResponse.json({ id, llmProvider: provider, llmModel: model, reasoningEffort });
   }
 
-  if (body.maxIterations !== undefined) {
-    const n = Math.max(1, Math.floor(Number(body.maxIterations)));
-    if (!isFinite(n)) return NextResponse.json({ error: "invalid maxIterations" }, { status: 400 });
-    const ok = getStore().setWorkspaceMaxIterations(id, n);
-    if (!ok) return notFound();
-    return NextResponse.json({ id, maxIterations: n });
+  if (body.maxIterations !== undefined || body.maxRunMinutes !== undefined) {
+    let maxIterations: number | undefined;
+    let maxRunMinutes: number | undefined;
+    if (body.maxIterations !== undefined) {
+      maxIterations = Math.max(1, Math.floor(Number(body.maxIterations)));
+      if (!isFinite(maxIterations)) {
+        return NextResponse.json({ error: "invalid maxIterations" }, { status: 400 });
+      }
+    }
+    if (body.maxRunMinutes !== undefined) {
+      maxRunMinutes = Math.floor(Number(body.maxRunMinutes));
+      if (!isFinite(maxRunMinutes) || maxRunMinutes < MIN_MAX_RUN_MINUTES || maxRunMinutes > MAX_MAX_RUN_MINUTES) {
+        return NextResponse.json(
+          { error: `maxRunMinutes must be between ${MIN_MAX_RUN_MINUTES} and ${MAX_MAX_RUN_MINUTES}` },
+          { status: 400 },
+        );
+      }
+    }
+    const store = getStore();
+    if (!store.getWorkspace(id)) return notFound();
+    if (maxIterations !== undefined) store.setWorkspaceMaxIterations(id, maxIterations);
+    if (maxRunMinutes !== undefined) store.setWorkspaceMaxRunMinutes(id, maxRunMinutes);
+    return NextResponse.json({
+      id,
+      ...(maxIterations !== undefined ? { maxIterations } : {}),
+      ...(maxRunMinutes !== undefined ? { maxRunMinutes } : {}),
+    });
   }
 
   if (body.description !== undefined) {

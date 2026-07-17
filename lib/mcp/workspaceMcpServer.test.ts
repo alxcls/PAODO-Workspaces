@@ -125,6 +125,26 @@ describe("callWorkspaceMcpTool", () => {
     expect(res.content[0]).toMatchObject({ type: "text", text: "[NEEDS_INPUT] which warehouse?" });
   });
 
+  it("surfaces a workspace timeout as an MCP tool error", async () => {
+    const executeSkillFn = vi.fn(async () => ({
+      state: "failed" as const,
+      code: "TIMEOUT" as const,
+      message: 'Workspace "ws1" exceeded its 20-minute execution limit.',
+    }));
+
+    const res = await callWorkspaceMcpTool(
+      "ws1",
+      "check_stock",
+      { sku: "x" },
+      deps(["check_stock"], { executeSkillFn: executeSkillFn as never }),
+    );
+
+    expect(res).toEqual({
+      isError: true,
+      content: [{ type: "text", text: '[TIMEOUT] Workspace "ws1" exceeded its 20-minute execution limit.' }],
+    });
+  });
+
   it("returns a tool error when skill execution throws instead of dropping the MCP response", async () => {
     const executeSkillFn = vi.fn(async () => {
       throw new Error("directory lookup failed");

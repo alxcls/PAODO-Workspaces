@@ -8,8 +8,9 @@ import { loadAgentConfig } from "./buildTools";
 import { runAgent } from "./runner";
 import type { AgentEvent, AgentRuntimeDeps } from "./runner";
 import type { Workspace } from "../workspace/workspaceStore";
-import { recordTurnUsage } from "../workspace/usageStore";
+import { recordRunError, recordTurnUsage } from "../workspace/usageStore";
 import type { SessionOrigin } from "../workspace/usageStore";
+import { createWorkspaceRunTimeout } from "./runTimeout";
 
 const SSE_HEADERS = {
   "Content-Type": "text/event-stream",
@@ -21,6 +22,7 @@ const SSE_HEADERS = {
 type SseState = { response: string; limitReached: boolean };
 
 type AgentStreamDeps = AgentRuntimeDeps & {
+  signal?: AbortSignal;
   sessionId?: string;
   workspaceId?: string;
   workspaceName?: string;
@@ -40,7 +42,7 @@ function toSsePayload(event: AgentEvent, state: SseState): object | null {
       state.limitReached = true;
       return null;
     case "error":
-      return { type: "error", message: event.message };
+      return { type: "error", message: event.message, ...(event.code ? { code: event.code } : {}) };
     case "turn_usage":
       return null;
     default:
@@ -57,13 +59,43 @@ export function makeAgentStream(ws: Workspace, message: string, log: Logger, dep
     async start(controller) {
       const send = (event: object) => controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
       const state: SseState = { response: "", limitReached: false };
+      const runTimeout = createWorkspaceRunTimeout(ws, [deps.signal]);
+      let sentTimeout = false;
+      let recordedError = false;
+      const recordError = (errorMessage: string, code?: string) => {
+        if (recordedError) return;
+        recordedError = true;
+        recordRunError(
+          {
+            sessionId,
+            workspaceId: deps.workspaceId ?? ws.id,
+            workspaceName: deps.workspaceName ?? ws.name,
+            origin: deps.origin ?? "api",
+          },
+          { code, message: errorMessage },
+          message,
+        );
+      };
+      const sendTimeout = () => {
+        if (sentTimeout) return;
+        sentTimeout = true;
+        recordError(runTimeout.error.message, "TIMEOUT");
+        send({ type: "error", code: "TIMEOUT", message: runTimeout.error.message });
+        send({ type: "done" });
+      };
       try {
         const inputs = buildWorkspacePromptInputs(ws.id, ws.dir);
         const isolatedMessages = [buildSystemPrompt(ws.dir, buildPromptConfig(loadAgentConfig(ws.id)), inputs)];
         for await (const event of runAgent(isolatedMessages, message, ws.dir, ws.id, {
           maxIterations: ws.maxIterations,
           ...deps,
+          signal: runTimeout.signal,
         })) {
+          if (runTimeout.didTimeout() && event.type === "error") continue;
+          if (runTimeout.didTimeout() && event.type === "done") {
+            sendTimeout();
+            break;
+          }
           if (event.type === "turn_usage") {
             recordTurnUsage(
               {
@@ -76,6 +108,7 @@ export function makeAgentStream(ws: Workspace, message: string, log: Logger, dep
             );
             continue;
           }
+          if (event.type === "error") recordError(event.message, event.code);
           if (event.type === "done") {
             send({ type: "response", content: state.response, iterationLimitReached: state.limitReached });
             send({ type: "done" });
@@ -85,10 +118,19 @@ export function makeAgentStream(ws: Workspace, message: string, log: Logger, dep
           if (payload) send(payload);
         }
       } catch (err) {
-        log.error({ err }, "agent stream error");
-        send({ type: "error", message: String(err) });
-        send({ type: "done" });
+        if (runTimeout.didTimeout()) {
+          log.warn({ workspaceId: ws.id, maxRunMinutes: ws.maxRunMinutes }, "agent stream timed out");
+          sendTimeout();
+        } else {
+          log.error({ err }, "agent stream error");
+          const message = String(err);
+          recordError(message);
+          send({ type: "error", message });
+          send({ type: "done" });
+        }
       } finally {
+        if (runTimeout.didTimeout()) sendTimeout();
+        runTimeout.dispose();
         controller.close();
       }
     },

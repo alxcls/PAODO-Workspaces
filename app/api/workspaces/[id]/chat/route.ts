@@ -39,6 +39,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       messages,
       userInput: userMessage,
       maxIterations: ws.maxIterations,
+      maxRunMinutes: ws.maxRunMinutes,
       origin: "chat",
     });
     if (alreadyRunning) return new Response("A run is already in progress", { status: 409 });

@@ -22,7 +22,7 @@ const h = vi.hoisted(() => ({
 vi.mock("../services", () => ({
   getStore: () => ({
     getWorkspace: (id: string) =>
-      id === "w1" ? { id: "w1", name: "WS", dir: "/tmp/w1", maxIterations: 10 } : undefined,
+      id === "w1" ? { id: "w1", name: "WS", dir: "/tmp/w1", maxIterations: 10, maxRunMinutes: 5 } : undefined,
   }),
 }));
 vi.mock("../../agent/runBroker", () => ({
@@ -100,6 +100,7 @@ describe("scheduler tick", () => {
     expect(h.startRun.mock.calls[0][0]).toMatchObject({
       workspaceId: "w1",
       userInput: "do the thing",
+      maxRunMinutes: 5,
       origin: "scheduled",
     });
 

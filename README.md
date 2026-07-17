@@ -4,7 +4,7 @@
 
 Each _workspace_ is an isolated Docker container running its own ReAct loop coding agent. Make it write scripts to run and instructions to follow, then call it through the workspace chat interface or an external API / MCP. Workspaces can be wired into a graph, so agents discover each other and delegate tasks. Think of it as multiple instances of VS Code + Claude Code, each in its own sandbox environment that can be wired together for collaboration.
 
-*Demo video of PAODO in action* :
+_Demo video of PAODO in action_ :
 
 [![PAODO Workspace demo video](https://img.youtube.com/vi/4nZ7X05ot4w/maxresdefault.jpg)](https://www.youtube.com/watch?v=4nZ7X05ot4w)
 
@@ -48,7 +48,7 @@ For VPS deployment, see the [deploy guide](deploy/README.md).
 
 ## How it works
 
-Each workspace runs in its own Docker sandbox and can be used through the chat UI, external API or MCP server. Agents through connected workspaces or MCP server can call each other through defined input/output contracts.
+Each workspace runs in its own Docker sandbox and is accessible via the chat UI, external API, or MCP server. Agents in connected workspaces and MCP clients can invoke its skills using defined input/output contracts.
 
 ![Architectural representation of the main functionality](doc/images/loop.png)
 
@@ -74,7 +74,7 @@ Workspaces can call each other. The network page connects them into a directed g
 
 Calls are **contract-first**: each workspace publishes typed _skills_ (`.skills/*.json`), and the platform validates the caller's input and the callee's output against the skill's schema. The callee runs in a fresh, isolated conversation. No graph edge, no call.
 
-## API access
+## Workspace API access
 
 Enable API access from the workspace panel to generate a key, then:
 
@@ -86,13 +86,36 @@ curl -X POST http://localhost:<port>/api/workspaces/<id>/agent \
 
 The response is a Server-Sent Events stream of progress events (`tool_start`, `tool_end`, …), ending in a single `response` event that carries the final answer, then `done`.
 
-Each API call creates a conversation visible in the workspace UI and returns its id in the
-`X-Conversation-Id` response header (also included in the terminal SSE events). To continue that
-same conversation on a later call, include it in the request body:
+Each call starts its own conversation, visible in the workspace UI. To thread calls together
+instead, pass the `conversationId` returned in the `X-Conversation-Id` header back in the next
+request body.
+
+## Workspace MCP access
+
+Enable MCP access from the workspace panel to mint a bearer secret and choose which skills to
+publish, then point any MCP client at the workspace:
 
 ```json
-{ "message": "Continue with the next step", "conversationId": "<conversation-id>" }
+{
+  "mcpServers": {
+    "paodo-<id>": {
+      "type": "http",
+      "url": "http://localhost:<port>/api/workspaces/<id>/mcp",
+      "headers": { "Authorization": "Bearer <mcp-secret>" }
+    }
+  }
+}
 ```
+
+The client sees exactly the skills you selected and nothing else — no agent tools, no filesystem, no
+graph. Each skill's `.skills/*.json` contract becomes the tool's input and output schema, and calls
+run through the same validated path the agent network uses. The secret is stored hashed, shown once,
+and revoked independently of the API key.
+
+Skill calls are one-shot, unlike the chat API above: each runs in a fresh, isolated conversation, so
+there is no `conversationId` to continue — a caller that needs different arguments calls again
+rather than resumes. Those conversations are still persisted and visible in the workspace UI and dashboard for
+auditing.
 
 ## Project structure
 

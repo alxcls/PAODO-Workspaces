@@ -17,7 +17,6 @@ import { toolError } from "../toolUtils";
 // Shorter than the general tool result cap — skill outputs are structured data, not raw
 // output, so 8k is enough and keeps nested agent-call chains from ballooning the context.
 const MAX_RESPONSE_CHARS = 8_000;
-const TIMEOUT_MS = 300_000;
 
 const schema = z.object({
   workspace: z.string().describe("Name of the target workspace to call"),
@@ -130,29 +129,12 @@ A workspace with no declared skills is not callable. If the workspace is not con
     return { result: `Error (${code}): ${message}`, meta };
   }
 
-  // Word an abort correctly: a caller cancel (user hit Stop) is not a timeout. Shared by the
-  // non-throwing-abort path and the thrown-abort catch, which classify it identically.
-  private abortResult(
-    workspace: string,
-    skill: string,
-    cancelledByCaller: boolean,
-    meta?: CallAgentMeta,
-  ): CallAgentResult {
-    if (cancelledByCaller) {
-      this.log.info(
-        { callerWorkspaceId: this.callerWorkspaceId, callee: workspace, skill },
-        "call_agent cancelled by caller",
-      );
-      return { result: `Error: call to "${workspace}" was cancelled.`, meta };
-    }
-    this.log.warn(
-      { callerWorkspaceId: this.callerWorkspaceId, callee: workspace, skill, timeoutMs: TIMEOUT_MS },
-      "call_agent timed out",
+  private cancelledResult(workspace: string, skill: string, meta?: CallAgentMeta): CallAgentResult {
+    this.log.info(
+      { callerWorkspaceId: this.callerWorkspaceId, callee: workspace, skill },
+      "call_agent cancelled by caller",
     );
-    return {
-      result: `Error: call to "${workspace}" timed out after ${TIMEOUT_MS / 1000}s — the target agent is too slow or stuck.`,
-      meta,
-    };
+    return { result: `Error (CANCELLED): call to "${workspace}" was cancelled.`, meta };
   }
 
   private async runCall(
@@ -178,14 +160,9 @@ A workspace with no declared skills is not callable. If the workspace is not con
 
     this.log.debug({ callerWorkspaceId: this.callerWorkspaceId, callee: workspace, skill }, "call_agent start");
 
-    // Run the callee under whichever fires first: the caller's abort (user hit Stop on the caller —
-    // the cascade) or the 5-minute safety timeout. timeout is kept separate so we can tell the two
-    // apart and word the result correctly (a cancel is not a timeout).
-    const timeout = AbortSignal.timeout(TIMEOUT_MS);
-    const signal = callerSignal ? AbortSignal.any([callerSignal, timeout]) : timeout;
     try {
       const result = await executeSkill(callee.id, this.callerWorkspaceId, skill, args, {
-        signal,
+        signal: callerSignal,
         store: this.store,
         containers: this.containers,
         // callee.id is the link's workspace; pair it with the conversation id the instant it exists.
@@ -201,10 +178,10 @@ A workspace with no declared skills is not callable. If the workspace is not con
 
       // The runner converts aborts into error events rather than throwing, so an abort
       // comes back as a failed result — detect it via the signal, not the error name.
-      if (signal.aborted) {
+      if (callerSignal?.aborted) {
         this.inputFailures.delete(retryKey);
         this.needsInputRounds.delete(retryKey);
-        return this.abortResult(workspace, skill, !!(callerSignal?.aborted && !timeout.aborted), meta);
+        return this.cancelledResult(workspace, skill, meta);
       }
 
       if (result.state === "failed") {
@@ -235,8 +212,8 @@ A workspace with no declared skills is not callable. If the workspace is not con
           : output;
       return { result: truncated, meta };
     } catch (err) {
-      if (signal.aborted) {
-        return this.abortResult(workspace, skill, !!(callerSignal?.aborted && !timeout.aborted));
+      if (callerSignal?.aborted) {
+        return this.cancelledResult(workspace, skill);
       }
       this.log.error({ err, callerWorkspaceId: this.callerWorkspaceId, callee: workspace, skill }, "call_agent failed");
       return { result: toolError(err) };

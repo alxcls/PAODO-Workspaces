@@ -53,6 +53,7 @@ async function main(): Promise<void> {
     dir: "/tmp/smoke-ws",
     createdAt: new Date(),
     maxIterations: 30,
+    maxRunMinutes: 5,
   };
   const isolatedStore = new WorkspaceStore({
     map: new Map([[wsId, ws]]),

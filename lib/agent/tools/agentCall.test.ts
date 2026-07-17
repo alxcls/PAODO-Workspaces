@@ -27,6 +27,11 @@ const containers = {} as IContainerManager;
 
 const INPUT_ERR: SkillCallResult = { state: "failed", code: "INPUT_VALIDATION_ERROR", message: "'sku' is required" };
 const NEEDS_INPUT: SkillCallResult = { state: "failed", code: "NEEDS_INPUT", message: "which warehouse?" };
+const TIMED_OUT: SkillCallResult = {
+  state: "failed",
+  code: "TIMEOUT",
+  message: 'Workspace "stock-agent" exceeded its 5-minute execution limit.',
+};
 
 const skillConfig = { skillInputMaxRetries: 2, skillOutputMaxRetries: 2, skillNeedsInputMaxRounds: 2 };
 
@@ -142,7 +147,7 @@ describe("AgentCallTool — caller cancel cascades into the callee", () => {
 
   it("reports a caller cancel as cancelled, not a timeout", async () => {
     // The callee run comes back aborted; the tool must word it as a cancellation (the caller's
-    // signal fired) rather than the 5-minute safety timeout.
+    // signal fired) rather than the callee's own workspace timeout.
     const caller = new AbortController();
     caller.abort();
     mockedExecute.mockImplementation(async (_callee, _caller, _skillId, _args, opts) => {
@@ -174,5 +179,15 @@ describe("AgentCallTool — NEEDS_INPUT rounds", () => {
 
     const second = await call(tool); // round 2 → terminal
     expect(second).toContain("stop re-calling this skill");
+  });
+});
+
+describe("AgentCallTool — workspace timeout", () => {
+  it("returns the callee timeout as a distinct model-facing tool error", async () => {
+    mockedExecute.mockResolvedValue(TIMED_OUT);
+
+    const result = await call(makeTool());
+
+    expect(result).toBe('Error (TIMEOUT): Workspace "stock-agent" exceeded its 5-minute execution limit.');
   });
 });

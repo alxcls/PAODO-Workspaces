@@ -30,6 +30,7 @@ function apiConversationStream(req: NextRequest, workspaceId: string, conversati
       let closed = false;
       let response = "";
       let limitReached = false;
+      let failure: Extract<AgentEvent, { type: "error" }> | undefined;
       const send = (event: object) => {
         if (!closed) controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
       };
@@ -55,11 +56,18 @@ function apiConversationStream(req: NextRequest, workspaceId: string, conversati
             limitReached = true;
             break;
           case "error":
-            send({ type: "error", message: event.message });
+            failure = event;
+            send({ type: "error", message: event.message, ...(event.code ? { code: event.code } : {}) });
             break;
           case "done":
-            send({ type: "response", content: response, iterationLimitReached: limitReached, conversationId });
-            send({ type: "done", conversationId });
+            if (!failure) {
+              send({ type: "response", content: response, iterationLimitReached: limitReached, conversationId });
+            }
+            send({
+              type: "done",
+              conversationId,
+              ...(failure ? { status: "failed", ...(failure.code ? { code: failure.code } : {}) } : {}),
+            });
             close();
             break;
         }
@@ -123,6 +131,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     messages,
     userInput: body.message.trim(),
     maxIterations: ws.maxIterations,
+    maxRunMinutes: ws.maxRunMinutes,
     origin: "api",
   });
   if (alreadyRunning) return new Response("A run is already in progress", { status: 409 });

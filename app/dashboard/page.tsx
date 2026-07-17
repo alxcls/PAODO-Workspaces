@@ -81,6 +81,13 @@ function DetailDrawer({ session, onClose, width }: { session: LightSession; onCl
     () => detail?.find((t) => t.toolCalls.length === 0)?.outputText ?? detail?.at(-1)?.outputText ?? "",
     [detail],
   );
+  const runError = useMemo(() => {
+    if (!detail) return undefined;
+    for (let i = detail.length - 1; i >= 0; i--) {
+      if (detail[i].error) return detail[i].error;
+    }
+    return undefined;
+  }, [detail]);
   const selTool = selected && detail ? detail[selected.turnIdx]?.toolCalls[selected.toolIdx] : null;
   const selReasoning = selected && detail ? detail[selected.turnIdx]?.reasoningText : undefined;
 
@@ -169,6 +176,14 @@ function DetailDrawer({ session, onClose, width }: { session: LightSession; onCl
                   {agentResponse}
                 </ReactMarkdown>
               </div>
+            </Section>
+          )}
+          {runError && (
+            <Section title="Error">
+              <p className="text-xs font-mono text-danger whitespace-pre-wrap break-words">
+                {runError.code ? `[${runError.code}] ` : ""}
+                {runError.message}
+              </p>
             </Section>
           )}
         </div>

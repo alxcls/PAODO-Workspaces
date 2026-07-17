@@ -30,7 +30,7 @@ export type AgentEvent =
   | { type: "tool_link"; name: string; id?: string; meta: CallAgentMeta }
   // `meta` is set only for call_agent: a deep-link to the callee's persisted session.
   | { type: "tool_result"; name: string; id?: string; result: string; meta?: CallAgentMeta }
-  | { type: "error"; message: string }
+  | { type: "error"; message: string; code?: "TIMEOUT" | "CANCELLED" }
   | { type: "limit_reached" }
   | { type: "done" }
   | {

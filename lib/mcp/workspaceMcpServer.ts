@@ -15,9 +15,6 @@ import type { SkillDefinition } from "../workspace/skillTypes";
 
 const log = createLogger("workspaceMcp");
 
-// Hard ceiling on a single tool call, mirroring AgentCallTool's 5-minute cap.
-const CALL_TIMEOUT_MS = 300_000;
-
 // Seams so the list/call logic can be unit-tested without touching disk, the config store, or a
 // real agent run. Production wires the concrete implementations.
 export interface WorkspaceMcpDeps {
@@ -73,7 +70,6 @@ export async function callWorkspaceMcpTool(
       canCallFn: () => true,
       store: getStore(),
       containers: getContainers(),
-      signal: AbortSignal.timeout(CALL_TIMEOUT_MS),
       origin: "mcp",
       resolvedSkill: skill,
     });

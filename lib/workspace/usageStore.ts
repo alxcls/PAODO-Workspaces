@@ -40,6 +40,11 @@ export interface ToolCallRecord {
   status: ToolStatus;
 }
 
+export interface RunErrorRecord {
+  code?: string;
+  message: string;
+}
+
 export interface TurnRecord {
   id: string;
   sessionId: string;
@@ -67,6 +72,8 @@ export interface TurnRecord {
   /** The model's prose output for this turn: preamble alongside tool calls, or the final
    *  answer on the terminal (no-tool) turn. The agent's response to the user. */
   outputText?: string;
+  /** Terminal run failure, stored on a zero-usage record so even pre-turn failures are observable. */
+  error?: RunErrorRecord;
   toolCalls: ToolCallRecord[];
 }
 
@@ -202,6 +209,26 @@ export function recordTurnUsage(
   const fields = { ...usage };
   delete fields.type;
   append({ ...ctx, ...fields });
+}
+
+/** Persist a terminal run error without pretending that an incomplete model turn consumed tokens. */
+export function recordRunError(
+  ctx: UsageContext,
+  error: RunErrorRecord,
+  userInput?: string,
+  append: (r: Omit<TurnRecord, "id" | "timestamp">) => void = appendUsage,
+): void {
+  append({
+    ...ctx,
+    userInput,
+    inputTokens: 0,
+    outputTokens: 0,
+    reasoningTokens: 0,
+    cachedInputTokens: 0,
+    cacheCreationTokens: 0,
+    toolCalls: [],
+    error,
+  });
 }
 
 // Dashboard list payload — token counts + tool names only, no heavy content. Memory already

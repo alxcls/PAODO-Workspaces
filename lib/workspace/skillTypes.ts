@@ -47,6 +47,8 @@ export type SkillErrorCode =
   | "INPUT_VALIDATION_ERROR"
   | "OUTPUT_VALIDATION_ERROR"
   | "NEEDS_INPUT"
+  | "TIMEOUT"
+  | "CANCELLED"
   | "EXECUTION_ERROR";
 
 /**

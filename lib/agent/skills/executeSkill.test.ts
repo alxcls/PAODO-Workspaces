@@ -16,6 +16,7 @@ import type { SkillDefinition } from "../../workspace/skillTypes";
 import type { IWorkspaceStore } from "../../infra/interfaces";
 import type { runAgent, AgentEvent } from "../runner";
 import * as broker from "../runBroker";
+import { createWorkspaceRunTimeout } from "../runTimeout";
 
 // executeSkill is the single enforcement point of the skill contract — every guarantee
 // the PRD makes (authz, both-sides validation, bounded correction retries) lives here.
@@ -38,8 +39,8 @@ const SKILL: SkillDefinition = {
   },
 };
 
-const CALLEE = { id: "callee-1", name: "stock-agent", dir: "/tmp/nowhere", maxIterations: 5 };
-const CALLER = { id: "caller-1", name: "shop-agent", dir: "/tmp/nowhere2", maxIterations: 5 };
+const CALLEE = { id: "callee-1", name: "stock-agent", dir: "/tmp/nowhere", maxIterations: 5, maxRunMinutes: 5 };
+const CALLER = { id: "caller-1", name: "shop-agent", dir: "/tmp/nowhere2", maxIterations: 5, maxRunMinutes: 5 };
 
 const store = {
   getWorkspace: (id: string) => (id === CALLEE.id ? CALLEE : id === CALLER.id ? CALLER : undefined),
@@ -550,11 +551,11 @@ describe("executeSkill — callee run and output contract", () => {
 
     const res = await call;
     expect(sawAbort).toBe(true);
-    expect(res).toMatchObject({ state: "failed", code: "EXECUTION_ERROR", conversationId: CONV });
-    expect((res as { message: string }).message).toContain("aborted");
+    expect(res).toMatchObject({ state: "failed", code: "CANCELLED", conversationId: CONV });
+    expect((res as { message: string }).message).toContain("cancelled");
   });
 
-  it("names an abort (timeout/cancel) instead of leaking the runner's raw error", async () => {
+  it("names a parent abort as cancellation instead of leaking the runner's raw error", async () => {
     // The runner never throws on abort — it yields an error event — so executeSkill must
     // recognize the aborted signal itself for the caller to see a meaningful message.
     const run = async function* (): AsyncGenerator<AgentEvent> {
@@ -567,8 +568,88 @@ describe("executeSkill — callee run and output contract", () => {
       { sku: "A1" },
       opts({ run }, { signal: AbortSignal.abort() }),
     );
-    expect(res).toMatchObject({ state: "failed", code: "EXECUTION_ERROR" });
-    expect((res as { message: string }).message).toContain("aborted");
-    expect((res as { message: string }).message).toContain("timeout or cancellation");
+    expect(res).toMatchObject({ state: "failed", code: "CANCELLED" });
+    expect((res as { message: string }).message).toContain("cancelled");
+  });
+
+  it("halts the callee when the caller workspace deadline expires", async () => {
+    let calleeObservedAbort = false;
+    const recorded: Array<Record<string, unknown>> = [];
+    const run = async function* (
+      _m: unknown,
+      _u: unknown,
+      _d: unknown,
+      _id: unknown,
+      options: { signal?: AbortSignal },
+    ): AsyncGenerator<AgentEvent> {
+      await new Promise<void>((resolve) => {
+        if (options.signal?.aborted) return resolve();
+        options.signal?.addEventListener("abort", () => resolve(), { once: true });
+      });
+      calleeObservedAbort = options.signal?.aborted ?? false;
+      yield { type: "error", message: "AbortError: provider request aborted" };
+    } as unknown as typeof runAgent;
+    const callerTimeout = createWorkspaceRunTimeout({ ...CALLER, maxRunMinutes: 0.001 });
+
+    try {
+      const res = await executeSkill(
+        CALLEE.id,
+        CALLER.id,
+        "check-stock",
+        { sku: "A1" },
+        opts(
+          { run },
+          {
+            signal: callerTimeout.signal,
+            appendUsageFn: (record) => recorded.push(record as unknown as Record<string, unknown>),
+          },
+        ),
+      );
+
+      expect(callerTimeout.didTimeout()).toBe(true);
+      expect(calleeObservedAbort).toBe(true);
+      expect(res).toMatchObject({ state: "failed", code: "CANCELLED", conversationId: FAKE_CONV_ID });
+      expect(recorded).toHaveLength(1);
+      expect(recorded[0]).toMatchObject({
+        workspaceId: CALLEE.id,
+        error: {
+          code: "CANCELLED",
+          message: 'Workspace "stock-agent" was cancelled because caller workspace "shop-agent" timed out.',
+        },
+      });
+    } finally {
+      callerTimeout.dispose();
+    }
+  });
+
+  it("returns TIMEOUT when the callee exceeds its own workspace limit", async () => {
+    const timedCallee = { ...CALLEE, maxRunMinutes: 0.001 };
+    const timedStore = {
+      getWorkspace: (id: string) => (id === timedCallee.id ? timedCallee : id === CALLER.id ? CALLER : undefined),
+    } as unknown as IWorkspaceStore;
+    const run = async function* (
+      _m: unknown,
+      _u: unknown,
+      _d: unknown,
+      _id: unknown,
+      options: { signal?: AbortSignal },
+    ): AsyncGenerator<AgentEvent> {
+      await new Promise<void>((resolve) => {
+        if (options.signal?.aborted) return resolve();
+        options.signal?.addEventListener("abort", () => resolve(), { once: true });
+      });
+      yield { type: "error", message: "AbortError: provider request aborted" };
+    } as unknown as typeof runAgent;
+
+    const res = await executeSkill(
+      timedCallee.id,
+      CALLER.id,
+      "check-stock",
+      { sku: "A1" },
+      opts({ run }, { store: timedStore }),
+    );
+
+    expect(res).toMatchObject({ state: "failed", code: "TIMEOUT", conversationId: FAKE_CONV_ID });
+    expect((res as { message: string }).message).toContain('Workspace "stock-agent" exceeded');
   });
 });

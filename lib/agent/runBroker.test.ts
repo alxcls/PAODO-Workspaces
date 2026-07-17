@@ -28,8 +28,10 @@ function params(
     maxIterations: 5,
     run,
     onTurnUsage: vi.fn(),
+    onRunError: vi.fn(),
     onPersist: vi.fn(),
     ...extra,
+    maxRunMinutes: extra.maxRunMinutes ?? 5,
   };
 }
 
@@ -96,6 +98,37 @@ describe("runBroker", () => {
     expect(broker.stop(p.workspaceId, p.conversationId)).toBe(true);
     await tick();
     expect(broker.isRunning(p.workspaceId, p.conversationId)).toBe(false);
+  });
+
+  it("emits a stable timeout error before done when the workspace limit expires", async () => {
+    const run = async function* (_m: unknown, _u: unknown, _d: unknown, _id: unknown, opts: RunAgentOptions) {
+      await new Promise<void>((resolve) => {
+        if (opts.signal?.aborted) return resolve();
+        opts.signal?.addEventListener("abort", () => resolve(), { once: true });
+      });
+      yield { type: "error", message: "AbortError: provider request aborted" } as AgentEvent;
+      yield { type: "done" } as AgentEvent;
+    } as unknown as typeof import("./runner").runAgent;
+
+    const p = params(run, { workspaceName: "Slow workspace", maxRunMinutes: 0.001 });
+    broker.startRun(p);
+    const received: AgentEvent[] = [];
+    broker.subscribe(p.workspaceId, p.conversationId, (event) => received.push(event));
+
+    await new Promise((resolve) => setTimeout(resolve, 90));
+
+    expect(received).toEqual([
+      {
+        type: "error",
+        code: "TIMEOUT",
+        message: 'Workspace "Slow workspace" exceeded its 0.001-minute execution limit.',
+      },
+      { type: "done" },
+    ]);
+    expect(p.onRunError).toHaveBeenCalledWith(expect.any(String), {
+      code: "TIMEOUT",
+      message: 'Workspace "Slow workspace" exceeded its 0.001-minute execution limit.',
+    });
   });
 
   it("returns null when subscribing to a conversation with no run", () => {

@@ -28,7 +28,14 @@ describe("loadAgentConfig", () => {
   });
 
   it("falls back to DEFAULT_LLM for a workspace that hasn't chosen", () => {
-    seedWorkspace({ id: "ws-unset", name: "x", dir: "/tmp/x", createdAt: new Date(), maxIterations: 30 });
+    seedWorkspace({
+      id: "ws-unset",
+      name: "x",
+      dir: "/tmp/x",
+      createdAt: new Date(),
+      maxIterations: 30,
+      maxRunMinutes: 5,
+    });
     const c = loadAgentConfig("ws-unset");
     expect(c.provider).toBe("deepseek");
     expect(c.model).toBe("deepseek-v4-pro");
@@ -41,6 +48,7 @@ describe("loadAgentConfig", () => {
       dir: "/tmp/y",
       createdAt: new Date(),
       maxIterations: 30,
+      maxRunMinutes: 5,
       llmProvider: "anthropic",
       llmModel: "claude-haiku-4-5",
       reasoningEffort: "high",
@@ -62,6 +70,7 @@ describe("loadAgentConfig", () => {
       dir: "/tmp/z",
       createdAt: new Date(),
       maxIterations: 30,
+      maxRunMinutes: 5,
       llmProvider: "anthropic",
       llmModel: "claude-haiku-4-5",
       reasoningEffort: "high",

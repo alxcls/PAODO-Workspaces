@@ -17,6 +17,7 @@ import type { ReasoningEffort } from "../agent/interfaces";
 import { deleteAllForWorkspace } from "../infra/security/workspaceSecretStore";
 import { deleteForWorkspace as deleteMcpConfig } from "../infra/security/mcpConfigStore";
 import { getCredentialProxy } from "../infra/proxy";
+import { DEFAULT_MAX_RUN_MINUTES, normalizeMaxRunMinutes } from "./workspaceLimits";
 export { WORKSPACES_ROOT };
 
 const log = createLogger("store");
@@ -27,6 +28,8 @@ export interface WorkspaceMetadata {
   dir: string;
   createdAt: Date;
   maxIterations: number;
+  /** Wall-clock limit for one run, including model, tool, validation, and child-agent wait time. */
+  maxRunMinutes: number;
   /** Workspace-level context shown in the UI and shared with external MCP clients as instructions. */
   description?: string;
   // Per-workspace LLM selection (chosen in the UI). Undefined when the workspace has never picked —
@@ -44,6 +47,7 @@ interface WorkspaceRecord {
   dir?: string;
   createdAt: string;
   maxIterations?: number;
+  maxRunMinutes?: number;
   description?: string;
   llmProvider?: string;
   llmModel?: string;
@@ -86,6 +90,11 @@ export class WorkspaceStore implements IWorkspaceStore {
     this.workspaces = opts.map ?? new Map();
     this.persistFn = opts.persist ?? (() => {});
     this.initRepoFn = opts.initRepo ?? (async () => {});
+    // A hot-reloaded server can reuse workspace objects created by an older module version. Fill
+    // the new field in-place so those live objects do not accidentally create a zero-delay timer.
+    for (const workspace of this.workspaces.values()) {
+      workspace.maxRunMinutes = normalizeMaxRunMinutes(workspace.maxRunMinutes);
+    }
     const records = (opts.load ?? (() => null))();
     if (records) this.hydrate(records);
   }
@@ -106,6 +115,7 @@ export class WorkspaceStore implements IWorkspaceStore {
         dir,
         createdAt: new Date(r.createdAt),
         maxIterations: r.maxIterations ?? 30,
+        maxRunMinutes: normalizeMaxRunMinutes(r.maxRunMinutes),
         description: r.description,
         llmProvider: r.llmProvider,
         llmModel: r.llmModel,
@@ -120,6 +130,7 @@ export class WorkspaceStore implements IWorkspaceStore {
       name: w.name,
       createdAt: w.createdAt.toISOString(),
       maxIterations: w.maxIterations,
+      maxRunMinutes: w.maxRunMinutes,
       description: w.description,
       llmProvider: w.llmProvider,
       llmModel: w.llmModel,
@@ -149,6 +160,7 @@ export class WorkspaceStore implements IWorkspaceStore {
       dir,
       createdAt: new Date(),
       maxIterations: 30,
+      maxRunMinutes: DEFAULT_MAX_RUN_MINUTES,
     };
 
     this.workspaces.set(id, workspace);
@@ -220,6 +232,14 @@ export class WorkspaceStore implements IWorkspaceStore {
     return true;
   }
 
+  setWorkspaceMaxRunMinutes(id: string, minutes: number): boolean {
+    const ws = this.workspaces.get(id);
+    if (!ws) return false;
+    ws.maxRunMinutes = minutes;
+    this.save();
+    return true;
+  }
+
   setWorkspaceDescription(id: string, description: string): boolean {
     const ws = this.workspaces.get(id);
     if (!ws) return false;
@@ -273,6 +293,8 @@ export const renameWorkspace = (id: string, name: string) => defaultWorkspaceSto
 export const deleteWorkspace = (id: string) => defaultWorkspaceStore.deleteWorkspace(id);
 export const setWorkspaceMaxIterations = (id: string, n: number) =>
   defaultWorkspaceStore.setWorkspaceMaxIterations(id, n);
+export const setWorkspaceMaxRunMinutes = (id: string, minutes: number) =>
+  defaultWorkspaceStore.setWorkspaceMaxRunMinutes(id, minutes);
 export const setWorkspaceDescription = (id: string, description: string) =>
   defaultWorkspaceStore.setWorkspaceDescription(id, description);
 export const setWorkspaceLlm = (

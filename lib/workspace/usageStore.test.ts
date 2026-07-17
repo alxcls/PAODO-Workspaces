@@ -82,6 +82,26 @@ describe("usageStore", () => {
     expect(detail[0].toolCalls[0].status).toBe("ok");
   });
 
+  it("records a terminal error even when the run completed no model turn", async () => {
+    const store = await freshStore();
+    store.recordRunError(
+      { sessionId: "failed-session", workspaceId: "w1", workspaceName: "WS", origin: "agent" },
+      { code: "TIMEOUT", message: "The workspace exceeded its limit." },
+      "do the work",
+    );
+
+    const detail = store.getSessionDetail("failed-session");
+    expect(detail).toHaveLength(1);
+    expect(detail[0]).toMatchObject({
+      userInput: "do the work",
+      inputTokens: 0,
+      outputTokens: 0,
+      toolCalls: [],
+      error: { code: "TIMEOUT", message: "The workspace exceeded its limit." },
+    });
+    expect(store.listUsageLight()).toHaveLength(1);
+  });
+
   it("listUsageLight strips heavy content but keeps tokens and tool names", async () => {
     const store = await freshStore();
     store.appendUsage(

@@ -73,6 +73,26 @@ describe("createWorkspace — name policy", () => {
   });
 });
 
+describe("getWorkspaceByName — name routing", () => {
+  it("resolves an exact name", async () => {
+    const ws = await store.createWorkspace("Sales");
+    expect(store.getWorkspaceByName("Sales")?.id).toBe(ws.id);
+  });
+
+  it("resolves a case- and whitespace-insensitive name, matching the uniqueness rule", async () => {
+    // call_agent / legacy /api/agent route by name; folding here keeps routing consistent with the
+    // fact that "sales" and "Sales" can no longer coexist.
+    const ws = await store.createWorkspace("Sales");
+    expect(store.getWorkspaceByName("sales")?.id).toBe(ws.id);
+    expect(store.getWorkspaceByName("  SALES  ")?.id).toBe(ws.id);
+  });
+
+  it("returns undefined for a genuinely different name", async () => {
+    await store.createWorkspace("Sales");
+    expect(store.getWorkspaceByName("sales-eu")).toBeUndefined();
+  });
+});
+
 describe("createWorkspace — concurrency", () => {
   it("serializes two concurrent identical creates: exactly one succeeds", async () => {
     const results = await Promise.allSettled([store.createWorkspace("dup"), store.createWorkspace("dup")]);

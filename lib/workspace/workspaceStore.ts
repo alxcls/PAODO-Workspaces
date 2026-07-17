@@ -218,7 +218,16 @@ export class WorkspaceStore implements IWorkspaceStore {
   }
 
   getWorkspaceByName(name: string): Workspace | undefined {
-    return [...this.workspaces.values()].find((w) => w.name === name);
+    const all = [...this.workspaces.values()];
+    // Exact match first — the fast path, and it disambiguates any legacy pre-uniqueness duplicates
+    // hydrate() may have loaded (uniqueness is enforced on create/rename, not on load).
+    const exact = all.find((w) => w.name === name);
+    if (exact) return exact;
+    // Fall back to the folded key so name routing matches the case/Unicode-insensitive uniqueness
+    // rule: call_agent("sales") resolves a workspace stored as "Sales". Unambiguous because at most
+    // one workspace can share a folded key once uniqueness is enforced.
+    const key = normalizeForUniqueness(name);
+    return all.find((w) => normalizeForUniqueness(w.name) === key);
   }
 
   listWorkspaces(): Workspace[] {

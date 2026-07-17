@@ -41,6 +41,13 @@ class Semaphore {
 
 async function addDirToZip(zip: JSZip, sem: Semaphore, dirPath: string, zipPath: string) {
   const entries = await sem.run(() => fs.readdir(dirPath, { withFileTypes: true }));
+  // JSZip only materializes a folder when something is placed inside it, so a directory with no
+  // files anywhere beneath it would vanish from the archive. Add an explicit folder entry to keep
+  // empty directories (and dirs holding only empty subdirs) present in the download.
+  if (entries.length === 0) {
+    zip.folder(zipPath);
+    return;
+  }
   await Promise.all(
     entries.map(async (entry) => {
       const fullPath = path.join(dirPath, entry.name);

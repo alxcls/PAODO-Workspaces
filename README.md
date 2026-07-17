@@ -2,9 +2,11 @@
 
 **PAODO turns coding agents into controlled, callable AI services.**
 
-Each _workspace_ is an isolated Docker container running its own ReAct loop coding agent. Make it write scripts to run and instructions to follow, then call it through the workspace chat interface or an external API. Workspaces can be wired into a graph, so agents discover each other and delegate tasks. Think of it as multiple instances of VS Code + Claude Code, each in its own sandbox environment that can be wired together for collaboration.
+Each _workspace_ is an isolated Docker container running its own ReAct loop coding agent. Make it write scripts to run and instructions to follow, then call it through the workspace chat interface or an external API / MCP. Workspaces can be wired into a graph, so agents discover each other and delegate tasks. Think of it as multiple instances of VS Code + Claude Code, each in its own sandbox environment that can be wired together for collaboration.
 
-[![Workspace overview](https://img.youtube.com/vi/4nZ7X05ot4w/maxresdefault.jpg)](https://www.youtube.com/watch?v=4nZ7X05ot4w)
+*Demo video of PAODO in action* :
+
+[![PAODO Workspace demo video](https://img.youtube.com/vi/4nZ7X05ot4w/maxresdefault.jpg)](https://www.youtube.com/watch?v=4nZ7X05ot4w)
 
 ## Features
 
@@ -46,7 +48,7 @@ For VPS deployment, see the [deploy guide](deploy/README.md).
 
 ## How it works
 
-Each workspace runs in its own Docker sandbox and can be used through the chat UI or external API. Connected workspaces can call each other through defined input/output contracts.
+Each workspace runs in its own Docker sandbox and can be used through the chat UI, external API or MCP server. Agents through connected workspaces or MCP server can call each other through defined input/output contracts.
 
 ![Architectural representation of the main functionality](doc/images/loop.png)
 
@@ -71,10 +73,6 @@ The agent runs a ReAct loop with the following tools:
 Workspaces can call each other. The network page connects them into a directed graph; an edge **A → B** lets A's agent invoke B's. Agents find their neighbors with `list_agents` and call them with `call_agent`.
 
 Calls are **contract-first**: each workspace publishes typed _skills_ (`.skills/*.json`), and the platform validates the caller's input and the callee's output against the skill's schema. The callee runs in a fresh, isolated conversation. No graph edge, no call.
-
-_Example: a newsroom editor agent delegates research and writing to specialist agents that share a common drive._
-
-![Agent Network](doc/images/NETWORK_EXAMPLE.png)
 
 ## API access
 

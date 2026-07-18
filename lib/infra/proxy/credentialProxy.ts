@@ -308,7 +308,7 @@ export class CredentialProxy {
           if (isBlockedDestinationError(err)) {
             auditBlockedDestination({ workspaceId: auth?.wsId, hostname, port, transport: "tunnel" });
           } else {
-            log.warn({ err, hostname, port, established }, "proxy tunnel upstream error");
+            log.warn({ err, upstreamHost: hostname, port, established }, "proxy tunnel upstream error");
           }
           if (!established) {
             try {
@@ -355,7 +355,7 @@ export class CredentialProxy {
     });
     tlsSocket.on("error", () => tlsSocket.destroy());
     tlsSocket.on("tlsClientError", (err) => {
-      log.debug({ err, hostname }, "TLS client error in MITM");
+      log.debug({ err, upstreamHost: hostname }, "TLS client error in MITM");
       tlsSocket.destroy();
     });
 
@@ -400,7 +400,7 @@ export class CredentialProxy {
           tlsSocket.write(buildResponseHead(upstreamRes, redactMap));
           upstreamRes.pipe(createRedactTransform(redactMap)).pipe(tlsSocket);
           upstreamRes.on("error", (err) => {
-            log.warn({ err, hostname, port }, "upstream response stream error");
+            log.warn({ err, upstreamHost: hostname, port }, "upstream response stream error");
             tlsSocket.destroy();
           });
         },
@@ -434,7 +434,7 @@ export class CredentialProxy {
       try {
         raw = await collectBody(src, headers, remaining);
       } catch (err) {
-        log.warn({ err, hostname: context.hostname }, "request body read failed");
+        log.warn({ err, upstreamHost: context.hostname }, "request body read failed");
         src.destroy();
         return;
       }
@@ -445,7 +445,7 @@ export class CredentialProxy {
       const req = startUpstream();
       req.on("error", (err) => {
         if (isBlockedDestinationError(err)) auditBlockedDestination(context);
-        else log.warn({ err, hostname: context.hostname }, "upstream request error");
+        else log.warn({ err, upstreamHost: context.hostname }, "upstream request error");
         src.destroy();
       });
       req.end(body);
@@ -454,7 +454,7 @@ export class CredentialProxy {
       const req = startUpstream();
       req.on("error", (err) => {
         if (isBlockedDestinationError(err)) auditBlockedDestination(context);
-        else log.warn({ err, hostname: context.hostname }, "upstream request error");
+        else log.warn({ err, upstreamHost: context.hostname }, "upstream request error");
         src.destroy();
       });
       pipeBody(src, req, headers, remaining);
@@ -506,7 +506,7 @@ export class CredentialProxy {
         socket.write(buildResponseHead(upstreamRes));
         upstreamRes.pipe(socket);
         upstreamRes.on("error", (err) => {
-          log.warn({ err, hostname, port }, "upstream response stream error");
+          log.warn({ err, upstreamHost: hostname, port }, "upstream response stream error");
           socket.destroy();
         });
       });

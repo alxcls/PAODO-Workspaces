@@ -171,7 +171,7 @@ export function buildSignalHandlers(): Record<string, PostDispatchFn> {
         try {
           await applyCompaction(ctx.model, ctx.messages, level, next_step);
         } catch (err) {
-          ctx.log.warn({ err, level }, "agent compact_context failed");
+          ctx.log.warn({ err, compactLevel: level }, "agent compact_context failed");
         }
       }
     },

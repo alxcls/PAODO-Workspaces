@@ -9,6 +9,21 @@ import ts from "typescript";
 const ROOT = path.resolve(__dirname, "../..");
 const LOGGER_RECEIVERS = new Set(["log", "wlog", "elog", "this.log"]);
 const EVENT_NAME = /^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$/;
+const LOG_METHODS = new Set(["trace", "debug", "info", "warn", "error", "fatal"]);
+
+// Pino writes these itself: `level`/`time`/`pid`/`hostname` as base bindings, `msg` from the
+// message argument, and `context`/`audit` from the children createLogger/createAuditLogger bind.
+// A call-site binding of the same name does not override them — it appends a second key with the
+// same name, and JSON readers take the last one. That silently rewrites the record: a `hostname`
+// binding replaced the machine identity with the upstream host being proxied, and a `level`
+// binding turned an info line into `"level":"light"`, which jq ranks ABOVE 40 (strings sort after
+// numbers), so info lines matched the `select(.level >= 40)` triage recipe in deploy/README.md.
+const RESERVED_BINDINGS = new Set(["level", "time", "pid", "hostname", "msg", "context", "audit"]);
+
+/** Receivers that are plausibly a logger — deliberately broader than LOGGER_RECEIVERS above. */
+function isLoggerReceiver(receiver: string): boolean {
+  return /(^|\.)(log|logger|audit)$/i.test(receiver);
+}
 
 function productionFiles(): string[] {
   const files = [
@@ -60,6 +75,41 @@ describe("error log contract", () => {
               if (!event || !EVENT_NAME.test(event)) violations.push(`${location} needs a snake_case literal event`);
               if (!outcome || !EVENT_NAME.test(outcome))
                 violations.push(`${location} needs a snake_case literal outcome`);
+            }
+          }
+        }
+        ts.forEachChild(node, visit);
+      };
+      visit(source);
+    }
+
+    expect(violations).toEqual([]);
+  });
+
+  it("never binds a field name Pino already writes, at any level", () => {
+    const violations: string[] = [];
+
+    for (const file of productionFiles()) {
+      const source = ts.createSourceFile(file, fs.readFileSync(file, "utf-8"), ts.ScriptTarget.Latest, true);
+      const visit = (node: ts.Node) => {
+        if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)) {
+          const method = node.expression.name.text;
+          const receiver = node.expression.expression.getText(source);
+          const bindings = node.arguments[0];
+          if (
+            LOG_METHODS.has(method) &&
+            isLoggerReceiver(receiver) &&
+            bindings &&
+            ts.isObjectLiteralExpression(bindings)
+          ) {
+            const line = source.getLineAndCharacterOfPosition(node.getStart(source)).line + 1;
+            for (const property of bindings.properties) {
+              // Shorthand (`{ hostname }`) collides just as readily as `{ hostname: x }`.
+              if (!ts.isPropertyAssignment(property) && !ts.isShorthandPropertyAssignment(property)) continue;
+              const name = property.name?.getText(source).replace(/["']/g, "");
+              if (name && RESERVED_BINDINGS.has(name)) {
+                violations.push(`${path.relative(ROOT, file)}:${line} binds reserved log field "${name}"`);
+              }
             }
           }
         }

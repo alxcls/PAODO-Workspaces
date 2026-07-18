@@ -10,6 +10,11 @@ services:
   workspace-api:
     image: caddy:2.10-alpine
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
     ports:
       # Bind only the public address. Tailscale Serve can keep using 443 on the
       # VPS's Tailscale address for the private UI.

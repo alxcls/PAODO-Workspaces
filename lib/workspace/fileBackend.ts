@@ -16,12 +16,7 @@ import { PathContainmentError } from "../infra/workspaceContainment";
  *
  * Everything else — EACCES, EIO, a full disk — is a genuine system fault and gets logged.
  */
-export function logFileRouteError(
-  log: pino.Logger,
-  err: unknown,
-  fields: Record<string, unknown>,
-  msg: string,
-): void {
+export function logFileRouteError(log: pino.Logger, err: unknown, fields: Record<string, unknown>, msg: string): void {
   if (err instanceof PathContainmentError) return;
   if ((err as NodeJS.ErrnoException).code === "ENOENT") return;
   log.warn({ err, ...fields }, msg);

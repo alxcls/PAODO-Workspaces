@@ -86,7 +86,7 @@ export async function applyCompaction(
 
   if (level === "light") {
     stripToolOutputs(messages);
-    log.info({ level, before, after: messages.length }, "context compacted");
+    log.info({ compactLevel: level, before, after: messages.length }, "context compacted");
     return;
   }
 
@@ -96,7 +96,7 @@ export async function applyCompaction(
     const summary = await summarizeHistory(model, messages.slice(1), nextStep);
     const brief = new HumanMessage(`${summary}\n\nNext step: ${nextStep}`);
     messages.splice(0, messages.length, system, brief);
-    log.info({ level, before, after: messages.length }, "context compacted");
+    log.info({ compactLevel: level, before, after: messages.length }, "context compacted");
     return;
   }
 
@@ -112,7 +112,7 @@ export async function applyCompaction(
     const summary = await summarizeHistory(model, messages.slice(1), nextStep);
     const brief = new HumanMessage(`${summary}\n\nNext step: ${nextStep}`);
     messages.splice(0, messages.length, system, brief);
-    log.info({ level: "medium->hard", before, after: messages.length }, "context compacted");
+    log.info({ compactLevel: "medium->hard", before, after: messages.length }, "context compacted");
     return;
   }
 
@@ -121,5 +121,5 @@ export async function applyCompaction(
   const briefMessages = [system, new HumanMessage(summary), ...tail];
   messages.splice(0, messages.length, ...briefMessages);
   stripToolOutputs(messages);
-  log.info({ level, before, after: messages.length }, "context compacted");
+  log.info({ compactLevel: level, before, after: messages.length }, "context compacted");
 }

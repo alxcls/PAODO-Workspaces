@@ -6,8 +6,16 @@ import ts from "typescript";
 const ROOT = process.cwd();
 const OUTPUT = path.join(ROOT, "log-inventory.json");
 const LEVELS = ["trace", "debug", "info", "warn", "error", "fatal"] as const;
+const RETENTIONS = [
+  "browser-only",
+  "development-only",
+  "docker-only",
+  "durable-operational",
+  "durable-security",
+] as const;
 type Level = (typeof LEVELS)[number];
 type Channel = "operational" | "audit";
+type Retention = (typeof RETENTIONS)[number];
 
 type LoggerMeta = {
   context: string | null;
@@ -26,8 +34,7 @@ type Entry = {
   fields: string[];
   bindings: string[];
   fieldsExpression?: string;
-  durable: boolean;
-  durableDestination: "operational" | "security" | null;
+  retention: Retention;
 };
 
 function sourceFiles(): string[] {
@@ -156,13 +163,16 @@ for (const absolute of sourceFiles()) {
             ? "browser-console"
             : "process-console"
           : (metadata?.channel ?? "operational");
-        const durableDestination = !isConsole
-          ? channel === "audit" && !["trace", "debug"].includes(level)
-            ? "security"
-            : channel === "operational" && ["warn", "error", "fatal"].includes(level)
-              ? "operational"
-              : null
-          : null;
+        const retention: Retention =
+          channel === "browser-console"
+            ? "browser-only"
+            : channel === "audit" && ["trace", "debug"].includes(level)
+              ? "development-only"
+              : channel === "audit" && !["trace", "debug"].includes(level)
+                ? "durable-security"
+                : channel === "operational" && ["warn", "error", "fatal"].includes(level)
+                  ? "durable-operational"
+                  : "docker-only";
 
         const entry: Entry = {
           file: relative,
@@ -173,8 +183,7 @@ for (const absolute of sourceFiles()) {
           message,
           fields: objectKeys(fieldsNode),
           bindings: metadata?.bindings ?? [],
-          durable: durableDestination !== null,
-          durableDestination,
+          retention,
         };
         if (!message && messageNode) entry.messageExpression = messageNode.getText();
         if (fieldsNode && !ts.isObjectLiteralExpression(fieldsNode)) entry.fieldsExpression = fieldsNode.getText();
@@ -186,27 +195,50 @@ for (const absolute of sourceFiles()) {
   visit(source);
 }
 
-// Line numbers are deliberately not recorded: they made the checked-in inventory churn on any
-// unrelated edit that shifted a log call, failing CI on PRs that changed no logging at all. Entries
-// are collected in sorted-file, source order, and Array#sort is stable, so output stays deterministic.
+// Line numbers are deliberately not recorded so the local inventory does not churn on unrelated
+// edits that only shift a call site. Entries are collected in sorted-file, source order, and
+// Array#sort is stable, so repeated local generations stay deterministic.
 for (const level of LEVELS) grouped[level].sort((a, b) => a.file.localeCompare(b.file));
 
 const counts = Object.fromEntries(LEVELS.map((level) => [level, grouped[level].length])) as Record<Level, number>;
+const entries = LEVELS.flatMap((level) => grouped[level]);
 const output = {
   $comment:
-    "Generated inventory of runtime log call sites. Includes operational Pino, audit Pino, and console calls under app/, components/, lib/, server.ts, proxyEntry.ts, and instrumentation files; excludes tests and developer scripts. Durable means eligible for a configured production durable destination. Regenerate with `npm run logs:inventory`.",
+    "Generated local inventory of runtime log call sites. Counts describe static call sites, not the number of events written. Regenerate with `npm run logs:inventory`; this file is intentionally gitignored.",
+  policy: {
+    operational: {
+      purpose: "Routine application activity and failures emitted through createLogger.",
+      dockerStdoutMinLevel: "LOG_LEVEL (info by default in production)",
+      durableMinLevel: "warn",
+      durableDestination: "OPERATIONAL_LOG_FILE (app.log or credproxy.log in Compose)",
+    },
+    securityAudit: {
+      purpose: "Authentication, authorization, and credential-lifecycle events emitted through createAuditLogger.",
+      dockerStdoutMinLevel: "info",
+      durableMinLevel: "info",
+      durableDestination: "SECURITY_LOG_FILE (security.log in Compose)",
+    },
+    dockerStdoutRetention: "json-file rotation capped at 10 MB x 5 files per service",
+    durableFileRetention: "checked every 15 minutes; rotate daily or above 50 MB; retain 14 compressed files",
+    retentionLabels: {
+      "browser-only": "Visible only in the browser developer console.",
+      "development-only": "Emitted only outside production; it has no production retention.",
+      "docker-only": "Written to process stdout/stderr when its level is enabled; retained only by Docker rotation.",
+      "durable-operational": "Written to Docker output and the configured durable operational file.",
+      "durable-security": "Written to Docker output and the configured durable security audit file.",
+    },
+  },
   summary: {
-    total: Object.values(counts).reduce((sum, count) => sum + count, 0),
-    pino: LEVELS.flatMap((level) => grouped[level]).filter((entry) => entry.logger === "pino").length,
-    console: LEVELS.flatMap((level) => grouped[level]).filter((entry) => entry.logger === "console").length,
-    durableCandidates: LEVELS.flatMap((level) => grouped[level]).filter((entry) => entry.durable).length,
-    operationalDurableCandidates: LEVELS.flatMap((level) => grouped[level]).filter(
-      (entry) => entry.durableDestination === "operational",
-    ).length,
-    securityAuditCandidates: LEVELS.flatMap((level) => grouped[level]).filter(
-      (entry) => entry.durableDestination === "security",
-    ).length,
+    totalCallSites: entries.length,
+    pinoCallSites: entries.filter((entry) => entry.logger === "pino").length,
+    consoleCallSites: entries.filter((entry) => entry.logger === "console").length,
+    durableCallSites: entries.filter((entry) => entry.retention.startsWith("durable-")).length,
+    durableOperationalCallSites: entries.filter((entry) => entry.retention === "durable-operational").length,
+    durableSecurityAuditCallSites: entries.filter((entry) => entry.retention === "durable-security").length,
     byLevel: counts,
+    byRetention: Object.fromEntries(
+      RETENTIONS.map((retention) => [retention, entries.filter((entry) => entry.retention === retention).length]),
+    ),
   },
   levels: grouped,
 };
@@ -214,18 +246,8 @@ const output = {
 prettier
   .format(JSON.stringify(output), { parser: "json", printWidth: 120 })
   .then((serialized) => {
-    if (process.argv.includes("--check")) {
-      const current = fs.existsSync(OUTPUT) ? fs.readFileSync(OUTPUT, "utf8") : "";
-      if (current !== serialized) {
-        console.error("log-inventory.json is stale; run `npm run logs:inventory`.");
-        process.exitCode = 1;
-      } else {
-        console.log(`log-inventory.json is current with ${output.summary.total} log call sites.`);
-      }
-    } else {
-      fs.writeFileSync(OUTPUT, serialized);
-      console.log(`Wrote ${path.relative(ROOT, OUTPUT)} with ${output.summary.total} log call sites.`);
-    }
+    fs.writeFileSync(OUTPUT, serialized);
+    console.log(`Wrote ${path.relative(ROOT, OUTPUT)} with ${output.summary.totalCallSites} log call sites.`);
   })
   .catch((err: unknown) => {
     console.error("Failed to format log inventory", err);

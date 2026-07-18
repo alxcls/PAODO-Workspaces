@@ -7,7 +7,7 @@ import { validateKey } from "@/lib/infra/security/apiKeyStore";
 import { getClientIp } from "@/lib/infra/realtime/clientIp";
 import { createAuditLogger, createLogger } from "@/lib/infra/logger";
 import { makeAgentStream } from "@/lib/agent/agentStream";
-import { rateLimited, subjectRateLimited } from "@/lib/api/guards";
+import { preAuthAuditDecision, rateLimited, subjectRateLimited } from "@/lib/api/guards";
 
 export async function POST(req: NextRequest) {
   const log = createLogger("api").child({ route: "agent" });
@@ -26,15 +26,19 @@ export async function POST(req: NextRequest) {
   if (!ws) return new Response("Workspace not found", { status: 404 });
 
   if (!plain || !validateKey(ws.id, plain)) {
-    audit.warn(
-      {
-        ip,
-        workspace: body.workspace,
-        requestId: req.headers.get("x-request-id") ?? undefined,
-        event: "api_auth_unauthorized",
-      },
-      "unauthorized request",
-    );
+    const decision = preAuthAuditDecision("api_auth_unauthorized");
+    if (decision.emit) {
+      audit.warn(
+        {
+          ip,
+          workspace: body.workspace,
+          requestId: req.headers.get("x-request-id") ?? undefined,
+          event: "api_auth_unauthorized",
+          ...(decision.suppressed > 0 ? { suppressed: decision.suppressed } : {}),
+        },
+        "unauthorized request",
+      );
+    }
     return new Response("Unauthorized", { status: 401 });
   }
 

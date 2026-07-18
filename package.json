@@ -16,7 +16,6 @@
     "graph": "tsx dev_tools/viz/generate-graph.ts && open dev_tools/viz/graph.html",
     "query-graph": "tsx dev_tools/query/query-graph.ts",
     "logs:inventory": "tsx scripts/inventory-logs.ts",
-    "logs:inventory:check": "tsx scripts/inventory-logs.ts --check",
     "update-pricing": "tsx scripts/update-pricing.ts",
     "check:mocks": "tsx scripts/check-mock-drift.ts",
     "test": "vitest run",

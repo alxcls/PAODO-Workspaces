@@ -7,14 +7,14 @@ import "dotenv/config";
 import { randomUUID } from "node:crypto";
 import { createServer } from "http";
 import { createAuditLogger, createLogger, runWithLogContext } from "./lib/infra/logger";
-import { LogThrottle, throttleFields } from "./lib/infra/logThrottle";
+import { sharedLogThrottle, throttleFields } from "./lib/infra/logThrottle";
 
 const log = createLogger("server");
 const audit = createAuditLogger("server");
 
 // Rejection paths are reachable pre-auth, and durable audit writes are synchronous. Throttling them
 // keeps an unauthenticated flood from turning into sustained blocking disk I/O on the event loop.
-const auditThrottle = new LogThrottle();
+const auditThrottle = sharedLogThrottle("preAuthAudit");
 
 function fatal(reason: string, err: unknown): never {
   log.fatal({ err, reason }, "process exiting after fatal error");

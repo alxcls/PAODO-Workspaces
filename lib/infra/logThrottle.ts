@@ -1,3 +1,5 @@
+import { globalSingleton } from "./globalSingleton";
+
 export type LogThrottleDecision =
   | { emit: false }
   | {
@@ -40,6 +42,15 @@ export class LogThrottle {
   forget(key: string): void {
     this.states.delete(key);
   }
+}
+
+/**
+ * Return a process-wide throttle that survives Next.js route-bundle/module re-instantiation.
+ * Callers should use a stable, feature-scoped name and coarse event keys so distributed clients
+ * cannot multiply synchronous durable writes by presenting different addresses or route params.
+ */
+export function sharedLogThrottle(name: string): LogThrottle {
+  return globalSingleton(`logThrottle:${name}`, () => new LogThrottle());
 }
 
 /**

@@ -1,0 +1,10 @@
+[Unit]
+Description=Check PAODO durable logs for rotation every 15 minutes
+
+[Timer]
+OnCalendar=*-*-* *:00/15:00
+AccuracySec=1min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

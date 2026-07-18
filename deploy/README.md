@@ -120,22 +120,29 @@ Provider, model, and reasoning effort are not set here — each workspace picks 
 ## Step 4 — Start the app
 
 ```bash
-# Install and enable log rotation, then install PAODO's policy. This is required
-# even when Docker was already present on the VPS.
+# Install log rotation, PAODO's policy, and its dedicated 15-minute size-check timer. This is
+# required even when Docker was already present on the VPS. The system timer remains enabled for
+# the host's other logs; PAODO's timer invokes only the PAODO policy.
 apt-get update && apt-get install -y logrotate
-install -m 0644 deploy/paodo-logrotate.conf /etc/logrotate.d/paodo
-systemctl enable --now logrotate.timer
+# Keep PAODO's policy outside /etc/logrotate.d so only its frequent timer invokes it.
+rm -f /etc/logrotate.d/paodo
+install -m 0644 deploy/paodo-logrotate.conf /etc/paodo-logrotate.conf
+install -m 0644 deploy/paodo-logrotate.service /etc/systemd/system/paodo-logrotate.service
+install -m 0644 deploy/paodo-logrotate.timer /etc/systemd/system/paodo-logrotate.timer
+systemctl daemon-reload
+systemctl enable --now logrotate.timer paodo-logrotate.timer
 
 # Build the local PAODO image explicitly on the first run, then start all services.
 docker compose up --build -d
 
-# All three checks should succeed; the timer should print "active".
+# All checks should succeed; both timers should print "active".
 docker compose ps
-systemctl is-active logrotate.timer
-logrotate --debug /etc/logrotate.d/paodo >/dev/null
+systemctl is-active logrotate.timer paodo-logrotate.timer
+systemctl list-timers paodo-logrotate.timer
+logrotate --debug --state /var/lib/logrotate/paodo.status /etc/paodo-logrotate.conf >/dev/null
 ```
 
-This starts three long-running containers: `app` (the web UI + agent), `socket-proxy` (a locked-down Docker API), and `credproxy` (the credential proxy that injects per-workspace secrets into outbound requests). A one-shot `log-init` service creates `/var/log/paodo` as `0750` and its log files as `0600`. Operational warnings go to `app.log`/`credproxy.log`; explicit authentication and credential-lifecycle audit events go to `security.log`. Debian's logrotate timer checks the files daily and retains 14 compressed rotations. The 50 MB threshold also applies if logrotate is invoked more frequently. The policy uses `copytruncate` so no container restart or signal handling is required; this simple approach has a very small potential log-loss window during rotation. Docker stdout/stderr logs are capped separately by Compose.
+This starts three long-running containers: `app`, `socket-proxy`, and `credproxy`. The one-shot `log-init` service prepares `/var/log/paodo`; the installed timer rotates its files, while Compose caps Docker stdout/stderr logs separately.
 
 ### How workspace egress works (credential proxy)
 
@@ -243,7 +250,13 @@ must reach the API or MCP endpoint from the public internet.
 ```bash
 # Pull latest code and rebuild
 git pull
-install -m 0644 deploy/paodo-logrotate.conf /etc/logrotate.d/paodo
+rm -f /etc/logrotate.d/paodo
+install -m 0644 deploy/paodo-logrotate.conf /etc/paodo-logrotate.conf
+install -m 0644 deploy/paodo-logrotate.service /etc/systemd/system/paodo-logrotate.service
+install -m 0644 deploy/paodo-logrotate.timer /etc/systemd/system/paodo-logrotate.timer
+systemctl daemon-reload
+systemctl enable paodo-logrotate.timer
+systemctl restart paodo-logrotate.timer
 docker compose up --build -d
 
 # Apply a config change (.env edit) without rebuilding

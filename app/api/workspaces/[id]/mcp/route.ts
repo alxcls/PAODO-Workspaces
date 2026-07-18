@@ -9,7 +9,7 @@ import type { NextRequest } from "next/server";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { buildWorkspaceMcpServer } from "@/lib/mcp/workspaceMcpServer";
 import { validateSecret } from "@/lib/infra/security/mcpConfigStore";
-import { rateLimited, subjectRateLimited } from "@/lib/api/guards";
+import { preAuthAuditDecision, rateLimited, subjectRateLimited } from "@/lib/api/guards";
 import { getClientIp } from "@/lib/infra/realtime/clientIp";
 import { createAuditLogger, createLogger } from "@/lib/infra/logger";
 
@@ -53,16 +53,20 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   if (limited) return limited;
 
   if (!validateSecret(id, bearer(req))) {
-    audit.warn(
-      {
-        workspaceId: id,
-        route: "mcp",
-        ip: getClientIp(req),
-        requestId: req.headers.get("x-request-id") ?? undefined,
-        event: "mcp_auth_unauthorized",
-      },
-      "unauthorized MCP request",
-    );
+    const decision = preAuthAuditDecision("mcp_auth_unauthorized");
+    if (decision.emit) {
+      audit.warn(
+        {
+          workspaceId: id,
+          route: "mcp",
+          ip: getClientIp(req),
+          requestId: req.headers.get("x-request-id") ?? undefined,
+          event: "mcp_auth_unauthorized",
+          ...(decision.suppressed > 0 ? { suppressed: decision.suppressed } : {}),
+        },
+        "unauthorized MCP request",
+      );
+    }
     return new Response("Unauthorized", { status: 401 });
   }
 

@@ -1,0 +1,7 @@
+[Unit]
+Description=Rotate PAODO durable logs
+Documentation=file:/etc/paodo-logrotate.conf
+
+[Service]
+Type=oneshot
+ExecStart=/usr/sbin/logrotate --state /var/lib/logrotate/paodo.status /etc/paodo-logrotate.conf

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { LogThrottle, throttleFields } from "./logThrottle";
+import { LogThrottle, sharedLogThrottle, throttleFields } from "./logThrottle";
 
 describe("LogThrottle", () => {
   it("emits immediately, suppresses repeats, and reports the suppressed count", () => {
@@ -21,6 +21,16 @@ describe("LogThrottle", () => {
     expect(throttle.record("b").emit).toBe(true);
     throttle.forget("a");
     expect(throttle.record("a").emit).toBe(true);
+  });
+
+  it("shares named throttles across module consumers", () => {
+    const name = `test-${crypto.randomUUID()}`;
+    const first = sharedLogThrottle(name);
+    const second = sharedLogThrottle(name);
+
+    expect(second).toBe(first);
+    expect(first.record("auth").emit).toBe(true);
+    expect(second.record("auth").emit).toBe(false);
   });
 });
 

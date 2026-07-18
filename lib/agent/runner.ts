@@ -518,12 +518,14 @@ export async function* runAgent(
           const toolStart = Date.now();
           let resultStr: string;
           let meta: CallAgentMeta | undefined;
+          let invocationThrew = false;
           // Tools that return UI metadata alongside the model-facing string expose callWithMeta
           // (a bound arrow property, so it can be called free-standing without a thisArg).
           const withMeta = tool?.callWithMeta;
           if (withMeta) {
             const r = await withMeta(tc.args, (m) => lq.emitLink({ name: tc.name, id: tc.id, meta: m }), signal).catch(
               (err) => {
+                invocationThrew = true;
                 if (!signal?.aborted) wlog.warn({ err, name: tc.name }, "tool invocation threw");
                 return {
                   result: `Error: ${String(err)}`,
@@ -536,6 +538,7 @@ export async function* runAgent(
           } else {
             if (tool) {
               resultStr = await invokeTool(tool, tc.args, signal).catch((err) => {
+                invocationThrew = true;
                 if (!signal?.aborted) wlog.warn({ err, name: tc.name }, "tool invocation threw");
                 return `Error: ${String(err)}`;
               });
@@ -544,8 +547,18 @@ export async function* runAgent(
               resultStr = `Error: unknown tool "${tc.name}"`;
             }
           }
-          wlog.debug({ name: tc.name, toolMs: Date.now() - toolStart }, "tool timing");
-          return { tc, resultStr, meta };
+          const toolMs = Date.now() - toolStart;
+          const status = classifyToolStatus(resultStr);
+          // Tool implementations commonly return an Error-prefixed result instead of throwing.
+          // Persist a safe operational signal without retaining arguments or result text, either
+          // of which may contain credentials or workspace contents. Unknown tools were warned
+          // above already; user cancellation is expected and should not become an incident log.
+          if (tool && status === "error" && !invocationThrew && !signal?.aborted) {
+            wlog.warn({ name: tc.name, toolMs, status }, "tool returned error");
+          } else {
+            wlog.debug({ name: tc.name, toolMs, status }, "tool timing");
+          }
+          return { tc, resultStr, meta, status };
         }),
       ).then((s) => {
         lq.notifySettled();
@@ -598,11 +611,11 @@ export async function* runAgent(
       yield {
         type: "turn_usage",
         ...usageBase,
-        toolCalls: settled.map(({ tc, resultStr }) => ({
+        toolCalls: settled.map(({ tc, resultStr, status }) => ({
           name: tc.name,
           args: tc.args,
           output: resultStr,
-          status: classifyToolStatus(resultStr),
+          status,
         })),
       };
 

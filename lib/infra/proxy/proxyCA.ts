@@ -30,7 +30,10 @@ function getProxyHmacKey(): Buffer | null {
   try {
     gKey._proxyHmacKey = readFileSync(PROXY_HMAC_FILE);
     return gKey._proxyHmacKey;
-  } catch {
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+      log.error({ err, event: "proxy_hmac_key_read_failed" }, "failed to read proxy HMAC key");
+    }
     return null;
   }
 }

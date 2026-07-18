@@ -80,6 +80,29 @@ describe("logger", () => {
     expect(record.headers.authorization).toBe("[Redacted]");
   });
 
+  it("attaches request context across asynchronous work", async () => {
+    const file = path.join(root, "operational.log");
+    process.env.OPERATIONAL_LOG_FILE = file;
+
+    const { createLogger, runWithLogContext } = await import("./logger");
+    const log = createLogger("test");
+    await runWithLogContext({ requestId: "request-1", method: "POST", pathname: "/api/workspaces" }, async () => {
+      await Promise.resolve();
+      log.warn({ workspaceId: "ws-1" }, "request-scoped warning");
+    });
+
+    const record = JSON.parse(readFileSync(file, "utf-8")) as Record<string, unknown>;
+    expect(record).toEqual(
+      expect.objectContaining({
+        context: "test",
+        requestId: "request-1",
+        method: "POST",
+        pathname: "/api/workspaces",
+        workspaceId: "ws-1",
+      }),
+    );
+  });
+
   it("fails during initialization when the durable destination cannot be opened", async () => {
     process.env.SECURITY_LOG_FILE = root; // A directory cannot be opened as an append-only log file.
     vi.spyOn(console, "error").mockImplementation(() => {});

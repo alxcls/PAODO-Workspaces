@@ -9,13 +9,15 @@
 // (separate module instances) share one key. Unlike the HMAC key it is generated ON DEMAND rather
 // than from ensureCA(): the secret store loads synchronously at module import, which happens
 // before server startup runs ensureCA() — and route bundles have no startup hook at all.
-import { readFileSync } from "fs";
+import fs from "fs";
 import path from "path";
 import { randomBytes, createCipheriv, createDecipheriv } from "crypto";
 import { WORKSPACES_ROOT } from "../paths";
+import { createLogger } from "../logger";
 import { createKeyFile } from "./keyFile";
 
 const KEY_FILE = path.join(WORKSPACES_ROOT, ".proxy-ca", "secrets-enc.key");
+const log = createLogger("secretStore");
 
 // Envelope persisted (via atomicSaveJson) in place of the legacy plaintext store JSON. Still a
 // .json file; trivially distinguishable from the legacy shape (wsId → name → entry objects).
@@ -45,10 +47,16 @@ export function getSecretsEncKey(): Buffer {
   if (g._secretsEncKey) return g._secretsEncKey;
   let key: Buffer;
   try {
-    key = readFileSync(KEY_FILE);
-  } catch {
-    // First use (or key file unreadable and absent): self-provision. createKeyFile mkdirs because
-    // .proxy-ca/ may not exist yet — ensureCA() has not necessarily run when the store imports us.
+    key = fs.readFileSync(KEY_FILE);
+  } catch (err) {
+    // Missing is the only safe provisioning case. Overwriting an existing key after EACCES/EIO
+    // would make every secret encrypted with the old key permanently unrecoverable.
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+      log.error({ err, event: "secrets_encryption_key_read_failed" }, "failed to read secrets encryption key");
+      throw err;
+    }
+    // First use: createKeyFile mkdirs because .proxy-ca/ may not exist yet — ensureCA() has not
+    // necessarily run when the store imports us.
     key = createKeyFile(KEY_FILE);
   }
   if (key.length !== 32) throw new Error("secrets encryption key is corrupt (expected 32 bytes)");

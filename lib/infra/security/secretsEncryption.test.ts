@@ -92,4 +92,18 @@ describe("key provisioning", () => {
     expect(stat.mode & 0o777).toBe(0o600);
     expect(fs.readFileSync(keyFile).equals(key)).toBe(true);
   });
+
+  it("does not replace an existing key after a non-ENOENT read failure", () => {
+    getSecretsEncKey();
+    const keyFile = path.join(ROOT, ".proxy-ca", "secrets-enc.key");
+    const original = fs.readFileSync(keyFile);
+    delete (global as Record<string, unknown>)._secretsEncKey;
+    const read = vi.spyOn(fs, "readFileSync").mockImplementationOnce(() => {
+      throw Object.assign(new Error("simulated storage failure"), { code: "EIO" });
+    });
+
+    expect(() => getSecretsEncKey()).toThrow("simulated storage failure");
+    read.mockRestore();
+    expect(fs.readFileSync(keyFile).equals(original)).toBe(true);
+  });
 });

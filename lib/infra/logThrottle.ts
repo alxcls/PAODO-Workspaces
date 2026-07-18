@@ -41,3 +41,21 @@ export class LogThrottle {
     this.states.delete(key);
   }
 }
+
+/**
+ * Returns the fields to log, or null when this event is being suppressed. Emitted events carry a
+ * `suppressed` count so a throttled burst still reports its true volume.
+ *
+ * Keys are deliberately coarse (the event name, not the client IP): the point is to bound how much
+ * synchronous durable-log I/O an unauthenticated caller can force, and a per-IP key bounds nothing
+ * once a scan is distributed across addresses.
+ */
+export function throttleFields(
+  throttle: LogThrottle,
+  key: string,
+  fields: Record<string, unknown>,
+): Record<string, unknown> | null {
+  const decision = throttle.record(key);
+  if (!decision.emit) return null;
+  return decision.suppressed > 0 ? { ...fields, suppressed: decision.suppressed } : fields;
+}

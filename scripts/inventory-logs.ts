@@ -17,7 +17,6 @@ type LoggerMeta = {
 
 type Entry = {
   file: string;
-  line: number;
   logger: "pino" | "console";
   channel: Channel | "browser-console" | "process-console";
   receiver: string;
@@ -167,7 +166,6 @@ for (const absolute of sourceFiles()) {
 
         const entry: Entry = {
           file: relative,
-          line: source.getLineAndCharacterOfPosition(node.getStart()).line + 1,
           logger: isConsole ? "console" : "pino",
           channel,
           receiver,
@@ -188,7 +186,10 @@ for (const absolute of sourceFiles()) {
   visit(source);
 }
 
-for (const level of LEVELS) grouped[level].sort((a, b) => a.file.localeCompare(b.file) || a.line - b.line);
+// Line numbers are deliberately not recorded: they made the checked-in inventory churn on any
+// unrelated edit that shifted a log call, failing CI on PRs that changed no logging at all. Entries
+// are collected in sorted-file, source order, and Array#sort is stable, so output stays deterministic.
+for (const level of LEVELS) grouped[level].sort((a, b) => a.file.localeCompare(b.file));
 
 const counts = Object.fromEntries(LEVELS.map((level) => [level, grouped[level].length])) as Record<Level, number>;
 const output = {

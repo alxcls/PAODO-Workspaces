@@ -33,7 +33,7 @@ function hasUnansweredToolCalls(messages: BaseMessage[]): boolean {
 
 // A fake model whose stream replays a scripted sequence of chunks per turn. Each turn either
 // emits tool calls (with tool_call_chunks) or plain text (final answer).
-function makeBuildTools(turns: Chunk[][]) {
+function makeBuildTools(turns: Chunk[][], executeResult = "command ran") {
   let turn = 0;
   const modelWithTools = {
     stream: async (_messages: BaseMessage[], _opts: { signal?: AbortSignal }) => {
@@ -44,7 +44,7 @@ function makeBuildTools(turns: Chunk[][]) {
     },
   };
   const toolMap = {
-    execute_command: { invoke: async () => "command ran" },
+    execute_command: { invoke: async () => executeResult },
     workspace_restore: { invoke: async () => "[restoring]" },
   };
   return () => ({ modelWithTools, model: modelWithTools, toolMap, signalHandlers: {} }) as never;
@@ -137,6 +137,23 @@ describe("runAgent — history stays consistent across aborts", () => {
     expect(hasUnansweredToolCalls(messages)).toBe(false);
     expect(messages.some((m) => m instanceof ToolMessage && m.tool_call_id === "call_1")).toBe(true);
     expect(events.at(-1)).toEqual({ type: "done" });
+  });
+
+  it("records a returned tool error as an error outcome", async () => {
+    const buildAgentTools = makeBuildTools(
+      [[toolCallsChunk({ id: "call_1", args: '{"cmd":"false"}' })], [new AIMessageChunk({ content: "recovered" })]],
+      "Error: command exited with code 1",
+    );
+    const events: AgentEvent[] = [];
+
+    for await (const event of runAgent([], "run command", "/tmp/ws", "ws-1", { ...noopDeps, buildAgentTools })) {
+      events.push(event);
+    }
+
+    const usage = events.find(
+      (event): event is Extract<AgentEvent, { type: "turn_usage" }> => event.type === "turn_usage",
+    );
+    expect(usage?.toolCalls).toEqual([expect.objectContaining({ name: "execute_command", status: "error" })]);
   });
 
   it("persists a reasoning-model tool turn as coalesced text, not raw streamed blocks", async () => {

@@ -240,7 +240,8 @@ export class CredentialProxy {
         }
         const upstream = net.connect({ host: hostname, port, lookup: this.lookup });
         let established = false;
-        upstream.on("error", () => {
+        upstream.on("error", (err) => {
+          this.warnThrottled("tunnel-upstream", { err, hostname, port, established }, "proxy tunnel upstream error");
           if (!established) {
             try {
               socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
@@ -323,7 +324,10 @@ export class CredentialProxy {
         (upstreamRes) => {
           tlsSocket.write(buildResponseHead(upstreamRes, redactMap));
           upstreamRes.pipe(createRedactTransform(redactMap)).pipe(tlsSocket);
-          upstreamRes.on("error", () => tlsSocket.destroy());
+          upstreamRes.on("error", (err) => {
+            this.warnThrottled("upstream-response", { err, hostname, port }, "upstream response stream error");
+            tlsSocket.destroy();
+          });
         },
       );
 
@@ -419,7 +423,10 @@ export class CredentialProxy {
       http.request({ hostname, port, method, path, headers, lookup: this.lookup }, (upstreamRes) => {
         socket.write(buildResponseHead(upstreamRes));
         upstreamRes.pipe(socket);
-        upstreamRes.on("error", () => socket.destroy());
+        upstreamRes.on("error", (err) => {
+          this.warnThrottled("upstream-response", { err, hostname, port }, "upstream response stream error");
+          socket.destroy();
+        });
       });
 
     await this.forwardRequestBody(socket, headers, remaining, tokenMap, startUpstream, hostname);

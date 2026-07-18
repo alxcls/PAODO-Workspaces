@@ -1,20 +1,19 @@
 {
   "$comment": "Generated inventory of runtime log call sites. Includes operational Pino, audit Pino, and console calls under app/, components/, lib/, server.ts, proxyEntry.ts, and instrumentation files; excludes tests and developer scripts. Durable means eligible for a configured production durable destination. Regenerate with `npm run logs:inventory`.",
   "summary": {
-    "total": 202,
-    "pino": 200,
+    "total": 205,
+    "pino": 203,
     "console": 2,
-    "durableCandidates": 135,
-    "operationalDurableCandidates": 110,
+    "durableCandidates": 138,
+    "operationalDurableCandidates": 113,
     "securityAuditCandidates": 25,
-    "byLevel": { "trace": 0, "debug": 27, "info": 52, "warn": 73, "error": 49, "fatal": 1 }
+    "byLevel": { "trace": 0, "debug": 27, "info": 52, "warn": 74, "error": 51, "fatal": 1 }
   },
   "levels": {
     "trace": [],
     "debug": [
       {
         "file": "lib/agent/promptContext.ts",
-        "line": 27,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -27,7 +26,6 @@
       },
       {
         "file": "lib/agent/runner.ts",
-        "line": 181,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -40,7 +38,6 @@
       },
       {
         "file": "lib/agent/runner.ts",
-        "line": 263,
         "logger": "pino",
         "channel": "operational",
         "receiver": "wlog",
@@ -53,7 +50,6 @@
       },
       {
         "file": "lib/agent/runner.ts",
-        "line": 507,
         "logger": "pino",
         "channel": "operational",
         "receiver": "wlog",
@@ -66,20 +62,18 @@
       },
       {
         "file": "lib/agent/runner.ts",
-        "line": 547,
         "logger": "pino",
         "channel": "operational",
         "receiver": "wlog",
         "context": "agent",
         "message": "tool timing",
-        "fields": ["name", "toolMs"],
+        "fields": ["name", "toolMs", "status"],
         "bindings": ["workspaceId"],
         "durable": false,
         "durableDestination": null
       },
       {
         "file": "lib/agent/runner.ts",
-        "line": 594,
         "logger": "pino",
         "channel": "operational",
         "receiver": "wlog",
@@ -92,7 +86,6 @@
       },
       {
         "file": "lib/agent/skills/executeSkill.ts",
-        "line": 320,
         "logger": "pino",
         "channel": "operational",
         "receiver": "elog",
@@ -105,7 +98,6 @@
       },
       {
         "file": "lib/agent/skills/executeSkill.ts",
-        "line": 361,
         "logger": "pino",
         "channel": "operational",
         "receiver": "elog",
@@ -118,7 +110,6 @@
       },
       {
         "file": "lib/agent/tools/agentCall.ts",
-        "line": 161,
         "logger": "pino",
         "channel": "operational",
         "receiver": "this.log",
@@ -131,7 +122,6 @@
       },
       {
         "file": "lib/agent/tools/agentCall.ts",
-        "line": 204,
         "logger": "pino",
         "channel": "operational",
         "receiver": "this.log",
@@ -144,7 +134,6 @@
       },
       {
         "file": "lib/infra/docker/backgroundTaskManager.ts",
-        "line": 162,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -157,7 +146,6 @@
       },
       {
         "file": "lib/infra/docker/containerCredentials.ts",
-        "line": 147,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -170,7 +158,6 @@
       },
       {
         "file": "lib/infra/docker/containerManager.ts",
-        "line": 141,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -183,7 +170,6 @@
       },
       {
         "file": "lib/infra/docker/containerManager.ts",
-        "line": 157,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -196,7 +182,6 @@
       },
       {
         "file": "lib/infra/docker/containerManager.ts",
-        "line": 160,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -209,7 +194,6 @@
       },
       {
         "file": "lib/infra/docker/containerManager.ts",
-        "line": 166,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -222,7 +206,6 @@
       },
       {
         "file": "lib/infra/docker/containerManager.ts",
-        "line": 229,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -235,7 +218,6 @@
       },
       {
         "file": "lib/infra/docker/containerManager.ts",
-        "line": 392,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -248,7 +230,6 @@
       },
       {
         "file": "lib/infra/docker/containerManager.ts",
-        "line": 405,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -261,7 +242,6 @@
       },
       {
         "file": "lib/infra/docker/containerManager.ts",
-        "line": 407,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -274,7 +254,6 @@
       },
       {
         "file": "lib/infra/docker/containerManager.ts",
-        "line": 410,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -287,7 +266,6 @@
       },
       {
         "file": "lib/infra/docker/proxyNetworkManager.ts",
-        "line": 92,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -300,7 +278,6 @@
       },
       {
         "file": "lib/infra/proxy/credentialProxy.ts",
-        "line": 288,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -313,7 +290,6 @@
       },
       {
         "file": "lib/infra/proxy/proxyCA.ts",
-        "line": 167,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -326,7 +302,6 @@
       },
       {
         "file": "lib/workspace/workspaceStore.ts",
-        "line": 314,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -339,7 +314,6 @@
       },
       {
         "file": "server.ts",
-        "line": 89,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -353,7 +327,6 @@
       },
       {
         "file": "server.ts",
-        "line": 124,
         "logger": "pino",
         "channel": "audit",
         "receiver": "audit",
@@ -368,7 +341,6 @@
     "info": [
       {
         "file": "app/api/workspaces/[id]/agent/route.ts",
-        "line": 147,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -381,7 +353,6 @@
       },
       {
         "file": "app/api/workspaces/[id]/chat/route.ts",
-        "line": 49,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -394,7 +365,6 @@
       },
       {
         "file": "lib/agent/compact.ts",
-        "line": 89,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -407,7 +377,6 @@
       },
       {
         "file": "lib/agent/compact.ts",
-        "line": 99,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -420,7 +389,6 @@
       },
       {
         "file": "lib/agent/compact.ts",
-        "line": 115,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -433,7 +401,6 @@
       },
       {
         "file": "lib/agent/compact.ts",
-        "line": 124,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -446,7 +413,6 @@
       },
       {
         "file": "lib/agent/runBroker.ts",
-        "line": 196,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -459,7 +425,6 @@
       },
       {
         "file": "lib/agent/runner.ts",
-        "line": 277,
         "logger": "pino",
         "channel": "operational",
         "receiver": "wlog",
@@ -472,7 +437,6 @@
       },
       {
         "file": "lib/agent/runner.ts",
-        "line": 295,
         "logger": "pino",
         "channel": "operational",
         "receiver": "wlog",
@@ -485,7 +449,6 @@
       },
       {
         "file": "lib/agent/runner.ts",
-        "line": 416,
         "logger": "pino",
         "channel": "operational",
         "receiver": "wlog",
@@ -498,7 +461,6 @@
       },
       {
         "file": "lib/agent/runner.ts",
-        "line": 480,
         "logger": "pino",
         "channel": "operational",
         "receiver": "wlog",
@@ -511,7 +473,6 @@
       },
       {
         "file": "lib/agent/runner.ts",
-        "line": 613,
         "logger": "pino",
         "channel": "operational",
         "receiver": "wlog",
@@ -524,7 +485,6 @@
       },
       {
         "file": "lib/agent/skills/executeSkill.ts",
-        "line": 357,
         "logger": "pino",
         "channel": "operational",
         "receiver": "elog",
@@ -537,7 +497,6 @@
       },
       {
         "file": "lib/agent/tools/agentCall.ts",
-        "line": 133,
         "logger": "pino",
         "channel": "operational",
         "receiver": "this.log",
@@ -550,7 +509,6 @@
       },
       {
         "file": "lib/infra/docker/imageManager.ts",
-        "line": 32,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -563,7 +521,6 @@
       },
       {
         "file": "lib/infra/docker/imageManager.ts",
-        "line": 34,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -576,7 +533,6 @@
       },
       {
         "file": "lib/infra/docker/imageManager.ts",
-        "line": 45,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -589,7 +545,6 @@
       },
       {
         "file": "lib/infra/docker/proxyReconciler.ts",
-        "line": 65,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -602,7 +557,6 @@
       },
       {
         "file": "lib/infra/docker/proxyReconciler.ts",
-        "line": 74,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -615,7 +569,6 @@
       },
       {
         "file": "lib/infra/proxy/credentialProxy.ts",
-        "line": 192,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -628,7 +581,6 @@
       },
       {
         "file": "lib/infra/proxy/proxyCA.ts",
-        "line": 65,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -641,7 +593,6 @@
       },
       {
         "file": "lib/infra/proxy/proxyCA.ts",
-        "line": 72,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -654,7 +605,6 @@
       },
       {
         "file": "lib/infra/proxy/proxyCA.ts",
-        "line": 104,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -667,7 +617,6 @@
       },
       {
         "file": "lib/infra/proxy/proxyCA.ts",
-        "line": 124,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -680,7 +629,6 @@
       },
       {
         "file": "lib/infra/schedules/scheduler.ts",
-        "line": 74,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -693,7 +641,6 @@
       },
       {
         "file": "lib/infra/schedules/scheduler.ts",
-        "line": 143,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -706,7 +653,6 @@
       },
       {
         "file": "lib/infra/schedules/scheduler.ts",
-        "line": 150,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -719,7 +665,6 @@
       },
       {
         "file": "lib/infra/schedules/scheduleStore.ts",
-        "line": 69,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -732,7 +677,6 @@
       },
       {
         "file": "lib/infra/schedules/scheduleStore.ts",
-        "line": 92,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -745,7 +689,6 @@
       },
       {
         "file": "lib/infra/security/apiKeyStore.ts",
-        "line": 42,
         "logger": "pino",
         "channel": "audit",
         "receiver": "audit",
@@ -758,7 +701,6 @@
       },
       {
         "file": "lib/infra/security/apiKeyStore.ts",
-        "line": 48,
         "logger": "pino",
         "channel": "audit",
         "receiver": "audit",
@@ -771,7 +713,6 @@
       },
       {
         "file": "lib/infra/security/apiKeyStore.ts",
-        "line": 55,
         "logger": "pino",
         "channel": "audit",
         "receiver": "audit",
@@ -784,7 +725,6 @@
       },
       {
         "file": "lib/infra/security/apiKeyStore.ts",
-        "line": 61,
         "logger": "pino",
         "channel": "audit",
         "receiver": "audit",
@@ -797,7 +737,6 @@
       },
       {
         "file": "lib/infra/security/mcpConfigStore.ts",
-        "line": 62,
         "logger": "pino",
         "channel": "audit",
         "receiver": "audit",
@@ -810,7 +749,6 @@
       },
       {
         "file": "lib/infra/security/mcpConfigStore.ts",
-        "line": 70,
         "logger": "pino",
         "channel": "audit",
         "receiver": "audit",
@@ -823,7 +761,6 @@
       },
       {
         "file": "lib/infra/security/mcpConfigStore.ts",
-        "line": 79,
         "logger": "pino",
         "channel": "audit",
         "receiver": "audit",
@@ -836,7 +773,6 @@
       },
       {
         "file": "lib/infra/security/mcpConfigStore.ts",
-        "line": 88,
         "logger": "pino",
         "channel": "audit",
         "receiver": "audit",
@@ -849,7 +785,6 @@
       },
       {
         "file": "lib/infra/security/mcpConfigStore.ts",
-        "line": 98,
         "logger": "pino",
         "channel": "audit",
         "receiver": "audit",
@@ -862,7 +797,6 @@
       },
       {
         "file": "lib/infra/security/workspaceSecretStore.ts",
-        "line": 123,
         "logger": "pino",
         "channel": "audit",
         "receiver": "audit",
@@ -875,7 +809,6 @@
       },
       {
         "file": "lib/infra/security/workspaceSecretStore.ts",
-        "line": 150,
         "logger": "pino",
         "channel": "audit",
         "receiver": "audit",
@@ -888,7 +821,6 @@
       },
       {
         "file": "lib/infra/security/workspaceSecretStore.ts",
-        "line": 158,
         "logger": "pino",
         "channel": "audit",
         "receiver": "audit",
@@ -901,7 +833,6 @@
       },
       {
         "file": "lib/infra/security/workspaceSecretStore.ts",
-        "line": 209,
         "logger": "pino",
         "channel": "audit",
         "receiver": "audit",
@@ -914,7 +845,6 @@
       },
       {
         "file": "lib/mcp/workspaceMcpServer.ts",
-        "line": 92,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -927,7 +857,6 @@
       },
       {
         "file": "lib/workspace/conversationStore.ts",
-        "line": 150,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -940,7 +869,6 @@
       },
       {
         "file": "lib/workspace/driveStore.ts",
-        "line": 115,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -953,7 +881,6 @@
       },
       {
         "file": "lib/workspace/driveStore.ts",
-        "line": 148,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -966,7 +893,6 @@
       },
       {
         "file": "lib/workspace/workspaceStore.ts",
-        "line": 184,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -979,7 +905,6 @@
       },
       {
         "file": "proxyEntry.ts",
-        "line": 35,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -992,7 +917,6 @@
       },
       {
         "file": "proxyEntry.ts",
-        "line": 58,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -1005,7 +929,6 @@
       },
       {
         "file": "proxyEntry.ts",
-        "line": 64,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -1018,7 +941,6 @@
       },
       {
         "file": "server.ts",
-        "line": 138,
         "logger": "pino",
         "channel": "audit",
         "receiver": "audit",
@@ -1031,7 +953,6 @@
       },
       {
         "file": "server.ts",
-        "line": 283,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -1046,7 +967,6 @@
     "warn": [
       {
         "file": "app/api/agent/route.ts",
-        "line": 29,
         "logger": "pino",
         "channel": "audit",
         "receiver": "audit",
@@ -1059,7 +979,6 @@
       },
       {
         "file": "app/api/drives/[id]/files/download/route.ts",
-        "line": 30,
         "logger": "pino",
         "channel": "operational",
         "receiver": "createLogger(\"api\")",
@@ -1072,7 +991,6 @@
       },
       {
         "file": "app/api/workspaces/[id]/agent/route.ts",
-        "line": 103,
         "logger": "pino",
         "channel": "audit",
         "receiver": "audit",
@@ -1085,7 +1003,6 @@
       },
       {
         "file": "app/api/workspaces/[id]/files/download/route.ts",
-        "line": 29,
         "logger": "pino",
         "channel": "operational",
         "receiver": "createLogger(\"api\")",
@@ -1098,7 +1015,6 @@
       },
       {
         "file": "app/api/workspaces/[id]/mcp/route.ts",
-        "line": 56,
         "logger": "pino",
         "channel": "audit",
         "receiver": "audit",
@@ -1111,7 +1027,6 @@
       },
       {
         "file": "app/api/workspaces/[id]/mcp/route.ts",
-        "line": 98,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -1124,7 +1039,6 @@
       },
       {
         "file": "app/api/workspaces/[id]/mcp/route.ts",
-        "line": 99,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -1137,7 +1051,6 @@
       },
       {
         "file": "lib/agent/agentStream.ts",
-        "line": 122,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -1150,7 +1063,6 @@
       },
       {
         "file": "lib/agent/buildTools.ts",
-        "line": 162,
         "logger": "pino",
         "channel": "operational",
         "receiver": "ctx.log",
@@ -1163,7 +1075,6 @@
       },
       {
         "file": "lib/agent/buildTools.ts",
-        "line": 164,
         "logger": "pino",
         "channel": "operational",
         "receiver": "ctx.log",
@@ -1176,7 +1087,6 @@
       },
       {
         "file": "lib/agent/buildTools.ts",
-        "line": 174,
         "logger": "pino",
         "channel": "operational",
         "receiver": "ctx.log",
@@ -1189,7 +1099,6 @@
       },
       {
         "file": "lib/agent/promptContext.ts",
-        "line": 29,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -1202,7 +1111,6 @@
       },
       {
         "file": "lib/agent/runBroker.ts",
-        "line": 141,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -1215,7 +1123,6 @@
       },
       {
         "file": "lib/agent/runBroker.ts",
-        "line": 187,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -1228,7 +1135,6 @@
       },
       {
         "file": "lib/agent/runBroker.ts",
-        "line": 271,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -1241,7 +1147,6 @@
       },
       {
         "file": "lib/agent/runner.ts",
-        "line": 312,
         "logger": "pino",
         "channel": "operational",
         "receiver": "wlog",
@@ -1254,7 +1159,6 @@
       },
       {
         "file": "lib/agent/runner.ts",
-        "line": 327,
         "logger": "pino",
         "channel": "operational",
         "receiver": "wlog",
@@ -1267,7 +1171,6 @@
       },
       {
         "file": "lib/agent/runner.ts",
-        "line": 397,
         "logger": "pino",
         "channel": "operational",
         "receiver": "wlog",
@@ -1280,7 +1183,6 @@
       },
       {
         "file": "lib/agent/runner.ts",
-        "line": 429,
         "logger": "pino",
         "channel": "operational",
         "receiver": "wlog",
@@ -1293,7 +1195,6 @@
       },
       {
         "file": "lib/agent/runner.ts",
-        "line": 527,
         "logger": "pino",
         "channel": "operational",
         "receiver": "wlog",
@@ -1306,7 +1207,6 @@
       },
       {
         "file": "lib/agent/runner.ts",
-        "line": 539,
         "logger": "pino",
         "channel": "operational",
         "receiver": "wlog",
@@ -1319,7 +1219,6 @@
       },
       {
         "file": "lib/agent/runner.ts",
-        "line": 543,
         "logger": "pino",
         "channel": "operational",
         "receiver": "wlog",
@@ -1331,8 +1230,19 @@
         "durableDestination": "operational"
       },
       {
+        "file": "lib/agent/runner.ts",
+        "logger": "pino",
+        "channel": "operational",
+        "receiver": "wlog",
+        "context": "agent",
+        "message": "tool returned error",
+        "fields": ["name", "toolMs", "status"],
+        "bindings": ["workspaceId"],
+        "durable": true,
+        "durableDestination": "operational"
+      },
+      {
         "file": "lib/agent/skills/executeSkill.ts",
-        "line": 173,
         "logger": "pino",
         "channel": "operational",
         "receiver": "elog",
@@ -1345,7 +1255,6 @@
       },
       {
         "file": "lib/agent/skills/executeSkill.ts",
-        "line": 330,
         "logger": "pino",
         "channel": "operational",
         "receiver": "elog",
@@ -1358,7 +1267,6 @@
       },
       {
         "file": "lib/agent/skills/executeSkill.ts",
-        "line": 335,
         "logger": "pino",
         "channel": "operational",
         "receiver": "elog",
@@ -1371,7 +1279,6 @@
       },
       {
         "file": "lib/agent/skills/executeSkill.ts",
-        "line": 365,
         "logger": "pino",
         "channel": "operational",
         "receiver": "elog",
@@ -1384,7 +1291,6 @@
       },
       {
         "file": "lib/agent/tools/agentCall.ts",
-        "line": 147,
         "logger": "pino",
         "channel": "operational",
         "receiver": "this.log",
@@ -1397,7 +1303,6 @@
       },
       {
         "file": "lib/agent/tools/agentCall.ts",
-        "line": 188,
         "logger": "pino",
         "channel": "operational",
         "receiver": "this.log",
@@ -1410,7 +1315,6 @@
       },
       {
         "file": "lib/agent/tools/execCommand.ts",
-        "line": 119,
         "logger": "pino",
         "channel": "operational",
         "receiver": "this.log",
@@ -1423,20 +1327,19 @@
       },
       {
         "file": "lib/api/guards.ts",
-        "line": 55,
         "logger": "pino",
         "channel": "audit",
-        "receiver": "createAuditLogger(\"api\")",
+        "receiver": "audit",
         "context": "api",
         "message": "rate limit exceeded",
-        "fields": ["...logContext", "subject", "event"],
+        "fields": [],
         "bindings": [],
         "durable": true,
-        "durableDestination": "security"
+        "durableDestination": "security",
+        "fieldsExpression": "fields"
       },
       {
         "file": "lib/infra/docker/backgroundTaskManager.ts",
-        "line": 84,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -1449,7 +1352,6 @@
       },
       {
         "file": "lib/infra/docker/backgroundTaskManager.ts",
-        "line": 101,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -1462,7 +1364,6 @@
       },
       {
         "file": "lib/infra/docker/backgroundTaskManager.ts",
-        "line": 103,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -1475,7 +1376,6 @@
       },
       {
         "file": "lib/infra/docker/backgroundTaskManager.ts",
-        "line": 143,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -1488,7 +1388,6 @@
       },
       {
         "file": "lib/infra/docker/backgroundTaskManager.ts",
-        "line": 148,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -1501,7 +1400,6 @@
       },
       {
         "file": "lib/infra/docker/containerManager.ts",
-        "line": 319,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -1514,7 +1412,6 @@
       },
       {
         "file": "lib/infra/docker/containerManager.ts",
-        "line": 388,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -1527,7 +1424,6 @@
       },
       {
         "file": "lib/infra/docker/dockerfileHasher.ts",
-        "line": 19,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -1540,7 +1436,6 @@
       },
       {
         "file": "lib/infra/docker/proxyNetworkManager.ts",
-        "line": 46,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -1553,7 +1448,6 @@
       },
       {
         "file": "lib/infra/docker/proxyNetworkManager.ts",
-        "line": 72,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -1566,7 +1460,6 @@
       },
       {
         "file": "lib/infra/docker/proxyNetworkManager.ts",
-        "line": 102,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -1579,7 +1472,6 @@
       },
       {
         "file": "lib/infra/docker/proxyReconciler.ts",
-        "line": 41,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -1592,7 +1484,6 @@
       },
       {
         "file": "lib/infra/git/snapshotWorkspace.ts",
-        "line": 20,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -1605,7 +1496,6 @@
       },
       {
         "file": "lib/infra/git/workspaceVersioning.ts",
-        "line": 280,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -1618,7 +1508,6 @@
       },
       {
         "file": "lib/infra/proxy/credentialProxy.ts",
-        "line": 207,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -1632,7 +1521,6 @@
       },
       {
         "file": "lib/infra/proxy/proxyCA.ts",
-        "line": 68,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -1645,7 +1533,6 @@
       },
       {
         "file": "lib/infra/proxy/proxyCA.ts",
-        "line": 120,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -1658,7 +1545,6 @@
       },
       {
         "file": "lib/infra/proxy/workspaceRuleStore.ts",
-        "line": 45,
         "logger": "pino",
         "channel": "audit",
         "receiver": "audit",
@@ -1671,7 +1557,6 @@
       },
       {
         "file": "lib/infra/schedules/scheduler.ts",
-        "line": 46,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -1684,7 +1569,6 @@
       },
       {
         "file": "lib/workspace/conversationStore.ts",
-        "line": 237,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -1697,7 +1581,6 @@
       },
       {
         "file": "lib/workspace/driveStore.ts",
-        "line": 146,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -1710,7 +1593,6 @@
       },
       {
         "file": "lib/workspace/fileContent.ts",
-        "line": 72,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -1723,7 +1605,6 @@
       },
       {
         "file": "lib/workspace/fileContent.ts",
-        "line": 109,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -1736,7 +1617,6 @@
       },
       {
         "file": "lib/workspace/fileContent.ts",
-        "line": 138,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -1749,7 +1629,6 @@
       },
       {
         "file": "lib/workspace/fileMove.ts",
-        "line": 166,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -1762,7 +1641,6 @@
       },
       {
         "file": "lib/workspace/fileMove.ts",
-        "line": 226,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -1775,7 +1653,6 @@
       },
       {
         "file": "lib/workspace/fileTree.ts",
-        "line": 23,
         "logger": "pino",
         "channel": "operational",
         "receiver": "createLogger(\"api\")",
@@ -1788,7 +1665,6 @@
       },
       {
         "file": "lib/workspace/skillStore.ts",
-        "line": 32,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -1801,7 +1677,6 @@
       },
       {
         "file": "lib/workspace/skillStore.ts",
-        "line": 36,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -1814,7 +1689,6 @@
       },
       {
         "file": "lib/workspace/skillStore.ts",
-        "line": 40,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -1827,7 +1701,6 @@
       },
       {
         "file": "lib/workspace/skillStore.ts",
-        "line": 59,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -1840,7 +1713,6 @@
       },
       {
         "file": "lib/workspace/skillStore.ts",
-        "line": 72,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -1853,7 +1725,6 @@
       },
       {
         "file": "lib/workspace/workspaceGraph.ts",
-        "line": 58,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -1866,7 +1737,6 @@
       },
       {
         "file": "lib/workspace/workspaceStore.ts",
-        "line": 193,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -1879,7 +1749,6 @@
       },
       {
         "file": "server.ts",
-        "line": 88,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -1893,85 +1762,84 @@
       },
       {
         "file": "server.ts",
-        "line": 102,
         "logger": "pino",
         "channel": "audit",
         "receiver": "audit",
         "context": "server",
         "message": "API rate limit exceeded",
-        "fields": ["ip", "method", "pathname", "policy", "requestId", "event"],
+        "fields": [],
         "bindings": [],
         "durable": true,
-        "durableDestination": "security"
+        "durableDestination": "security",
+        "fieldsExpression": "fields"
       },
       {
         "file": "server.ts",
-        "line": 118,
         "logger": "pino",
         "channel": "audit",
         "receiver": "audit",
         "context": "server",
         "message": "auth blocked",
-        "fields": ["ip", "requestId", "event"],
+        "fields": [],
         "bindings": [],
         "durable": true,
-        "durableDestination": "security"
+        "durableDestination": "security",
+        "fieldsExpression": "fields"
       },
       {
         "file": "server.ts",
-        "line": 130,
         "logger": "pino",
         "channel": "audit",
         "receiver": "audit",
         "context": "server",
         "message": "auth unauthorized",
-        "fields": ["ip", "requestId", "event"],
+        "fields": [],
         "bindings": [],
         "durable": true,
-        "durableDestination": "security"
+        "durableDestination": "security",
+        "fieldsExpression": "fields"
       },
       {
         "file": "server.ts",
-        "line": 142,
         "logger": "pino",
         "channel": "audit",
         "receiver": "audit",
         "context": "server",
         "message": "csrf blocked",
-        "fields": ["ip", "method", "pathname", "requestId", "event"],
+        "fields": [],
         "bindings": [],
         "durable": true,
-        "durableDestination": "security"
+        "durableDestination": "security",
+        "fieldsExpression": "fields"
       },
       {
         "file": "server.ts",
-        "line": 161,
         "logger": "pino",
         "channel": "audit",
         "receiver": "audit",
         "context": "server",
         "message": "auth blocked",
-        "fields": ["ip", "requestId", "transport", "event"],
+        "fields": [],
         "bindings": [],
         "durable": true,
-        "durableDestination": "security"
+        "durableDestination": "security",
+        "fieldsExpression": "fields"
       },
       {
         "file": "server.ts",
-        "line": 168,
         "logger": "pino",
         "channel": "audit",
         "receiver": "audit",
         "context": "server",
         "message": "auth unauthorized",
-        "fields": ["ip", "requestId", "transport", "event"],
+        "fields": [],
         "bindings": [],
         "durable": true,
-        "durableDestination": "security"
+        "durableDestination": "security",
+        "fieldsExpression": "fields"
       },
       {
         "file": "server.ts",
-        "line": 232,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -1984,7 +1852,6 @@
       },
       {
         "file": "server.ts",
-        "line": 252,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -1999,7 +1866,6 @@
     "error": [
       {
         "file": "app/api/drives/[id]/route.ts",
-        "line": 29,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -2012,7 +1878,6 @@
       },
       {
         "file": "app/api/drives/route.ts",
-        "line": 21,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -2025,7 +1890,6 @@
       },
       {
         "file": "app/api/workspace-graph/route.ts",
-        "line": 32,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -2038,7 +1902,6 @@
       },
       {
         "file": "app/api/workspaces/[id]/mcp/route.ts",
-        "line": 92,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -2051,7 +1914,6 @@
       },
       {
         "file": "app/api/workspaces/route.ts",
-        "line": 30,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -2064,7 +1926,6 @@
       },
       {
         "file": "components/home/AgentLoopBlock.tsx",
-        "line": 63,
         "logger": "console",
         "channel": "browser-console",
         "receiver": "console",
@@ -2078,7 +1939,6 @@
       },
       {
         "file": "instrumentation.node.ts",
-        "line": 20,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -2091,7 +1951,6 @@
       },
       {
         "file": "lib/agent/agentStream.ts",
-        "line": 125,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -2104,7 +1963,6 @@
       },
       {
         "file": "lib/agent/runBroker.ts",
-        "line": 198,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -2117,7 +1975,6 @@
       },
       {
         "file": "lib/agent/runBroker.ts",
-        "line": 211,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -2130,7 +1987,6 @@
       },
       {
         "file": "lib/agent/runner.ts",
-        "line": 297,
         "logger": "pino",
         "channel": "operational",
         "receiver": "wlog",
@@ -2143,7 +1999,6 @@
       },
       {
         "file": "lib/agent/runner.ts",
-        "line": 631,
         "logger": "pino",
         "channel": "operational",
         "receiver": "wlog",
@@ -2156,7 +2011,6 @@
       },
       {
         "file": "lib/agent/skills/executeSkill.ts",
-        "line": 347,
         "logger": "pino",
         "channel": "operational",
         "receiver": "elog",
@@ -2169,7 +2023,6 @@
       },
       {
         "file": "lib/agent/tools/agentCall.ts",
-        "line": 218,
         "logger": "pino",
         "channel": "operational",
         "receiver": "this.log",
@@ -2182,7 +2035,6 @@
       },
       {
         "file": "lib/infra/docker/containerManager.ts",
-        "line": 303,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -2195,7 +2047,6 @@
       },
       {
         "file": "lib/infra/docker/containerManager.ts",
-        "line": 337,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -2208,7 +2059,6 @@
       },
       {
         "file": "lib/infra/docker/containerManager.ts",
-        "line": 442,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -2221,7 +2071,6 @@
       },
       {
         "file": "lib/infra/git/workspaceVersioning.ts",
-        "line": 284,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -2234,7 +2083,6 @@
       },
       {
         "file": "lib/infra/jsonPersist.ts",
-        "line": 25,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -2247,7 +2095,6 @@
       },
       {
         "file": "lib/infra/logger.ts",
-        "line": 42,
         "logger": "console",
         "channel": "process-console",
         "receiver": "console",
@@ -2260,7 +2107,6 @@
       },
       {
         "file": "lib/infra/proxy/credentialProxy.ts",
-        "line": 187,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -2272,8 +2118,19 @@
         "durableDestination": "operational"
       },
       {
+        "file": "lib/infra/proxy/proxyCA.ts",
+        "logger": "pino",
+        "channel": "operational",
+        "receiver": "log",
+        "context": "proxyCA",
+        "message": "failed to read proxy HMAC key",
+        "fields": ["err", "event"],
+        "bindings": [],
+        "durable": true,
+        "durableDestination": "operational"
+      },
+      {
         "file": "lib/infra/schedules/scheduler.ts",
-        "line": 76,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -2286,7 +2143,6 @@
       },
       {
         "file": "lib/infra/schedules/scheduleStore.ts",
-        "line": 53,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -2299,7 +2155,6 @@
       },
       {
         "file": "lib/infra/security/apiKeyStore.ts",
-        "line": 24,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -2312,7 +2167,6 @@
       },
       {
         "file": "lib/infra/security/mcpConfigStore.ts",
-        "line": 34,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -2324,8 +2178,19 @@
         "durableDestination": "operational"
       },
       {
+        "file": "lib/infra/security/secretsEncryption.ts",
+        "logger": "pino",
+        "channel": "operational",
+        "receiver": "log",
+        "context": "secretStore",
+        "message": "failed to read secrets encryption key",
+        "fields": ["err", "event"],
+        "bindings": [],
+        "durable": true,
+        "durableDestination": "operational"
+      },
+      {
         "file": "lib/infra/security/workspaceSecretStore.ts",
-        "line": 72,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -2338,7 +2203,6 @@
       },
       {
         "file": "lib/infra/security/workspaceSecretStore.ts",
-        "line": 114,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -2351,7 +2215,6 @@
       },
       {
         "file": "lib/infra/security/workspaceSecretStore.ts",
-        "line": 125,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -2364,7 +2227,6 @@
       },
       {
         "file": "lib/infra/security/workspaceSecretStore.ts",
-        "line": 229,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -2377,7 +2239,6 @@
       },
       {
         "file": "lib/mcp/workspaceMcpServer.ts",
-        "line": 79,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -2390,7 +2251,6 @@
       },
       {
         "file": "lib/workspace/conversationStore.ts",
-        "line": 85,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -2403,7 +2263,6 @@
       },
       {
         "file": "lib/workspace/conversationStore.ts",
-        "line": 170,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -2416,7 +2275,6 @@
       },
       {
         "file": "lib/workspace/conversationStore.ts",
-        "line": 194,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -2429,7 +2287,6 @@
       },
       {
         "file": "lib/workspace/conversationStore.ts",
-        "line": 226,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -2442,7 +2299,6 @@
       },
       {
         "file": "lib/workspace/driveStore.ts",
-        "line": 55,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -2455,7 +2311,6 @@
       },
       {
         "file": "lib/workspace/fileUpload.ts",
-        "line": 70,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -2468,7 +2323,6 @@
       },
       {
         "file": "lib/workspace/fileUpload.ts",
-        "line": 92,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -2481,7 +2335,6 @@
       },
       {
         "file": "lib/workspace/usageStore.ts",
-        "line": 144,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -2494,7 +2347,6 @@
       },
       {
         "file": "lib/workspace/usageStore.ts",
-        "line": 174,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -2507,7 +2359,6 @@
       },
       {
         "file": "lib/workspace/usageStore.ts",
-        "line": 198,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -2520,7 +2371,6 @@
       },
       {
         "file": "lib/workspace/workspaceStore.ts",
-        "line": 209,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -2533,7 +2383,6 @@
       },
       {
         "file": "lib/workspace/workspaceStore.ts",
-        "line": 260,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -2546,7 +2395,6 @@
       },
       {
         "file": "lib/workspace/workspaceWatcher.ts",
-        "line": 71,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -2559,7 +2407,6 @@
       },
       {
         "file": "proxyEntry.ts",
-        "line": 69,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -2572,7 +2419,6 @@
       },
       {
         "file": "server.ts",
-        "line": 87,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -2586,7 +2432,6 @@
       },
       {
         "file": "server.ts",
-        "line": 152,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -2599,7 +2444,6 @@
       },
       {
         "file": "server.ts",
-        "line": 202,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -2612,7 +2456,6 @@
       },
       {
         "file": "server.ts",
-        "line": 238,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -2625,7 +2468,6 @@
       },
       {
         "file": "server.ts",
-        "line": 249,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -2640,7 +2482,6 @@
     "fatal": [
       {
         "file": "server.ts",
-        "line": 15,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",

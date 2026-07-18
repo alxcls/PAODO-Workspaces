@@ -6,10 +6,15 @@
 import "dotenv/config";
 import { randomUUID } from "node:crypto";
 import { createServer } from "http";
-import { createAuditLogger, createLogger } from "./lib/infra/logger";
+import { createAuditLogger, createLogger, runWithLogContext } from "./lib/infra/logger";
+import { LogThrottle, throttleFields } from "./lib/infra/logThrottle";
 
 const log = createLogger("server");
 const audit = createAuditLogger("server");
+
+// Rejection paths are reachable pre-auth, and durable audit writes are synchronous. Throttling them
+// keeps an unauthenticated flood from turning into sustained blocking disk I/O on the event loop.
+const auditThrottle = new LogThrottle();
 
 function fatal(reason: string, err: unknown): never {
   log.fatal({ err, reason }, "process exiting after fatal error");
@@ -99,10 +104,15 @@ httpServer.on("request", (req, res) => {
   if (pathname.startsWith("/api/")) {
     const rl = checkApiRateLimit(ip, method, pathname);
     if (!rl.ok) {
-      audit.warn(
-        { ip, method, pathname, policy: rl.policy, requestId, event: "api_rate_limited" },
-        "API rate limit exceeded",
-      );
+      const fields = throttleFields(auditThrottle, "api_rate_limited", {
+        ip,
+        method,
+        pathname,
+        policy: rl.policy,
+        requestId,
+        event: "api_rate_limited",
+      });
+      if (fields) audit.warn(fields, "API rate limit exceeded");
       res.writeHead(429, {
         "Retry-After": String(rl.retryAfter),
         "RateLimit-Limit": String(rl.limit),
@@ -115,7 +125,8 @@ httpServer.on("request", (req, res) => {
 
   const authResult = authenticate(ip, req);
   if (authResult === "blocked") {
-    audit.warn({ ip, requestId, event: "auth_blocked" }, "auth blocked");
+    const fields = throttleFields(auditThrottle, "auth_blocked", { ip, requestId, event: "auth_blocked" });
+    if (fields) audit.warn(fields, "auth blocked");
     res.writeHead(429, { "Retry-After": "60" });
     res.end("Too Many Requests");
     return;
@@ -127,7 +138,8 @@ httpServer.on("request", (req, res) => {
     return;
   }
   if (authResult === "unauthorized") {
-    audit.warn({ ip, requestId, event: "auth_unauthorized" }, "auth unauthorized");
+    const fields = throttleFields(auditThrottle, "auth_unauthorized", { ip, requestId, event: "auth_unauthorized" });
+    if (fields) audit.warn(fields, "auth unauthorized");
     res.writeHead(401, { "WWW-Authenticate": 'Basic realm="App"' });
     res.end("Unauthorized");
     return;
@@ -139,13 +151,24 @@ httpServer.on("request", (req, res) => {
   }
 
   if (isCsrf({ method, pathname, secFetchSite: req.headers["sec-fetch-site"] as string | undefined })) {
-    audit.warn({ ip, method, pathname, requestId, event: "csrf_blocked" }, "csrf blocked");
+    const fields = throttleFields(auditThrottle, "csrf_blocked", {
+      ip,
+      method,
+      pathname,
+      requestId,
+      event: "csrf_blocked",
+    });
+    if (fields) audit.warn(fields, "csrf blocked");
     res.writeHead(403);
     res.end("Forbidden");
     return;
   }
 
-  handle(req, res);
+  // Every log produced while Next handles this request (including caught route errors) inherits
+  // the same correlation fields as the access log without each route having to bind them manually.
+  runWithLogContext({ requestId, method, pathname }, () => {
+    void handle(req, res);
+  });
 });
 
 const wss = new WebSocketServer({ noServer: true });
@@ -158,14 +181,27 @@ httpServer.on("upgrade", (req, socket, head) => {
     const wsIp = getClientIp(req);
     const wsAuthResult = authenticate(wsIp, req);
     if (wsAuthResult === "blocked") {
-      audit.warn({ ip: wsIp, requestId, transport: "websocket", event: "auth_blocked" }, "auth blocked");
+      const fields = throttleFields(auditThrottle, "ws_auth_blocked", {
+        ip: wsIp,
+        requestId,
+        transport: "websocket",
+        event: "auth_blocked",
+      });
+      if (fields) audit.warn(fields, "auth blocked");
       socket.write("HTTP/1.1 429 Too Many Requests\r\nRetry-After: 60\r\n\r\n");
       socket.destroy();
       return;
     }
     if (wsAuthResult === "challenge" || wsAuthResult === "unauthorized") {
-      if (wsAuthResult === "unauthorized")
-        audit.warn({ ip: wsIp, requestId, transport: "websocket", event: "auth_unauthorized" }, "auth unauthorized");
+      if (wsAuthResult === "unauthorized") {
+        const fields = throttleFields(auditThrottle, "ws_auth_unauthorized", {
+          ip: wsIp,
+          requestId,
+          transport: "websocket",
+          event: "auth_unauthorized",
+        });
+        if (fields) audit.warn(fields, "auth unauthorized");
+      }
       socket.write('HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: Basic realm="App"\r\n\r\n');
       socket.destroy();
       return;

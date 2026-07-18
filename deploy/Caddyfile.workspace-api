@@ -20,22 +20,34 @@
 		handle @workspaceAgent {
 			reverse_proxy app:{$APP_PORT} {
 				# Replace caller-supplied forwarding headers. The application uses
-				# these for rate limiting and audit logs.
+				# CF-Connecting-IP for rate limiting and audit logs, and trusts
+				# only that one name: on the UI path Cloudflare sets it and
+				# overwrites any client value, and here Caddy does the same. This
+				# domain is DNS-direct to the origin (no Cloudflare in front), so
+				# {remote_host} is the real caller. X-Real-IP and X-Forwarded-For
+				# are stripped and not re-set — nothing reads them any more, and
+				# leaving them would invite trusting a header no hop sanitizes.
 				header_up -X-Real-IP
 				header_up -X-Forwarded-For
-				header_up X-Real-IP {remote_host}
-				header_up X-Forwarded-For {remote_host}
+				header_up -CF-Connecting-IP
+				header_up CF-Connecting-IP {remote_host}
 			}
 		}
 
 		handle @workspaceMcp {
 			reverse_proxy app:{$APP_PORT} {
 				# Replace caller-supplied forwarding headers. The application uses
-				# these for rate limiting and audit logs.
+				# CF-Connecting-IP for rate limiting and audit logs, and trusts
+				# only that one name: on the UI path Cloudflare sets it and
+				# overwrites any client value, and here Caddy does the same. This
+				# domain is DNS-direct to the origin (no Cloudflare in front), so
+				# {remote_host} is the real caller. X-Real-IP and X-Forwarded-For
+				# are stripped and not re-set — nothing reads them any more, and
+				# leaving them would invite trusting a header no hop sanitizes.
 				header_up -X-Real-IP
 				header_up -X-Forwarded-For
-				header_up X-Real-IP {remote_host}
-				header_up X-Forwarded-For {remote_host}
+				header_up -CF-Connecting-IP
+				header_up CF-Connecting-IP {remote_host}
 			}
 		}
 

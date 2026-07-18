@@ -18,8 +18,6 @@ jobs:
       - run: npm ci
       - run: npm run lint
       - run: npm run format:check
-      # Exercise the generator; its JSON output is a local diagnostic artifact and is gitignored.
-      - run: npm run logs:inventory
       # Validate the deployment model from the same .env.example a fresh install copies.
       - run: cp .env.example .env
       - run: docker compose config --quiet

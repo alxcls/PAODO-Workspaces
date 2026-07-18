@@ -17,10 +17,8 @@ import { rm } from "fs/promises";
 import { WORKSPACES_ROOT } from "../infra/paths";
 import { atomicSaveJson } from "../infra/jsonPersist";
 import { createLogger } from "../infra/logger";
-import { LogThrottle } from "../infra/logThrottle";
 
 const log = createLogger("driveStore");
-const readFailures = new LogThrottle();
 
 export interface Drive {
   id: string;
@@ -43,20 +41,12 @@ const DRIVES_DIR = path.join(WORKSPACES_ROOT, ".drives");
 
 function readJson<T>(file: string, fallback: T): T {
   try {
-    const parsed = JSON.parse(fs.readFileSync(file, "utf-8")) as T;
-    readFailures.forget(file);
-    return parsed;
+    return JSON.parse(fs.readFileSync(file, "utf-8")) as T;
   } catch (err) {
     // Missing files are normal before the first drive/connection is created. Corruption,
     // permissions, and other I/O failures must not make every drive silently disappear.
     if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
-      const decision = readFailures.record(file);
-      if (decision.emit) {
-        log.error(
-          { err, file, ...(decision.suppressed > 0 ? { suppressed: decision.suppressed } : {}) },
-          "failed to load drive registry — using fallback",
-        );
-      }
+      log.error({ err, file }, "failed to load drive registry — using fallback");
     }
     return fallback;
   }

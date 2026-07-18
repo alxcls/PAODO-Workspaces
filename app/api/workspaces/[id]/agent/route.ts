@@ -4,7 +4,7 @@
 export const runtime = "nodejs";
 
 import { type NextRequest, NextResponse } from "next/server";
-import { preAuthAuditDecision, requireWorkspace, rateLimited, subjectRateLimited } from "@/lib/api/guards";
+import { requireWorkspace, rateLimited, subjectRateLimited } from "@/lib/api/guards";
 import { validateKey } from "@/lib/infra/security/apiKeyStore";
 import { getClientIp } from "@/lib/infra/realtime/clientIp";
 import { createAuditLogger, createLogger } from "@/lib/infra/logger";
@@ -100,18 +100,14 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const audit = createAuditLogger("api").child({ workspaceId: id, route: "agent" });
 
   if (!plain || !validateKey(id, plain)) {
-    const decision = preAuthAuditDecision("api_auth_unauthorized");
-    if (decision.emit) {
-      audit.warn(
-        {
-          ip: getClientIp(req),
-          requestId: req.headers.get("x-request-id") ?? undefined,
-          event: "api_auth_unauthorized",
-          ...(decision.suppressed > 0 ? { suppressed: decision.suppressed } : {}),
-        },
-        "unauthorized request",
-      );
-    }
+    audit.warn(
+      {
+        ip: getClientIp(req),
+        requestId: req.headers.get("x-request-id") ?? undefined,
+        event: "api_auth_unauthorized",
+      },
+      "unauthorized request",
+    );
     return new Response("Unauthorized", { status: 401 });
   }
 

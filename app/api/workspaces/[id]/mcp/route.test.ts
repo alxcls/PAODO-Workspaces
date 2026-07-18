@@ -11,7 +11,6 @@ const h = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/api/guards", () => ({
-  preAuthAuditDecision: () => ({ emit: true, suppressed: 0 }),
   rateLimited: () => h.limited,
   subjectRateLimited: () => h.workspaceLimited,
 }));

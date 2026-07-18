@@ -21,7 +21,6 @@ import {
 } from "@/lib/infra/security/rateLimit";
 import { getClientIp } from "@/lib/infra/realtime/clientIp";
 import { createAuditLogger } from "@/lib/infra/logger";
-import { sharedLogThrottle } from "@/lib/infra/logThrottle";
 import { WorkspaceNameError } from "@/lib/workspace/workspaceName";
 
 /** The one and only "not found" body every route returns for a missing resource. */
@@ -51,30 +50,11 @@ export function requireDrive(id: string): Drive | NextResponse {
 }
 
 const audit = createAuditLogger("api");
-// Durable audit writes are synchronous, so an unauthenticated flood against a rate-limited route
-// would otherwise convert directly into blocking disk I/O. See lib/infra/logThrottle.ts.
-const auditThrottle = sharedLogThrottle("preAuthAudit");
-
-/** Decide whether a coarse, process-wide pre-auth audit event should be emitted. */
-export function preAuthAuditDecision(key: string) {
-  return auditThrottle.record(key);
-}
 
 /** Apply a route-level IP policy and return a standard 429 response when it is exhausted. */
 function rejection(rl: RateLimitResult, logContext: Record<string, unknown>, subject: string): Response | null {
   if (rl.ok) return null;
-  const decision = preAuthAuditDecision("rate_limited");
-  if (decision.emit) {
-    audit.warn(
-      {
-        ...logContext,
-        subject,
-        event: "rate_limited",
-        ...(decision.suppressed > 0 ? { suppressed: decision.suppressed } : {}),
-      },
-      "rate limit exceeded",
-    );
-  }
+  audit.warn({ ...logContext, subject, event: "rate_limited" }, "rate limit exceeded");
   return new Response("Too Many Requests", {
     status: 429,
     headers: {

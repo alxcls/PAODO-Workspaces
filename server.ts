@@ -6,18 +6,14 @@
 import "dotenv/config";
 import { randomUUID } from "node:crypto";
 import { createServer } from "http";
-import { createAuditLogger, createLogger, runWithLogContext } from "./lib/infra/logger";
-import { sharedLogThrottle, throttleFields } from "./lib/infra/logThrottle";
+import { createAuditLogger, createLogger, flushLogs, runWithLogContext } from "./lib/infra/logger";
 
 const log = createLogger("server");
 const audit = createAuditLogger("server");
 
-// Rejection paths are reachable pre-auth, and durable audit writes are synchronous. Throttling them
-// keeps an unauthenticated flood from turning into sustained blocking disk I/O on the event loop.
-const auditThrottle = sharedLogThrottle("preAuthAudit");
-
 function fatal(reason: string, err: unknown): never {
   log.fatal({ err, reason }, "process exiting after fatal error");
+  flushLogs();
   process.exit(1);
 }
 
@@ -88,10 +84,15 @@ httpServer.on("request", (req, res) => {
     logged = true;
     const durationNs = process.hrtime.bigint() - start;
     const durationMs = Number(durationNs) / 1_000_000;
-    const meta = { method, pathname, status: res.statusCode, durationMs, requestId, context: "http" };
+    // `event` rather than a second `context` field: the child logger already binds context, and two
+    // keys of the same name in one JSON object is malformed enough to break some readers.
+    const meta = { method, pathname, status: res.statusCode, durationMs, requestId, event: "http_request" };
     if (res.statusCode >= 500) log.error(meta, "http request");
     else if (res.statusCode >= 400) log.warn(meta, "http request");
-    else if (!url.startsWith("/_next/") && !url.includes("/files/upload")) log.debug(meta, "http request");
+    // Successful requests are the baseline "is anything happening" signal, so they log at info and
+    // reach Docker's output in production; at debug they were invisible there and nothing but errors
+    // ever showed up. Static assets and upload chunks stay out — high volume, nothing to observe.
+    else if (!url.startsWith("/_next/") && !url.includes("/files/upload")) log.info(meta, "http request");
   };
   res.once("finish", logRequest);
   res.once("close", logRequest);
@@ -104,15 +105,10 @@ httpServer.on("request", (req, res) => {
   if (pathname.startsWith("/api/")) {
     const rl = checkApiRateLimit(ip, method, pathname);
     if (!rl.ok) {
-      const fields = throttleFields(auditThrottle, "api_rate_limited", {
-        ip,
-        method,
-        pathname,
-        policy: rl.policy,
-        requestId,
-        event: "api_rate_limited",
-      });
-      if (fields) audit.warn(fields, "API rate limit exceeded");
+      audit.warn(
+        { ip, method, pathname, policy: rl.policy, requestId, event: "api_rate_limited" },
+        "API rate limit exceeded",
+      );
       res.writeHead(429, {
         "Retry-After": String(rl.retryAfter),
         "RateLimit-Limit": String(rl.limit),
@@ -125,8 +121,7 @@ httpServer.on("request", (req, res) => {
 
   const authResult = authenticate(ip, req);
   if (authResult === "blocked") {
-    const fields = throttleFields(auditThrottle, "auth_blocked", { ip, requestId, event: "auth_blocked" });
-    if (fields) audit.warn(fields, "auth blocked");
+    audit.warn({ ip, requestId, event: "auth_blocked" }, "auth blocked");
     res.writeHead(429, { "Retry-After": "60" });
     res.end("Too Many Requests");
     return;
@@ -138,8 +133,7 @@ httpServer.on("request", (req, res) => {
     return;
   }
   if (authResult === "unauthorized") {
-    const fields = throttleFields(auditThrottle, "auth_unauthorized", { ip, requestId, event: "auth_unauthorized" });
-    if (fields) audit.warn(fields, "auth unauthorized");
+    audit.warn({ ip, requestId, event: "auth_unauthorized" }, "auth unauthorized");
     res.writeHead(401, { "WWW-Authenticate": 'Basic realm="App"' });
     res.end("Unauthorized");
     return;
@@ -151,14 +145,7 @@ httpServer.on("request", (req, res) => {
   }
 
   if (isCsrf({ method, pathname, secFetchSite: req.headers["sec-fetch-site"] as string | undefined })) {
-    const fields = throttleFields(auditThrottle, "csrf_blocked", {
-      ip,
-      method,
-      pathname,
-      requestId,
-      event: "csrf_blocked",
-    });
-    if (fields) audit.warn(fields, "csrf blocked");
+    audit.warn({ ip, method, pathname, requestId, event: "csrf_blocked" }, "csrf blocked");
     res.writeHead(403);
     res.end("Forbidden");
     return;
@@ -181,26 +168,14 @@ httpServer.on("upgrade", (req, socket, head) => {
     const wsIp = getClientIp(req);
     const wsAuthResult = authenticate(wsIp, req);
     if (wsAuthResult === "blocked") {
-      const fields = throttleFields(auditThrottle, "ws_auth_blocked", {
-        ip: wsIp,
-        requestId,
-        transport: "websocket",
-        event: "auth_blocked",
-      });
-      if (fields) audit.warn(fields, "auth blocked");
+      audit.warn({ ip: wsIp, requestId, transport: "websocket", event: "auth_blocked" }, "auth blocked");
       socket.write("HTTP/1.1 429 Too Many Requests\r\nRetry-After: 60\r\n\r\n");
       socket.destroy();
       return;
     }
     if (wsAuthResult === "challenge" || wsAuthResult === "unauthorized") {
       if (wsAuthResult === "unauthorized") {
-        const fields = throttleFields(auditThrottle, "ws_auth_unauthorized", {
-          ip: wsIp,
-          requestId,
-          transport: "websocket",
-          event: "auth_unauthorized",
-        });
-        if (fields) audit.warn(fields, "auth unauthorized");
+        audit.warn({ ip: wsIp, requestId, transport: "websocket", event: "auth_unauthorized" }, "auth unauthorized");
       }
       socket.write('HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: Basic realm="App"\r\n\r\n');
       socket.destroy();
@@ -331,7 +306,10 @@ function shutdown() {
   stopAllWatchers();
   app
     .close()
-    .then(() => process.exit(0))
+    .then(() => {
+      flushLogs();
+      process.exit(0);
+    })
     .catch((err) => fatal("shutdown", err));
 }
 

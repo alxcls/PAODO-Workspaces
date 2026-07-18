@@ -24,7 +24,6 @@ import { Transform } from "stream";
 import { signDomainCert } from "./proxyCA";
 import { isBlockedAddress, makeGuardedLookup } from "./destinationGuard";
 import { createLogger } from "../logger";
-import { LogThrottle } from "../logThrottle";
 import { WorkspaceRuleStore } from "./workspaceRuleStore";
 import { readHttpHeaders, collectBody, pipeBody, bodyMode } from "./httpWire";
 import type { DomainRule } from "../security/workspaceSecretStore";
@@ -164,7 +163,6 @@ export function buildResponseHead(res: http.IncomingMessage, redactMap?: TokenMa
 
 export class CredentialProxy {
   private ruleStore = new WorkspaceRuleStore();
-  private warningThrottle = new LogThrottle();
   private server: net.Server;
   // Predicate deciding whether a resolved destination IP is off-limits (SSRF guard), plus a
   // hostname lookup built from it. Injectable so tests can point the proxy at a loopback stub.
@@ -180,7 +178,7 @@ export class CredentialProxy {
     this.lookup = makeGuardedLookup(this.blockDestination);
     this.server = net.createServer((socket) => {
       this.handleConnection(socket).catch((err) => {
-        this.warnThrottled("connection", { err }, "proxy connection error");
+        log.warn({ err }, "proxy connection error");
         socket.destroy();
       });
     });
@@ -199,12 +197,6 @@ export class CredentialProxy {
 
   clearRules(wsId: string): void {
     this.ruleStore.clearRules(wsId);
-  }
-
-  private warnThrottled(key: string, fields: Record<string, unknown>, message: string): void {
-    const decision = this.warningThrottle.record(key);
-    if (!decision.emit) return;
-    log.warn({ ...fields, ...(decision.suppressed > 0 ? { suppressed: decision.suppressed } : {}) }, message);
   }
 
   private async handleConnection(socket: net.Socket): Promise<void> {
@@ -241,7 +233,7 @@ export class CredentialProxy {
         const upstream = net.connect({ host: hostname, port, lookup: this.lookup });
         let established = false;
         upstream.on("error", (err) => {
-          this.warnThrottled("tunnel-upstream", { err, hostname, port, established }, "proxy tunnel upstream error");
+          log.warn({ err, hostname, port, established }, "proxy tunnel upstream error");
           if (!established) {
             try {
               socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
@@ -325,7 +317,7 @@ export class CredentialProxy {
           tlsSocket.write(buildResponseHead(upstreamRes, redactMap));
           upstreamRes.pipe(createRedactTransform(redactMap)).pipe(tlsSocket);
           upstreamRes.on("error", (err) => {
-            this.warnThrottled("upstream-response", { err, hostname, port }, "upstream response stream error");
+            log.warn({ err, hostname, port }, "upstream response stream error");
             tlsSocket.destroy();
           });
         },
@@ -358,7 +350,7 @@ export class CredentialProxy {
       try {
         raw = await collectBody(src, headers, remaining);
       } catch (err) {
-        this.warnThrottled("request-body", { err, hostname }, "request body read failed");
+        log.warn({ err, hostname }, "request body read failed");
         src.destroy();
         return;
       }
@@ -368,7 +360,7 @@ export class CredentialProxy {
       delete headers["transfer-encoding"];
       const req = startUpstream();
       req.on("error", (err) => {
-        this.warnThrottled("upstream-request", { err, hostname }, "upstream request error");
+        log.warn({ err, hostname }, "upstream request error");
         src.destroy();
       });
       req.end(body);
@@ -376,7 +368,7 @@ export class CredentialProxy {
       // No body, or too large to buffer — stream it through untouched (headers/path already done).
       const req = startUpstream();
       req.on("error", (err) => {
-        this.warnThrottled("upstream-request", { err, hostname }, "upstream request error");
+        log.warn({ err, hostname }, "upstream request error");
         src.destroy();
       });
       pipeBody(src, req, headers, remaining);
@@ -424,7 +416,7 @@ export class CredentialProxy {
         socket.write(buildResponseHead(upstreamRes));
         upstreamRes.pipe(socket);
         upstreamRes.on("error", (err) => {
-          this.warnThrottled("upstream-response", { err, hostname, port }, "upstream response stream error");
+          log.warn({ err, hostname, port }, "upstream response stream error");
           socket.destroy();
         });
       });

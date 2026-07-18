@@ -162,11 +162,18 @@ describe("authRequestFromIncoming / getClientIp", () => {
     expect(r).toEqual({ method: "POST", pathname: "/api/x", authorization: "Basic zzz" });
   });
 
-  it("prefers x-real-ip, falling back to the socket peer", () => {
-    expect(getClientIp({ headers: { "x-real-ip": "9.9.9.9" }, socket: { remoteAddress: "1.2.3.4" } } as never)).toBe(
-      "9.9.9.9",
-    );
+  it("prefers cf-connecting-ip, falling back to the socket peer", () => {
+    expect(
+      getClientIp({ headers: { "cf-connecting-ip": "9.9.9.9" }, socket: { remoteAddress: "1.2.3.4" } } as never),
+    ).toBe("9.9.9.9");
     expect(getClientIp({ headers: {}, socket: { remoteAddress: "1.2.3.4" } } as never)).toBe("1.2.3.4");
     expect(getClientIp({ headers: {}, socket: {} } as never)).toBe("unknown");
+  });
+
+  it("ignores client-supplied forwarding headers", () => {
+    // Nothing in the chain sets these, so a caller can put anything in them. Trusting one puts an
+    // attacker-chosen address in the audit trail and lets them rotate past the brute-force lockout.
+    const spoofed = { "x-real-ip": "203.0.113.99", "x-forwarded-for": "203.0.113.99" };
+    expect(getClientIp({ headers: spoofed, socket: { remoteAddress: "1.2.3.4" } } as never)).toBe("1.2.3.4");
   });
 });

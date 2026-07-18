@@ -5,7 +5,7 @@ import path from "path";
 
 const nextConfig: NextConfig = {
   devIndicators: false,
-  serverExternalPackages: ["pino", "pino-pretty"],
+  serverExternalPackages: ["pino"],
   logging: {
     incomingRequests: false,
   },

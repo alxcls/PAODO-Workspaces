@@ -1,7 +1,7 @@
 // Standalone entry point for the credential-proxy SIDECAR container (docker-compose service
 // `credproxy`). In production the app runs inside its own container; hosting the proxy there would
 // force the app onto every per-workspace network and hand the untrusted sandbox an L3 route to the
-// control plane (0.0.0.0:3000 + /ws), defeating the x-real-ip trust and cross-workspace isolation.
+// control plane (0.0.0.0:3000 + /ws), defeating client-IP attribution and cross-workspace isolation.
 // Instead this minimal process runs ONLY the proxy: the app attaches THIS container (never itself)
 // to each workspace network, so port 9998 is the sole thing a workspace can reach.
 //

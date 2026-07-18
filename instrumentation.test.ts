@@ -8,7 +8,10 @@ vi.mock("./lib/infra/logger", () => ({
 
 import { onRequestError } from "./instrumentation";
 
-afterEach(() => vi.unstubAllEnvs());
+afterEach(() => {
+  vi.unstubAllEnvs();
+  mocks.error.mockClear();
+});
 
 describe("Next.js request-error instrumentation", () => {
   it("logs Node.js exceptions with route context and request correlation without retaining the query", async () => {
@@ -41,5 +44,19 @@ describe("Next.js request-error instrumentation", () => {
       }),
       "unhandled Next.js request error",
     );
+  });
+
+  it("does nothing outside the Node.js runtime", async () => {
+    // The Edge bundle has no filesystem, so the logger must not be reached there. The guard is also
+    // what lets webpack drop the import while parsing the Edge bundle — see instrumentation.ts.
+    vi.stubEnv("NEXT_RUNTIME", "edge");
+    await onRequestError(new Error("boom"), { path: "/", method: "GET", headers: {} }, {
+      routerKind: "App Router",
+      routePath: "/",
+      routeType: "route",
+      revalidateReason: undefined,
+    } as never);
+
+    expect(mocks.error).not.toHaveBeenCalled();
   });
 });

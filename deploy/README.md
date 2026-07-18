@@ -120,29 +120,22 @@ Provider, model, and reasoning effort are not set here — each workspace picks 
 ## Step 4 — Start the app
 
 ```bash
-# Install log rotation, PAODO's policy, and its dedicated 15-minute size-check timer. This is
-# required even when Docker was already present on the VPS. The system timer remains enabled for
-# the host's other logs; PAODO's timer invokes only the PAODO policy.
+# One-time: install the audit-log rotation policy. The host's stock daily logrotate.timer runs it.
 apt-get update && apt-get install -y logrotate
-# Keep PAODO's policy outside /etc/logrotate.d so only its frequent timer invokes it.
-rm -f /etc/logrotate.d/paodo
-install -m 0644 deploy/paodo-logrotate.conf /etc/paodo-logrotate.conf
-install -m 0644 deploy/paodo-logrotate.service /etc/systemd/system/paodo-logrotate.service
-install -m 0644 deploy/paodo-logrotate.timer /etc/systemd/system/paodo-logrotate.timer
-systemctl daemon-reload
-systemctl enable --now logrotate.timer paodo-logrotate.timer
+install -m 0644 deploy/paodo-logrotate.conf /etc/logrotate.d/paodo
 
 # Build the local PAODO image explicitly on the first run, then start all services.
 docker compose up --build -d
 
-# All checks should succeed; both timers should print "active".
+# All checks should succeed.
 docker compose ps
-systemctl is-active logrotate.timer paodo-logrotate.timer
-systemctl list-timers paodo-logrotate.timer
-logrotate --debug --state /var/lib/logrotate/paodo.status /etc/paodo-logrotate.conf >/dev/null
+systemctl is-active logrotate.timer
+logrotate --debug /etc/logrotate.d/paodo >/dev/null
 ```
 
-This starts three long-running containers: `app`, `socket-proxy`, and `credproxy`. The one-shot `log-init` service prepares `/var/log/paodo`; the installed timer rotates its files, while Compose caps Docker stdout/stderr logs separately.
+This starts three long-running containers: `app`, `socket-proxy`, and `credproxy`. The one-shot `log-init` service prepares `/var/log/paodo` before the others start.
+
+Only the audit trail is written to disk, at `/var/log/paodo/security.log` — that is the record that has to survive a container wipe. Everything else goes to stdout, where Compose's `json-file` driver bounds it at 10 MB × 5 per service.
 
 ### How workspace egress works (credential proxy)
 
@@ -249,15 +242,7 @@ must reach the API or MCP endpoint from the public internet.
 
 ```bash
 # Pull latest code and rebuild
-git pull
-rm -f /etc/logrotate.d/paodo
-install -m 0644 deploy/paodo-logrotate.conf /etc/paodo-logrotate.conf
-install -m 0644 deploy/paodo-logrotate.service /etc/systemd/system/paodo-logrotate.service
-install -m 0644 deploy/paodo-logrotate.timer /etc/systemd/system/paodo-logrotate.timer
-systemctl daemon-reload
-systemctl enable paodo-logrotate.timer
-systemctl restart paodo-logrotate.timer
-docker compose up --build -d
+git pull && docker compose up --build -d
 
 # Apply a config change (.env edit) without rebuilding
 docker compose up -d
@@ -282,11 +267,39 @@ docker ps                                                           # container 
 
 docker ps -a                                                        # container status (idle container included)
 
-docker compose logs -f app                                          # live app logs (pretty-printed)
-
 docker stats                                                        # live CPU/RAM per container
 
 docker system df                                                    # disk usage (images, containers, volumes)
 
 tailscale status                                                    # VPN status
 ```
+
+### Reading the logs over SSH
+
+Everything is line-delimited JSON, so `jq` works on all of it.
+
+```bash
+# Everything the app is doing, live. Use this first — it is where errors, warnings and
+# successful requests all appear. Docker keeps 10 MB x 5 files per service.
+docker compose logs -f app | jq -R 'fromjson? // .'
+docker compose logs -f credproxy | jq -R 'fromjson? // .'
+
+# The audit trail. This is the one file on disk; it survives a container wipe and
+# logrotate keeps 14 compressed days.
+tail -f /var/log/paodo/security.log
+
+# Who is failing to authenticate, and how often.
+jq -r 'select(.event | startswith("auth_")) | "\(.ip) \(.event) \(.suppressed // 0)"' \
+  /var/log/paodo/security.log | sort | uniq -c | sort -rn
+
+# Everything that happened around an incident, newest last.
+jq -c 'select(.time > (now - 3600) * 1000)' /var/log/paodo/security.log | tail -50
+```
+
+A `suppressed: N` field means that line stands in for N more identical events within the same
+minute — repeated warnings collapse in-process so a scanner cannot flood the file or push older
+entries out of the retention window. Order by `time` rather than file position: writes are buffered
+and flushed at shutdown, so the last few lines can interleave.
+
+To persist operational logs as well, set `OPERATIONAL_LOG_FILE=/logs/app.log` on the `app` service
+and add the path to `/etc/logrotate.d/paodo`. It is off by default because stdout already covers it.

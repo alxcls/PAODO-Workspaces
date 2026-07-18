@@ -3,7 +3,6 @@
 // the fail-closed secret verification — is a pure, socket-free unit that can be tested directly.
 import { verifyProxySecret } from "./proxyCA";
 import { createAuditLogger } from "../logger";
-import { LogThrottle } from "../logThrottle";
 import type { DomainRule } from "../security/workspaceSecretStore";
 
 const audit = createAuditLogger("credentialProxy");
@@ -16,18 +15,15 @@ export interface ProxyAuth {
 
 export class WorkspaceRuleStore {
   private rules = new Map<string, DomainRule[]>();
-  private rejectedAuthThrottle = new LogThrottle();
 
   setRules(wsId: string, rules: DomainRule[]): void {
     if (rules.length === 0) {
       this.rules.delete(wsId);
-      this.rejectedAuthThrottle.forget(wsId);
     } else this.rules.set(wsId, rules);
   }
 
   clearRules(wsId: string): void {
     this.rules.delete(wsId);
-    this.rejectedAuthThrottle.forget(wsId);
   }
 
   // Resolve the injection rules a connection is allowed to use. A workspace's rules apply only when
@@ -40,17 +36,7 @@ export class WorkspaceRuleStore {
     }
     const wsId = auth?.wsId ?? "";
     if (this.rules.has(wsId)) {
-      const decision = this.rejectedAuthThrottle.record(wsId);
-      if (decision.emit) {
-        audit.warn(
-          {
-            wsId,
-            event: "proxy_auth_rejected",
-            ...(decision.suppressed > 0 ? { suppressed: decision.suppressed } : {}),
-          },
-          "proxy secret mismatch — refusing credential injection",
-        );
-      }
+      audit.warn({ wsId, event: "proxy_auth_rejected" }, "proxy secret mismatch — refusing credential injection");
     }
     return [];
   }

@@ -76,11 +76,16 @@ export function authRequestFromIncoming(req: IncomingMessage): AuthRequest {
   };
 }
 
-// Extracts the client IP, preferring the x-real-ip header (set by Tailscale Serve) and falling back
-// to the socket peer. Distinct from realtime/clientIp.ts, which reads a NextRequest.
+// Extracts the client IP. Cloudflare sets cf-connecting-ip at its edge and overwrites whatever the
+// client sent, so it is the one forwarded address this deployment can trust; x-real-ip and
+// x-forwarded-for are set by nothing in the chain, which means a client picks their own value. That
+// matters because this address is written to the audit trail and keys the brute-force lockout: a
+// forgeable value is both a poisoned record and a lockout an attacker steps around by rotating a
+// header. Falls back to the socket peer (the Docker gateway in production — useless for attribution,
+// but never a lie). Distinct from realtime/clientIp.ts, which reads a NextRequest.
 export function getClientIp(req: IncomingMessage): string {
-  const h = req.headers["x-real-ip"];
-  if (typeof h === "string" && h) return h;
+  const forwarded = req.headers["cf-connecting-ip"];
+  if (typeof forwarded === "string" && forwarded) return forwarded;
   return req.socket.remoteAddress ?? "unknown";
 }
 

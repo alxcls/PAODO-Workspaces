@@ -65,5 +65,5 @@ This is a single-user, self-hosted app accessed exclusively over a private Tails
 
 **Operational**
 
-- Explicit audit events (auth failures, rate-limit trips, and credential lifecycle changes) are logged to `/var/log/paodo/security.log`; operational warnings use `app.log`/`credproxy.log`. Host logs survive container restarts, use restrictive permissions, and are bounded by the supplied logrotate policy.
+- Explicit audit events (auth failures, rate-limit trips, and credential lifecycle changes) are logged with an `audit: true` tag, alongside operational logs on container stdout, where Docker's `json-file` driver bounds and rotates them. Nothing is persisted to the host, so logs do not survive a container wipe — see `deploy/README.md` if that becomes a requirement.
 - Server refuses to start in production if `USERNAME` or `PASSWORD` are unset

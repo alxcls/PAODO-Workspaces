@@ -6,14 +6,13 @@
 import "dotenv/config";
 import { randomUUID } from "node:crypto";
 import { createServer } from "http";
-import { createAuditLogger, createLogger, flushLogs, runWithLogContext } from "./lib/infra/logger";
+import { createAuditLogger, createLogger, runWithLogContext } from "./lib/infra/logger";
 
 const log = createLogger("server");
 const audit = createAuditLogger("server");
 
 function fatal(reason: string, err: unknown): never {
   log.fatal({ err, reason }, "process exiting after fatal error");
-  flushLogs();
   process.exit(1);
 }
 
@@ -306,10 +305,7 @@ function shutdown() {
   stopAllWatchers();
   app
     .close()
-    .then(() => {
-      flushLogs();
-      process.exit(0);
-    })
+    .then(() => process.exit(0))
     .catch((err) => fatal("shutdown", err));
 }
 

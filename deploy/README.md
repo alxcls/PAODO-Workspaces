@@ -120,22 +120,16 @@ Provider, model, and reasoning effort are not set here — each workspace picks 
 ## Step 4 — Start the app
 
 ```bash
-# One-time: install the audit-log rotation policy. The host's stock daily logrotate.timer runs it.
-apt-get update && apt-get install -y logrotate
-install -m 0644 deploy/paodo-logrotate.conf /etc/logrotate.d/paodo
-
 # Build the local PAODO image explicitly on the first run, then start all services.
 docker compose up --build -d
 
 # All checks should succeed.
 docker compose ps
-systemctl is-active logrotate.timer
-logrotate --debug /etc/logrotate.d/paodo >/dev/null
 ```
 
-This starts three long-running containers: `app`, `socket-proxy`, and `credproxy`. The one-shot `log-init` service prepares `/var/log/paodo` before the others start.
+This starts three long-running containers: `app`, `socket-proxy`, and `credproxy`.
 
-Only the audit trail is written to disk, at `/var/log/paodo/security.log` — that is the record that has to survive a container wipe. Everything else goes to stdout, where Compose's `json-file` driver bounds it at 10 MB × 5 per service.
+Nothing is written to a log file on the host. Every container logs line-delimited JSON to stdout, where Compose's `json-file` driver captures and rotates it at 10 MB × 5 per service. See [Reading the logs over SSH](#reading-the-logs-over-ssh).
 
 ### How workspace egress works (credential proxy)
 
@@ -278,28 +272,29 @@ tailscale status                                                    # VPN status
 
 Everything is line-delimited JSON, so `jq` works on all of it.
 
+Everything goes to container stdout — there is no log file on the host. Docker keeps 10 MB × 5
+files per service and rotates them for you.
+
 ```bash
-# Everything the app is doing, live. Use this first — it is where errors, warnings and
-# successful requests all appear. Docker keeps 10 MB x 5 files per service.
+# Everything the app is doing, live. Use this first — errors, warnings and successful
+# requests all appear here.
 docker compose logs -f app | jq -R 'fromjson? // .'
 docker compose logs -f credproxy | jq -R 'fromjson? // .'
 
-# The audit trail. This is the one file on disk; it survives a container wipe and
-# logrotate keeps 14 compressed days.
-tail -f /var/log/paodo/security.log
+# Security events only: auth failures, rate-limit trips, credential lifecycle changes.
+docker compose logs app | jq -R 'fromjson? // empty | select(.audit)'
 
 # Who is failing to authenticate, and how often.
-jq -r 'select(.event | startswith("auth_")) | "\(.ip) \(.event) \(.suppressed // 0)"' \
-  /var/log/paodo/security.log | sort | uniq -c | sort -rn
+docker compose logs app | jq -Rr 'fromjson? // empty | select(.event | startswith("auth_")) | "\(.ip) \(.event)"' \
+  | sort | uniq -c | sort -rn
 
-# Everything that happened around an incident, newest last.
-jq -c 'select(.time > (now - 3600) * 1000)' /var/log/paodo/security.log | tail -50
+# Everything around an incident, newest last.
+docker compose logs --since 1h app | jq -R 'fromjson? // empty'
 ```
 
-A `suppressed: N` field means that line stands in for N more identical events within the same
-minute — repeated warnings collapse in-process so a scanner cannot flood the file or push older
-entries out of the retention window. Order by `time` rather than file position: writes are buffered
-and flushed at shutdown, so the last few lines can interleave.
+Set `LOG_LEVEL` in `.env` to change verbosity (default `info`). Note it applies to audit events too,
+so raising it above `info` will hide the low-severity ones.
 
-To persist operational logs as well, set `OPERATIONAL_LOG_FILE=/logs/app.log` on the `app` service
-and add the path to `/etc/logrotate.d/paodo`. It is off by default because stdout already covers it.
+Logs do not survive `docker compose down` plus a container wipe. If you later need an audit trail
+that does, ship stdout to something outside the host rather than reintroducing a bind-mounted file —
+a log driver or a collector is the same one-line change and someone else maintains the rotation.

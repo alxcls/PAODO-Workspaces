@@ -7,26 +7,6 @@ x-logging: &default-logging
     max-file: "5"
 
 services:
-  # Prepares the bind-mounted log dir. The app and credproxy containers drop ALL capabilities, so
-  # they cannot chown a root-owned host directory themselves — without this they crash-loop on
-  # EACCES after any host wipe that recreates /var/log/paodo.
-  log-init:
-    image: paodo_ws_app
-    user: "0:0"
-    command:
-      - sh
-      - -c
-      - >-
-        mkdir -p /logs &&
-        touch /logs/security.log &&
-        chown 1000:1000 /logs /logs/security.log &&
-        chmod 0750 /logs &&
-        chmod 0600 /logs/security.log
-    volumes:
-      - /var/log/paodo:/logs
-    restart: "no"
-    logging: *default-logging
-
   socket-proxy:
     image: tecnativa/docker-socket-proxy:0.3.0
     restart: unless-stopped
@@ -57,17 +37,11 @@ services:
       - .env
     environment:
       - DOCKER_HOST=tcp://socket-proxy:2375
-      # Only the audit channel is persisted to disk. Operational logs go to stdout, where the
-      # json-file driver above bounds them; set OPERATIONAL_LOG_FILE to persist those too.
-      - SECURITY_LOG_FILE=/logs/security.log
       - WORKSPACES_VOLUME_NAME=paodo_ws_workspaces
       - WORKSPACES_ROOT=/app/data
     volumes:
       - workspaces:/app/data
-      - /var/log/paodo:/logs # host bind mount — security logs survive container wipe
     depends_on:
-      log-init:
-        condition: service_completed_successfully
       socket-proxy:
         condition: service_started
     restart: unless-stopped
@@ -97,12 +71,8 @@ services:
     environment:
       - WORKSPACES_ROOT=/app/data
       - CREDENTIAL_PROXY_PORT=9998
-      # Appends to the same audit file as the app. Log lines are far below PIPE_BUF, so O_APPEND
-      # writes from both containers interleave atomically rather than tearing.
-      - SECURITY_LOG_FILE=/logs/security.log
     volumes:
       - workspaces:/app/data:ro
-      - /var/log/paodo:/logs
     depends_on:
       - app
     restart: unless-stopped

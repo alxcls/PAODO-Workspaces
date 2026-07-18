@@ -11,7 +11,7 @@
 import "dotenv/config";
 import * as fs from "fs";
 import * as path from "path";
-import { createLogger } from "./lib/infra/logger";
+import { createLogger, exitAfterLogs } from "./lib/infra/logger";
 import { CredentialProxy } from "./lib/infra/proxy/credentialProxy";
 import { ensureCA } from "./lib/infra/proxy/proxyCA";
 import { WORKSPACES_ROOT } from "./lib/infra/paths";
@@ -31,7 +31,7 @@ const log = createLogger("credproxyEntry");
 // would kill the process with no log line at all, leaving a silent Docker restart loop.
 function fatal(reason: string, err: unknown): never {
   log.fatal({ event: "process_fatal", outcome: "process_exit", err, reason }, "process exiting after fatal error");
-  process.exit(1);
+  exitAfterLogs(1);
 }
 
 function fatalSecretStore(err: unknown): never {
@@ -39,7 +39,7 @@ function fatalSecretStore(err: unknown): never {
     { event: "startup_secret_store_unavailable", outcome: "process_exit", err, filePath: SECRET_STORE_FILE },
     "existing workspace secret store could not be read or decrypted — refusing to start credential proxy",
   );
-  process.exit(1);
+  exitAfterLogs(1);
 }
 
 function fatalProxyKeyMaterial(err: unknown): never {
@@ -47,7 +47,7 @@ function fatalProxyKeyMaterial(err: unknown): never {
     { event: "startup_proxy_key_material_invalid", outcome: "process_exit", err },
     "existing credential-proxy key material is incomplete or invalid — refusing to start",
   );
-  process.exit(1);
+  exitAfterLogs(1);
 }
 
 function fatalProxyListener(err: unknown): never {
@@ -55,7 +55,7 @@ function fatalProxyListener(err: unknown): never {
     { event: "credential_proxy_listener_failed", outcome: "process_exit", err, port: CREDENTIAL_PROXY_PORT },
     "credential proxy listener failed — exiting so the service can restart",
   );
-  process.exit(1);
+  exitAfterLogs(1);
 }
 
 process.on("uncaughtException", (err) => fatal("uncaughtException", err));

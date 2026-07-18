@@ -13,9 +13,9 @@ beforeEach(() => {
   written = [];
   vi.stubEnv("NODE_ENV", "production");
   process.env.LOG_LEVEL = "info";
-  // The logger writes through a synchronous pino destination (fs.writeSync on fd 1) rather than the
-  // process.stdout stream, so that a fatal record cannot be lost to an unflushed queue on exit.
-  // That makes fs.writeSync the capture point; intercept fd 1 only and let anything else through.
+  // Routine records use Pino's asynchronous SonicBoom destination. Tests explicitly flush that
+  // buffer, whose synchronous drain uses fs.writeSync; intercept fd 1 only and let other writes
+  // through. The separate process-boundary test below verifies the real exit path.
   const realWriteSync = fs.writeSync.bind(fs);
   vi.spyOn(fs, "writeSync").mockImplementation(((fd: number, data: unknown, ...rest: unknown[]) => {
     if (fd !== 1) return (realWriteSync as (...a: unknown[]) => number)(fd, data, ...rest);
@@ -36,9 +36,10 @@ afterEach(() => {
 
 describe("logger", () => {
   it("tags audit events so they can be filtered out of the same stream", async () => {
-    const { createAuditLogger, createLogger } = await import("./logger");
+    const { createAuditLogger, createLogger, flushLogsSync } = await import("./logger");
     createLogger("test").warn({ workspaceId: "ws-1" }, "operational warning");
     createAuditLogger("test").info({ workspaceId: "ws-1", event: "key_rotated" }, "key rotated");
+    flushLogsSync();
 
     expect(written).toEqual([
       expect.objectContaining({ level: 40, context: "test", msg: "operational warning" }),
@@ -55,9 +56,10 @@ describe("logger", () => {
   });
 
   it("adds a stable event and outcome to legacy message-only records", async () => {
-    const { createLogger } = await import("./logger");
+    const { createLogger, flushLogsSync } = await import("./logger");
     createLogger("agent").info("agent run started");
     createLogger("agent").warn({ workspaceId: "ws-1" }, "agent stream timed out");
+    flushLogsSync();
 
     expect(written[0]).toEqual(
       expect.objectContaining({
@@ -79,11 +81,12 @@ describe("logger", () => {
   });
 
   it("preserves explicit semantic event and outcome fields", async () => {
-    const { createLogger } = await import("./logger");
+    const { createLogger, flushLogsSync } = await import("./logger");
     createLogger("test").error(
       { event: "workspace_create_failed", outcome: "workspace_not_created" },
       "failed to create workspace",
     );
+    flushLogsSync();
 
     expect(written[0]).toEqual(
       expect.objectContaining({
@@ -94,11 +97,12 @@ describe("logger", () => {
   });
 
   it("redacts common credential fields", async () => {
-    const { createAuditLogger } = await import("./logger");
+    const { createAuditLogger, flushLogsSync } = await import("./logger");
     createAuditLogger("test").info(
       { token: "top-secret", headers: { authorization: "Bearer top-secret" } },
       "redacted event",
     );
+    flushLogsSync();
 
     const [record] = written;
     expect(record.token).toBe("[Redacted]");
@@ -106,7 +110,7 @@ describe("logger", () => {
   });
 
   it("redacts credentials embedded in errors, stderr, agent output, and the message", async () => {
-    const { createLogger } = await import("./logger");
+    const { createLogger, flushLogsSync } = await import("./logger");
     const bearer = "eyJhbGciOiJIUzI1NiJ9.payload.signature";
     const openAiKey = "sk-proj-abcdefghijklmnopqrstuvwxyz";
     const mcpSecret = `mcp_${"a".repeat(64)}`;
@@ -121,6 +125,7 @@ describe("logger", () => {
       },
       `MCP request failed with secret=${mcpSecret}`,
     );
+    flushLogsSync();
 
     const serialized = JSON.stringify(written[0]);
     expect(serialized).not.toContain(bearer);
@@ -145,13 +150,14 @@ describe("logger", () => {
   });
 
   it("attaches request context across asynchronous work", async () => {
-    const { createLogger, runWithLogContext } = await import("./logger");
+    const { createLogger, flushLogsSync, runWithLogContext } = await import("./logger");
     const log = createLogger("test");
 
     await runWithLogContext({ requestId: "request-1", method: "POST", pathname: "/api/workspaces" }, async () => {
       await Promise.resolve();
       log.warn({ workspaceId: "ws-1" }, "request-scoped warning");
     });
+    flushLogsSync();
 
     expect(written[0]).toEqual(
       expect.objectContaining({
@@ -165,33 +171,44 @@ describe("logger", () => {
   });
 
   it("does not leak context into work that ran outside the scope", async () => {
-    const { createLogger, runWithLogContext } = await import("./logger");
+    const { createLogger, flushLogsSync, runWithLogContext } = await import("./logger");
     const log = createLogger("test");
 
     runWithLogContext({ requestId: "request-1" }, () => log.warn("inside"));
     log.warn("outside");
+    flushLogsSync();
 
     expect(written[0].requestId).toBe("request-1");
     expect(written[1].requestId).toBeUndefined();
   });
 
-  // Regression: the logger used to write to process.stdout, which queues anything past the pipe
-  // buffer inside Node instead of blocking. server.ts's fatal() logs and calls process.exit(1)
-  // immediately, so the queue was discarded and the record explaining the crash never arrived —
-  // measured at 65,536 of 200,105 bytes in the production image. A synchronous destination has no
-  // queue to lose. Spawned for real because the failure only exists across a process boundary.
+  it("buffers routine records until an asynchronous drain or explicit flush", async () => {
+    const { createLogger, flushLogsSync } = await import("./logger");
+    createLogger("test").info("routine record");
+
+    expect(written).toEqual([]);
+    flushLogsSync();
+    expect(written[0]).toEqual(expect.objectContaining({ context: "test", msg: "routine record" }));
+  });
+
+  // Regression: process.exit() stops the event loop before an asynchronous stdout queue drains.
+  // exitAfterLogs synchronously drains the final record at the intentional exit boundary, while
+  // routine writes above remain asynchronous. Spawned because the failure crosses a process edge.
   it("does not lose a record when the process exits immediately after writing", () => {
     const script = path.join(mkdtempSync(path.join(tmpdir(), "paodo-logexit-")), "exit.ts");
     const loggerModule = path.join(__dirname, "logger.ts");
     writeFileSync(
       script,
-      `import { createLogger } from ${JSON.stringify(loggerModule)};\n` +
+      `import { createLogger, exitAfterLogs } from ${JSON.stringify(loggerModule)};\n` +
         `createLogger("test").fatal({ big: "x".repeat(200000) }, "process exiting");\n` +
-        `process.exit(1);\n`,
+        `exitAfterLogs(1);\n`,
     );
 
     // stdio pipe, not inherit — a pipe is what a container's stdout is, and what truncated.
-    const { stdout } = spawnSync("npx", ["tsx", script], { encoding: "utf-8", stdio: "pipe" });
+    const { stdout } = spawnSync(process.execPath, ["--import", "tsx", script], {
+      encoding: "utf-8",
+      stdio: "pipe",
+    });
     rmSync(path.dirname(script), { recursive: true, force: true });
 
     expect(stdout.length).toBeGreaterThan(200_000);
@@ -201,10 +218,11 @@ describe("logger", () => {
   it("honours LOG_LEVEL", async () => {
     process.env.LOG_LEVEL = "error";
 
-    const { createLogger } = await import("./logger");
+    const { createLogger, flushLogsSync } = await import("./logger");
     const log = createLogger("test");
     log.warn("dropped");
     log.error("kept");
+    flushLogsSync();
 
     expect(written).toHaveLength(1);
     expect(written[0].msg).toBe("kept");

@@ -15,6 +15,22 @@ import pino from "pino";
 const isDev = process.env.NODE_ENV !== "production";
 const level = process.env.LOG_LEVEL ?? (isDev ? "debug" : "info");
 
+// Routine records are buffered and drained asynchronously so Docker stdout backpressure cannot
+// block the Node.js event loop on every request. The cap prevents a stalled Docker log reader from
+// turning the buffer into unbounded process memory; SonicBoom drops new records after the cap and
+// resumes once the destination drains. Fatal calls synchronously drain the existing buffer before
+// enqueueing their record, and exitAfterLogs() drains that final record immediately before exit.
+const destination = pino.destination({
+  fd: 1,
+  sync: false,
+  // Keep even unusually large fatal records buffered until exitAfterLogs can drain them in one
+  // synchronous boundary write. A short periodic flush still makes routine records visible fast.
+  minLength: 512 * 1024,
+  maxWrite: 1024 * 1024,
+  periodicFlush: 100,
+  maxLength: 8 * 1024 * 1024,
+});
+
 type LogContext = Record<string, unknown>;
 
 // Field-name redaction below protects structured bindings, but credentials also turn up inside
@@ -166,6 +182,16 @@ const root = pino(
       // Error.message and Error.stack are non-enumerable, so the explicit `err` serializer above
       // first runs Pino's standard Error serializer and then scrubs the resulting strings.
       logMethod(args, method, level) {
+        // Make room for a fatal record in the bounded async buffer. This is intentionally the only
+        // log level that may block; callers use it when the process is already about to terminate.
+        if (level === 60) {
+          try {
+            destination.flushSync();
+          } catch {
+            // Best effort: Pino will still attempt to enqueue the fatal record below. The eventual
+            // exit must not be prevented just because stdout itself is broken.
+          }
+        }
         const sanitized = args.map((arg) => sanitizeLogValue(arg));
         method.apply(this, applyLogContract(sanitized, level) as Parameters<typeof method>);
       },
@@ -178,13 +204,7 @@ const root = pino(
   // reachable from instrumentation.ts, Next tries to bundle it and the dev server fails every
   // request with "Can't resolve 'stream'". Pipe through `npm run dev | npx pino-pretty` instead.
   //
-  // sync: true, not process.stdout. A container's stdout is a pipe, and writing to a pipe stream
-  // queues anything past the ~64 KiB kernel buffer inside Node rather than blocking — so
-  // process.exit() in the fatal path discards the queue, losing the very line that explains the
-  // exit. Measured in this image: a 200 KB record through process.stdout arrives as 65,536 bytes,
-  // through a sync destination as all 200,105. fs.writeSync has no queue to lose, which also means
-  // no flush plumbing on the exit paths.
-  pino.destination({ fd: 1, sync: true }),
+  destination,
 );
 
 export function createLogger(context: string) {
@@ -207,4 +227,18 @@ export function createAuditLogger(context: string) {
 /** Run work with structured fields automatically attached to every log line it produces. */
 export function runWithLogContext<T>(bindings: LogContext, fn: () => T): T {
   return logContext.run(bindings, fn);
+}
+
+/** Drain buffered records synchronously. Reserved for tests and intentional process shutdown. */
+export function flushLogsSync(): void {
+  destination.flushSync();
+}
+
+/** Flush the final log records and terminate even if stdout itself cannot be drained. */
+export function exitAfterLogs(code: number): never {
+  try {
+    flushLogsSync();
+  } finally {
+    process.exit(code);
+  }
 }

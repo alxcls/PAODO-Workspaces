@@ -7,7 +7,7 @@ import "dotenv/config";
 import { randomUUID } from "node:crypto";
 import { createServer } from "http";
 import path from "path";
-import { createAuditLogger, createLogger, runWithLogContext } from "./lib/infra/logger";
+import { createAuditLogger, createLogger, exitAfterLogs, runWithLogContext } from "./lib/infra/logger";
 import { throttleLog } from "./lib/infra/logThrottle";
 
 const log = createLogger("server");
@@ -15,7 +15,7 @@ const audit = createAuditLogger("server");
 
 function fatal(reason: string, err: unknown): never {
   log.fatal({ event: "process_fatal", outcome: "process_exit", err, reason }, "process exiting after fatal error");
-  process.exit(1);
+  exitAfterLogs(1);
 }
 
 process.on("uncaughtException", (err) => fatal("uncaughtException", err));
@@ -64,7 +64,7 @@ if (!Number.isInteger(port) || port < 1 || port > 65_535) {
     },
     "HTTP listener configuration is invalid — refusing to start",
   );
-  process.exit(1);
+  exitAfterLogs(1);
 }
 
 const authFailures = new AuthFailureTracker();
@@ -88,7 +88,7 @@ httpServer.on("error", (err) => {
     { event: "startup_http_listener_failed", outcome: "process_exit", err, port },
     "HTTP listener failed — refusing to continue",
   );
-  process.exit(1);
+  exitAfterLogs(1);
 });
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -300,7 +300,7 @@ if ((!UI_USER || !UI_PASS) && !dev) {
     { event: "startup_credentials_missing", outcome: "process_exit" },
     "USERNAME and PASSWORD must be set in production — refusing to start.",
   );
-  process.exit(1);
+  exitAfterLogs(1);
 }
 
 if (!hasConfiguredProviderApiKey() && !dev) {
@@ -308,7 +308,7 @@ if (!hasConfiguredProviderApiKey() && !dev) {
     { event: "startup_llm_api_keys_missing", outcome: "process_exit" },
     "At least one LLM provider API key must be set in production — refusing to start.",
   );
-  process.exit(1);
+  exitAfterLogs(1);
 }
 
 try {
@@ -318,7 +318,7 @@ try {
     { event: "startup_data_root_unavailable", outcome: "process_exit", err, dataRoot: WORKSPACES_ROOT },
     "workspace data root is unavailable or not writable — refusing to start",
   );
-  process.exit(1);
+  exitAfterLogs(1);
 }
 
 if (!dev) {
@@ -334,7 +334,7 @@ if (!dev) {
       },
       "existing workspace registry could not be read safely — refusing to start",
     );
-    process.exit(1);
+    exitAfterLogs(1);
   }
   try {
     assertSecretStoreAvailable();
@@ -348,7 +348,7 @@ if (!dev) {
       },
       "existing workspace secret store could not be read or decrypted — refusing to start",
     );
-    process.exit(1);
+    exitAfterLogs(1);
   }
 }
 
@@ -363,7 +363,7 @@ async function assertGitAvailable() {
       { event: "startup_git_unavailable", outcome: "process_exit" },
       "git is not available — workspace version history (snapshots) would silently no-op. Refusing to start.",
     );
-    process.exit(1);
+    exitAfterLogs(1);
   }
   log.warn("git is not available — workspace snapshots will be disabled until git is installed.");
 }
@@ -381,7 +381,7 @@ assertGitAvailable()
         { event: "startup_proxy_key_material_invalid", outcome: "process_exit", err },
         "existing credential-proxy key material is incomplete or invalid — refusing to start",
       );
-      process.exit(1);
+      exitAfterLogs(1);
     }
     if (!process.env.WORKSPACES_VOLUME_NAME) {
       // Local dev: the app runs on the host, so it hosts the proxy in-process at
@@ -438,7 +438,7 @@ function shutdown(signal: NodeJS.Signals) {
       },
       "process shutdown failed",
     );
-    process.exit(1);
+    exitAfterLogs(1);
   };
   try {
     wss.close();
@@ -460,7 +460,7 @@ function shutdown(signal: NodeJS.Signals) {
         },
         "process shutdown completed",
       );
-      process.exit(0);
+      exitAfterLogs(0);
     })
     .catch(failShutdown);
 }

@@ -10,7 +10,7 @@ import { rm } from "fs/promises";
 import { spawn } from "child_process";
 import { randomUUID, createHash } from "crypto";
 import path from "path";
-import { createLogger } from "../logger";
+import { createLogger, exitAfterLogs } from "../logger";
 import { DockerClient, IDockerClient } from "./dockerClient";
 import { ImageManager, HASH_LABEL } from "./imageManager";
 import type { IContainerManager } from "../interfaces";
@@ -507,7 +507,7 @@ export class ContainerManager implements IContainerManager {
         { event: "startup_docker_unavailable", outcome: "process_exit", stderr: r.stderr },
         "Docker is not available. Make sure Docker is running before starting the server.",
       );
-      process.exit(1);
+      exitAfterLogs(1);
     }
     try {
       await this.imageManager.ensureImage(CONTAINER_IMAGE, "Dockerfile.workspace");
@@ -521,7 +521,7 @@ export class ContainerManager implements IContainerManager {
         },
         "workspace image could not be inspected or built — refusing to start",
       );
-      process.exit(1);
+      exitAfterLogs(1);
     }
   }
 }

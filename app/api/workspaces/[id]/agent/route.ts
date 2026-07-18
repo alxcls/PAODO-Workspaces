@@ -144,6 +144,6 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   });
   if (alreadyRunning) return new Response("A run is already in progress", { status: 409 });
 
-  log.info({ conversationId }, "public API chat stream started");
+  log.debug({ conversationId }, "public API chat stream started");
   return apiConversationStream(req, ws.id, conversationId);
 }

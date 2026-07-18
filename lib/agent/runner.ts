@@ -13,6 +13,7 @@ import { getContainers } from "../infra/services";
 import type { IContainerManager, IWorkspaceStore, IWorkspaceVersioning } from "../infra/interfaces";
 import { getWsForWorkspace } from "../infra/realtime/wsHub";
 import { createLogger } from "../infra/logger";
+import { throttleLog } from "../infra/logThrottle";
 import type { ToolStatus } from "../workspace/usageStore";
 import type { CallAgentMeta } from "./tools/agentCall";
 
@@ -176,9 +177,20 @@ function extractContentFromChunk(chunk: AIMessageChunk): { tokens: string[]; rea
           if ("thinking" in block && block.thinking) reasoning.push(block.thinking);
           break;
         default:
-          // Surface unrecognized block shapes (e.g. from a new provider) instead of
-          // dropping them silently. Kept at debug level to avoid noise.
-          log.debug({ blockType: block.type }, "unhandled content block type");
+          // A provider/schema change can otherwise discard output silently. Warn at most once per
+          // throttle window because the same unknown block can appear in every streamed chunk.
+          const suppressed = throttleLog("agent_content_block_unhandled");
+          if (suppressed !== null) {
+            log.warn(
+              {
+                event: "agent_content_block_unhandled",
+                outcome: "content_block_ignored",
+                blockType: block.type,
+                suppressed,
+              },
+              "unhandled model content block type",
+            );
+          }
       }
     }
   }
@@ -274,7 +286,7 @@ async function* synthesizeLimit(
   wlog: Logger,
 ): AsyncGenerator<AgentEvent> {
   /* eslint-enable @typescript-eslint/no-explicit-any */
-  wlog.info("limit synthesis started");
+  wlog.debug("limit synthesis started");
   try {
     const synthMessages = [
       ...messages,
@@ -292,7 +304,7 @@ async function* synthesizeLimit(
       }
     }
     if (synthText) messages.push(new AIMessage(synthText));
-    wlog.info({ chars: synthText.length }, "limit synthesis done");
+    wlog.debug({ chars: synthText.length }, "limit synthesis done");
   } catch (err) {
     wlog.error(
       { event: "agent_limit_synthesis_failed", outcome: "response_summary_missing", err },

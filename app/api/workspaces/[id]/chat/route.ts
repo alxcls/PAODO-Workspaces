@@ -46,7 +46,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     conversations.setActiveId(ws.id, conversationId);
   }
 
-  log.info({ conversationId, mode: userMessage ? "send" : "attach" }, "chat stream started");
+  log.debug({ conversationId, mode: userMessage ? "send" : "attach" }, "chat stream started");
   const encoder = new TextEncoder();
 
   const stream = new ReadableStream({

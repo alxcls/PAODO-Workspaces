@@ -62,15 +62,32 @@ process.on("uncaughtException", (err) => fatal("uncaughtException", err));
 process.on("unhandledRejection", (err) => fatal("unhandledRejection", err));
 
 const CREDENTIAL_PROXY_PORT = parseInt(process.env.CREDENTIAL_PROXY_PORT ?? "9998", 10);
+const CA_WAIT_INTERVAL_MS = 2000;
+const CA_WAIT_WARN_AFTER_MS = 30_000;
 // domain.key is the last file ensureCA writes, so its presence implies the whole CA set exists —
 // use it as the barrier so we never fall into ensureCA's generate branch on the read-only mount.
 const CA_SENTINEL = path.join(WORKSPACES_ROOT, ".proxy-ca", "domain.key");
 
 // The data dir is mounted read-only; wait for the app to have generated the CA before loading it.
 async function waitForCA(): Promise<void> {
+  const startedAt = Date.now();
+  let delayedWarningEmitted = false;
   while (!fs.existsSync(CA_SENTINEL)) {
-    log.info("waiting for proxy CA to be created by the app…");
-    await new Promise((r) => setTimeout(r, 2000));
+    const waitedMs = Date.now() - startedAt;
+    if (!delayedWarningEmitted && waitedMs >= CA_WAIT_WARN_AFTER_MS) {
+      delayedWarningEmitted = true;
+      log.warn(
+        {
+          event: "credential_proxy_ca_wait_delayed",
+          outcome: "startup_waiting",
+          waitedMs,
+        },
+        "credential proxy is still waiting for the app to create its CA",
+      );
+    } else {
+      log.debug({ waitedMs }, "waiting for proxy CA to be created by the app");
+    }
+    await new Promise((r) => setTimeout(r, CA_WAIT_INTERVAL_MS));
   }
 }
 

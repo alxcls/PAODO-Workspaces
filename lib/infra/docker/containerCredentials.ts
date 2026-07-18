@@ -143,6 +143,15 @@ export async function installProxyCA(docker: IDockerClient, containerName: strin
     ],
     { asRoot: true, stdin: caPem, trimStdout: true },
   );
-  if (caSetup.code !== 0)
-    log.debug({ workspaceId, stderr: caSetup.stderr }, "proxy CA install / bundle setup failed (non-fatal)");
+  if (caSetup.code !== 0) {
+    log.warn(
+      {
+        event: "workspace_proxy_ca_install_failed",
+        outcome: "workspace_proxy_trust_degraded",
+        workspaceId,
+        stderr: caSetup.stderr,
+      },
+      "proxy CA install or bundle setup failed",
+    );
+  }
 }

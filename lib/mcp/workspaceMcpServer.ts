@@ -98,7 +98,16 @@ export async function callWorkspaceMcpTool(
 
   // Every failure (NEEDS_INPUT included, per the PRD) surfaces as a normal MCP tool error carrying
   // the machine-readable code plus the human message.
-  log.info({ workspaceId, skill: name, code: result.code }, "workspace mcp tool call failed");
+  log.warn(
+    {
+      event: "workspace_mcp_tool_call_failed",
+      outcome: "tool_error_returned",
+      workspaceId,
+      skill: name,
+      code: result.code,
+    },
+    "workspace MCP tool call failed",
+  );
   return toolError(`[${result.code}] ${result.message}`);
 }
 

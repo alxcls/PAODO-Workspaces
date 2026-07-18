@@ -246,8 +246,17 @@ export class ContainerManager implements IContainerManager {
         asRoot: true,
         trimStdout: true,
       });
-      if (chown.code !== 0)
-        log.debug({ workspaceId, stderr: chown.stderr }, "workspace chown sweep failed (non-fatal)");
+      if (chown.code !== 0) {
+        log.warn(
+          {
+            event: "workspace_ownership_repair_failed",
+            outcome: "workspace_permissions_may_be_incorrect",
+            workspaceId,
+            stderr: chown.stderr,
+          },
+          "workspace ownership repair failed",
+        );
+      }
 
       // Install the proxy CA and build the combined trust bundle inside the fresh container (no-op
       // when the proxy isn't set up). See containerCredentials.installProxyCA.

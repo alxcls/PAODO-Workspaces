@@ -284,22 +284,30 @@ export class ContainerManager implements IContainerManager {
       // BLOCK until it finishes and propagate its exit code. Without --wait, setsid forks and the
       // parent exits immediately, so the docker exec client closes at once — the command looks
       // instantly "done" and its output never streams.
-      const proc = spawn("docker", [
-        "exec",
-        "-i",
-        "-w",
-        "/workspace",
-        name,
-        "setsid",
-        "--wait",
-        "/bin/bash",
-        "-c",
-        launcher,
-        ...cmdArgs,
-      ]);
-      proc.stdin.end();
-      proc.stdout.on("data", (chunk: Buffer) => opts.onStdout(chunk.toString()));
-      proc.stderr.on("data", (chunk: Buffer) => opts.onStderr(chunk.toString()));
+      let proc: ReturnType<typeof spawn>;
+      try {
+        proc = spawn("docker", [
+          "exec",
+          "-i",
+          "-w",
+          "/workspace",
+          name,
+          "setsid",
+          "--wait",
+          "/bin/bash",
+          "-c",
+          launcher,
+          ...cmdArgs,
+        ]);
+      } catch (err) {
+        log.error({ err, workspaceId }, "failed to spawn Docker foreground command");
+        opts.onStderr(`${err instanceof Error ? err.message : String(err)}\n`);
+        resolve({ code: 1 });
+        return;
+      }
+      proc.stdin!.end();
+      proc.stdout!.on("data", (chunk: Buffer) => opts.onStdout(chunk.toString()));
+      proc.stderr!.on("data", (chunk: Buffer) => opts.onStderr(chunk.toString()));
 
       let killed = false;
       const kill = () => {
@@ -317,12 +325,18 @@ export class ContainerManager implements IContainerManager {
         else opts.signal.addEventListener("abort", kill, { once: true });
       }
 
+      let finished = false;
       const done = (code: number | null) => {
+        if (finished) return;
+        finished = true;
         opts.signal?.removeEventListener("abort", kill);
         resolve({ code });
       };
       proc.on("close", (code) => done(code));
-      proc.on("error", () => done(1));
+      proc.on("error", (err) => {
+        log.error({ err, workspaceId }, "Docker foreground command process error");
+        done(1);
+      });
     });
   }
 

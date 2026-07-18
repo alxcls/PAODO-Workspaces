@@ -1,26 +1,26 @@
 {
   "$comment": "Generated inventory of runtime log call sites. Includes operational Pino, audit Pino, and console calls under app/, components/, lib/, server.ts, proxyEntry.ts, and instrumentation files; excludes tests and developer scripts. Durable means eligible for a configured production durable destination. Regenerate with `npm run logs:inventory`.",
   "summary": {
-    "total": 189,
-    "pino": 187,
+    "total": 202,
+    "pino": 200,
     "console": 2,
-    "durableCandidates": 122,
-    "operationalDurableCandidates": 97,
+    "durableCandidates": 135,
+    "operationalDurableCandidates": 110,
     "securityAuditCandidates": 25,
-    "byLevel": { "trace": 0, "debug": 27, "info": 52, "warn": 66, "error": 43, "fatal": 1 }
+    "byLevel": { "trace": 0, "debug": 27, "info": 52, "warn": 73, "error": 49, "fatal": 1 }
   },
   "levels": {
     "trace": [],
     "debug": [
       {
         "file": "lib/agent/promptContext.ts",
-        "line": 26,
+        "line": 27,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
         "context": "promptContext",
-        "message": "AGENTS.md not found in ${…} — skipping",
-        "fields": [],
+        "message": "AGENTS.md not found — skipping",
+        "fields": ["workspaceDir"],
         "bindings": [],
         "durable": false,
         "durableDestination": null
@@ -66,7 +66,7 @@
       },
       {
         "file": "lib/agent/runner.ts",
-        "line": 538,
+        "line": 547,
         "logger": "pino",
         "channel": "operational",
         "receiver": "wlog",
@@ -79,7 +79,7 @@
       },
       {
         "file": "lib/agent/runner.ts",
-        "line": 585,
+        "line": 594,
         "logger": "pino",
         "channel": "operational",
         "receiver": "wlog",
@@ -144,7 +144,7 @@
       },
       {
         "file": "lib/infra/docker/backgroundTaskManager.ts",
-        "line": 154,
+        "line": 162,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -235,7 +235,7 @@
       },
       {
         "file": "lib/infra/docker/containerManager.ts",
-        "line": 378,
+        "line": 392,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -248,7 +248,7 @@
       },
       {
         "file": "lib/infra/docker/containerManager.ts",
-        "line": 391,
+        "line": 405,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -261,7 +261,7 @@
       },
       {
         "file": "lib/infra/docker/containerManager.ts",
-        "line": 393,
+        "line": 407,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -274,7 +274,7 @@
       },
       {
         "file": "lib/infra/docker/containerManager.ts",
-        "line": 396,
+        "line": 410,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -511,7 +511,7 @@
       },
       {
         "file": "lib/agent/runner.ts",
-        "line": 604,
+        "line": 613,
         "logger": "pino",
         "channel": "operational",
         "receiver": "wlog",
@@ -940,7 +940,7 @@
       },
       {
         "file": "lib/workspace/driveStore.ts",
-        "line": 100,
+        "line": 115,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -953,7 +953,7 @@
       },
       {
         "file": "lib/workspace/driveStore.ts",
-        "line": 133,
+        "line": 148,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -1031,7 +1031,7 @@
       },
       {
         "file": "server.ts",
-        "line": 280,
+        "line": 283,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -1188,6 +1188,19 @@
         "durableDestination": "operational"
       },
       {
+        "file": "lib/agent/promptContext.ts",
+        "line": 29,
+        "logger": "pino",
+        "channel": "operational",
+        "receiver": "log",
+        "context": "promptContext",
+        "message": "failed to read AGENTS.md — workspace instructions omitted",
+        "fields": ["err", "workspaceDir"],
+        "bindings": [],
+        "durable": true,
+        "durableDestination": "operational"
+      },
+      {
         "file": "lib/agent/runBroker.ts",
         "line": 141,
         "logger": "pino",
@@ -1274,6 +1287,45 @@
         "context": "agent",
         "message": "agent loop limit reached",
         "fields": ["iterations"],
+        "bindings": ["workspaceId"],
+        "durable": true,
+        "durableDestination": "operational"
+      },
+      {
+        "file": "lib/agent/runner.ts",
+        "line": 527,
+        "logger": "pino",
+        "channel": "operational",
+        "receiver": "wlog",
+        "context": "agent",
+        "message": "tool invocation threw",
+        "fields": ["err", "name"],
+        "bindings": ["workspaceId"],
+        "durable": true,
+        "durableDestination": "operational"
+      },
+      {
+        "file": "lib/agent/runner.ts",
+        "line": 539,
+        "logger": "pino",
+        "channel": "operational",
+        "receiver": "wlog",
+        "context": "agent",
+        "message": "tool invocation threw",
+        "fields": ["err", "name"],
+        "bindings": ["workspaceId"],
+        "durable": true,
+        "durableDestination": "operational"
+      },
+      {
+        "file": "lib/agent/runner.ts",
+        "line": 543,
+        "logger": "pino",
+        "channel": "operational",
+        "receiver": "wlog",
+        "context": "agent",
+        "message": "model requested unknown tool",
+        "fields": ["name"],
         "bindings": ["workspaceId"],
         "durable": true,
         "durableDestination": "operational"
@@ -1410,7 +1462,20 @@
       },
       {
         "file": "lib/infra/docker/backgroundTaskManager.ts",
-        "line": 140,
+        "line": 103,
+        "logger": "pino",
+        "channel": "operational",
+        "receiver": "log",
+        "context": "container",
+        "message": "failed to stop background task",
+        "fields": ["workspaceId", "taskId", "stderr"],
+        "bindings": [],
+        "durable": true,
+        "durableDestination": "operational"
+      },
+      {
+        "file": "lib/infra/docker/backgroundTaskManager.ts",
+        "line": 143,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -1422,8 +1487,21 @@
         "durableDestination": "operational"
       },
       {
+        "file": "lib/infra/docker/backgroundTaskManager.ts",
+        "line": 148,
+        "logger": "pino",
+        "channel": "operational",
+        "receiver": "log",
+        "context": "container",
+        "message": "failed to rehydrate background tasks",
+        "fields": ["workspaceId", "stderr"],
+        "bindings": [],
+        "durable": true,
+        "durableDestination": "operational"
+      },
+      {
         "file": "lib/infra/docker/containerManager.ts",
-        "line": 311,
+        "line": 319,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -1436,7 +1514,7 @@
       },
       {
         "file": "lib/infra/docker/containerManager.ts",
-        "line": 374,
+        "line": 388,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -1619,7 +1697,7 @@
       },
       {
         "file": "lib/workspace/driveStore.ts",
-        "line": 131,
+        "line": 146,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -1867,7 +1945,7 @@
       },
       {
         "file": "server.ts",
-        "line": 160,
+        "line": 161,
         "logger": "pino",
         "channel": "audit",
         "receiver": "audit",
@@ -1880,7 +1958,7 @@
       },
       {
         "file": "server.ts",
-        "line": 167,
+        "line": 168,
         "logger": "pino",
         "channel": "audit",
         "receiver": "audit",
@@ -1893,7 +1971,20 @@
       },
       {
         "file": "server.ts",
-        "line": 249,
+        "line": 232,
+        "logger": "pino",
+        "channel": "operational",
+        "receiver": "log",
+        "context": "server",
+        "message": "websocket message handling failed",
+        "fields": ["err", "workspaceId", "messageType"],
+        "bindings": [],
+        "durable": true,
+        "durableDestination": "operational"
+      },
+      {
+        "file": "server.ts",
+        "line": 252,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -1907,6 +1998,19 @@
     ],
     "error": [
       {
+        "file": "app/api/drives/[id]/route.ts",
+        "line": 29,
+        "logger": "pino",
+        "channel": "operational",
+        "receiver": "log",
+        "context": "api",
+        "message": "failed to update drive",
+        "fields": ["err", "driveId"],
+        "bindings": [],
+        "durable": true,
+        "durableDestination": "operational"
+      },
+      {
         "file": "app/api/drives/route.ts",
         "line": 21,
         "logger": "pino",
@@ -1916,6 +2020,19 @@
         "message": "failed to create drive",
         "fields": ["err", "name"],
         "bindings": ["route"],
+        "durable": true,
+        "durableDestination": "operational"
+      },
+      {
+        "file": "app/api/workspace-graph/route.ts",
+        "line": 32,
+        "logger": "pino",
+        "channel": "operational",
+        "receiver": "log",
+        "context": "api",
+        "message": "failed to save workspace graph",
+        "fields": ["err", "route"],
+        "bindings": [],
         "durable": true,
         "durableDestination": "operational"
       },
@@ -2026,7 +2143,7 @@
       },
       {
         "file": "lib/agent/runner.ts",
-        "line": 622,
+        "line": 631,
         "logger": "pino",
         "channel": "operational",
         "receiver": "wlog",
@@ -2065,7 +2182,33 @@
       },
       {
         "file": "lib/infra/docker/containerManager.ts",
-        "line": 428,
+        "line": 303,
+        "logger": "pino",
+        "channel": "operational",
+        "receiver": "log",
+        "context": "container",
+        "message": "failed to spawn Docker foreground command",
+        "fields": ["err", "workspaceId"],
+        "bindings": [],
+        "durable": true,
+        "durableDestination": "operational"
+      },
+      {
+        "file": "lib/infra/docker/containerManager.ts",
+        "line": 337,
+        "logger": "pino",
+        "channel": "operational",
+        "receiver": "log",
+        "context": "container",
+        "message": "Docker foreground command process error",
+        "fields": ["err", "workspaceId"],
+        "bindings": [],
+        "durable": true,
+        "durableDestination": "operational"
+      },
+      {
+        "file": "lib/infra/docker/containerManager.ts",
+        "line": 442,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -2298,6 +2441,19 @@
         "durableDestination": "operational"
       },
       {
+        "file": "lib/workspace/driveStore.ts",
+        "line": 55,
+        "logger": "pino",
+        "channel": "operational",
+        "receiver": "log",
+        "context": "driveStore",
+        "message": "failed to load drive registry — using fallback",
+        "fields": ["err", "file", "...(decision.suppressed > 0 ? { suppressed: decision.suppressed } : {})"],
+        "bindings": [],
+        "durable": true,
+        "durableDestination": "operational"
+      },
+      {
         "file": "lib/workspace/fileUpload.ts",
         "line": 70,
         "logger": "pino",
@@ -2430,7 +2586,20 @@
       },
       {
         "file": "server.ts",
-        "line": 201,
+        "line": 152,
+        "logger": "pino",
+        "channel": "operational",
+        "receiver": "log",
+        "context": "server",
+        "message": "websocket server error",
+        "fields": ["err"],
+        "bindings": [],
+        "durable": true,
+        "durableDestination": "operational"
+      },
+      {
+        "file": "server.ts",
+        "line": 202,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -2443,7 +2612,7 @@
       },
       {
         "file": "server.ts",
-        "line": 235,
+        "line": 238,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",
@@ -2456,7 +2625,7 @@
       },
       {
         "file": "server.ts",
-        "line": 246,
+        "line": 249,
         "logger": "pino",
         "channel": "operational",
         "receiver": "log",

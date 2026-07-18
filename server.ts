@@ -149,6 +149,7 @@ httpServer.on("request", (req, res) => {
 });
 
 const wss = new WebSocketServer({ noServer: true });
+wss.on("error", (err) => log.error({ err }, "websocket server error"));
 
 httpServer.on("upgrade", (req, socket, head) => {
   const { pathname } = new URL(req.url ?? "", "http://localhost");
@@ -217,16 +218,18 @@ wss.on("connection", (ws, req) => {
   ws.on("error", cleanup);
 
   ws.on("message", (data) => {
+    let msg: { type: string; path?: string };
     try {
-      const msg = JSON.parse(data.toString()) as { type: string; path?: string };
-      if (msg.type === "ping") {
-        ws.send(JSON.stringify({ type: "pong" }));
-      }
-      if (msg.type === "self_write" && msg.path) {
-        markSelfWrite(msg.path);
-      }
+      msg = JSON.parse(data.toString()) as { type: string; path?: string };
     } catch {
       // ignore malformed messages
+      return;
+    }
+    try {
+      if (msg.type === "ping") ws.send(JSON.stringify({ type: "pong" }));
+      if (msg.type === "self_write" && msg.path) markSelfWrite(msg.path);
+    } catch (err) {
+      log.warn({ err, workspaceId, messageType: msg.type }, "websocket message handling failed");
     }
   });
 });

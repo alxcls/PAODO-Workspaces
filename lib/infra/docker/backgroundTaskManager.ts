@@ -92,13 +92,16 @@ export class BackgroundTaskManager {
   async stop(workspaceId: string, taskId: string): Promise<boolean> {
     const task = this.tasks.get(workspaceId)?.get(taskId);
     if (!task) return false;
-    await this.docker
+    const result = await this.docker
       .exec(containerName(workspaceId), [
         "/bin/bash",
         "-c",
         `kill -KILL -${task.pgid} 2>/dev/null; rm -f ${TASK_DIR}/${taskId}.pid ${TASK_DIR}/${taskId}.cmd`,
       ])
       .catch((err) => log.warn({ err, workspaceId, taskId }, "failed to stop background task"));
+    if (result && result.code !== 0) {
+      log.warn({ workspaceId, taskId, stderr: result.stderr }, "failed to stop background task");
+    }
     this.tasks.get(workspaceId)?.delete(taskId);
     return true;
   }
@@ -140,7 +143,12 @@ export class BackgroundTaskManager {
         log.warn({ err, workspaceId }, "failed to rehydrate background tasks");
         return null;
       });
-    if (!res || res.code !== 0 || !res.stdout) return;
+    if (!res) return;
+    if (res.code !== 0) {
+      log.warn({ workspaceId, stderr: res.stderr }, "failed to rehydrate background tasks");
+      return;
+    }
+    if (!res.stdout) return;
     const tasks = new Map<string, BackgroundTask>();
     for (const line of res.stdout.split("\n")) {
       const [taskId, pgidStr, cmdB64] = line.split("\t");

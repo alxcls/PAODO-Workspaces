@@ -22,8 +22,12 @@ export interface WorkspacePromptInputs {
 function readAgentsMd(workspaceDir: string): string | undefined {
   try {
     return fs.readFileSync(path.join(workspaceDir, "AGENTS.md"), "utf-8").trim();
-  } catch {
-    log.debug(`AGENTS.md not found in ${workspaceDir} — skipping`);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+      log.debug({ workspaceDir }, "AGENTS.md not found — skipping");
+    } else {
+      log.warn({ err, workspaceDir }, "failed to read AGENTS.md — workspace instructions omitted");
+    }
     return undefined;
   }
 }

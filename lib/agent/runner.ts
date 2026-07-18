@@ -523,17 +523,26 @@ export async function* runAgent(
           const withMeta = tool?.callWithMeta;
           if (withMeta) {
             const r = await withMeta(tc.args, (m) => lq.emitLink({ name: tc.name, id: tc.id, meta: m }), signal).catch(
-              (err) => ({
-                result: `Error: ${String(err)}`,
-                meta: undefined,
-              }),
+              (err) => {
+                if (!signal?.aborted) wlog.warn({ err, name: tc.name }, "tool invocation threw");
+                return {
+                  result: `Error: ${String(err)}`,
+                  meta: undefined,
+                };
+              },
             );
             resultStr = r.result;
             meta = r.meta;
           } else {
-            resultStr = tool
-              ? await invokeTool(tool, tc.args, signal).catch((err) => `Error: ${String(err)}`)
-              : `Error: unknown tool "${tc.name}"`;
+            if (tool) {
+              resultStr = await invokeTool(tool, tc.args, signal).catch((err) => {
+                if (!signal?.aborted) wlog.warn({ err, name: tc.name }, "tool invocation threw");
+                return `Error: ${String(err)}`;
+              });
+            } else {
+              wlog.warn({ name: tc.name }, "model requested unknown tool");
+              resultStr = `Error: unknown tool "${tc.name}"`;
+            }
           }
           wlog.debug({ name: tc.name, toolMs: Date.now() - toolStart }, "tool timing");
           return { tc, resultStr, meta };

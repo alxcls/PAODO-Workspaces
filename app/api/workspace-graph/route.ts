@@ -2,6 +2,9 @@
 import { NextResponse } from "next/server";
 import { getGraph, saveGraph } from "@/lib/workspace/workspaceGraph";
 import type { GraphEdge } from "@/lib/workspace/workspaceGraph";
+import { createLogger } from "@/lib/infra/logger";
+
+const log = createLogger("api");
 
 function graphEnabled() {
   return process.env.GRAPH_ENABLED !== "false";
@@ -22,7 +25,12 @@ export async function PUT(req: Request) {
   try {
     saveGraph(edges, body.positions ?? {});
   } catch (e) {
-    return NextResponse.json({ error: (e as Error).message }, { status: 400 });
+    const message = e instanceof Error ? e.message : String(e);
+    if (message.startsWith("Graph contains a cycle")) {
+      return NextResponse.json({ error: message }, { status: 400 });
+    }
+    log.error({ err: e, route: "workspace-graph" }, "failed to save workspace graph");
+    return NextResponse.json({ error: "failed to save workspace graph" }, { status: 500 });
   }
   return NextResponse.json({ ok: true });
 }

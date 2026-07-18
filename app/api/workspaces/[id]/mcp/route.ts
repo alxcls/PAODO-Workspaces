@@ -12,6 +12,7 @@ import { validateSecret } from "@/lib/infra/security/mcpConfigStore";
 import { rateLimited, subjectRateLimited } from "@/lib/api/guards";
 import { getClientIp } from "@/lib/infra/realtime/clientIp";
 import { createAuditLogger, createLogger } from "@/lib/infra/logger";
+import { throttleLogWithSources } from "@/lib/infra/logThrottle";
 
 const log = createLogger("api");
 const audit = createAuditLogger("api");
@@ -53,16 +54,24 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   if (limited) return limited;
 
   if (!validateSecret(id, bearer(req))) {
-    audit.warn(
-      {
-        workspaceId: id,
-        route: "mcp",
-        ip: getClientIp(req),
-        requestId: req.headers.get("x-request-id") ?? undefined,
-        event: "mcp_auth_unauthorized",
-      },
-      "unauthorized MCP request",
-    );
+    // Reachable by anyone on the internet — this is one of the two routes the public Caddy gateway
+    // forwards — so the caller decides how often it logs. Per-IP rate limiting above bounds a single
+    // source; the throttle is what bounds a flood spread across many.
+    const ip = getClientIp(req);
+    const throttled = throttleLogWithSources("mcp_auth_unauthorized", ip);
+    if (throttled) {
+      audit.warn(
+        {
+          workspaceId: id,
+          route: "mcp",
+          ip,
+          requestId: req.headers.get("x-request-id") ?? undefined,
+          event: "mcp_auth_unauthorized",
+          ...throttled,
+        },
+        "unauthorized MCP request",
+      );
+    }
     return new Response("Unauthorized", { status: 401 });
   }
 

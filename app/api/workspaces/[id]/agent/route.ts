@@ -8,6 +8,7 @@ import { requireWorkspace, rateLimited, subjectRateLimited } from "@/lib/api/gua
 import { validateKey } from "@/lib/infra/security/apiKeyStore";
 import { getClientIp } from "@/lib/infra/realtime/clientIp";
 import { createAuditLogger, createLogger } from "@/lib/infra/logger";
+import { throttleLogWithSources } from "@/lib/infra/logThrottle";
 import type { AgentEvent } from "@/lib/agent/runner";
 import { buildSystemPrompt, buildPromptConfig } from "@/lib/agent/systemPrompt";
 import { buildWorkspacePromptInputs } from "@/lib/agent/promptContext";
@@ -100,14 +101,22 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const audit = createAuditLogger("api").child({ workspaceId: id, route: "agent" });
 
   if (!plain || !validateKey(id, plain)) {
-    audit.warn(
-      {
-        ip: getClientIp(req),
-        requestId: req.headers.get("x-request-id") ?? undefined,
-        event: "api_auth_unauthorized",
-      },
-      "unauthorized request",
-    );
+    // Reachable by anyone on the internet — this is one of the two routes the public Caddy gateway
+    // forwards — so the caller decides how often it logs. Per-IP rate limiting above bounds a single
+    // source; the throttle is what bounds a flood spread across many.
+    const ip = getClientIp(req);
+    const throttled = throttleLogWithSources("api_auth_unauthorized", ip);
+    if (throttled) {
+      audit.warn(
+        {
+          ip,
+          requestId: req.headers.get("x-request-id") ?? undefined,
+          event: "api_auth_unauthorized",
+          ...throttled,
+        },
+        "unauthorized request",
+      );
+    }
     return new Response("Unauthorized", { status: 401 });
   }
 

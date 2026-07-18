@@ -16,7 +16,7 @@ import fs from "fs/promises";
 import path from "path";
 import { createLogger } from "@/lib/infra/logger";
 import { assertInsideWorkspace } from "@/lib/infra/workspaceContainment";
-import { lexicalFilePath, type FileBackend } from "./fileBackend";
+import { lexicalFilePath, logFileRouteError, type FileBackend } from "./fileBackend";
 
 type FileClass = { type: "image"; mimeType: string } | { type: "text"; content: string } | { type: "binary" };
 
@@ -69,7 +69,7 @@ export async function getFileContent(req: Request, be: FileBackend): Promise<Res
     if (classified.type === "image") return NextResponse.json({ type: "image" });
     return NextResponse.json({ type: "binary" });
   } catch (err) {
-    log.warn({ err, filePath }, "GET file failed");
+    logFileRouteError(log, err, { filePath }, "GET file failed");
     const msg = err instanceof Error ? err.message : "Unknown error";
     return NextResponse.json({ error: msg }, { status: 400 });
   }
@@ -106,7 +106,7 @@ export async function putFileContent(req: Request, be: FileBackend): Promise<Res
     await be.afterWrite?.(`saved ${path.basename(resolved)}`);
     return NextResponse.json({ ok: true });
   } catch (err) {
-    log.warn({ err, path: body.path }, "PUT file failed");
+    logFileRouteError(log, err, { path: body.path }, "PUT file failed");
     if ((err as NodeJS.ErrnoException).code === "ENOENT") {
       return NextResponse.json({ error: "File was moved or deleted before it could be saved" }, { status: 409 });
     }
@@ -135,7 +135,7 @@ export async function deleteFileContent(req: Request, be: FileBackend): Promise<
     await be.afterWrite?.(`deleted ${path.basename(resolved)}`);
     return NextResponse.json({ ok: true });
   } catch (err) {
-    log.warn({ err, filePath }, "DELETE file failed");
+    logFileRouteError(log, err, { filePath }, "DELETE file failed");
     const msg = err instanceof Error ? err.message : "Unknown error";
     return NextResponse.json({ error: msg }, { status: 400 });
   }

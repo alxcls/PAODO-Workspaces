@@ -294,7 +294,10 @@ async function* synthesizeLimit(
     if (synthText) messages.push(new AIMessage(synthText));
     wlog.info({ chars: synthText.length }, "limit synthesis done");
   } catch (err) {
-    wlog.error({ err }, "limit synthesis failed");
+    wlog.error(
+      { event: "agent_limit_synthesis_failed", outcome: "response_summary_missing", err },
+      "limit synthesis failed",
+    );
   }
 }
 
@@ -413,7 +416,9 @@ export async function* runAgent(
   };
 
   messages.push(new HumanMessage(userInput));
-  wlog.info({ maxIterations }, "agent run started");
+  // The broker/stream owner emits the correlated info-level run lifecycle with session and
+  // conversation ids. Keep this inner loop boundary at debug to avoid duplicate production lines.
+  wlog.debug({ maxIterations }, "agent loop started");
 
   await tryCommitBaseline(versioning, workspaceId, workspaceDir, userInput, wlog);
 
@@ -477,7 +482,7 @@ export async function* runAgent(
             response_metadata: { runUsage: { inputTokens: runInputTokens, outputTokens: runOutputTokens } },
           }),
         );
-        wlog.info("agent run done");
+        wlog.debug("agent loop done");
         yield { type: "done" };
         break;
       }
@@ -623,7 +628,7 @@ export async function* runAgent(
       // (atomic block, so history stays valid for a later resume). Stop here instead of looping
       // back into another — immediately aborted — model stream. Skip compaction on the way out.
       if (signal?.aborted) {
-        wlog.info("agent run aborted by user");
+        wlog.debug("agent loop aborted");
         yield { type: "done" };
         break;
       }
@@ -641,7 +646,7 @@ export async function* runAgent(
     // A thrown error (e.g. the model stream aborting mid-turn) lands here before any
     // assistant tool-call turn is committed, so history is left consistent — see the
     // atomic commit above. Just surface the error and close the stream.
-    wlog.error({ err }, "agent run failed");
+    wlog.error({ event: "agent_run_failed", outcome: "error_event_emitted", err }, "agent run failed");
     yield { type: "error", message: String(err) };
     yield { type: "done" };
   } finally {

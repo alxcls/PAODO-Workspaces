@@ -7,7 +7,7 @@ import fs from "fs/promises";
 import path from "path";
 import { createLogger } from "@/lib/infra/logger";
 import { assertInsideWorkspace } from "@/lib/infra/workspaceContainment";
-import { lexicalFilePath, type FileBackend } from "./fileBackend";
+import { lexicalFilePath, logFileRouteError, type FileBackend } from "./fileBackend";
 
 interface MoveBody {
   sourcePath: string;
@@ -163,7 +163,7 @@ async function moveOne(
     }
     return outcome;
   } catch (err) {
-    log.warn({ err, sourcePath, destinationDirectory }, "PATCH file move failed");
+    logFileRouteError(log, err, { sourcePath, destinationDirectory }, "PATCH file move failed");
     return { error: err instanceof Error ? err.message : "Unknown error", status: 400 };
   }
 }

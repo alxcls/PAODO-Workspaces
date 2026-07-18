@@ -23,12 +23,14 @@ import * as https from "https";
 import { Transform } from "stream";
 import { signDomainCert } from "./proxyCA";
 import { isBlockedAddress, makeGuardedLookup } from "./destinationGuard";
-import { createLogger } from "../logger";
+import { createAuditLogger, createLogger } from "../logger";
+import { throttleLog } from "../logThrottle";
 import { WorkspaceRuleStore } from "./workspaceRuleStore";
 import { readHttpHeaders, collectBody, pipeBody, bodyMode } from "./httpWire";
 import type { DomainRule } from "../security/workspaceSecretStore";
 
 const log = createLogger("credentialProxy");
+const audit = createAuditLogger("credentialProxy");
 
 // token → real value
 type TokenMap = Map<string, string>;
@@ -62,9 +64,12 @@ function tokenMapForHost(rules: DomainRule[], hostname: string): TokenMap {
   return map;
 }
 
-function substituteTokens(value: string, tokenMap: TokenMap): string {
+function substituteTokens(value: string, tokenMap: TokenMap, usedTokens?: Set<string>): string {
   for (const [token, realValue] of tokenMap) {
-    if (value.includes(token)) value = value.split(token).join(realValue);
+    if (value.includes(token)) {
+      usedTokens?.add(token);
+      value = value.split(token).join(realValue);
+    }
   }
   return value;
 }
@@ -72,13 +77,13 @@ function substituteTokens(value: string, tokenMap: TokenMap): string {
 // Substitute in a single header value. Covers the plain case (token appears verbatim) and
 // `Authorization: Basic base64(user:token)`, where the client base64-encodes the credentials so
 // the literal token never appears in the header — we decode, substitute, and re-encode.
-export function substituteHeaderValue(value: string, tokenMap: Map<string, string>): string {
-  const direct = substituteTokens(value, tokenMap);
+export function substituteHeaderValue(value: string, tokenMap: Map<string, string>, usedTokens?: Set<string>): string {
+  const direct = substituteTokens(value, tokenMap, usedTokens);
   const basic = /^Basic\s+(\S+)\s*$/i.exec(direct);
   if (basic) {
     try {
       const decoded = Buffer.from(basic[1], "base64").toString("latin1");
-      const replaced = substituteTokens(decoded, tokenMap);
+      const replaced = substituteTokens(decoded, tokenMap, usedTokens);
       if (replaced !== decoded) return "Basic " + Buffer.from(replaced, "latin1").toString("base64");
     } catch {
       // not valid base64 — keep the direct substitution
@@ -128,9 +133,61 @@ export function createRedactTransform(redactMap: TokenMap): Transform {
 // Substitute every request-line/header place a secret can ride: the request target (path + query
 // string) and all header values. Mutates `headers` in place; returns the substituted path.
 // The request body is handled separately by forwardRequestBody (it must be buffered to rewrite).
-function substituteRequestMeta(requestPath: string, headers: Record<string, string>, tokenMap: TokenMap): string {
-  for (const k of Object.keys(headers)) headers[k] = substituteHeaderValue(headers[k], tokenMap);
-  return substituteTokens(requestPath, tokenMap);
+function substituteRequestMeta(
+  requestPath: string,
+  headers: Record<string, string>,
+  tokenMap: TokenMap,
+  usedTokens?: Set<string>,
+): string {
+  for (const k of Object.keys(headers)) headers[k] = substituteHeaderValue(headers[k], tokenMap, usedTokens);
+  return substituteTokens(requestPath, tokenMap, usedTokens);
+}
+
+interface ProxyRequestContext {
+  workspaceId?: string;
+  hostname: string;
+  port: number;
+  transport: "http" | "https" | "tunnel";
+}
+
+function isBlockedDestinationError(err: unknown): boolean {
+  return (err as NodeJS.ErrnoException | undefined)?.code === "EBLOCKED";
+}
+
+function auditBlockedDestination(context: ProxyRequestContext): void {
+  const suppressed = throttleLog("proxy_destination_blocked");
+  if (suppressed === null) return;
+  audit.warn(
+    {
+      event: "proxy_destination_blocked",
+      outcome: "request_blocked",
+      suppressed,
+      ...context,
+    },
+    "credential proxy blocked a private destination",
+  );
+}
+
+function auditUpstreamAuthFailure(
+  context: ProxyRequestContext,
+  method: string,
+  status: number,
+  credentialCount: number,
+): void {
+  const suppressed = throttleLog("credential_proxy_upstream_auth_failed");
+  if (suppressed === null) return;
+  audit.warn(
+    {
+      event: "credential_proxy_upstream_auth_failed",
+      outcome: "credential_rejected_by_upstream",
+      suppressed,
+      method,
+      status,
+      credentialCount,
+      ...context,
+    },
+    "upstream rejected a proxied credential",
+  );
 }
 
 export function buildResponseHead(res: http.IncomingMessage, redactMap?: TokenMap): string {
@@ -172,7 +229,12 @@ export class CredentialProxy {
   // test run an HTTPS stub with a self-signed chain); production always uses the system roots.
   private upstreamCa?: string | string[];
 
-  constructor(opts?: { blockDestination?: (ip: string) => boolean; upstreamCa?: string | string[] }) {
+  constructor(opts?: {
+    blockDestination?: (ip: string) => boolean;
+    upstreamCa?: string | string[];
+    /** The production sidecar exits here so Docker can restart a dead listener. */
+    onServerError?: (err: Error) => void;
+  }) {
     this.blockDestination = opts?.blockDestination ?? isBlockedAddress;
     this.upstreamCa = opts?.upstreamCa;
     this.lookup = makeGuardedLookup(this.blockDestination);
@@ -182,7 +244,16 @@ export class CredentialProxy {
         socket.destroy();
       });
     });
-    this.server.on("error", (err) => log.error({ err }, "proxy server error"));
+    this.server.on("error", (err) => {
+      if (opts?.onServerError) {
+        opts.onServerError(err);
+        return;
+      }
+      log.error(
+        { event: "credential_proxy_server_error", outcome: "proxy_listener_failed", err },
+        "proxy server error",
+      );
+    });
   }
 
   listen(port: number): void {
@@ -219,13 +290,14 @@ export class CredentialProxy {
       const tokenMap = tokenMapForHost(rules, hostname);
       if (tokenMap.size > 0) {
         socket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
-        await this.handleMitm(socket, hostname, port, tokenMap, remaining);
+        await this.handleMitm(socket, hostname, port, tokenMap, remaining, auth?.wsId);
       } else {
         // SSRF guard: refuse tunnels to internal addresses. IP literals are checked here (net.connect
         // skips DNS for them, so guardedLookup would never see them); hostnames are validated by the
         // lookup, which rejects a resolved address in a blocked range. The 200 is withheld until the
         // upstream is actually established, so a blocked target only ever gets a 403.
         if (net.isIP(hostname) && this.blockDestination(hostname)) {
+          auditBlockedDestination({ workspaceId: auth?.wsId, hostname, port, transport: "tunnel" });
           socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
           socket.destroy();
           return;
@@ -233,7 +305,11 @@ export class CredentialProxy {
         const upstream = net.connect({ host: hostname, port, lookup: this.lookup });
         let established = false;
         upstream.on("error", (err) => {
-          log.warn({ err, hostname, port, established }, "proxy tunnel upstream error");
+          if (isBlockedDestinationError(err)) {
+            auditBlockedDestination({ workspaceId: auth?.wsId, hostname, port, transport: "tunnel" });
+          } else {
+            log.warn({ err, hostname, port, established }, "proxy tunnel upstream error");
+          }
           if (!established) {
             try {
               socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
@@ -258,7 +334,7 @@ export class CredentialProxy {
         });
       }
     } else {
-      await this.handleHttpProxy(socket, statusLine, headers, remaining);
+      await this.handleHttpProxy(socket, statusLine, headers, remaining, auth?.wsId);
     }
   }
 
@@ -268,6 +344,7 @@ export class CredentialProxy {
     port: number,
     tokenMap: TokenMap,
     prefixData: Buffer,
+    workspaceId?: string,
   ): Promise<void> {
     const { cert: certPem, key: keyPem } = signDomainCert(hostname);
 
@@ -295,7 +372,9 @@ export class CredentialProxy {
     // compresses anyway passes through unredacted: accidental-echo coverage, not a guarantee.)
     delete headers["accept-encoding"];
     headers["connection"] = "close";
-    const requestPath = substituteRequestMeta(parts[1] ?? "/", headers, tokenMap);
+    const usedTokens = new Set<string>();
+    const requestPath = substituteRequestMeta(parts[1] ?? "/", headers, tokenMap, usedTokens);
+    const requestContext: ProxyRequestContext = { workspaceId, hostname, port, transport: "https" };
 
     // Response direction: redact real values back into tokens so an upstream echoing the
     // credential (error messages, request mirrors) never exposes plaintext to the container.
@@ -314,6 +393,10 @@ export class CredentialProxy {
           lookup: this.lookup,
         },
         (upstreamRes) => {
+          const status = upstreamRes.statusCode ?? 0;
+          if ((status === 401 || status === 403) && usedTokens.size > 0) {
+            auditUpstreamAuthFailure(requestContext, method, status, usedTokens.size);
+          }
           tlsSocket.write(buildResponseHead(upstreamRes, redactMap));
           upstreamRes.pipe(createRedactTransform(redactMap)).pipe(tlsSocket);
           upstreamRes.on("error", (err) => {
@@ -323,7 +406,7 @@ export class CredentialProxy {
         },
       );
 
-    await this.forwardRequestBody(tlsSocket, headers, remaining, tokenMap, startUpstream, hostname);
+    await this.forwardRequestBody(tlsSocket, headers, remaining, tokenMap, usedTokens, startUpstream, requestContext);
   }
 
   // Forward the request body upstream, substituting tokens inside it when it is small enough to
@@ -333,8 +416,9 @@ export class CredentialProxy {
     headers: Record<string, string>,
     remaining: Buffer,
     tokenMap: TokenMap,
+    usedTokens: Set<string>,
     startUpstream: () => http.ClientRequest,
-    hostname: string,
+    context: ProxyRequestContext,
   ): Promise<void> {
     // Honor `Expect: 100-continue`: the client withholds the body until it sees an interim 100
     // response (Python requests does this on larger POSTs — exactly the token-exchange calls this
@@ -350,17 +434,18 @@ export class CredentialProxy {
       try {
         raw = await collectBody(src, headers, remaining);
       } catch (err) {
-        log.warn({ err, hostname }, "request body read failed");
+        log.warn({ err, hostname: context.hostname }, "request body read failed");
         src.destroy();
         return;
       }
-      const body = Buffer.from(substituteTokens(raw.toString("latin1"), tokenMap), "latin1");
+      const body = Buffer.from(substituteTokens(raw.toString("latin1"), tokenMap, usedTokens), "latin1");
       // Length changed (token → real value) and any chunked framing is gone: fix the headers.
       headers["content-length"] = String(body.length);
       delete headers["transfer-encoding"];
       const req = startUpstream();
       req.on("error", (err) => {
-        log.warn({ err, hostname }, "upstream request error");
+        if (isBlockedDestinationError(err)) auditBlockedDestination(context);
+        else log.warn({ err, hostname: context.hostname }, "upstream request error");
         src.destroy();
       });
       req.end(body);
@@ -368,7 +453,8 @@ export class CredentialProxy {
       // No body, or too large to buffer — stream it through untouched (headers/path already done).
       const req = startUpstream();
       req.on("error", (err) => {
-        log.warn({ err, hostname }, "upstream request error");
+        if (isBlockedDestinationError(err)) auditBlockedDestination(context);
+        else log.warn({ err, hostname: context.hostname }, "upstream request error");
         src.destroy();
       });
       pipeBody(src, req, headers, remaining);
@@ -380,6 +466,7 @@ export class CredentialProxy {
     statusLine: string,
     headers: Record<string, string>,
     remaining: Buffer,
+    workspaceId?: string,
   ): Promise<void> {
     // e.g. GET http://example.com/path HTTP/1.1
     const match = /^(\w+)\s+http:\/\/([^/\s]+)(\/[^\s]*)?\s/.exec(statusLine);
@@ -396,6 +483,7 @@ export class CredentialProxy {
     // SSRF guard: refuse plain-HTTP forwards to internal addresses. IP literals are checked here
     // (http.request skips DNS for them); hostnames are validated by this.lookup below.
     if (net.isIP(hostname) && this.blockDestination(hostname)) {
+      auditBlockedDestination({ workspaceId, hostname, port, transport: "http" });
       socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
       socket.destroy();
       return;
@@ -409,7 +497,9 @@ export class CredentialProxy {
 
     delete headers["proxy-authorization"];
     headers["connection"] = "close";
-    const path = substituteRequestMeta(requestPath, headers, tokenMap);
+    const usedTokens = new Set<string>();
+    const path = substituteRequestMeta(requestPath, headers, tokenMap, usedTokens);
+    const requestContext: ProxyRequestContext = { workspaceId, hostname, port, transport: "http" };
 
     const startUpstream = () =>
       http.request({ hostname, port, method, path, headers, lookup: this.lookup }, (upstreamRes) => {
@@ -421,6 +511,6 @@ export class CredentialProxy {
         });
       });
 
-    await this.forwardRequestBody(socket, headers, remaining, tokenMap, startUpstream, hostname);
+    await this.forwardRequestBody(socket, headers, remaining, tokenMap, usedTokens, startUpstream, requestContext);
   }
 }

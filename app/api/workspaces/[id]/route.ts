@@ -12,6 +12,32 @@ import { WORKSPACES_ROOT } from "@/lib/infra/paths";
 import { SUPPORTED_PROVIDERS, getProviderMetadata } from "@/lib/agent/buildModel";
 import { DEFAULT_LLM, type ReasoningEffort } from "@/lib/agent/interfaces";
 import { MAX_MAX_RUN_MINUTES, MIN_MAX_RUN_MINUTES } from "@/lib/workspace/workspaceLimits";
+import { createAuditLogger, createLogger } from "@/lib/infra/logger";
+
+const log = createLogger("api");
+const audit = createAuditLogger("api");
+
+async function runDeleteCleanup(
+  workspaceId: string,
+  stage: string,
+  cleanup: () => unknown | Promise<unknown>,
+): Promise<void> {
+  try {
+    await cleanup();
+  } catch (err) {
+    log.error(
+      {
+        event: "workspace_delete_cleanup_failed",
+        outcome: "workspace_cleanup_incomplete",
+        err,
+        workspaceId,
+        stage,
+      },
+      "workspace deletion cleanup failed",
+    );
+    throw err;
+  }
+}
 
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -129,17 +155,28 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
   const { id } = await params;
   const ws = getStore().getWorkspace(id);
   if (!ws) return NextResponse.json({ deleted: false });
-  await getStore().deleteWorkspace(id);
-  disconnectWorkspace(id);
-  removeWorkspaceFromGraph(id);
-  deleteKey(id);
+  await runDeleteCleanup(id, "workspace_registry_and_owned_resources", () => getStore().deleteWorkspace(id));
+  await runDeleteCleanup(id, "drive_connections", () => disconnectWorkspace(id));
+  await runDeleteCleanup(id, "agent_graph", () => removeWorkspaceFromGraph(id));
+  await runDeleteCleanup(id, "api_key", () => deleteKey(id));
   await Promise.all([
-    getContainers().remove(id),
-    getContainers().deleteWorkspaceDir(ws.dir),
+    runDeleteCleanup(id, "container", () => getContainers().remove(id)),
+    runDeleteCleanup(id, "workspace_directory", () => getContainers().deleteWorkspaceDir(ws.dir)),
     // Version history must not outlive the workspace.
-    getVersioning().deleteRepo(id),
+    runDeleteCleanup(id, "version_history", () => getVersioning().deleteRepo(id)),
     // Agent-permissions file written by the permission model — best-effort, may not exist.
-    rm(path.join(WORKSPACES_ROOT, ".agent-permissions", `${id}.json`), { force: true }),
+    runDeleteCleanup(id, "agent_permissions", () =>
+      rm(path.join(WORKSPACES_ROOT, ".agent-permissions", `${id}.json`), { force: true }),
+    ),
   ]);
+  audit.info(
+    {
+      event: "workspace_deleted",
+      outcome: "workspace_and_owned_resources_deleted",
+      workspaceId: id,
+      workspaceName: ws.name,
+    },
+    "workspace deleted",
+  );
   return NextResponse.json({ deleted: true });
 }

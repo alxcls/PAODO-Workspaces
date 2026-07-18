@@ -46,11 +46,20 @@ type Store = Record<string, ScheduleEntry>;
 
 const store = globalSingleton<Store>("cronSchedules", () => readJson<Store>(FILE, {}));
 
-function save() {
+function save(context: { workspaceId: string; scheduleId: string; operation: string }) {
   try {
     atomicSaveJson(FILE, store);
   } catch (err) {
-    log.error({ err }, "failed to save schedule store");
+    log.error(
+      {
+        event: "schedule_store_save_failed",
+        outcome: "schedule_state_not_persisted",
+        err,
+        filePath: FILE,
+        ...context,
+      },
+      "failed to save schedule store",
+    );
     throw err;
   }
 }
@@ -65,7 +74,7 @@ export function listAll(): ScheduleEntry[] {
 
 export function setSchedule(entry: ScheduleEntry): void {
   store[entry.workspaceId] = entry;
-  save();
+  save({ workspaceId: entry.workspaceId, scheduleId: entry.id, operation: "set_schedule" });
   log.info({ workspaceId: entry.workspaceId, scheduleId: entry.id }, "schedule set");
 }
 
@@ -74,7 +83,7 @@ export function setNextRunAt(workspaceId: string, nextRunAt: string | null): voi
   const entry = store[workspaceId];
   if (!entry) return;
   entry.nextRunAt = nextRunAt;
-  save();
+  save({ workspaceId, scheduleId: entry.id, operation: "set_next_run" });
 }
 
 /** Record the outcome of a run and advance the next-run pointer in one atomic write. */
@@ -88,6 +97,6 @@ export function recordRun(
   entry.lastRunStatus = outcome.status;
   entry.lastRunSnippet = outcome.snippet;
   entry.nextRunAt = outcome.nextRunAt;
-  save();
+  save({ workspaceId, scheduleId: entry.id, operation: "record_run" });
   log.info({ workspaceId, status: outcome.status, nextRunAt: outcome.nextRunAt }, "schedule run recorded");
 }

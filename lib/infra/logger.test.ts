@@ -42,9 +42,55 @@ describe("logger", () => {
 
     expect(written).toEqual([
       expect.objectContaining({ level: 40, context: "test", msg: "operational warning" }),
-      expect.objectContaining({ level: 30, context: "test", msg: "key rotated", audit: true }),
+      expect.objectContaining({
+        level: 30,
+        context: "test",
+        event: "key_rotated",
+        outcome: "event_recorded",
+        msg: "key rotated",
+        audit: true,
+      }),
     ]);
     expect(written[0].audit).toBeUndefined();
+  });
+
+  it("adds a stable event and outcome to legacy message-only records", async () => {
+    const { createLogger } = await import("./logger");
+    createLogger("agent").info("agent run started");
+    createLogger("agent").warn({ workspaceId: "ws-1" }, "agent stream timed out");
+
+    expect(written[0]).toEqual(
+      expect.objectContaining({
+        context: "agent",
+        event: "agent_run_started",
+        outcome: "event_recorded",
+        msg: "agent run started",
+      }),
+    );
+    expect(written[1]).toEqual(
+      expect.objectContaining({
+        context: "agent",
+        workspaceId: "ws-1",
+        event: "agent_stream_timed_out",
+        outcome: "attention_required",
+        msg: "agent stream timed out",
+      }),
+    );
+  });
+
+  it("preserves explicit semantic event and outcome fields", async () => {
+    const { createLogger } = await import("./logger");
+    createLogger("test").error(
+      { event: "workspace_create_failed", outcome: "workspace_not_created" },
+      "failed to create workspace",
+    );
+
+    expect(written[0]).toEqual(
+      expect.objectContaining({
+        event: "workspace_create_failed",
+        outcome: "workspace_not_created",
+      }),
+    );
   });
 
   it("redacts common credential fields", async () => {
@@ -57,6 +103,45 @@ describe("logger", () => {
     const [record] = written;
     expect(record.token).toBe("[Redacted]");
     expect((record.headers as { authorization: string }).authorization).toBe("[Redacted]");
+  });
+
+  it("redacts credentials embedded in errors, stderr, agent output, and the message", async () => {
+    const { createLogger } = await import("./logger");
+    const bearer = "eyJhbGciOiJIUzI1NiJ9.payload.signature";
+    const openAiKey = "sk-proj-abcdefghijklmnopqrstuvwxyz";
+    const mcpSecret = `mcp_${"a".repeat(64)}`;
+    const proxyPassword = "proxy-password-abcdefghijklmnopqrstuvwxyz";
+
+    createLogger("test").error(
+      {
+        err: new Error(`provider rejected Authorization: Bearer ${bearer}`),
+        stderr: `git failed for https://workspace:${proxyPassword}@example.com/repo`,
+        agentError: `Invalid API key: ${openAiKey}`,
+        event: "mcp_auth_unauthorized",
+      },
+      `MCP request failed with secret=${mcpSecret}`,
+    );
+
+    const serialized = JSON.stringify(written[0]);
+    expect(serialized).not.toContain(bearer);
+    expect(serialized).not.toContain(openAiKey);
+    expect(serialized).not.toContain(mcpSecret);
+    expect(serialized).not.toContain(proxyPassword);
+    expect(serialized).toContain("[Redacted]");
+
+    const record = written[0] as {
+      err: { type: string; message: string; stack: string };
+      stderr: string;
+      agentError: string;
+      msg: string;
+    };
+    expect(record.err.type).toBe("Error");
+    expect(record.err.message).toBe("provider rejected Authorization: Bearer [Redacted]");
+    expect(record.err.stack).toContain("provider rejected Authorization: Bearer [Redacted]");
+    expect(record.stderr).toContain("https://workspace:[Redacted]@example.com/repo");
+    expect(record.agentError).toBe("Invalid API key: [Redacted]");
+    expect(record.msg).toBe("MCP request failed with secret=[Redacted]");
+    expect(written[0].event).toBe("mcp_auth_unauthorized");
   });
 
   it("attaches request context across asynchronous work", async () => {

@@ -16,6 +16,7 @@ import { CredentialProxy } from "./lib/infra/proxy/credentialProxy";
 import { ensureCA } from "./lib/infra/proxy/proxyCA";
 import { WORKSPACES_ROOT } from "./lib/infra/paths";
 import {
+  assertSecretStoreAvailable,
   getWorkspaceRules,
   listSecretWorkspaceIds,
   reloadSecretStore,
@@ -23,6 +24,42 @@ import {
 } from "./lib/infra/security/workspaceSecretStore";
 
 const log = createLogger("credproxyEntry");
+
+// Mirrors server.ts. This sidecar is its own long-running process, so it needs its own handlers:
+// the main().catch() at the bottom covers startup only, and once main() resolves everything runs
+// on event-loop callbacks (the watchFile handler, every proxy socket). An unhandled throw there
+// would kill the process with no log line at all, leaving a silent Docker restart loop.
+function fatal(reason: string, err: unknown): never {
+  log.fatal({ event: "process_fatal", outcome: "process_exit", err, reason }, "process exiting after fatal error");
+  process.exit(1);
+}
+
+function fatalSecretStore(err: unknown): never {
+  log.fatal(
+    { event: "startup_secret_store_unavailable", outcome: "process_exit", err, filePath: SECRET_STORE_FILE },
+    "existing workspace secret store could not be read or decrypted — refusing to start credential proxy",
+  );
+  process.exit(1);
+}
+
+function fatalProxyKeyMaterial(err: unknown): never {
+  log.fatal(
+    { event: "startup_proxy_key_material_invalid", outcome: "process_exit", err },
+    "existing credential-proxy key material is incomplete or invalid — refusing to start",
+  );
+  process.exit(1);
+}
+
+function fatalProxyListener(err: unknown): never {
+  log.fatal(
+    { event: "credential_proxy_listener_failed", outcome: "process_exit", err, port: CREDENTIAL_PROXY_PORT },
+    "credential proxy listener failed — exiting so the service can restart",
+  );
+  process.exit(1);
+}
+
+process.on("uncaughtException", (err) => fatal("uncaughtException", err));
+process.on("unhandledRejection", (err) => fatal("unhandledRejection", err));
 
 const CREDENTIAL_PROXY_PORT = parseInt(process.env.CREDENTIAL_PROXY_PORT ?? "9998", 10);
 // domain.key is the last file ensureCA writes, so its presence implies the whole CA set exists —
@@ -48,10 +85,22 @@ function applyAllRules(proxy: CredentialProxy, previousIds: Set<string>): Set<st
 }
 
 async function main(): Promise<void> {
+  try {
+    assertSecretStoreAvailable();
+  } catch (err) {
+    fatalSecretStore(err);
+  }
   await waitForCA();
-  ensureCA(WORKSPACES_ROOT); // files exist → load branch only (no writes to the RO mount)
+  try {
+    // files exist → load branch only (no writes to the RO mount)
+    ensureCA(WORKSPACES_ROOT, { strictExisting: true });
+  } catch (err) {
+    fatalProxyKeyMaterial(err);
+  }
 
-  const proxy = new CredentialProxy();
+  const proxy = new CredentialProxy({
+    onServerError: fatalProxyListener,
+  });
   proxy.listen(CREDENTIAL_PROXY_PORT);
 
   let ids = applyAllRules(proxy, new Set());
@@ -66,6 +115,5 @@ async function main(): Promise<void> {
 }
 
 main().catch((err) => {
-  log.error({ err }, "credential proxy sidecar failed to start");
-  process.exit(1);
+  fatal("startup", err);
 });

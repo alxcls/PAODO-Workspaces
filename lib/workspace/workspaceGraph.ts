@@ -54,8 +54,9 @@ function hasCycle(edges: GraphEdge[]): boolean {
 }
 
 export function saveGraph(edges: GraphEdge[], positions: Record<string, { x: number; y: number }>): void {
+  // Not logged: the graph editor lets a user draw a cycle, and rejecting it is the feature working.
+  // The route turns this into a 400 the user sees and acts on — nothing for an operator to do.
   if (hasCycle(edges)) {
-    log.warn({ edgeCount: edges.length }, "saveGraph rejected — cycle detected");
     throw new Error("Graph contains a cycle — only DAGs are allowed.");
   }
   state.graph = { edges, positions };
@@ -84,5 +85,22 @@ export function removeWorkspaceFromGraph(workspaceId: string): void {
   delete positions[workspaceId];
   if (edges.length === graph.edges.length && !(workspaceId in graph.positions)) return;
   state.graph = { edges, positions };
-  atomicSaveJson(GRAPH_FILE, state.graph);
+  // Called mid-cascade by DELETE /api/workspaces/[id]: the registry entry is already gone, and the
+  // container, files, git repo and API key are cleaned up after this returns. Throwing would abort
+  // that cleanup and orphan all of it, so a failed write is logged and swallowed — a stale edge is
+  // cheap to live with, an orphaned container is not. saveGraph still throws; its route handles it.
+  try {
+    atomicSaveJson(GRAPH_FILE, state.graph);
+  } catch (err) {
+    log.error(
+      {
+        event: "workspace_graph_cleanup_persist_failed",
+        outcome: "stale_graph_may_remain",
+        err,
+        workspaceId,
+        filePath: GRAPH_FILE,
+      },
+      "failed to save workspace graph after workspace removal",
+    );
+  }
 }

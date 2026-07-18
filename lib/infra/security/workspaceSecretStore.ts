@@ -52,16 +52,21 @@ export function normalizeDomain(input: string): string {
 
 const g = global as typeof global & { _workspaceSecrets?: Store };
 let migrateLegacy = false;
+let initialLoadError: unknown = null;
 if (!g._workspaceSecrets) {
   g._workspaceSecrets = {};
   try {
     const parsed: unknown = JSON.parse(readFileSync(FILE, "utf-8"));
-    if (isEncEnvelope(parsed)) {
-      g._workspaceSecrets = JSON.parse(decryptFromEnvelope(parsed)) as Store;
-    } else {
+    const encrypted = isEncEnvelope(parsed);
+    const loaded = encrypted ? (JSON.parse(decryptFromEnvelope(parsed)) as Store) : (parsed as Store);
+    // Validate/coerce before exposing the loaded object globally. A malformed legacy or decrypted
+    // payload must follow the same production-fatal path as bad JSON/authentication, not throw at
+    // module evaluation before server.ts can emit the dedicated fatal record.
+    upgradeStoreDomains(loaded);
+    g._workspaceSecrets = loaded;
+    if (!encrypted) {
       // Legacy plaintext store from before encryption at rest — load it, then re-save encrypted
       // below so the plaintext doesn't linger on disk until the next mutation.
-      g._workspaceSecrets = parsed as Store;
       migrateLegacy = true;
     }
   } catch (err) {
@@ -69,11 +74,26 @@ if (!g._workspaceSecrets) {
     // key) fails closed: start empty rather than crash; the next setSecret overwrites the file.
     // The error log is the recovery signal.
     if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
-      log.error({ err, event: "secret_store_load_failed" }, "failed to load secret store — starting empty");
+      initialLoadError = err;
+      log.error(
+        {
+          event: "secret_store_load_failed",
+          outcome: "empty_secret_store_used",
+          err,
+          filePath: FILE,
+        },
+        "failed to load secret store — starting empty",
+      );
     }
   }
 }
 const store = g._workspaceSecrets;
+
+/** Production startup calls this before accepting requests to prevent an empty fallback from
+ * overwriting an existing store that could not be read or decrypted. */
+export function assertSecretStoreAvailable(): void {
+  if (initialLoadError) throw initialLoadError;
+}
 
 function sanitizeDomains(domains: string[]): string[] {
   const out: string[] = [];
@@ -107,22 +127,45 @@ function upgradeStoreDomains(target: Store): void {
   }
 }
 
-function save() {
+function save(context: { operation: string; wsId?: string; name?: string }) {
   try {
     atomicSaveJson(FILE, encryptToEnvelope(JSON.stringify(store)));
   } catch (err) {
-    log.error({ err }, "failed to save secret store");
+    log.error(
+      {
+        event: "secret_store_save_failed",
+        outcome: "secret_change_not_persisted",
+        err,
+        filePath: FILE,
+        ...context,
+      },
+      "failed to save secret store",
+    );
     throw err;
   }
 }
 
 if (migrateLegacy) {
+  let migrationPrepared = false;
   try {
     upgradeStoreDomains(store);
-    save();
+    migrationPrepared = true;
+    save({ operation: "migrate_legacy_store" });
     audit.info({ event: "secret_store_encrypted" }, "migrated plaintext secret store to encrypted format");
   } catch (err) {
-    log.error({ err }, "failed to re-save secret store encrypted");
+    // Once preparation succeeded, save() owns the detailed persistence error. A malformed legacy
+    // structure can fail before save() is reached, so retain a distinct record for that case.
+    if (!migrationPrepared) {
+      log.error(
+        {
+          event: "secret_store_migration_failed",
+          outcome: "legacy_store_not_migrated",
+          err,
+          filePath: FILE,
+        },
+        "failed to prepare legacy secret store migration",
+      );
+    }
   }
 }
 upgradeStoreDomains(store);
@@ -146,7 +189,7 @@ export function setSecret(wsId: string, name: string, value: string, domains: st
   if (!store[wsId]) store[wsId] = {};
   const sanitized = sanitizeDomains(domains);
   store[wsId][name] = { value, createdAt: new Date().toISOString(), domains: sanitized };
-  save();
+  save({ operation: "set_secret", wsId, name });
   audit.info({ wsId, name, event: "workspace_secret_set" }, "secret set");
 }
 
@@ -154,7 +197,7 @@ export function deleteSecret(wsId: string, name: string): boolean {
   if (!store[wsId]?.[name]) return false;
   delete store[wsId][name];
   if (Object.keys(store[wsId]).length === 0) delete store[wsId];
-  save();
+  save({ operation: "delete_secret", wsId, name });
   audit.info({ wsId, name, event: "workspace_secret_deleted" }, "secret deleted");
   return true;
 }
@@ -205,7 +248,7 @@ export function getWorkspaceRules(wsId: string): DomainRule[] {
 export function deleteAllForWorkspace(wsId: string): void {
   if (!store[wsId]) return;
   delete store[wsId];
-  save();
+  save({ operation: "delete_workspace_secrets", wsId });
   audit.info({ wsId, event: "workspace_secrets_deleted" }, "all secrets deleted for workspace");
 }
 
@@ -226,7 +269,15 @@ export function reloadSecretStore(): void {
     next = isEncEnvelope(parsed) ? (JSON.parse(decryptFromEnvelope(parsed)) as Store) : (parsed as Store);
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
-      log.error({ err, event: "secret_store_reload_failed" }, "failed to reload secret store");
+      log.error(
+        {
+          event: "secret_store_reload_failed",
+          outcome: "proxy_rules_cleared",
+          err,
+          filePath: FILE,
+        },
+        "failed to reload secret store",
+      );
     }
   }
   upgradeStoreDomains(next);

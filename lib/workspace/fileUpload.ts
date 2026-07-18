@@ -54,6 +54,8 @@ export async function handleUpload(req: NextRequest, be: UploadBackend): Promise
     const entries = Object.entries(zip.files).filter(([, entry]) => !entry.dir);
     let count = 0;
     const failures: string[] = [];
+    const writeFailures: string[] = [];
+    let firstWriteError: unknown;
 
     for (const [zipPath, entry] of entries) {
       const resolved = contain(zipPath);
@@ -67,9 +69,25 @@ export async function handleUpload(req: NextRequest, be: UploadBackend): Promise
         await fs.writeFile(resolved, content);
         count++;
       } catch (err) {
-        log.error({ ...be.logContext, err, zipPath }, "failed to write archive entry");
+        firstWriteError ??= err;
+        writeFailures.push(zipPath);
         failures.push(zipPath);
       }
+    }
+
+    if (writeFailures.length > 0) {
+      log.error(
+        {
+          ...be.logContext,
+          event: "archive_entries_write_failed",
+          outcome: "archive_write_incomplete",
+          err: firstWriteError,
+          writtenCount: count,
+          failureCount: writeFailures.length,
+          samplePaths: writeFailures.slice(0, 10),
+        },
+        "failed to write archive entries",
+      );
     }
 
     await be.afterWrite?.(`uploaded ${count} file(s)`);
@@ -89,7 +107,16 @@ export async function handleUpload(req: NextRequest, be: UploadBackend): Promise
     await fs.mkdir(path.dirname(resolved), { recursive: true });
     await fs.writeFile(resolved, buf);
   } catch (err) {
-    log.error({ ...be.logContext, err, filePath }, "failed to write uploaded file");
+    log.error(
+      {
+        ...be.logContext,
+        event: "uploaded_file_write_failed",
+        outcome: "file_not_written",
+        err,
+        filePath,
+      },
+      "failed to write uploaded file",
+    );
     return NextResponse.json({ error: "failed to write file" }, { status: 500 });
   }
 

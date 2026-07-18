@@ -215,7 +215,17 @@ A workspace with no declared skills is not callable. If the workspace is not con
       if (callerSignal?.aborted) {
         return this.cancelledResult(workspace, skill);
       }
-      this.log.error({ err, callerWorkspaceId: this.callerWorkspaceId, callee: workspace, skill }, "call_agent failed");
+      this.log.error(
+        {
+          event: "call_agent_unexpected_failure",
+          outcome: "tool_error_returned",
+          err,
+          callerWorkspaceId: this.callerWorkspaceId,
+          callee: workspace,
+          skill,
+        },
+        "call_agent failed",
+      );
       return { result: toolError(err) };
     }
   }

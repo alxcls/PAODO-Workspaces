@@ -2,7 +2,13 @@
 // the legacy thinking:{type:"enabled", budget_tokens} shape with a 400 and require adaptive thinking
 // + output_config.effort; older models (Haiku 4.5) still take the legacy budget and reject effort.
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { anthropicThinkingConfig, buildModel, SUPPORTED_PROVIDERS, providerApiKeyEnv } from "./buildModel";
+import {
+  anthropicThinkingConfig,
+  buildModel,
+  hasConfiguredProviderApiKey,
+  SUPPORTED_PROVIDERS,
+  providerApiKeyEnv,
+} from "./buildModel";
 import type { LLMProviderConfig } from "./interfaces";
 
 describe("anthropicThinkingConfig", () => {
@@ -94,5 +100,22 @@ describe("buildModel", () => {
 
   it("rejects a config with no model rather than constructing an unusable client", () => {
     expect(() => buildModel(config({ model: "" }))).toThrow(/no model selected/);
+  });
+});
+
+describe("hasConfiguredProviderApiKey", () => {
+  it("returns false when every supported provider key is absent or blank", () => {
+    expect(hasConfiguredProviderApiKey({})).toBe(false);
+    expect(
+      hasConfiguredProviderApiKey({
+        OPENAI_API_KEY: " ",
+        ANTHROPIC_API_KEY: "",
+        DEEPSEEK_API_KEY: "\t",
+      }),
+    ).toBe(false);
+  });
+
+  it("returns true when any supported provider key is configured", () => {
+    expect(hasConfiguredProviderApiKey({ OPENAI_API_KEY: "sk-test" })).toBe(true);
   });
 });

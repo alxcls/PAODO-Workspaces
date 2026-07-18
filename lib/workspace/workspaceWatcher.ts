@@ -68,7 +68,10 @@ class WorkspaceWatcher {
     });
 
     this.watcher.on("error", (err: unknown) => {
-      log.error({ workspaceId, err }, "watcher error");
+      log.error(
+        { event: "workspace_watcher_failed", outcome: "file_updates_may_be_stale", workspaceId, err },
+        "watcher error",
+      );
     });
   }
 

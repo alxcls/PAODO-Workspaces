@@ -262,7 +262,9 @@ export async function executeSkill(
 ${JSON.stringify(callEnvelope, null, 2)}
 
 ${buildStructuredResponderBlock(skill)}`;
+  let runStatus: "success" | "failed" | "timeout" | "cancelled" = "success";
   const fail = (code: SkillErrorCode, message: string): SkillCallResult => {
+    runStatus = code === "TIMEOUT" ? "timeout" : code === "CANCELLED" ? "cancelled" : "failed";
     recordRunError(
       {
         sessionId,
@@ -285,7 +287,10 @@ ${buildStructuredResponderBlock(skill)}`;
   // The per-turn `done` events runAgent emits are suppressed; a single `done` is published in the
   // finally below, after persist, so a correction retry never prematurely closes a subscriber.
   const { startExternalRun } = await import("../runBroker");
-  const liveRun = startExternalRun(callee.id, conv.id, firstInput);
+  const liveRun = startExternalRun(callee.id, conv.id, firstInput, {
+    sessionId,
+    origin: opts.origin ?? "agent",
+  });
 
   // The signal the callee actually runs under: whichever of these fires first halts it.
   //   - opts.signal      — the caller's remaining deadline or explicit Stop (cascades recursively)
@@ -344,7 +349,10 @@ ${buildStructuredResponderBlock(skill)}`;
         return fail("CANCELLED", message);
       }
       if ("error" in turn) {
-        elog.error({ attempt, agentError: turn.error }, "skill call execution error");
+        elog.error(
+          { event: "skill_call_execution_failed", outcome: "skill_call_failed", attempt, agentError: turn.error },
+          "skill call execution error",
+        );
         return fail("EXECUTION_ERROR", turn.error);
       }
 
@@ -374,7 +382,7 @@ ${buildStructuredResponderBlock(skill)}`;
     // the just-written on-disk history and receives `done` to end its stream cleanly.
     if (liveRun) {
       liveRun.publish({ type: "done" });
-      liveRun.finish();
+      liveRun.finish(runStatus);
     }
   }
 }

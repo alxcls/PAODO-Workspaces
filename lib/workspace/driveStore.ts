@@ -46,7 +46,10 @@ function readJson<T>(file: string, fallback: T): T {
     // Missing files are normal before the first drive/connection is created. Corruption,
     // permissions, and other I/O failures must not make every drive silently disappear.
     if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
-      log.error({ err, file }, "failed to load drive registry — using fallback");
+      log.error(
+        { event: "drive_registry_load_failed", outcome: "fallback_used", err, filePath: file },
+        "failed to load drive registry — using fallback",
+      );
     }
     return fallback;
   }
@@ -78,15 +81,49 @@ export function getDrive(driveId: string): Drive | undefined {
   return listDrives().find((d) => d.id === driveId);
 }
 
+function saveConnections(
+  connections: DriveConnection[],
+  context: { operation: string; connectionId?: string; driveId?: string; workspaceId?: string },
+): void {
+  try {
+    atomicSaveJson(CONNECTIONS_FILE, connections);
+  } catch (err) {
+    log.error(
+      {
+        event: "drive_connection_save_failed",
+        outcome: "drive_connection_change_not_persisted",
+        err,
+        filePath: CONNECTIONS_FILE,
+        ...context,
+      },
+      "failed to save drive connection change",
+    );
+    throw err;
+  }
+}
+
 // The name never hits the drive's own path (that is keyed by UUID), but drive_download writes into
 // the workspace at downloads/<drive-name>/..., so the name must be a safe single path segment.
+/**
+ * Thrown when the caller supplied a name the user has to fix — as opposed to a disk or I/O failure.
+ * Routes branch on it to answer 400 without logging (the user reads the message and corrects it)
+ * while every other failure stays on the 500 + log.error path, where an operator can actually act.
+ * Mirrors WorkspaceNameError; replaces matching on the message text.
+ */
+export class DriveNameError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "DriveNameError";
+  }
+}
+
 function assertSafeDriveName(name: string): void {
   const trimmed = name.trim();
   // Forbid path separators and control characters — the name is used as a path segment under
   // downloads/<drive-name>/. Hyphens and underscores are allowed.
   const hasUnsafeChar = /[/\\\x00-\x1f]/.test(trimmed);
   if (!trimmed || trimmed.length > 100 || trimmed === "." || trimmed === ".." || hasUnsafeChar) {
-    throw new Error(`Invalid drive name: "${name}"`);
+    throw new DriveNameError(`Invalid drive name: "${name}"`);
   }
 }
 
@@ -153,7 +190,12 @@ export function connectDrive(
   if (existing) {
     existing.sourceHandle = handles?.sourceHandle;
     existing.targetHandle = handles?.targetHandle;
-    atomicSaveJson(CONNECTIONS_FILE, connections);
+    saveConnections(connections, {
+      operation: "update_connection_handles",
+      connectionId: existing.id,
+      driveId,
+      workspaceId,
+    });
     return existing;
   }
   const connection: DriveConnection = {
@@ -164,15 +206,26 @@ export function connectDrive(
     targetHandle: handles?.targetHandle,
   };
   connections.push(connection);
-  atomicSaveJson(CONNECTIONS_FILE, connections);
+  saveConnections(connections, {
+    operation: "connect_drive",
+    connectionId: connection.id,
+    driveId,
+    workspaceId,
+  });
   return connection;
 }
 
 export function disconnectDrive(connectionId: string): boolean {
   const connections = listConnections();
+  const connection = connections.find((candidate) => candidate.id === connectionId);
   const next = connections.filter((c) => c.id !== connectionId);
   if (next.length === connections.length) return false;
-  atomicSaveJson(CONNECTIONS_FILE, next);
+  saveConnections(next, {
+    operation: "disconnect_drive",
+    connectionId,
+    driveId: connection?.driveId,
+    workspaceId: connection?.workspaceId,
+  });
   return true;
 }
 
@@ -180,7 +233,9 @@ export function disconnectDrive(connectionId: string): boolean {
 export function disconnectWorkspace(workspaceId: string): void {
   const connections = listConnections();
   const next = connections.filter((c) => c.workspaceId !== workspaceId);
-  if (next.length !== connections.length) atomicSaveJson(CONNECTIONS_FILE, next);
+  if (next.length !== connections.length) {
+    saveConnections(next, { operation: "disconnect_workspace", workspaceId });
+  }
 }
 
 /** Drives connected to a given workspace — the set an agent can see and address by name. */

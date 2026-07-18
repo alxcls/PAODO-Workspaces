@@ -18,6 +18,7 @@ import { deleteAllForWorkspace } from "../infra/security/workspaceSecretStore";
 import { deleteForWorkspace as deleteMcpConfig } from "../infra/security/mcpConfigStore";
 import { getCredentialProxy } from "../infra/proxy";
 import { DEFAULT_MAX_RUN_MINUTES, normalizeMaxRunMinutes } from "./workspaceLimits";
+import { assertWorkspaceRegistryRecords } from "../infra/startupChecks";
 export { WORKSPACES_ROOT };
 
 const log = createLogger("store");
@@ -152,6 +153,28 @@ export class WorkspaceStore implements IWorkspaceStore {
     this.persistFn(records);
   }
 
+  // Configuration mutations update the live object before persisting it. If the registry write
+  // fails, callers need to know which operation diverged from disk; a generic request 500 loses
+  // that distinction and the next restart will silently restore the previous value.
+  private saveUpdate(workspaceId: string, operation: string): void {
+    try {
+      this.save();
+    } catch (err) {
+      log.error(
+        {
+          event: "workspace_registry_save_failed",
+          outcome: "workspace_update_in_memory_only",
+          err,
+          workspaceId,
+          operation,
+          filePath: REGISTRY_FILE,
+        },
+        "failed to save workspace registry update",
+      );
+      throw err;
+    }
+  }
+
   // Runs a name-mutating operation as the sole writer at a time. The chain is kept alive regardless
   // of how fn settles (errors are swallowed on the stored tail) so one failed mutation can't poison
   // later ones; the caller still sees fn's real result or rejection.
@@ -206,7 +229,8 @@ export class WorkspaceStore implements IWorkspaceStore {
       try {
         this.save();
       } catch (err) {
-        log.error({ err, id, name }, "failed to save registry after createWorkspace");
+        // POST /api/workspaces owns the single detailed create failure record; rethrow here so the
+        // caller can return a 500 without duplicating the same persistence exception.
         throw err;
       }
       return workspace;
@@ -244,7 +268,7 @@ export class WorkspaceStore implements IWorkspaceStore {
       // running agent's container mount is untouched. Conversations, versioning, and secrets are all
       // id-keyed too, so only the display name changes.
       ws.name = name;
-      this.save();
+      this.saveUpdate(id, "rename_workspace");
       return true;
     });
   }
@@ -257,7 +281,16 @@ export class WorkspaceStore implements IWorkspaceStore {
     try {
       this.save();
     } catch (err) {
-      log.error({ err, id }, "failed to save registry after deleteWorkspace");
+      log.error(
+        {
+          event: "workspace_registry_delete_persist_failed",
+          outcome: "workspace_deleted_in_memory_only",
+          err,
+          workspaceId: id,
+          filePath: REGISTRY_FILE,
+        },
+        "failed to save registry after workspace deletion",
+      );
       throw err;
     }
     return true;
@@ -267,7 +300,7 @@ export class WorkspaceStore implements IWorkspaceStore {
     const ws = this.workspaces.get(id);
     if (!ws) return false;
     ws.maxIterations = n;
-    this.save();
+    this.saveUpdate(id, "set_max_iterations");
     return true;
   }
 
@@ -275,7 +308,7 @@ export class WorkspaceStore implements IWorkspaceStore {
     const ws = this.workspaces.get(id);
     if (!ws) return false;
     ws.maxRunMinutes = minutes;
-    this.save();
+    this.saveUpdate(id, "set_max_run_minutes");
     return true;
   }
 
@@ -283,7 +316,7 @@ export class WorkspaceStore implements IWorkspaceStore {
     const ws = this.workspaces.get(id);
     if (!ws) return false;
     ws.description = description.trim();
-    this.save();
+    this.saveUpdate(id, "set_description");
     return true;
   }
 
@@ -293,7 +326,7 @@ export class WorkspaceStore implements IWorkspaceStore {
     ws.llmProvider = sel.provider;
     ws.llmModel = sel.model;
     ws.reasoningEffort = sel.reasoningEffort;
-    this.save();
+    this.saveUpdate(id, "set_llm");
     return true;
   }
 }
@@ -310,9 +343,20 @@ function defaultLoad(): WorkspaceRecord[] | null {
   // Only read the registry when this module instance owns a fresh map; otherwise an earlier
   // instance already populated it and re-reading would duplicate/overwrite live workspace state.
   if (!freshMap) return null;
-  const records = readJson<WorkspaceRecord[] | null>(REGISTRY_FILE, null);
-  if (!records) log.debug("workspace registry not found — starting fresh");
-  return records;
+  const records = readJson<unknown>(REGISTRY_FILE, null);
+  if (records === null) {
+    log.debug("workspace registry not found — starting fresh");
+    return null;
+  }
+  // Production startup independently treats this as fatal. Keeping the import-time loader
+  // defensive prevents malformed-but-valid JSON from throwing before server.ts installs its fatal
+  // handlers; local development retains the historical empty-registry fallback.
+  try {
+    assertWorkspaceRegistryRecords(records);
+    return records as unknown as WorkspaceRecord[];
+  } catch {
+    return null;
+  }
 }
 
 export const defaultWorkspaceStore = new WorkspaceStore({

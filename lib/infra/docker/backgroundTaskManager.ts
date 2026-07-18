@@ -49,39 +49,74 @@ export class BackgroundTaskManager {
     const logFile = `${TASK_DIR}/${taskId}.output`;
     const pidFile = `${TASK_DIR}/${taskId}.pid`;
     const cmdFile = `${TASK_DIR}/${taskId}.cmd`;
+    let stage = "launch_process";
 
-    // setsid makes the inner bash a new session/process-group leader; it self-reports that pid
-    // (== pgid) to the pidfile, then execs the user command in place so the recorded pid IS the
-    // server. The trailing `&` frees the launching `docker exec` at once; tini (--init) reaps the
-    // detached tree on container stop. Same `echo $$ > pid; exec "$0" "$@"` idiom as execStreaming.
-    // The command is also recorded verbatim to a .cmd file (via `printf '%s' "$1"` — argv, no
-    // injection) so rehydrate() can recover it if the in-memory map is lost.
-    const launcher =
-      `mkdir -p ${TASK_DIR}; ` +
-      `printf '%s' "$1" > ${cmdFile}; ` +
-      `setsid /bin/bash -c 'echo $$ > ${pidFile}; exec "$0" "$@"' ` +
-      `/bin/bash -c "$1" > ${logFile} 2>&1 & `;
-    const launch = await this.docker.exec(name, ["/bin/bash", "-c", launcher, "bash", command]);
-    if (launch.code !== 0) throw new Error(`background launch failed: ${launch.stderr}`);
+    try {
+      // setsid makes the inner bash a new session/process-group leader; it self-reports that pid
+      // (== pgid) to the pidfile, then execs the user command in place so the recorded pid IS the
+      // server. The trailing `&` frees the launching `docker exec` at once; tini (--init) reaps the
+      // detached tree on container stop. Same `echo $$ > pid; exec "$0" "$@"` idiom as execStreaming.
+      // The command is also recorded verbatim to a .cmd file (via `printf '%s' "$1"` — argv, no
+      // injection) so rehydrate() can recover it if the in-memory map is lost.
+      const launcher =
+        `mkdir -p ${TASK_DIR}; ` +
+        `printf '%s' "$1" > ${cmdFile}; ` +
+        `setsid /bin/bash -c 'echo $$ > ${pidFile}; exec "$0" "$@"' ` +
+        `/bin/bash -c "$1" > ${logFile} 2>&1 & `;
+      const launch = await this.docker.exec(name, ["/bin/bash", "-c", launcher, "bash", command]);
+      if (launch.code !== 0) throw new Error(`background launch failed: ${launch.stderr}`);
 
-    // Poll (in-container) up to ~2s for the self-reported pgid so a command that crashes on the
-    // very first line still yields a pid we can report/track.
-    const read = await this.docker.exec(
-      name,
-      [
-        "/bin/bash",
-        "-c",
-        `for i in $(seq 1 20); do if [ -s ${pidFile} ]; then cat ${pidFile}; exit 0; fi; sleep 0.1; done; exit 1`,
-      ],
-      { trimStdout: true },
-    );
-    const pgid = parseInt(read.stdout, 10);
-    if (!read.code && Number.isInteger(pgid)) {
-      let tasks = this.tasks.get(workspaceId);
-      if (!tasks) this.tasks.set(workspaceId, (tasks = new Map()));
-      tasks.set(taskId, { taskId, pgid, logFile, command });
-    } else {
-      log.warn({ workspaceId, taskId }, "background task started but pid was not captured (not tracked)");
+      // Poll (in-container) up to ~2s for the self-reported pgid so a command that crashes on the
+      // very first line still yields a pid we can report/track.
+      stage = "capture_process_id";
+      const read = await this.docker.exec(
+        name,
+        [
+          "/bin/bash",
+          "-c",
+          `for i in $(seq 1 20); do if [ -s ${pidFile} ]; then cat ${pidFile}; exit 0; fi; sleep 0.1; done; exit 1`,
+        ],
+        { trimStdout: true },
+      );
+      const pgid = parseInt(read.stdout, 10);
+      if (!read.code && Number.isInteger(pgid)) {
+        let tasks = this.tasks.get(workspaceId);
+        if (!tasks) this.tasks.set(workspaceId, (tasks = new Map()));
+        tasks.set(taskId, { taskId, pgid, logFile, command });
+        log.info(
+          {
+            event: "background_task_started",
+            outcome: "background_task_running",
+            workspaceId,
+            taskId,
+            pgid,
+          },
+          "background task started",
+        );
+      } else {
+        log.warn(
+          {
+            event: "background_task_tracking_failed",
+            outcome: "background_task_running_untracked",
+            workspaceId,
+            taskId,
+          },
+          "background task started but pid was not captured",
+        );
+      }
+    } catch (err) {
+      log.error(
+        {
+          event: "background_task_start_failed",
+          outcome: "background_task_not_started",
+          err,
+          workspaceId,
+          taskId,
+          stage,
+        },
+        "failed to start background task",
+      );
+      throw err;
     }
     return { taskId, logFile };
   }
@@ -92,17 +127,53 @@ export class BackgroundTaskManager {
   async stop(workspaceId: string, taskId: string): Promise<boolean> {
     const task = this.tasks.get(workspaceId)?.get(taskId);
     if (!task) return false;
-    const result = await this.docker
-      .exec(containerName(workspaceId), [
+    let stopped = false;
+    try {
+      const result = await this.docker.exec(containerName(workspaceId), [
         "/bin/bash",
         "-c",
         `kill -KILL -${task.pgid} 2>/dev/null; rm -f ${TASK_DIR}/${taskId}.pid ${TASK_DIR}/${taskId}.cmd`,
-      ])
-      .catch((err) => log.warn({ err, workspaceId, taskId }, "failed to stop background task"));
-    if (result && result.code !== 0) {
-      log.warn({ workspaceId, taskId, stderr: result.stderr }, "failed to stop background task");
+      ]);
+      stopped = result.code === 0;
+      if (!stopped) {
+        log.error(
+          {
+            event: "background_task_stop_failed",
+            outcome: "background_task_may_still_be_running",
+            workspaceId,
+            taskId,
+            pgid: task.pgid,
+            stderr: result.stderr,
+          },
+          "failed to stop background task",
+        );
+      }
+    } catch (err) {
+      log.error(
+        {
+          event: "background_task_stop_failed",
+          outcome: "background_task_may_still_be_running",
+          err,
+          workspaceId,
+          taskId,
+          pgid: task.pgid,
+        },
+        "failed to stop background task",
+      );
     }
     this.tasks.get(workspaceId)?.delete(taskId);
+    if (stopped) {
+      log.info(
+        {
+          event: "background_task_stopped",
+          outcome: "background_task_stopped",
+          workspaceId,
+          taskId,
+          pgid: task.pgid,
+        },
+        "background task stopped",
+      );
+    }
     return true;
   }
 

@@ -27,11 +27,21 @@ const store = globalSingleton<Store>("mcpConfig", () => readJson<Store>(FILE, {}
 
 const EMPTY: McpConfigEntry = { enabled: false, secretHash: null, selectedSkillIds: [] };
 
-function save() {
+function save(workspaceId: string, operation: string) {
   try {
     atomicSaveJson(FILE, store);
   } catch (err) {
-    log.error({ err }, "failed to save mcp config store");
+    log.error(
+      {
+        event: "mcp_config_store_save_failed",
+        outcome: "mcp_config_change_not_persisted",
+        err,
+        workspaceId,
+        operation,
+        filePath: FILE,
+      },
+      "failed to save mcp config store",
+    );
     throw err;
   }
 }
@@ -58,7 +68,7 @@ export function getState(workspaceId: string): McpConfigEntry {
 
 export function setEnabled(workspaceId: string, enabled: boolean) {
   store[workspaceId] = { ...entry(workspaceId), enabled };
-  save();
+  save(workspaceId, "set_enabled");
   audit.info({ workspaceId, enabled, event: "mcp_enabled_changed" }, "workspace mcp enabled state changed");
 }
 
@@ -66,7 +76,7 @@ export function setEnabled(workspaceId: string, enabled: boolean) {
 export function mintSecret(workspaceId: string): string {
   const { plain, hash } = generateSecret();
   store[workspaceId] = { ...entry(workspaceId), secretHash: hash, enabled: true };
-  save();
+  save(workspaceId, "mint_secret");
   audit.info({ workspaceId, event: "mcp_secret_minted" }, "workspace mcp secret minted");
   return plain;
 }
@@ -74,7 +84,7 @@ export function mintSecret(workspaceId: string): string {
 export function revokeSecret(workspaceId: string) {
   if (store[workspaceId]) {
     store[workspaceId] = { ...store[workspaceId], secretHash: null };
-    save();
+    save(workspaceId, "revoke_secret");
   }
   audit.info({ workspaceId, event: "mcp_secret_revoked" }, "workspace mcp secret revoked");
 }
@@ -84,7 +94,7 @@ export function setSelectedSkills(workspaceId: string, skillIds: string[]) {
   const seen = new Set<string>();
   const cleaned = skillIds.filter((s) => typeof s === "string" && s && !seen.has(s) && seen.add(s));
   store[workspaceId] = { ...entry(workspaceId), selectedSkillIds: cleaned };
-  save();
+  save(workspaceId, "set_selected_skills");
   audit.info(
     { workspaceId, count: cleaned.length, event: "mcp_selected_skills_updated" },
     "workspace mcp selected skills updated",
@@ -94,7 +104,7 @@ export function setSelectedSkills(workspaceId: string, skillIds: string[]) {
 export function deleteForWorkspace(workspaceId: string) {
   if (!(workspaceId in store)) return;
   delete store[workspaceId];
-  save();
+  save(workspaceId, "delete_config");
   audit.info({ workspaceId, event: "mcp_config_deleted" }, "workspace mcp config deleted");
 }
 

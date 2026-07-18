@@ -20,6 +20,7 @@ const SSE_HEADERS = {
 } as const;
 
 type SseState = { response: string; limitReached: boolean };
+type AgentStreamStatus = "success" | "failed" | "timeout" | "cancelled" | "limit_reached" | "incomplete";
 
 type AgentStreamDeps = AgentRuntimeDeps & {
   signal?: AbortSignal;
@@ -57,11 +58,28 @@ export function makeAgentStream(ws: Workspace, message: string, log: Logger, dep
   const encoder = new TextEncoder();
   const stream = new ReadableStream({
     async start(controller) {
+      const startedAt = Date.now();
       const send = (event: object) => controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
       const state: SseState = { response: "", limitReached: false };
       const runTimeout = createWorkspaceRunTimeout(ws, [deps.signal]);
       let sentTimeout = false;
       let recordedError = false;
+      let terminalEventSeen = false;
+      let terminalStatus: AgentStreamStatus = "success";
+      const origin = deps.origin ?? "api";
+      const workspaceId = deps.workspaceId ?? ws.id;
+      log.info(
+        {
+          event: "agent_run_started",
+          outcome: "run_started",
+          sessionId,
+          workspaceId,
+          origin,
+          maxIterations: ws.maxIterations,
+          maxRunMinutes: ws.maxRunMinutes,
+        },
+        "agent run started",
+      );
       const recordError = (errorMessage: string, code?: string) => {
         if (recordedError) return;
         recordedError = true;
@@ -79,6 +97,20 @@ export function makeAgentStream(ws: Workspace, message: string, log: Logger, dep
       const sendTimeout = () => {
         if (sentTimeout) return;
         sentTimeout = true;
+        terminalEventSeen = true;
+        terminalStatus = "timeout";
+        log.warn(
+          {
+            event: "agent_run_timed_out",
+            outcome: "run_ended",
+            sessionId,
+            workspaceId,
+            origin,
+            maxRunMinutes: ws.maxRunMinutes,
+            durationMs: Date.now() - startedAt,
+          },
+          "agent run timed out",
+        );
         recordError(runTimeout.error.message, "TIMEOUT");
         send({ type: "error", code: "TIMEOUT", message: runTimeout.error.message });
         send({ type: "done" });
@@ -108,8 +140,13 @@ export function makeAgentStream(ws: Workspace, message: string, log: Logger, dep
             );
             continue;
           }
-          if (event.type === "error") recordError(event.message, event.code);
+          if (event.type === "limit_reached") terminalStatus = "limit_reached";
+          if (event.type === "error") {
+            terminalStatus = event.code === "TIMEOUT" ? "timeout" : event.code === "CANCELLED" ? "cancelled" : "failed";
+            recordError(event.message, event.code);
+          }
           if (event.type === "done") {
+            terminalEventSeen = true;
             send({ type: "response", content: state.response, iterationLimitReached: state.limitReached });
             send({ type: "done" });
             break;
@@ -122,7 +159,11 @@ export function makeAgentStream(ws: Workspace, message: string, log: Logger, dep
           log.warn({ workspaceId: ws.id, maxRunMinutes: ws.maxRunMinutes }, "agent stream timed out");
           sendTimeout();
         } else {
-          log.error({ err }, "agent stream error");
+          terminalStatus = "failed";
+          log.error(
+            { event: "agent_stream_failed", outcome: "stream_closed_with_error", err, workspaceId: ws.id },
+            "agent stream error",
+          );
           const message = String(err);
           recordError(message);
           send({ type: "error", message });
@@ -130,8 +171,21 @@ export function makeAgentStream(ws: Workspace, message: string, log: Logger, dep
         }
       } finally {
         if (runTimeout.didTimeout()) sendTimeout();
+        if (!terminalEventSeen && terminalStatus === "success") terminalStatus = "incomplete";
         runTimeout.dispose();
         controller.close();
+        log.info(
+          {
+            event: "agent_run_completed",
+            outcome: "run_ended",
+            sessionId,
+            workspaceId,
+            origin,
+            status: terminalStatus,
+            durationMs: Date.now() - startedAt,
+          },
+          "agent run completed",
+        );
       }
     },
   });

@@ -89,7 +89,16 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     // complete and it is safe to tear the per-request server/transport down afterward.
     return await transport.handleRequest(req);
   } catch (err) {
-    log.error({ err, workspaceId: id, route: "mcp" }, "workspace MCP request failed");
+    log.error(
+      {
+        event: "workspace_mcp_request_failed",
+        outcome: "jsonrpc_internal_error_returned",
+        err,
+        workspaceId: id,
+        route: "mcp",
+      },
+      "workspace MCP request failed",
+    );
     return Response.json(
       { jsonrpc: "2.0", error: { code: -32603, message: "Internal error" }, id: await requestId(requestForErrorId) },
       { status: 500 },

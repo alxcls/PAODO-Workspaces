@@ -32,7 +32,10 @@ function getProxyHmacKey(): Buffer | null {
     return gKey._proxyHmacKey;
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
-      log.error({ err, event: "proxy_hmac_key_read_failed" }, "failed to read proxy HMAC key");
+      log.error(
+        { event: "proxy_hmac_key_read_failed", outcome: "credential_injection_unavailable", err },
+        "failed to read proxy HMAC key",
+      );
     }
     return null;
   }
@@ -45,7 +48,13 @@ let domainKeyPublic: forge.pki.rsa.PublicKey | null = null;
 
 const domainCertCache = new Map<string, { cert: string; key: string }>();
 
-export function ensureCA(dataDir: string): void {
+export interface EnsureCAOptions {
+  /** Refuse to replace existing unreadable/partial trust material. Production uses this because
+   * silently rotating it breaks trust and workspace proxy authentication. */
+  strictExisting?: boolean;
+}
+
+export function ensureCA(dataDir: string, options: EnsureCAOptions = {}): void {
   const caDir = path.join(dataDir, ".proxy-ca");
   const keyFile = path.join(caDir, "ca.key");
   const certFile = path.join(caDir, "ca.crt");
@@ -53,9 +62,15 @@ export function ensureCA(dataDir: string): void {
   _caCertPath = certFile;
 
   mkdirSync(caDir, { recursive: true });
-  ensureProxyHmacKey(caDir);
+  ensureProxyHmacKey(caDir, options.strictExisting ?? false);
 
-  if (existsSync(keyFile) && existsSync(certFile) && existsSync(domainKeyFile)) {
+  const caMaterial = [keyFile, certFile, domainKeyFile];
+  const existingCount = caMaterial.filter(existsSync).length;
+  if (options.strictExisting && existingCount > 0 && existingCount < caMaterial.length) {
+    throw new Error("proxy CA material is incomplete — refusing to replace existing trust material");
+  }
+
+  if (existingCount === caMaterial.length) {
     try {
       caKey = forge.pki.privateKeyFromPem(readFileSync(keyFile, "utf-8"));
       caCert = forge.pki.certificateFromPem(readFileSync(certFile, "utf-8"));
@@ -68,6 +83,7 @@ export function ensureCA(dataDir: string): void {
       log.info("loaded existing proxy CA");
       return;
     } catch (err) {
+      if (options.strictExisting) throw err;
       log.warn({ err }, "failed to load existing CA — regenerating");
     }
   }
@@ -113,13 +129,16 @@ export function getCACertPath(): string {
 
 // Generate (once) and load the host-only HMAC key used to derive per-workspace proxy secrets.
 // Generated independently of the CA so existing deployments pick it up on the next startup.
-function ensureProxyHmacKey(caDir: string): void {
+function ensureProxyHmacKey(caDir: string, strictExisting: boolean): void {
   const keyFile = path.join(caDir, "proxy-hmac.key");
   if (existsSync(keyFile)) {
     try {
-      gKey._proxyHmacKey = readFileSync(keyFile);
+      const key = readFileSync(keyFile);
+      if (strictExisting && key.length !== 32) throw new Error("proxy HMAC key is corrupt (expected 32 bytes)");
+      gKey._proxyHmacKey = key;
       return;
     } catch (err) {
+      if (strictExisting) throw err;
       log.warn({ err }, "failed to load proxy HMAC key — regenerating");
     }
   }

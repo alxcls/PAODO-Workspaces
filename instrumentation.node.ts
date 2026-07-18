@@ -19,6 +19,8 @@ function pathname(rawPath: string): string {
 export const logNextRequestError: Instrumentation.onRequestError = (err, request, context) => {
   log.error(
     {
+      event: "next_request_unhandled",
+      outcome: "request_failed",
       err,
       requestId: firstHeader(request.headers["x-request-id"]),
       method: request.method,

@@ -40,6 +40,20 @@ function nextRunIso(entry: ScheduleEntry, from: Date): string | null {
   return next ? next.toISOString() : null;
 }
 
+// scheduleStore owns the detailed persistence error record. Scheduler recovery paths use this
+// wrapper so a failed status write cannot escape into the broker subscriber or produce a second,
+// less-specific scheduler error for the same failure.
+function recordRunSafely(
+  workspaceId: string,
+  outcome: { at: string; status: RunStatus; snippet: string; nextRunAt: string | null },
+): void {
+  try {
+    recordRun(workspaceId, outcome);
+  } catch {
+    // Already logged as schedule_store_save_failed with workspace, schedule and operation context.
+  }
+}
+
 function fire(entry: ScheduleEntry, now: Date): void {
   const ws = getStore().getWorkspace(entry.workspaceId);
   if (!ws) {
@@ -73,9 +87,18 @@ function fire(entry: ScheduleEntry, now: Date): void {
     });
     log.info({ workspaceId: ws.id, conversationId, scheduleId: entry.id }, "schedule fired");
   } catch (err) {
-    log.error({ err, workspaceId: ws.id }, "schedule fire failed to start");
+    log.error(
+      {
+        event: "schedule_fire_start_failed",
+        outcome: "run_not_started",
+        err,
+        workspaceId: ws.id,
+        scheduleId: entry.id,
+      },
+      "schedule fire failed to start",
+    );
     inflight.delete(entry.workspaceId);
-    recordRun(entry.workspaceId, {
+    recordRunSafely(entry.workspaceId, {
       at: now.toISOString(),
       status: "error",
       snippet: String(err).slice(0, SNIPPET_MAX),
@@ -96,7 +119,7 @@ function fire(entry: ScheduleEntry, now: Date): void {
     const snippet = (response.trim() || (errored ? "run failed" : "")).slice(0, SNIPPET_MAX);
     // Recompute from the latest stored schedule in case it was edited mid-run.
     const latest = getSchedule(entry.workspaceId) ?? entry;
-    recordRun(entry.workspaceId, {
+    recordRunSafely(entry.workspaceId, {
       at: new Date().toISOString(),
       status,
       snippet,
@@ -119,11 +142,37 @@ function fire(entry: ScheduleEntry, now: Date): void {
 
 function tick(): void {
   const now = new Date();
-  for (const entry of listAll()) {
-    if (!entry.enabled || !entry.nextRunAt) continue;
-    if (inflight.has(entry.workspaceId)) continue;
-    if (new Date(entry.nextRunAt).getTime() > now.getTime()) continue;
-    fire(entry, now);
+  let entries: ScheduleEntry[];
+  try {
+    entries = listAll();
+  } catch (err) {
+    log.error(
+      { event: "schedule_scan_failed", outcome: "tick_aborted", err },
+      "failed to read schedules for scheduler tick",
+    );
+    return;
+  }
+
+  // Isolate every entry: one malformed schedule must not abort later due schedules or escape the
+  // interval callback and trigger the process-level uncaughtException handler.
+  for (const entry of entries) {
+    try {
+      if (!entry.enabled || !entry.nextRunAt) continue;
+      if (inflight.has(entry.workspaceId)) continue;
+      if (new Date(entry.nextRunAt).getTime() > now.getTime()) continue;
+      fire(entry, now);
+    } catch (err) {
+      log.error(
+        {
+          event: "schedule_tick_entry_failed",
+          outcome: "schedule_skipped",
+          err,
+          workspaceId: entry.workspaceId,
+          scheduleId: entry.id,
+        },
+        "scheduler tick failed for schedule",
+      );
+    }
   }
 }
 

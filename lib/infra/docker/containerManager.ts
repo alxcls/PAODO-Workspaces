@@ -117,120 +117,155 @@ export class ContainerManager implements IContainerManager {
   }
 
   private async _ensureContainer(workspaceId: string, workspaceDir: string): Promise<void> {
-    const status = await this.getContainerStatus(workspaceId);
-    const hash = await this.imageManager.getCurrentHash("Dockerfile.workspace");
-    const secretsHash = hashSecretNames(listSecretMeta(workspaceId));
+    let stage = "inspect_container";
+    try {
+      const status = await this.getContainerStatus(workspaceId);
+      stage = "hash_workspace_image";
+      const hash = await this.imageManager.getCurrentHash("Dockerfile.workspace");
+      stage = "read_workspace_secrets";
+      const secretsHash = hashSecretNames(listSecretMeta(workspaceId));
 
-    if (status === "running" || status === "stopped") {
-      const containerHash = await this.imageManager.getContainerImageHash(containerName(workspaceId));
-      const containerSecretsHash = await this.getContainerSecretsHash(containerName(workspaceId));
-      const imageMatches = !hash || containerHash === hash;
-      const secretsMatch = containerSecretsHash === secretsHash;
-      if (imageMatches && secretsMatch) {
-        if (status === "running") {
-          // Reattaching to a still-running container (e.g. after an app restart wiped our
-          // in-memory task map). Rebuild it from the container's pidfiles so a survivor
-          // background process is surfaced and stoppable rather than colliding invisibly.
-          await this.background.rehydrate(workspaceId);
-          // A redeploy can recreate the credproxy sidecar and drop its attachment to this
-          // still-running workspace's network, black-holing egress. Reattach idempotently.
+      if (status === "running" || status === "stopped") {
+        stage = "inspect_container_image";
+        const containerHash = await this.imageManager.getContainerImageHash(containerName(workspaceId));
+        stage = "inspect_container_secrets";
+        const containerSecretsHash = await this.getContainerSecretsHash(containerName(workspaceId));
+        const imageMatches = !hash || containerHash === hash;
+        const secretsMatch = containerSecretsHash === secretsHash;
+        if (imageMatches && secretsMatch) {
+          if (status === "running") {
+            // Reattaching to a still-running container (e.g. after an app restart wiped our
+            // in-memory task map). Rebuild it from the container's pidfiles so a survivor
+            // background process is surfaced and stoppable rather than colliding invisibly.
+            stage = "rehydrate_background_tasks";
+            await this.background.rehydrate(workspaceId);
+            // A redeploy can recreate the credproxy sidecar and drop its attachment to this
+            // still-running workspace's network, black-holing egress. Reattach idempotently.
+            stage = "attach_credential_proxy";
+            await this.proxy.attach(workspaceId);
+            return;
+          }
+          // Stopped, image unchanged, secrets unchanged — just restart it.
+          log.debug({ workspaceId }, "starting stopped container");
+          stage = "ensure_network";
+          await this.ensureNetwork(workspaceId);
+          stage = "connect_container_network";
+          const connect = await this.docker.cmd(
+            "network",
+            "connect",
+            networkName(workspaceId),
+            containerName(workspaceId),
+          );
+          if (connect.code !== 0) throw new Error(`docker network connect failed: ${connect.stderr}`);
+          stage = "start_container";
+          const r = await this.docker.cmd("start", containerName(workspaceId));
+          if (r.code !== 0) throw new Error(`docker start failed: ${r.stderr}`);
+          stage = "attach_credential_proxy";
           await this.proxy.attach(workspaceId);
           return;
+        } else if (!secretsMatch) {
+          // Workspace secrets were added/removed since this container was created (or it
+          // predates the secrets-hash label) — recreate so env vars reflect the current set.
+          log.debug({ workspaceId }, "workspace secrets changed — recreating container");
+        } else {
+          // Image changed — remove so we recreate from the current image below.
+          log.debug({ workspaceId }, "workspace image changed — recreating container");
         }
-        // Stopped, image unchanged, secrets unchanged — just restart it.
-        log.debug({ workspaceId }, "starting stopped container");
-        await this.ensureNetwork(workspaceId);
-        const connect = await this.docker.cmd(
-          "network",
-          "connect",
-          networkName(workspaceId),
-          containerName(workspaceId),
-        );
-        if (connect.code !== 0) throw new Error(`docker network connect failed: ${connect.stderr}`);
-        const r = await this.docker.cmd("start", containerName(workspaceId));
-        if (r.code !== 0) throw new Error(`docker start failed: ${r.stderr}`);
-        await this.proxy.attach(workspaceId);
-        return;
-      } else if (!secretsMatch) {
-        // Workspace secrets were added/removed since this container was created (or it
-        // predates the secrets-hash label) — recreate so env vars reflect the current set.
-        log.debug({ workspaceId }, "workspace secrets changed — recreating container");
-      } else {
-        // Image changed — remove so we recreate from the current image below.
-        log.debug({ workspaceId }, "workspace image changed — recreating container");
+        stage = "remove_stale_container";
+        await this.remove(workspaceId);
       }
-      await this.remove(workspaceId);
+
+      // missing (or just removed) — create and start
+      log.debug({ workspaceId }, "creating container");
+      stage = "ensure_network";
+      await this.ensureNetwork(workspaceId);
+
+      // Build the credential-proxy + secret env args (tokens only — real values stay in the proxy).
+      // See containerCredentials.ts for how tokens, the proxy URL, and the CA-trust vars are derived.
+      stage = "build_credential_environment";
+      const { envArgs: credentialEnvArgs, hasProxyCA } = buildCredentialEnv(workspaceId);
+      // Attach the sidecar to this workspace's network so the proxy alias resolves inside the
+      // container. Only when this workspace actually has a proxy CA; attach() itself no-ops in local
+      // dev (no sidecar — proxy is in-process).
+      if (hasProxyCA) {
+        stage = "attach_credential_proxy";
+        await this.proxy.attach(workspaceId);
+      }
+
+      stage = "run_container";
+      const r = await this.docker.cmd(
+        "run",
+        "-d",
+        // --init runs tini as PID 1 so it reaps orphaned/killed processes. Without it, the keep-alive
+        // `sleep infinity` is PID 1 and never wait()s on reparented children, so every command we
+        // group-kill (execStreaming) would linger as a zombie and slowly exhaust the PID table.
+        "--init",
+        "--name",
+        containerName(workspaceId),
+        "--network",
+        networkName(workspaceId),
+        `--memory=${CONTAINER_MEMORY}`,
+        `--cpus=${CONTAINER_CPUS}`,
+        ...this.buildVolumeArg(workspaceDir),
+        ...(hash ? ["--label", `${HASH_LABEL}=${hash}`] : []),
+        "--label",
+        `${SECRETS_LABEL}=${secretsHash}`,
+        ...credentialEnvArgs,
+        // Drop all Linux capabilities, then add back only the minimal set dpkg/apt and the chown sweep
+        // need when run as root via `docker exec -u 0` (apt_install tool, ownership sweep). The agent's
+        // shell is non-root with no setuid path, so it cannot use these caps — they are reachable only
+        // by the app-initiated root execs. Combined with no-new-privileges this blocks setuid escalation.
+        "--cap-drop",
+        "ALL",
+        "--cap-add",
+        "CHOWN",
+        "--cap-add",
+        "DAC_OVERRIDE",
+        "--cap-add",
+        "FOWNER",
+        "--cap-add",
+        "FSETID",
+        "--cap-add",
+        "SETGID",
+        "--cap-add",
+        "SETUID",
+        "--security-opt",
+        "no-new-privileges:true",
+        CONTAINER_IMAGE,
+        "sleep",
+        "infinity",
+      );
+      if (r.code !== 0) throw new Error(`docker run failed: ${r.stderr}`);
+
+      // One-time ownership sweep: legacy workspaces created when the agent ran as root hold root-owned
+      // files the uid-1000 agent/app can no longer manage. Chown the tree to 1000:1000 so both can.
+      // Runs as root (-u 0) for this single bootstrap command only. Idempotent and cheap on
+      // already-1000-owned trees.
+      stage = "repair_workspace_ownership";
+      const chown = await this.docker.exec(containerName(workspaceId), ["chown", "-R", "1000:1000", "/workspace"], {
+        asRoot: true,
+        trimStdout: true,
+      });
+      if (chown.code !== 0)
+        log.debug({ workspaceId, stderr: chown.stderr }, "workspace chown sweep failed (non-fatal)");
+
+      // Install the proxy CA and build the combined trust bundle inside the fresh container (no-op
+      // when the proxy isn't set up). See containerCredentials.installProxyCA.
+      stage = "install_proxy_ca";
+      await installProxyCA(this.docker, containerName(workspaceId), workspaceId);
+    } catch (err) {
+      log.error(
+        {
+          event: "workspace_container_start_failed",
+          outcome: "workspace_container_unavailable",
+          err,
+          workspaceId,
+          stage,
+        },
+        "workspace container failed to start",
+      );
+      throw err;
     }
-
-    // missing (or just removed) — create and start
-    log.debug({ workspaceId }, "creating container");
-    await this.ensureNetwork(workspaceId);
-
-    // Build the credential-proxy + secret env args (tokens only — real values stay in the proxy).
-    // See containerCredentials.ts for how tokens, the proxy URL, and the CA-trust vars are derived.
-    const { envArgs: credentialEnvArgs, hasProxyCA } = buildCredentialEnv(workspaceId);
-    // Attach the sidecar to this workspace's network so the proxy alias resolves inside the
-    // container. Only when this workspace actually has a proxy CA; attach() itself no-ops in local
-    // dev (no sidecar — proxy is in-process).
-    if (hasProxyCA) await this.proxy.attach(workspaceId);
-
-    const r = await this.docker.cmd(
-      "run",
-      "-d",
-      // --init runs tini as PID 1 so it reaps orphaned/killed processes. Without it, the keep-alive
-      // `sleep infinity` is PID 1 and never wait()s on reparented children, so every command we
-      // group-kill (execStreaming) would linger as a zombie and slowly exhaust the PID table.
-      "--init",
-      "--name",
-      containerName(workspaceId),
-      "--network",
-      networkName(workspaceId),
-      `--memory=${CONTAINER_MEMORY}`,
-      `--cpus=${CONTAINER_CPUS}`,
-      ...this.buildVolumeArg(workspaceDir),
-      ...(hash ? ["--label", `${HASH_LABEL}=${hash}`] : []),
-      "--label",
-      `${SECRETS_LABEL}=${secretsHash}`,
-      ...credentialEnvArgs,
-      // Drop all Linux capabilities, then add back only the minimal set dpkg/apt and the chown sweep
-      // need when run as root via `docker exec -u 0` (apt_install tool, ownership sweep). The agent's
-      // shell is non-root with no setuid path, so it cannot use these caps — they are reachable only
-      // by the app-initiated root execs. Combined with no-new-privileges this blocks setuid escalation.
-      "--cap-drop",
-      "ALL",
-      "--cap-add",
-      "CHOWN",
-      "--cap-add",
-      "DAC_OVERRIDE",
-      "--cap-add",
-      "FOWNER",
-      "--cap-add",
-      "FSETID",
-      "--cap-add",
-      "SETGID",
-      "--cap-add",
-      "SETUID",
-      "--security-opt",
-      "no-new-privileges:true",
-      CONTAINER_IMAGE,
-      "sleep",
-      "infinity",
-    );
-    if (r.code !== 0) throw new Error(`docker run failed: ${r.stderr}`);
-
-    // One-time ownership sweep: legacy workspaces created when the agent ran as root hold root-owned
-    // files the uid-1000 agent/app can no longer manage. Chown the tree to 1000:1000 so both can.
-    // Runs as root (-u 0) for this single bootstrap command only. Idempotent and cheap on
-    // already-1000-owned trees.
-    const chown = await this.docker.exec(containerName(workspaceId), ["chown", "-R", "1000:1000", "/workspace"], {
-      asRoot: true,
-      trimStdout: true,
-    });
-    if (chown.code !== 0) log.debug({ workspaceId, stderr: chown.stderr }, "workspace chown sweep failed (non-fatal)");
-
-    // Install the proxy CA and build the combined trust bundle inside the fresh container (no-op
-    // when the proxy isn't set up). See containerCredentials.installProxyCA.
-    await installProxyCA(this.docker, containerName(workspaceId), workspaceId);
   }
 
   async ensure(workspaceId: string, workspaceDir: string): Promise<void> {
@@ -243,7 +278,21 @@ export class ContainerManager implements IContainerManager {
       // Enforce the egress invariant on every wake: the credproxy sidecar must be attached to this
       // workspace's network. Self-heals a dropped attachment and fails loudly if it can't, rather
       // than letting the agent black-hole on cryptic "could not resolve proxy" DNS errors.
-      await this.proxy.verify(workspaceId);
+      try {
+        await this.proxy.verify(workspaceId);
+      } catch (err) {
+        log.error(
+          {
+            event: "workspace_container_start_failed",
+            outcome: "workspace_container_unavailable",
+            err,
+            workspaceId,
+            stage: "verify_proxy_network",
+          },
+          "workspace container failed to start",
+        );
+        throw err;
+      }
     })().finally(() => {
       this.startLocks.delete(workspaceId);
       this.resetIdleTimer(workspaceId);
@@ -300,7 +349,10 @@ export class ContainerManager implements IContainerManager {
           ...cmdArgs,
         ]);
       } catch (err) {
-        log.error({ err, workspaceId }, "failed to spawn Docker foreground command");
+        log.error(
+          { event: "docker_foreground_spawn_failed", outcome: "command_not_started", err, workspaceId },
+          "failed to spawn Docker foreground command",
+        );
         opts.onStderr(`${err instanceof Error ? err.message : String(err)}\n`);
         resolve({ code: 1 });
         return;
@@ -334,7 +386,10 @@ export class ContainerManager implements IContainerManager {
       };
       proc.on("close", (code) => done(code));
       proc.on("error", (err) => {
-        log.error({ err, workspaceId }, "Docker foreground command process error");
+        log.error(
+          { event: "docker_foreground_process_error", outcome: "command_failed", err, workspaceId },
+          "Docker foreground command process error",
+        );
         done(1);
       });
     });
@@ -439,13 +494,26 @@ export class ContainerManager implements IContainerManager {
   async assertDockerAvailable(): Promise<void> {
     const r = await this.docker.cmd("info");
     if (r.code !== 0) {
-      log.error(
-        { stderr: r.stderr },
+      log.fatal(
+        { event: "startup_docker_unavailable", outcome: "process_exit", stderr: r.stderr },
         "Docker is not available. Make sure Docker is running before starting the server.",
       );
       process.exit(1);
     }
-    await this.imageManager.ensureImage(CONTAINER_IMAGE, "Dockerfile.workspace");
+    try {
+      await this.imageManager.ensureImage(CONTAINER_IMAGE, "Dockerfile.workspace");
+    } catch (err) {
+      log.fatal(
+        {
+          event: "startup_workspace_image_unavailable",
+          outcome: "process_exit",
+          err,
+          image: CONTAINER_IMAGE,
+        },
+        "workspace image could not be inspected or built — refusing to start",
+      );
+      process.exit(1);
+    }
   }
 }
 

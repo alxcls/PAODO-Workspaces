@@ -8,6 +8,19 @@
 import fs from "fs/promises";
 import path from "path";
 
+/**
+ * Thrown when a path resolves outside the workspace. Typed rather than a bare Error so the file
+ * routes can recognise it without matching on the message: it surfaces to the user as a 4xx and is
+ * deliberately not logged (see logFileRouteError), because a normal click reaches it — fileTree
+ * lists symlinks as ordinary files and the boundary check below resolves them first.
+ */
+export class PathContainmentError extends Error {
+  constructor(readonly attemptedPath: string) {
+    super("Path is outside workspace");
+    this.name = "PathContainmentError";
+  }
+}
+
 export async function assertInsideWorkspace(wsDir: string, filePath: string): Promise<string> {
   const wsReal = await fs.realpath(wsDir);
   let resolved: string;
@@ -20,7 +33,7 @@ export async function assertInsideWorkspace(wsDir: string, filePath: string): Pr
     resolved = path.join(parentReal, path.basename(filePath));
   }
   if (!resolved.startsWith(wsReal + path.sep) && resolved !== wsReal) {
-    throw new Error("Path is outside workspace");
+    throw new PathContainmentError(filePath);
   }
   return resolved;
 }

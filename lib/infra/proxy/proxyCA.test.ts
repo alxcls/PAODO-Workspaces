@@ -3,7 +3,7 @@
 // rejects anything but the exact value derived from that workspace's id.
 
 import { describe, it, expect, beforeAll } from "vitest";
-import { mkdtempSync } from "fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import path from "path";
 import { ensureCA, deriveProxySecret, verifyProxySecret } from "./proxyCA";
@@ -46,5 +46,28 @@ describe("verifyProxySecret", () => {
   it("rejects a missing secret", () => {
     expect(verifyProxySecret("ws-a", undefined)).toBe(false);
     expect(verifyProxySecret("ws-a", "")).toBe(false);
+  });
+});
+
+describe("strict existing proxy material", () => {
+  it("still provisions a completely fresh data root", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "proxy-ca-fresh-test-"));
+    expect(() => ensureCA(root, { strictExisting: true })).not.toThrow();
+  });
+
+  it("rejects partial existing CA material instead of silently rotating it", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "proxy-ca-partial-test-"));
+    const dir = path.join(root, ".proxy-ca");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(path.join(dir, "ca.key"), "partial");
+    expect(() => ensureCA(root, { strictExisting: true })).toThrow(/incomplete/);
+  });
+
+  it("rejects a corrupt existing HMAC key", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "proxy-hmac-corrupt-test-"));
+    const dir = path.join(root, ".proxy-ca");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(path.join(dir, "proxy-hmac.key"), "short");
+    expect(() => ensureCA(root, { strictExisting: true })).toThrow(/HMAC key is corrupt/);
   });
 });

@@ -125,6 +125,11 @@ export function buildModel(config: LLMProviderConfig): ChatOpenAI | ChatAnthropi
 // validation of a workspace's stored provider. Derived from the registry so it can't drift.
 export const SUPPORTED_PROVIDERS = Object.keys(PROVIDERS);
 
+/** Whether startup has credentials for at least one supported LLM provider. */
+export function hasConfiguredProviderApiKey(env: Record<string, string | undefined> = process.env): boolean {
+  return Object.values(PROVIDERS).some(({ apiKeyEnv }) => Boolean(env[apiKeyEnv]?.trim()));
+}
+
 // The env var holding a provider's API key; undefined for an unknown provider (buildModel rejects it).
 export function providerApiKeyEnv(provider: string): string | undefined {
   return PROVIDERS[provider]?.apiKeyEnv;

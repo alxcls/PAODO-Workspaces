@@ -17,11 +17,21 @@ type Store = Record<string, { keyHash: string | null; enabled: boolean }>;
 
 const store = globalSingleton<Store>("apiKeys", () => readJson<Store>(FILE, {}));
 
-function save() {
+function save(workspaceId: string, operation: string) {
   try {
     atomicSaveJson(FILE, store);
   } catch (err) {
-    log.error({ err }, "failed to save api key store");
+    log.error(
+      {
+        event: "api_key_store_save_failed",
+        outcome: "api_key_change_not_persisted",
+        err,
+        workspaceId,
+        operation,
+        filePath: FILE,
+      },
+      "failed to save api key store",
+    );
     throw err;
   }
 }
@@ -38,26 +48,26 @@ function hashKey(plain: string): string {
 
 export function setKey(workspaceId: string, hash: string) {
   store[workspaceId] = { keyHash: hash, enabled: true };
-  save();
+  save(workspaceId, "set_key");
   audit.info({ workspaceId, event: "api_key_set" }, "api key set");
 }
 
 export function revokeKey(workspaceId: string) {
   if (store[workspaceId]) store[workspaceId].keyHash = null;
-  save();
+  save(workspaceId, "revoke_key");
   audit.info({ workspaceId, event: "api_key_revoked" }, "api key revoked");
 }
 
 export function deleteKey(workspaceId: string) {
   if (!(workspaceId in store)) return;
   delete store[workspaceId];
-  save();
+  save(workspaceId, "delete_key");
   audit.info({ workspaceId, event: "api_key_deleted" }, "api key deleted");
 }
 
 export function setEnabled(workspaceId: string, enabled: boolean) {
   store[workspaceId] = { keyHash: store[workspaceId]?.keyHash ?? null, enabled };
-  save();
+  save(workspaceId, "set_enabled");
   audit.info({ workspaceId, enabled, event: "api_key_enabled_changed" }, "api key enabled state changed");
 }
 

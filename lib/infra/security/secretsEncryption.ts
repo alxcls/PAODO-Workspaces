@@ -52,7 +52,15 @@ export function getSecretsEncKey(): Buffer {
     // Missing is the only safe provisioning case. Overwriting an existing key after EACCES/EIO
     // would make every secret encrypted with the old key permanently unrecoverable.
     if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
-      log.error({ err, event: "secrets_encryption_key_read_failed" }, "failed to read secrets encryption key");
+      log.error(
+        {
+          event: "secrets_encryption_key_read_failed",
+          outcome: "encryption_operation_failed",
+          err,
+          filePath: KEY_FILE,
+        },
+        "failed to read secrets encryption key",
+      );
       throw err;
     }
     // First use: createKeyFile mkdirs because .proxy-ca/ may not exist yet — ensureCA() has not

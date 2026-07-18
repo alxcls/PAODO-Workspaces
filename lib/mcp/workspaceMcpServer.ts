@@ -76,7 +76,16 @@ export async function callWorkspaceMcpTool(
   } catch (err) {
     // Never let an execution exception escape the MCP request handler: doing so can leave a
     // Streamable-HTTP client with a closed connection and no JSON-RPC response.
-    log.error({ workspaceId, skill: name, err }, "workspace MCP skill execution threw");
+    log.error(
+      {
+        event: "workspace_mcp_skill_execution_threw",
+        outcome: "tool_error_returned",
+        workspaceId,
+        skill: name,
+        err,
+      },
+      "workspace MCP skill execution threw",
+    );
     return toolError("[EXECUTION_ERROR] The skill could not be completed.");
   }
 

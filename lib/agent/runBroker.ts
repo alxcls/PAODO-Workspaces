@@ -35,6 +35,16 @@ interface RunSession {
 // final events before the session is evicted.
 const DONE_LINGER_MS = 30_000;
 
+type AgentRunStatus = "success" | "failed" | "timeout" | "cancelled" | "limit_reached" | "incomplete";
+
+function statusFromEvent(current: AgentRunStatus, event: AgentEvent): AgentRunStatus {
+  if (event.type === "limit_reached") return "limit_reached";
+  if (event.type !== "error") return current;
+  if (event.code === "TIMEOUT") return "timeout";
+  if (event.code === "CANCELLED") return "cancelled";
+  return "failed";
+}
+
 const g = global as typeof global & { _runBroker?: Map<string, RunSession> };
 if (!g._runBroker) g._runBroker = new Map();
 const sessions = g._runBroker;
@@ -127,12 +137,28 @@ export function startRun(params: StartRunParams): { alreadyRunning: boolean } {
     ...params.runOptions,
     signal: runTimeout.signal,
   };
+  const startedAt = Date.now();
+  log.info(
+    {
+      event: "agent_run_started",
+      outcome: "run_started",
+      sessionId,
+      conversationId: params.conversationId,
+      workspaceId: params.workspaceId,
+      origin,
+      maxIterations: params.maxIterations,
+      maxRunMinutes: params.maxRunMinutes,
+    },
+    "agent run started",
+  );
 
   // Detached: not awaited, not tied to any request. Errors are surfaced as events by runAgent.
   void (async () => {
     let sentDone = false;
     let recordedError = false;
+    let terminalStatus: AgentRunStatus = "success";
     const publish = (event: AgentEvent) => {
+      terminalStatus = statusFromEvent(terminalStatus, event);
       session.buffer.push(event);
       for (const sub of session.subscribers) {
         try {
@@ -150,11 +176,38 @@ export function startRun(params: StartRunParams): { alreadyRunning: boolean } {
     };
     const publishTimeout = () => {
       if (sentDone) return;
+      terminalStatus = "timeout";
+      log.warn(
+        {
+          event: "agent_run_timed_out",
+          outcome: "run_ended",
+          sessionId,
+          conversationId: params.conversationId,
+          workspaceId: params.workspaceId,
+          origin,
+          maxRunMinutes: params.maxRunMinutes,
+          durationMs: Date.now() - startedAt,
+        },
+        "agent run timed out",
+      );
       publish({ type: "error", code: "TIMEOUT", message: runTimeout.error.message });
       publish({ type: "done" });
     };
     const publishUserStop = () => {
       if (sentDone) return;
+      terminalStatus = "cancelled";
+      log.info(
+        {
+          event: "agent_run_cancelled",
+          outcome: "run_ended",
+          sessionId,
+          conversationId: params.conversationId,
+          workspaceId: params.workspaceId,
+          origin,
+          durationMs: Date.now() - startedAt,
+        },
+        "agent run cancelled by user",
+      );
       publish({ type: "error", code: "CANCELLED", message: USER_STOPPED_CONVERSATION_MESSAGE });
       publish({ type: "done" });
     };
@@ -184,19 +237,19 @@ export function startRun(params: StartRunParams): { alreadyRunning: boolean } {
       }
     } catch (err) {
       if (runTimeout.didTimeout()) {
-        log.warn(
+        terminalStatus = "timeout";
+      } else if (session.abort.signal.aborted) {
+        terminalStatus = "cancelled";
+      } else {
+        terminalStatus = "failed";
+        log.error(
           {
+            event: "detached_agent_run_failed",
+            outcome: "run_ended",
+            err,
             workspaceId: params.workspaceId,
             conversationId: params.conversationId,
-            maxRunMinutes: params.maxRunMinutes,
           },
-          "detached run timed out",
-        );
-      } else if (session.abort.signal.aborted) {
-        log.info({ workspaceId: params.workspaceId, conversationId: params.conversationId }, "run stopped by user");
-      } else {
-        log.error(
-          { err, workspaceId: params.workspaceId, conversationId: params.conversationId },
           "detached run failed",
         );
       }
@@ -208,8 +261,31 @@ export function startRun(params: StartRunParams): { alreadyRunning: boolean } {
       try {
         persist();
       } catch (err) {
-        log.error({ err }, "persist on run end failed");
+        log.error(
+          {
+            event: "conversation_run_persist_failed",
+            outcome: "run_history_not_persisted",
+            err,
+            workspaceId: params.workspaceId,
+            conversationId: params.conversationId,
+          },
+          "persist on run end failed",
+        );
       }
+      if (!sentDone && terminalStatus === "success") terminalStatus = "incomplete";
+      log.info(
+        {
+          event: "agent_run_completed",
+          outcome: "run_ended",
+          sessionId,
+          conversationId: params.conversationId,
+          workspaceId: params.workspaceId,
+          origin,
+          status: terminalStatus,
+          durationMs: Date.now() - startedAt,
+        },
+        "agent run completed",
+      );
       setTimeout(() => {
         // Only evict if no newer run took this slot.
         if (sessions.get(k) === session) sessions.delete(k);
@@ -233,7 +309,7 @@ export interface ExternalRun {
   publish: (event: AgentEvent) => void;
   /** Mark the run done and schedule eviction. Persist the conversation BEFORE calling this so a
    *  client reconnecting at the end replays from a consistent on-disk history. */
-  finish: () => void;
+  finish: (status?: AgentRunStatus) => void;
   /** Fires when stop() is called for this conversation. The producer (executeSkill) must thread
    *  this into the callee's runner so a Stop on the callee's own tab actually halts it — otherwise
    *  the session's AbortController has no listener and stop() is a no-op. */
@@ -245,7 +321,12 @@ export interface ExternalRun {
  * (mirrors startRun's one-run-per-conversation rule). The caller publishes each event and calls
  * finish() when the whole call — including any correction retries — has completed.
  */
-export function startExternalRun(workspaceId: string, conversationId: string, userInput: string): ExternalRun | null {
+export function startExternalRun(
+  workspaceId: string,
+  conversationId: string,
+  userInput: string,
+  opts: { sessionId?: string; origin?: SessionOrigin } = {},
+): ExternalRun | null {
   const k = key(workspaceId, conversationId);
   const existing = sessions.get(k);
   if (existing && existing.status === "running") return null;
@@ -260,9 +341,25 @@ export function startExternalRun(workspaceId: string, conversationId: string, us
     status: "running",
   };
   sessions.set(k, session);
+  const sessionId = opts.sessionId ?? crypto.randomUUID();
+  const origin = opts.origin ?? "agent";
+  const startedAt = Date.now();
+  let terminalStatus: AgentRunStatus = "success";
+  log.info(
+    {
+      event: "agent_run_started",
+      outcome: "run_started",
+      sessionId,
+      conversationId,
+      workspaceId,
+      origin,
+    },
+    "agent run started",
+  );
 
   return {
     publish: (event) => {
+      terminalStatus = statusFromEvent(terminalStatus, event);
       session.buffer.push(event);
       for (const sub of session.subscribers) {
         try {
@@ -272,9 +369,26 @@ export function startExternalRun(workspaceId: string, conversationId: string, us
         }
       }
     },
-    finish: () => {
+    finish: (status) => {
       if (session.status === "done") return;
       session.status = "done";
+      if (status) terminalStatus = status;
+      if (!session.buffer.some((event) => event.type === "done") && terminalStatus === "success") {
+        terminalStatus = "incomplete";
+      }
+      log.info(
+        {
+          event: "agent_run_completed",
+          outcome: "run_ended",
+          sessionId,
+          conversationId,
+          workspaceId,
+          origin,
+          status: terminalStatus,
+          durationMs: Date.now() - startedAt,
+        },
+        "agent run completed",
+      );
       setTimeout(() => {
         if (sessions.get(k) === session) sessions.delete(k);
       }, DONE_LINGER_MS);

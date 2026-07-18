@@ -22,7 +22,10 @@ export function readJson<T>(filePath: string, fallback: T): T {
     // A missing file is the normal first-run case. Corruption, permissions, and I/O failures are
     // not: keep the existing fallback behavior, but never make persisted state disappear silently.
     if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
-      log.error({ err, filePath }, "failed to load persisted JSON — using fallback");
+      log.error(
+        { event: "persisted_json_load_failed", outcome: "fallback_used", err, filePath },
+        "failed to load persisted JSON — using fallback",
+      );
     }
     return fallback;
   }

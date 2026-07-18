@@ -29,7 +29,15 @@ export async function PUT(req: Request) {
     if (message.startsWith("Graph contains a cycle")) {
       return NextResponse.json({ error: message }, { status: 400 });
     }
-    log.error({ err: e, route: "workspace-graph" }, "failed to save workspace graph");
+    log.error(
+      {
+        event: "workspace_graph_save_failed",
+        outcome: "graph_updated_in_memory_only",
+        err: e,
+        route: "workspace-graph",
+      },
+      "failed to save workspace graph",
+    );
     return NextResponse.json({ error: "failed to save workspace graph" }, { status: 500 });
   }
   return NextResponse.json({ ok: true });

@@ -113,6 +113,13 @@ nano .env
 | `EXEC_SILENCE_TIMEOUT_MS`      | No                 | Kills a shell command if it produces no output for this long (default: `60000` = 1 min)                                 |
 | `EXEC_MAX_TIMEOUT_MS`          | No                 | Kills a shell command after this total elapsed time regardless of output (default: `1800000` = 30 min)                  |
 
+Production startup requires at least one of the three LLM provider API keys.
+
+Startup also fails closed when the workspace data volume, registry, encrypted secret store,
+credential-proxy key material, workspace image, or HTTP listener is unavailable. These conditions
+emit a structured `fatal` record before the process exits; the credential-proxy sidecar likewise
+exits on listener failure so Docker can restart it.
+
 Provider, model, and reasoning effort are not set here — each workspace picks them in the UI's Model block.
 
 ---

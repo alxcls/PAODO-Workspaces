@@ -27,7 +27,10 @@ export async function POST(req: NextRequest) {
   } catch (err) {
     const nameError = workspaceNameErrorResponse(err);
     if (nameError) return nameError;
-    log.error({ err, name: body.name }, "failed to create workspace");
+    log.error(
+      { event: "workspace_create_failed", outcome: "workspace_not_created", err, name: body.name },
+      "failed to create workspace",
+    );
     return NextResponse.json({ error: "failed to create workspace" }, { status: 500 });
   }
 }

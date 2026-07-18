@@ -13,12 +13,26 @@ import {
   reverseTokenMap,
   createRedactTransform,
   buildResponseHead,
+  CredentialProxy,
 } from "./credentialProxy";
 import { decodeChunked } from "./httpWire";
 
 const TOKEN = "__pxy_ws1_OPENAI_API_KEY__";
 const REAL = "sk-realsecret123";
 const tokenMap = new Map([[TOKEN, REAL]]);
+
+describe("CredentialProxy server failure policy", () => {
+  it("hands listener failures to the production fatal callback", () => {
+    const seen: Error[] = [];
+    const proxy = new CredentialProxy({ onServerError: (err) => seen.push(err) });
+    const server = (proxy as unknown as { server: import("net").Server }).server;
+    const failure = new Error("listener failed");
+
+    server.emit("error", failure);
+
+    expect(seen).toEqual([failure]);
+  });
+});
 
 describe("substituteHeaderValue", () => {
   it("substitutes a token that appears verbatim (Bearer)", () => {
@@ -41,6 +55,16 @@ describe("substituteHeaderValue", () => {
 
   it("leaves values without a token untouched", () => {
     expect(substituteHeaderValue("application/json", tokenMap)).toBe("application/json");
+  });
+
+  it("reports the exact token that was actually injected", () => {
+    const used = new Set<string>();
+    expect(substituteHeaderValue(`Bearer ${TOKEN}`, tokenMap, used)).toBe(`Bearer ${REAL}`);
+    expect([...used]).toEqual([TOKEN]);
+
+    const unused = new Set<string>();
+    substituteHeaderValue("application/json", tokenMap, unused);
+    expect(unused.size).toBe(0);
   });
 
   it("does not corrupt a Basic header whose payload isn't valid base64", () => {

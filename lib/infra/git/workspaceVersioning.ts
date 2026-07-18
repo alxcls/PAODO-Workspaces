@@ -14,12 +14,13 @@
 // records that subtree as an embedded-repo gitlink rather than its file bytes. Accepted for v1.
 import path from "path";
 import { mkdir, rm } from "fs/promises";
-import { createLogger } from "../logger";
+import { createAuditLogger, createLogger } from "../logger";
 import { WORKSPACES_ROOT } from "../paths";
 import { GitClient, type IGitClient } from "./gitClient";
 import type { HistoryEntry, IWorkspaceVersioning, VersionStat, VersionFileStat } from "../interfaces";
 
 const log = createLogger("versioning");
+const audit = createAuditLogger("versioning");
 
 // Stable commit identity so we never depend on (or mutate) the host's global git config.
 const IDENTITY = ["-c", "user.name=PAODO Agent", "-c", "user.email=agent@paodo.local"];
@@ -276,12 +277,33 @@ export class WorkspaceVersioning implements IWorkspaceVersioning {
         "--verify",
         `${sha}^{commit}`,
       ]);
-      if (verify.code !== 0) {
-        log.warn({ workspaceId, sha }, "restore: unknown sha");
-        return false;
-      }
+      // Not logged: a stale restore point in an open tab is the user's problem to see, and the
+      // route returns a 400 saying so. Only the reset below — where git had a real commit and
+      // still failed — is a system failure worth a line.
+      if (verify.code !== 0) return false;
       const reset = await this.git.run([...this.base(workspaceId, workspaceDir), "reset", "--hard", sha]);
-      if (reset.code !== 0) log.error({ workspaceId, sha, stderr: reset.stderr }, "restore: reset failed");
+      if (reset.code !== 0) {
+        log.error(
+          {
+            event: "workspace_restore_reset_failed",
+            outcome: "workspace_not_restored",
+            workspaceId,
+            sha,
+            stderr: reset.stderr,
+          },
+          "restore: reset failed",
+        );
+      } else {
+        audit.info(
+          {
+            event: "workspace_restored",
+            outcome: "workspace_files_restored",
+            workspaceId,
+            sha,
+          },
+          "workspace restored to snapshot",
+        );
+      }
       return reset.code === 0;
     });
   }

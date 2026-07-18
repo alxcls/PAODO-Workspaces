@@ -141,7 +141,10 @@ function readAllRecords(): TurnRecord[] {
       .map((l) => JSON.parse(l) as TurnRecord);
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
-      log.error({ err, filePath: FILE }, "failed to load usage store — using empty history");
+      log.error(
+        { event: "usage_store_load_failed", outcome: "empty_history_used", err, filePath: FILE },
+        "failed to load usage store — using empty history",
+      );
     }
     return [];
   }
@@ -171,7 +174,10 @@ function compact() {
     renameSync(tmp, FILE);
     g._usageFileLines = kept.length;
   } catch (err) {
-    log.error({ err }, "failed to compact usage store");
+    log.error(
+      { event: "usage_store_compaction_failed", outcome: "compaction_skipped", err, filePath: FILE },
+      "failed to compact usage store",
+    );
   }
 }
 
@@ -195,7 +201,10 @@ export function appendUsage(partial: Omit<TurnRecord, "id" | "timestamp">): void
       appendFileSync(FILE, JSON.stringify(record) + "\n");
       g._usageFileLines = (g._usageFileLines ?? 0) + 1;
     } catch (err2) {
-      log.error({ err: err2 }, "failed to append usage record");
+      log.error(
+        { event: "usage_record_append_failed", outcome: "usage_record_not_persisted", err: err2, filePath: FILE },
+        "failed to append usage record",
+      );
     }
   }
 }

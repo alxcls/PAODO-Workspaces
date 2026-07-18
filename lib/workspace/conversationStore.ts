@@ -82,7 +82,16 @@ function ensureLoaded(workspaceId: string): WorkspaceConversations {
     s.metas = JSON.parse(raw) as ConversationMeta[];
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
-      log.error({ err, workspaceId, filePath: indexPath(workspaceId) }, "failed to load conversation index");
+      log.error(
+        {
+          event: "conversation_index_load_failed",
+          outcome: "empty_index_used",
+          err,
+          workspaceId,
+          filePath: indexPath(workspaceId),
+        },
+        "failed to load conversation index",
+      );
     }
     s.metas = [];
   }
@@ -98,8 +107,11 @@ function saveIndex(workspaceId: string, s: WorkspaceConversations): void {
 function notifyConversationsChanged(workspaceId: string): void {
   try {
     broadcastToWorkspace(workspaceId, JSON.stringify({ type: "conversations_changed" }));
-  } catch {
-    // Best-effort UI hint only: failures must never affect conversation persistence.
+  } catch (err) {
+    // Best-effort UI hint only: failures must never affect conversation persistence. Debug level
+    // because a disconnected client is routine — it is here only so a UI that has silently stopped
+    // refreshing leaves a trail to follow.
+    log.debug({ err, workspaceId }, "conversations_changed broadcast failed");
   }
 }
 
@@ -167,7 +179,17 @@ export function getMessages(workspaceId: string, convId: string): BaseMessage[] 
       const file = JSON.parse(raw) as ConversationFile;
       msgs = deserializeMessages(file.messages ?? []);
     } catch (err) {
-      log.error({ err, workspaceId, convId }, "failed to load conversation messages");
+      log.error(
+        {
+          event: "conversation_messages_load_failed",
+          outcome: "empty_history_used",
+          err,
+          workspaceId,
+          convId,
+          filePath: filePath(workspaceId, convId),
+        },
+        "failed to load conversation messages",
+      );
       msgs = [];
     }
     s.messages.set(convId, msgs);
@@ -191,7 +213,17 @@ export function getPersistedMessages(workspaceId: string, convId: string): BaseM
     const file = JSON.parse(raw) as ConversationFile;
     return deserializeMessages(file.messages ?? []);
   } catch (err) {
-    log.error({ err, workspaceId, convId }, "failed to load persisted conversation messages");
+    log.error(
+      {
+        event: "persisted_conversation_load_failed",
+        outcome: "empty_history_used",
+        err,
+        workspaceId,
+        convId,
+        filePath: filePath(workspaceId, convId),
+      },
+      "failed to load persisted conversation messages",
+    );
     return [];
   }
 }
@@ -223,7 +255,18 @@ export function persist(workspaceId: string, convId: string): void {
     saveIndex(workspaceId, s);
     notifyConversationsChanged(workspaceId);
   } catch (err) {
-    log.error({ err, workspaceId, convId }, "failed to persist conversation");
+    log.error(
+      {
+        event: "conversation_persist_failed",
+        outcome: "conversation_not_persisted",
+        err,
+        workspaceId,
+        convId,
+        conversationFilePath: filePath(workspaceId, convId),
+        indexFilePath: indexPath(workspaceId),
+      },
+      "failed to persist conversation",
+    );
   }
 }
 

@@ -98,11 +98,22 @@ describe("encryption at rest", () => {
     const reloaded = await freshStore();
     expect(reloaded.listSecretMeta("ws1")).toEqual([]);
     expect(reloaded.getWorkspaceRules("ws1")).toEqual([]);
+    expect(() => reloaded.assertSecretStoreAvailable()).toThrow();
+  });
+
+  it("marks a malformed legacy store unavailable without throwing during module import", async () => {
+    fs.writeFileSync(FILE, JSON.stringify({ ws1: "not-a-secret-map" }));
+
+    const store = await freshStore();
+
+    expect(store.listSecretMeta("ws1")).toEqual([]);
+    expect(() => store.assertSecretStoreAvailable()).toThrow();
   });
 
   it("starts empty when no file exists (first run)", async () => {
     const store = await freshStore();
     expect(store.listSecretMeta("anything")).toEqual([]);
+    expect(() => store.assertSecretStoreAvailable()).not.toThrow();
   });
 });
 

@@ -67,3 +67,14 @@ describe("formatDriveLine", () => {
     expect(store.formatDriveLine(drive)).toBe(`- scratch (id: ${drive.id})`);
   });
 });
+
+describe("drive connection persistence", () => {
+  it("surfaces a connection registry write failure", () => {
+    const drive = store.createDrive("articles");
+    // A directory at the registry path makes atomic rename fail deterministically without mocking
+    // the persistence layer, exercising the same error boundary production uses.
+    fs.mkdirSync(path.join(ROOT, ".drive-connections.json"));
+
+    expect(() => store.connectDrive(drive.id, "ws1")).toThrow();
+  });
+});

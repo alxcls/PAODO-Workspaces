@@ -6,6 +6,7 @@
 import "dotenv/config";
 import { randomUUID } from "node:crypto";
 import { createServer } from "http";
+import path from "path";
 import { createAuditLogger, createLogger, runWithLogContext } from "./lib/infra/logger";
 import { throttleLog } from "./lib/infra/logThrottle";
 
@@ -13,7 +14,7 @@ const log = createLogger("server");
 const audit = createAuditLogger("server");
 
 function fatal(reason: string, err: unknown): never {
-  log.fatal({ err, reason }, "process exiting after fatal error");
+  log.fatal({ event: "process_fatal", outcome: "process_exit", err, reason }, "process exiting after fatal error");
   process.exit(1);
 }
 
@@ -25,7 +26,7 @@ import { WebSocketServer } from "ws";
 import { getStore, getContainers, getVersioning, getCredentialProxy } from "./lib/infra/services";
 import { ensureCA } from "./lib/infra/proxy/proxyCA";
 import { WORKSPACES_ROOT } from "./lib/infra/paths";
-import { getWorkspaceRules } from "./lib/infra/security/workspaceSecretStore";
+import { assertSecretStoreAvailable, getWorkspaceRules } from "./lib/infra/security/workspaceSecretStore";
 import { setTodos } from "./lib/workspace/todoStore";
 import { loadIndex } from "./lib/workspace/conversationStore";
 import { addConnection, removeConnection, getConnectionCount } from "./lib/infra/realtime/wsHub";
@@ -42,13 +43,29 @@ import { buildSecurityHeaders } from "./lib/infra/security/securityHeaders";
 import { startScheduler, stopScheduler } from "./lib/infra/schedules/scheduler";
 import { startProxyReconciler, stopProxyReconciler } from "./lib/infra/docker/proxyReconciler";
 import { checkApiRateLimit } from "./lib/infra/security/rateLimit";
+import { hasConfiguredProviderApiKey } from "./lib/agent/buildModel";
+import { assertDataRootAvailable, assertWorkspaceRegistryAvailable } from "./lib/infra/startupChecks";
 
 const dev = process.env.NODE_ENV !== "production";
-const port = parseInt(process.env.PORT ?? "3000", 10);
+const rawPort = process.env.PORT ?? "3000";
+const port = Number(rawPort);
 
 const UI_USER = process.env.USERNAME ?? "";
 const UI_PASS = process.env.PASSWORD ?? "";
 const credentials = { user: UI_USER, pass: UI_PASS };
+
+if (!Number.isInteger(port) || port < 1 || port > 65_535) {
+  log.fatal(
+    {
+      event: "startup_http_listener_failed",
+      outcome: "process_exit",
+      err: new Error(`PORT must be an integer between 1 and 65535; received ${JSON.stringify(rawPort)}`),
+      configuredPort: rawPort,
+    },
+    "HTTP listener configuration is invalid — refusing to start",
+  );
+  process.exit(1);
+}
 
 const authFailures = new AuthFailureTracker();
 let authLoggedOnce = false;
@@ -66,7 +83,13 @@ function setSecurityHeaders(res: import("http").ServerResponse): void {
 }
 
 const httpServer = createServer();
-httpServer.on("error", (err) => fatal("httpServer", err));
+httpServer.on("error", (err) => {
+  log.fatal(
+    { event: "startup_http_listener_failed", outcome: "process_exit", err, port },
+    "HTTP listener failed — refusing to continue",
+  );
+  process.exit(1);
+});
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const app = next({ dev, httpServer, port, webpack: true } as any);
@@ -93,7 +116,7 @@ httpServer.on("request", (req, res) => {
     // `event` rather than a second `context` field: the child logger already binds context, and two
     // keys of the same name in one JSON object is malformed enough to break some readers.
     const meta = { method, pathname, status: res.statusCode, durationMs, requestId, event: "http_request" };
-    if (res.statusCode >= 500) log.error(meta, "http request");
+    if (res.statusCode >= 500) log.error({ ...meta, event: "http_request", outcome: "request_failed" }, "http request");
     // 429s from inside Next (the route-level limits in lib/api/guards.ts) are equally caller-driven,
     // so they get the same throttle rather than a line each.
     else if (res.statusCode === 429) {
@@ -179,7 +202,9 @@ httpServer.on("request", (req, res) => {
 });
 
 const wss = new WebSocketServer({ noServer: true });
-wss.on("error", (err) => log.error({ err }, "websocket server error"));
+wss.on("error", (err) =>
+  log.error({ event: "websocket_server_error", outcome: "websocket_service_degraded", err }, "websocket server error"),
+);
 
 httpServer.on("upgrade", (req, socket, head) => {
   const { pathname } = new URL(req.url ?? "", "http://localhost");
@@ -235,11 +260,8 @@ wss.on("connection", (ws, req) => {
     // First connection — load saved conversations from disk so a returning user immediately sees
     // their history. Conversations persist across restarts and disconnects (and a run keeps going
     // even with no one connected), so we deliberately no longer wipe message history here.
-    try {
-      loadIndex(workspaceId);
-    } catch (err) {
-      log.error({ workspaceId, err }, "failed to load conversations");
-    }
+    // loadIndex owns its recoverable persistence error log and falls back to an empty index.
+    loadIndex(workspaceId);
     ensureWatcher(workspaceId, workspace.dir);
   }
 
@@ -274,8 +296,60 @@ wss.on("connection", (ws, req) => {
 });
 
 if ((!UI_USER || !UI_PASS) && !dev) {
-  log.error("USERNAME and PASSWORD must be set in production — refusing to start.");
+  log.fatal(
+    { event: "startup_credentials_missing", outcome: "process_exit" },
+    "USERNAME and PASSWORD must be set in production — refusing to start.",
+  );
   process.exit(1);
+}
+
+if (!hasConfiguredProviderApiKey() && !dev) {
+  log.fatal(
+    { event: "startup_llm_api_keys_missing", outcome: "process_exit" },
+    "At least one LLM provider API key must be set in production — refusing to start.",
+  );
+  process.exit(1);
+}
+
+try {
+  assertDataRootAvailable(WORKSPACES_ROOT);
+} catch (err) {
+  log.fatal(
+    { event: "startup_data_root_unavailable", outcome: "process_exit", err, dataRoot: WORKSPACES_ROOT },
+    "workspace data root is unavailable or not writable — refusing to start",
+  );
+  process.exit(1);
+}
+
+if (!dev) {
+  try {
+    assertWorkspaceRegistryAvailable(WORKSPACES_ROOT);
+  } catch (err) {
+    log.fatal(
+      {
+        event: "startup_workspace_registry_unavailable",
+        outcome: "process_exit",
+        err,
+        filePath: path.join(WORKSPACES_ROOT, ".workspaces.json"),
+      },
+      "existing workspace registry could not be read safely — refusing to start",
+    );
+    process.exit(1);
+  }
+  try {
+    assertSecretStoreAvailable();
+  } catch (err) {
+    log.fatal(
+      {
+        event: "startup_secret_store_unavailable",
+        outcome: "process_exit",
+        err,
+        filePath: path.join(WORKSPACES_ROOT, ".workspace-secrets.json"),
+      },
+      "existing workspace secret store could not be read or decrypted — refusing to start",
+    );
+    process.exit(1);
+  }
 }
 
 // Snapshots (workspace version history) shell out to the `git` binary, and those failures are
@@ -285,7 +359,10 @@ if ((!UI_USER || !UI_PASS) && !dev) {
 async function assertGitAvailable() {
   if (await getVersioning().isGitAvailable()) return;
   if (!dev) {
-    log.error("git is not available — workspace version history (snapshots) would silently no-op. Refusing to start.");
+    log.fatal(
+      { event: "startup_git_unavailable", outcome: "process_exit" },
+      "git is not available — workspace version history (snapshots) would silently no-op. Refusing to start.",
+    );
     process.exit(1);
   }
   log.warn("git is not available — workspace snapshots will be disabled until git is installed.");
@@ -297,7 +374,15 @@ assertGitAvailable()
   .then(() => getContainers().assertDockerAvailable())
   .then(async () => {
     // The app owns CA generation (writable data mount); the credproxy sidecar only loads it.
-    ensureCA(WORKSPACES_ROOT);
+    try {
+      ensureCA(WORKSPACES_ROOT, { strictExisting: !dev });
+    } catch (err) {
+      log.fatal(
+        { event: "startup_proxy_key_material_invalid", outcome: "process_exit", err },
+        "existing credential-proxy key material is incomplete or invalid — refusing to start",
+      );
+      process.exit(1);
+    }
     if (!process.env.WORKSPACES_VOLUME_NAME) {
       // Local dev: the app runs on the host, so it hosts the proxy in-process at
       // host.docker.internal:9998. Reload persisted rules (lost on restart).
@@ -319,7 +404,7 @@ assertGitAvailable()
   .then(() => app.prepare())
   .then(() => {
     httpServer.listen(port, () => {
-      log.info(`Ready on http://localhost:${port}`);
+      log.info({ event: "server_ready", outcome: "startup_complete", port }, `Ready on http://localhost:${port}`);
     });
     // Fire workspace schedules on their recurrence (in-process tick loop). Started after boot so
     // the store/services are ready; missed slots from any downtime are skipped, not replayed.
@@ -327,16 +412,58 @@ assertGitAvailable()
   })
   .catch((err) => fatal("startup", err));
 
-function shutdown() {
-  wss.close();
-  stopScheduler();
-  stopProxyReconciler();
-  stopAllWatchers();
+let shuttingDown = false;
+
+function shutdown(signal: NodeJS.Signals) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  const startedAt = Date.now();
+  log.info(
+    {
+      event: "process_shutdown_started",
+      outcome: "shutdown_in_progress",
+      signal,
+      uptimeMs: Math.round(process.uptime() * 1000),
+    },
+    "process shutdown started",
+  );
+  const failShutdown = (err: unknown): never => {
+    log.fatal(
+      {
+        event: "process_shutdown_failed",
+        outcome: "process_exit",
+        err,
+        signal,
+        durationMs: Date.now() - startedAt,
+      },
+      "process shutdown failed",
+    );
+    process.exit(1);
+  };
+  try {
+    wss.close();
+    stopScheduler();
+    stopProxyReconciler();
+    stopAllWatchers();
+  } catch (err) {
+    failShutdown(err);
+  }
   app
     .close()
-    .then(() => process.exit(0))
-    .catch((err) => fatal("shutdown", err));
+    .then(() => {
+      log.info(
+        {
+          event: "process_shutdown_completed",
+          outcome: "process_exit",
+          signal,
+          durationMs: Date.now() - startedAt,
+        },
+        "process shutdown completed",
+      );
+      process.exit(0);
+    })
+    .catch(failShutdown);
 }
 
-process.on("SIGINT", shutdown);
-process.on("SIGTERM", shutdown);
+process.on("SIGINT", () => shutdown("SIGINT"));
+process.on("SIGTERM", () => shutdown("SIGTERM"));

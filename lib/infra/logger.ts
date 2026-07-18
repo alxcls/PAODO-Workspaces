@@ -80,5 +80,3 @@ export function createAuditLogger(context: string) {
 export function runWithLogContext<T>(bindings: LogContext, fn: () => T): T {
   return logContext.run(bindings, fn);
 }
-
-export const logger = createLogger("app");

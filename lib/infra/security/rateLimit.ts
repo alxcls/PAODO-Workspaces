@@ -1,9 +1,6 @@
 // In-memory token-bucket limiter plus the application's central rate-limit policy. The custom
 // server applies the global and control-plane layers to every API request; public Bearer endpoints
 // and uploads add their narrower route-level policy after that.
-import { createLogger } from "../logger";
-
-const log = createLogger("rateLimit");
 const LOOPBACK = new Set(["::1", "127.0.0.1", "::ffff:127.0.0.1"]);
 
 export class RateLimiter {
@@ -41,7 +38,6 @@ export class RateLimiter {
     entry.lastSeen = now;
     if (entry.tokens < 1) {
       const retryAfter = Math.max(1, Math.ceil((1 - entry.tokens) / refillPerMs / 1000));
-      log.warn({ ip, bucket: opts?.bucket, retryAfter }, "rate limit exceeded");
       return { ok: false, retryAfter, limit: max, remaining: 0 };
     }
     entry.tokens -= 1;

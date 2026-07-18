@@ -177,7 +177,6 @@ const DRIVE_EDGE_STYLE = {
   data: { kind: "drive" as const },
 };
 
-
 const FAIL_LINKS = "Failed to save drive links";
 
 const plural = (n: number, noun: string) => `${n} ${noun}${n > 1 ? "s" : ""}`;

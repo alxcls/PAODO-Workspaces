@@ -120,13 +120,22 @@ Provider, model, and reasoning effort are not set here — each workspace picks 
 ## Step 4 — Start the app
 
 ```bash
-# Pre-create the security-log dir owned by the app's UID (1000) so the bind-mounted
-# /logs is writable — the hardened container can't chown it itself. Change the path freely.
-mkdir -p /var/log/paodo && chown 1000:1000 /var/log/paodo
-docker compose up -d
+# Install and enable log rotation, then install PAODO's policy. This is required
+# even when Docker was already present on the VPS.
+apt-get update && apt-get install -y logrotate
+install -m 0644 deploy/paodo-logrotate.conf /etc/logrotate.d/paodo
+systemctl enable --now logrotate.timer
+
+# Build the local PAODO image explicitly on the first run, then start all services.
+docker compose up --build -d
+
+# All three checks should succeed; the timer should print "active".
+docker compose ps
+systemctl is-active logrotate.timer
+logrotate --debug /etc/logrotate.d/paodo >/dev/null
 ```
 
-This starts three containers: `app` (the web UI + agent), `socket-proxy` (a locked-down Docker API), and `credproxy` (the credential proxy that injects per-workspace secrets into outbound requests).
+This starts three long-running containers: `app` (the web UI + agent), `socket-proxy` (a locked-down Docker API), and `credproxy` (the credential proxy that injects per-workspace secrets into outbound requests). A one-shot `log-init` service creates `/var/log/paodo` as `0750` and its log files as `0600`. Operational warnings go to `app.log`/`credproxy.log`; explicit authentication and credential-lifecycle audit events go to `security.log`. Debian's logrotate timer checks the files daily and retains 14 compressed rotations. The 50 MB threshold also applies if logrotate is invoked more frequently. The policy uses `copytruncate` so no container restart or signal handling is required; this simple approach has a very small potential log-loss window during rotation. Docker stdout/stderr logs are capped separately by Compose.
 
 ### How workspace egress works (credential proxy)
 
@@ -233,7 +242,9 @@ must reach the API or MCP endpoint from the public internet.
 
 ```bash
 # Pull latest code and rebuild
-git pull && docker compose up --build -d
+git pull
+install -m 0644 deploy/paodo-logrotate.conf /etc/logrotate.d/paodo
+docker compose up --build -d
 
 # Apply a config change (.env edit) without rebuilding
 docker compose up -d

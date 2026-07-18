@@ -66,6 +66,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((err) => {
-  log.error({ err: String(err) }, "credential proxy sidecar failed to start");
+  log.error({ err }, "credential proxy sidecar failed to start");
   process.exit(1);
 });

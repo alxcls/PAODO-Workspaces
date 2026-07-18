@@ -116,7 +116,7 @@ You run as a NON-ROOT user, confined to the workspace. apt-get/sudo are NOT avai
 
       const killWith = (reason: string) => {
         if (settled) return;
-        this.log.warn({ command, reason }, "command killed");
+        this.log.warn({ commandChars: command.length, reason }, "command killed");
         this.broadcast(JSON.stringify({ type: "stdout", data: `\n[killed] ${reason}\n` }));
         ctrl.abort(); // real kill: streamExec tears down the process group
         finish(`[killed] ${reason}`); // unblock the agent immediately

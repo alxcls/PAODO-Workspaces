@@ -11,10 +11,11 @@ import { createHash } from "crypto";
 import path from "path";
 import { WORKSPACES_ROOT } from "../paths";
 import { atomicSaveJson } from "../jsonPersist";
-import { createLogger } from "../logger";
+import { createAuditLogger, createLogger } from "../logger";
 import { isEncEnvelope, encryptToEnvelope, decryptFromEnvelope } from "./secretsEncryption";
 
 const log = createLogger("secretStore");
+const audit = createAuditLogger("secretStore");
 
 const FILE = path.join(WORKSPACES_ROOT, ".workspace-secrets.json");
 // Exposed so the credential-proxy sidecar (a separate process) can watch it for changes.
@@ -119,7 +120,7 @@ if (migrateLegacy) {
   try {
     upgradeStoreDomains(store);
     save();
-    log.info("migrated plaintext secret store to encrypted format");
+    audit.info({ event: "secret_store_encrypted" }, "migrated plaintext secret store to encrypted format");
   } catch (err) {
     log.error({ err }, "failed to re-save secret store encrypted");
   }
@@ -146,7 +147,7 @@ export function setSecret(wsId: string, name: string, value: string, domains: st
   const sanitized = sanitizeDomains(domains);
   store[wsId][name] = { value, createdAt: new Date().toISOString(), domains: sanitized };
   save();
-  log.info({ wsId, name }, "secret set");
+  audit.info({ wsId, name, event: "workspace_secret_set" }, "secret set");
 }
 
 export function deleteSecret(wsId: string, name: string): boolean {
@@ -154,7 +155,7 @@ export function deleteSecret(wsId: string, name: string): boolean {
   delete store[wsId][name];
   if (Object.keys(store[wsId]).length === 0) delete store[wsId];
   save();
-  log.info({ wsId, name }, "secret deleted");
+  audit.info({ wsId, name, event: "workspace_secret_deleted" }, "secret deleted");
   return true;
 }
 
@@ -205,7 +206,7 @@ export function deleteAllForWorkspace(wsId: string): void {
   if (!store[wsId]) return;
   delete store[wsId];
   save();
-  log.info({ wsId }, "all secrets deleted for workspace");
+  audit.info({ wsId, event: "workspace_secrets_deleted" }, "all secrets deleted for workspace");
 }
 
 // Workspace ids that currently have any secret. Used by the credential-proxy sidecar to know

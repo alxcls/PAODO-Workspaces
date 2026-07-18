@@ -504,7 +504,7 @@ export async function* runAgent(
       for (const tc of activeCalls) {
         yield { type: "tool_start", name: tc.name, id: tc.id, args: tc.args };
         resolvedNotify({ type: "tool_call", name: tc.name, args: tc.args });
-        wlog.debug({ name: tc.name, args: tc.args }, "tool call");
+        wlog.debug({ name: tc.name, argumentKeys: Object.keys(tc.args) }, "tool call");
       }
 
       // call_agent surfaces its callee-session deep-link the moment the callee conversation is
@@ -582,7 +582,7 @@ export async function* runAgent(
         if (!typedToolMap[tc.name]?.suppressResultNotify) {
           resolvedNotify({ type: "tool_result_log", name: tc.name, result: resultStr });
         }
-        wlog.debug({ name: tc.name, result: resultStr.slice(0, 200) }, "tool result");
+        wlog.debug({ name: tc.name, resultChars: resultStr.length }, "tool result");
       }
 
       // Emit usage now that outputs are known, attaching each tool call's result.

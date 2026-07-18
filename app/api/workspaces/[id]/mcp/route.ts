@@ -10,6 +10,11 @@ import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/
 import { buildWorkspaceMcpServer } from "@/lib/mcp/workspaceMcpServer";
 import { validateSecret } from "@/lib/infra/security/mcpConfigStore";
 import { rateLimited, subjectRateLimited } from "@/lib/api/guards";
+import { getClientIp } from "@/lib/infra/realtime/clientIp";
+import { createAuditLogger, createLogger } from "@/lib/infra/logger";
+
+const log = createLogger("api");
+const audit = createAuditLogger("api");
 
 function bearer(req: Request): string {
   return req.headers.get("authorization")?.replace(/^Bearer\s+/i, "") ?? "";
@@ -48,6 +53,16 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   if (limited) return limited;
 
   if (!validateSecret(id, bearer(req))) {
+    audit.warn(
+      {
+        workspaceId: id,
+        route: "mcp",
+        ip: getClientIp(req),
+        requestId: req.headers.get("x-request-id") ?? undefined,
+        event: "mcp_auth_unauthorized",
+      },
+      "unauthorized MCP request",
+    );
     return new Response("Unauthorized", { status: 401 });
   }
 
@@ -73,14 +88,15 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     // enableJsonResponse buffers the full response before this resolves, so the exchange is
     // complete and it is safe to tear the per-request server/transport down afterward.
     return await transport.handleRequest(req);
-  } catch {
+  } catch (err) {
+    log.error({ err, workspaceId: id, route: "mcp" }, "workspace MCP request failed");
     return Response.json(
       { jsonrpc: "2.0", error: { code: -32603, message: "Internal error" }, id: await requestId(requestForErrorId) },
       { status: 500 },
     );
   } finally {
-    await transport?.close().catch(() => {});
-    await server?.close().catch(() => {});
+    await transport?.close().catch((err) => log.warn({ err, workspaceId: id }, "failed to close MCP transport"));
+    await server?.close().catch((err) => log.warn({ err, workspaceId: id }, "failed to close MCP server"));
   }
 }
 

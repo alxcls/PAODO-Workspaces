@@ -20,7 +20,7 @@ import {
   type RateLimitResult,
 } from "@/lib/infra/security/rateLimit";
 import { getClientIp } from "@/lib/infra/realtime/clientIp";
-import { createLogger } from "@/lib/infra/logger";
+import { createAuditLogger } from "@/lib/infra/logger";
 import { WorkspaceNameError } from "@/lib/workspace/workspaceName";
 
 /** The one and only "not found" body every route returns for a missing resource. */
@@ -52,7 +52,7 @@ export function requireDrive(id: string): Drive | NextResponse {
 /** Apply a route-level IP policy and return a standard 429 response when it is exhausted. */
 function rejection(rl: RateLimitResult, logContext: Record<string, unknown>, subject: string): Response | null {
   if (rl.ok) return null;
-  createLogger("api").warn({ ...logContext, subject }, "rate limit exceeded");
+  createAuditLogger("api").warn({ ...logContext, subject, event: "rate_limited" }, "rate limit exceeded");
   return new Response("Too Many Requests", {
     status: 429,
     headers: {
@@ -77,7 +77,11 @@ export function rateLimited(
   const rl = opts?.policy
     ? checkRateLimitPolicy(ip, opts.policy, opts.scope)
     : checkRateLimit(ip, { max: opts?.max, bucket: opts?.bucket });
-  return rejection(rl, { ...opts?.logContext, policy: opts?.policy }, ip);
+  return rejection(
+    rl,
+    { ...opts?.logContext, policy: opts?.policy, requestId: req.headers.get("x-request-id") ?? undefined },
+    ip,
+  );
 }
 
 /** Apply an authenticated workspace/principal quota without retaining the bearer secret. */

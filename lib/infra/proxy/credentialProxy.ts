@@ -24,6 +24,7 @@ import { Transform } from "stream";
 import { signDomainCert } from "./proxyCA";
 import { isBlockedAddress, makeGuardedLookup } from "./destinationGuard";
 import { createLogger } from "../logger";
+import { LogThrottle } from "../logThrottle";
 import { WorkspaceRuleStore } from "./workspaceRuleStore";
 import { readHttpHeaders, collectBody, pipeBody, bodyMode } from "./httpWire";
 import type { DomainRule } from "../security/workspaceSecretStore";
@@ -163,6 +164,7 @@ export function buildResponseHead(res: http.IncomingMessage, redactMap?: TokenMa
 
 export class CredentialProxy {
   private ruleStore = new WorkspaceRuleStore();
+  private warningThrottle = new LogThrottle();
   private server: net.Server;
   // Predicate deciding whether a resolved destination IP is off-limits (SSRF guard), plus a
   // hostname lookup built from it. Injectable so tests can point the proxy at a loopback stub.
@@ -178,7 +180,7 @@ export class CredentialProxy {
     this.lookup = makeGuardedLookup(this.blockDestination);
     this.server = net.createServer((socket) => {
       this.handleConnection(socket).catch((err) => {
-        log.debug({ err: String(err) }, "proxy connection error");
+        this.warnThrottled("connection", { err }, "proxy connection error");
         socket.destroy();
       });
     });
@@ -197,6 +199,12 @@ export class CredentialProxy {
 
   clearRules(wsId: string): void {
     this.ruleStore.clearRules(wsId);
+  }
+
+  private warnThrottled(key: string, fields: Record<string, unknown>, message: string): void {
+    const decision = this.warningThrottle.record(key);
+    if (!decision.emit) return;
+    log.warn({ ...fields, ...(decision.suppressed > 0 ? { suppressed: decision.suppressed } : {}) }, message);
   }
 
   private async handleConnection(socket: net.Socket): Promise<void> {
@@ -277,7 +285,7 @@ export class CredentialProxy {
     });
     tlsSocket.on("error", () => tlsSocket.destroy());
     tlsSocket.on("tlsClientError", (err) => {
-      log.debug({ err: String(err), hostname }, "TLS client error in MITM");
+      log.debug({ err, hostname }, "TLS client error in MITM");
       tlsSocket.destroy();
     });
 
@@ -346,7 +354,7 @@ export class CredentialProxy {
       try {
         raw = await collectBody(src, headers, remaining);
       } catch (err) {
-        log.debug({ err: String(err), hostname }, "request body read failed");
+        this.warnThrottled("request-body", { err, hostname }, "request body read failed");
         src.destroy();
         return;
       }
@@ -356,7 +364,7 @@ export class CredentialProxy {
       delete headers["transfer-encoding"];
       const req = startUpstream();
       req.on("error", (err) => {
-        log.debug({ err: String(err), hostname }, "upstream request error");
+        this.warnThrottled("upstream-request", { err, hostname }, "upstream request error");
         src.destroy();
       });
       req.end(body);
@@ -364,7 +372,7 @@ export class CredentialProxy {
       // No body, or too large to buffer — stream it through untouched (headers/path already done).
       const req = startUpstream();
       req.on("error", (err) => {
-        log.debug({ err: String(err), hostname }, "upstream request error");
+        this.warnThrottled("upstream-request", { err, hostname }, "upstream request error");
         src.destroy();
       });
       pipeBody(src, req, headers, remaining);

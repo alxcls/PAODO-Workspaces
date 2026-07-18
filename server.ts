@@ -4,10 +4,20 @@
 // (e.g. Next.js HMR) and plain HTTP requests are forwarded to Next.js as normal.
 
 import "dotenv/config";
+import { randomUUID } from "node:crypto";
 import { createServer } from "http";
-import { createLogger } from "./lib/infra/logger";
+import { createAuditLogger, createLogger } from "./lib/infra/logger";
 
 const log = createLogger("server");
+const audit = createAuditLogger("server");
+
+function fatal(reason: string, err: unknown): never {
+  log.fatal({ err, reason }, "process exiting after fatal error");
+  process.exit(1);
+}
+
+process.on("uncaughtException", (err) => fatal("uncaughtException", err));
+process.on("unhandledRejection", (err) => fatal("unhandledRejection", err));
 
 import next from "next";
 import { WebSocketServer } from "ws";
@@ -55,6 +65,7 @@ function setSecurityHeaders(res: import("http").ServerResponse): void {
 }
 
 const httpServer = createServer();
+httpServer.on("error", (err) => fatal("httpServer", err));
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const app = next({ dev, httpServer, port, webpack: true } as any);
@@ -63,6 +74,8 @@ const handle = app.getRequestHandler();
 httpServer.on("request", (req, res) => {
   const method = req.method ?? "GET";
   const url = req.url ?? "/";
+  const pathname = new URL(url, "http://localhost").pathname;
+  const requestId = randomUUID();
   const start = process.hrtime.bigint();
   let logged = false;
   const logRequest = () => {
@@ -70,7 +83,7 @@ httpServer.on("request", (req, res) => {
     logged = true;
     const durationNs = process.hrtime.bigint() - start;
     const durationMs = Number(durationNs) / 1_000_000;
-    const meta = { method, url, status: res.statusCode, durationMs, context: "http" };
+    const meta = { method, pathname, status: res.statusCode, durationMs, requestId, context: "http" };
     if (res.statusCode >= 500) log.error(meta, "http request");
     else if (res.statusCode >= 400) log.warn(meta, "http request");
     else if (!url.startsWith("/_next/") && !url.includes("/files/upload")) log.debug(meta, "http request");
@@ -79,13 +92,17 @@ httpServer.on("request", (req, res) => {
   res.once("close", logRequest);
 
   setSecurityHeaders(res);
+  res.setHeader("X-Request-Id", requestId);
+  req.headers["x-request-id"] = requestId;
 
-  const pathname = new URL(url, "http://localhost").pathname;
   const ip = getClientIp(req);
   if (pathname.startsWith("/api/")) {
     const rl = checkApiRateLimit(ip, method, pathname);
     if (!rl.ok) {
-      log.warn({ ip, method, pathname, policy: rl.policy, event: "api_rate_limited" }, "API rate limit exceeded");
+      audit.warn(
+        { ip, method, pathname, policy: rl.policy, requestId, event: "api_rate_limited" },
+        "API rate limit exceeded",
+      );
       res.writeHead(429, {
         "Retry-After": String(rl.retryAfter),
         "RateLimit-Limit": String(rl.limit),
@@ -98,19 +115,19 @@ httpServer.on("request", (req, res) => {
 
   const authResult = authenticate(ip, req);
   if (authResult === "blocked") {
-    log.warn({ ip, event: "auth_blocked" }, "auth blocked");
+    audit.warn({ ip, requestId, event: "auth_blocked" }, "auth blocked");
     res.writeHead(429, { "Retry-After": "60" });
     res.end("Too Many Requests");
     return;
   }
   if (authResult === "challenge") {
-    log.debug({ ip, event: "auth_challenge" }, "auth challenge");
+    audit.debug({ ip, requestId, event: "auth_challenge" }, "auth challenge");
     res.writeHead(401, { "WWW-Authenticate": 'Basic realm="App"' });
     res.end("Unauthorized");
     return;
   }
   if (authResult === "unauthorized") {
-    log.warn({ ip, event: "auth_unauthorized" }, "auth unauthorized");
+    audit.warn({ ip, requestId, event: "auth_unauthorized" }, "auth unauthorized");
     res.writeHead(401, { "WWW-Authenticate": 'Basic realm="App"' });
     res.end("Unauthorized");
     return;
@@ -118,11 +135,11 @@ httpServer.on("request", (req, res) => {
 
   if (req.headers["authorization"] && !authLoggedOnce) {
     authLoggedOnce = true;
-    log.info({ event: "auth_ok" }, "auth configured and working");
+    audit.info({ requestId, event: "auth_ok" }, "auth configured and working");
   }
 
   if (isCsrf({ method, pathname, secFetchSite: req.headers["sec-fetch-site"] as string | undefined })) {
-    log.warn({ ip, method, url, event: "csrf_blocked" }, "csrf blocked");
+    audit.warn({ ip, method, pathname, requestId, event: "csrf_blocked" }, "csrf blocked");
     res.writeHead(403);
     res.end("Forbidden");
     return;
@@ -136,16 +153,18 @@ const wss = new WebSocketServer({ noServer: true });
 httpServer.on("upgrade", (req, socket, head) => {
   const { pathname } = new URL(req.url ?? "", "http://localhost");
   if (pathname === "/ws") {
+    const requestId = randomUUID();
     const wsIp = getClientIp(req);
     const wsAuthResult = authenticate(wsIp, req);
     if (wsAuthResult === "blocked") {
-      log.warn({ ip: wsIp, event: "auth_blocked" }, "auth blocked");
+      audit.warn({ ip: wsIp, requestId, transport: "websocket", event: "auth_blocked" }, "auth blocked");
       socket.write("HTTP/1.1 429 Too Many Requests\r\nRetry-After: 60\r\n\r\n");
       socket.destroy();
       return;
     }
     if (wsAuthResult === "challenge" || wsAuthResult === "unauthorized") {
-      if (wsAuthResult === "unauthorized") log.warn({ ip: wsIp, event: "auth_unauthorized" }, "auth unauthorized");
+      if (wsAuthResult === "unauthorized")
+        audit.warn({ ip: wsIp, requestId, transport: "websocket", event: "auth_unauthorized" }, "auth unauthorized");
       socket.write('HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: Basic realm="App"\r\n\r\n');
       socket.destroy();
       return;
@@ -263,14 +282,18 @@ assertGitAvailable()
     // Fire workspace schedules on their recurrence (in-process tick loop). Started after boot so
     // the store/services are ready; missed slots from any downtime are skipped, not replayed.
     startScheduler();
-  });
+  })
+  .catch((err) => fatal("startup", err));
 
 function shutdown() {
   wss.close();
   stopScheduler();
   stopProxyReconciler();
   stopAllWatchers();
-  app.close().finally(() => process.exit(0));
+  app
+    .close()
+    .then(() => process.exit(0))
+    .catch((err) => fatal("shutdown", err));
 }
 
 process.on("SIGINT", shutdown);

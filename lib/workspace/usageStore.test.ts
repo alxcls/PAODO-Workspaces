@@ -179,4 +179,16 @@ describe("usageStore", () => {
     const all = store.listUsage();
     expect(all.map((r) => r.id)).toEqual(["2", "1"]);
   });
+
+  it("keeps the existing empty-history fallback when persisted JSONL is corrupt", async () => {
+    fs.rmSync(ROOT, { recursive: true, force: true });
+    fs.mkdirSync(ROOT, { recursive: true });
+    process.env.WORKSPACES_ROOT = ROOT;
+    fs.writeFileSync(FILE, "{not valid json}\n");
+    clearGlobalLog();
+    vi.resetModules();
+
+    const store = await import("./usageStore");
+    expect(store.listUsage()).toEqual([]);
+  });
 });

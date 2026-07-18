@@ -6,9 +6,10 @@ import path from "path";
 import { WORKSPACES_ROOT } from "../paths";
 import { atomicSaveJson, readJson } from "../jsonPersist";
 import { globalSingleton } from "../globalSingleton";
-import { createLogger } from "../logger";
+import { createAuditLogger, createLogger } from "../logger";
 
 const log = createLogger("apiKeys");
+const audit = createAuditLogger("apiKeys");
 
 const FILE = path.join(WORKSPACES_ROOT, ".api-keys.json");
 
@@ -38,26 +39,26 @@ function hashKey(plain: string): string {
 export function setKey(workspaceId: string, hash: string) {
   store[workspaceId] = { keyHash: hash, enabled: true };
   save();
-  log.info({ workspaceId }, "api key set");
+  audit.info({ workspaceId, event: "api_key_set" }, "api key set");
 }
 
 export function revokeKey(workspaceId: string) {
   if (store[workspaceId]) store[workspaceId].keyHash = null;
   save();
-  log.info({ workspaceId }, "api key revoked");
+  audit.info({ workspaceId, event: "api_key_revoked" }, "api key revoked");
 }
 
 export function deleteKey(workspaceId: string) {
   if (!(workspaceId in store)) return;
   delete store[workspaceId];
   save();
-  log.info({ workspaceId }, "api key deleted");
+  audit.info({ workspaceId, event: "api_key_deleted" }, "api key deleted");
 }
 
 export function setEnabled(workspaceId: string, enabled: boolean) {
   store[workspaceId] = { keyHash: store[workspaceId]?.keyHash ?? null, enabled };
   save();
-  log.info({ workspaceId, enabled }, "api key enabled state changed");
+  audit.info({ workspaceId, enabled, event: "api_key_enabled_changed" }, "api key enabled state changed");
 }
 
 export function getState(workspaceId: string): { keyHash: string | null; enabled: boolean } {
@@ -66,11 +67,6 @@ export function getState(workspaceId: string): { keyHash: string | null; enabled
 
 export function validateKey(workspaceId: string, plain: string): boolean {
   const { keyHash, enabled } = getState(workspaceId);
-  if (!enabled || !keyHash) {
-    log.warn({ workspaceId, reason: !enabled ? "disabled" : "no key set" }, "api key validation failed");
-    return false;
-  }
-  const ok = timingSafeEqual(Buffer.from(hashKey(plain)), Buffer.from(keyHash));
-  if (!ok) log.warn({ workspaceId }, "api key validation failed — bad key");
-  return ok;
+  if (!enabled || !keyHash) return false;
+  return timingSafeEqual(Buffer.from(hashKey(plain)), Buffer.from(keyHash));
 }

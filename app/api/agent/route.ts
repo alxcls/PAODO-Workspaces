@@ -5,12 +5,13 @@ import { type NextRequest } from "next/server";
 import { getStore, getContainers } from "@/lib/infra/services";
 import { validateKey } from "@/lib/infra/security/apiKeyStore";
 import { getClientIp } from "@/lib/infra/realtime/clientIp";
-import { createLogger } from "@/lib/infra/logger";
+import { createAuditLogger, createLogger } from "@/lib/infra/logger";
 import { makeAgentStream } from "@/lib/agent/agentStream";
 import { rateLimited, subjectRateLimited } from "@/lib/api/guards";
 
 export async function POST(req: NextRequest) {
   const log = createLogger("api").child({ route: "agent" });
+  const audit = createAuditLogger("api").child({ route: "agent" });
   const ip = getClientIp(req);
   const limited = rateLimited(req, { policy: "publicAgentIp", logContext: { route: "agent" } });
   if (limited) return limited;
@@ -25,7 +26,15 @@ export async function POST(req: NextRequest) {
   if (!ws) return new Response("Workspace not found", { status: 404 });
 
   if (!plain || !validateKey(ws.id, plain)) {
-    log.warn({ ip, workspace: body.workspace }, "unauthorized request");
+    audit.warn(
+      {
+        ip,
+        workspace: body.workspace,
+        requestId: req.headers.get("x-request-id") ?? undefined,
+        event: "api_auth_unauthorized",
+      },
+      "unauthorized request",
+    );
     return new Response("Unauthorized", { status: 401 });
   }
 

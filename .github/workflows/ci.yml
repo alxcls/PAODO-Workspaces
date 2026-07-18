@@ -18,6 +18,10 @@ jobs:
       - run: npm ci
       - run: npm run lint
       - run: npm run format:check
+      - run: npm run logs:inventory:check
+      # Validate the deployment model from the same .env.example a fresh install copies.
+      - run: cp .env.example .env
+      - run: docker compose config --quiet
       # Unit tests only — `npm test` excludes the Docker-backed integration tier
       # (vitest.integration.config.ts), keeping CI fast and self-contained.
       - run: npm test

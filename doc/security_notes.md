@@ -65,5 +65,5 @@ This is a single-user, self-hosted app accessed exclusively over a private Tails
 
 **Operational**
 
-- Security events (auth failures, rate-limit trips) logged to `/var/log/paodo/security.log` on the host — survives container restarts
+- Explicit audit events (auth failures, rate-limit trips, and credential lifecycle changes) are logged to `/var/log/paodo/security.log`; operational warnings use `app.log`/`credproxy.log`. Host logs survive container restarts, use restrictive permissions, and are bounded by the supplied logrotate policy.
 - Server refuses to start in production if `USERNAME` or `PASSWORD` are unset

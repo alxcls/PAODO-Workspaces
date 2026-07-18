@@ -80,7 +80,10 @@ function ensureLoaded(workspaceId: string): WorkspaceConversations {
   try {
     const raw = readFileSync(indexPath(workspaceId), "utf-8");
     s.metas = JSON.parse(raw) as ConversationMeta[];
-  } catch {
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+      log.error({ err, workspaceId, filePath: indexPath(workspaceId) }, "failed to load conversation index");
+    }
     s.metas = [];
   }
   s.activeId = s.metas[0]?.id ?? null;
@@ -163,7 +166,8 @@ export function getMessages(workspaceId: string, convId: string): BaseMessage[] 
       const raw = readFileSync(filePath(workspaceId, convId), "utf-8");
       const file = JSON.parse(raw) as ConversationFile;
       msgs = deserializeMessages(file.messages ?? []);
-    } catch {
+    } catch (err) {
+      log.error({ err, workspaceId, convId }, "failed to load conversation messages");
       msgs = [];
     }
     s.messages.set(convId, msgs);
@@ -186,7 +190,8 @@ export function getPersistedMessages(workspaceId: string, convId: string): BaseM
     const raw = readFileSync(filePath(workspaceId, convId), "utf-8");
     const file = JSON.parse(raw) as ConversationFile;
     return deserializeMessages(file.messages ?? []);
-  } catch {
+  } catch (err) {
+    log.error({ err, workspaceId, convId }, "failed to load persisted conversation messages");
     return [];
   }
 }

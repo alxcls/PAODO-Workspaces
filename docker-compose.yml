@@ -1,6 +1,29 @@
 name: paodo_ws
 
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
 services:
+  log-init:
+    image: paodo_ws_app
+    user: "0:0"
+    command:
+      - sh
+      - -c
+      - >-
+        mkdir -p /logs &&
+        touch /logs/app.log /logs/security.log /logs/credproxy.log &&
+        chown 1000:1000 /logs /logs/app.log /logs/security.log /logs/credproxy.log &&
+        chmod 0750 /logs &&
+        chmod 0600 /logs/app.log /logs/security.log /logs/credproxy.log
+    volumes:
+      - /var/log/paodo:/logs
+    restart: "no"
+    logging: *default-logging
+
   socket-proxy:
     image: tecnativa/docker-socket-proxy:0.3.0
     restart: unless-stopped
@@ -16,6 +39,7 @@ services:
       POST: 1
     networks:
       - socket_proxy_net
+    logging: *default-logging
 
   app:
     build:
@@ -30,6 +54,7 @@ services:
       - .env
     environment:
       - DOCKER_HOST=tcp://socket-proxy:2375
+      - OPERATIONAL_LOG_FILE=/logs/app.log
       - SECURITY_LOG_FILE=/logs/security.log
       - WORKSPACES_VOLUME_NAME=paodo_ws_workspaces
       - WORKSPACES_ROOT=/app/data
@@ -37,7 +62,10 @@ services:
       - workspaces:/app/data
       - /var/log/paodo:/logs # host bind mount — security logs survive container wipe
     depends_on:
-      - socket-proxy
+      log-init:
+        condition: service_completed_successfully
+      socket-proxy:
+        condition: service_started
     restart: unless-stopped
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -48,6 +76,7 @@ services:
     networks:
       - socket_proxy_net
       - app_net
+    logging: *default-logging
 
   # Credential-proxy sidecar. Runs ONLY the proxy (proxyEntry.ts) so the app never has to join a
   # per-workspace network — the app attaches THIS container to each wsnet at runtime, exposing only
@@ -64,8 +93,11 @@ services:
     environment:
       - WORKSPACES_ROOT=/app/data
       - CREDENTIAL_PROXY_PORT=9998
+      - OPERATIONAL_LOG_FILE=/logs/credproxy.log
+      - SECURITY_LOG_FILE=/logs/security.log
     volumes:
       - workspaces:/app/data:ro
+      - /var/log/paodo:/logs
     depends_on:
       - app
     restart: unless-stopped
@@ -75,6 +107,7 @@ services:
       - no-new-privileges:true
     networks:
       - credproxy_net
+    logging: *default-logging
 
 volumes:
   workspaces:

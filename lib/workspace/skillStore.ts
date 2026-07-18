@@ -54,7 +54,10 @@ export async function loadSkills(workspaceDir: string): Promise<SkillDefinition[
   let entries: string[];
   try {
     entries = await fsAsync.readdir(dir);
-  } catch {
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+      log.warn({ err, dir }, "failed to read skills directory — treating workspace as having no skills");
+    }
     return []; // no .skills/ directory — workspace declares no skills
   }
 

@@ -98,7 +98,7 @@ export class BackgroundTaskManager {
         "-c",
         `kill -KILL -${task.pgid} 2>/dev/null; rm -f ${TASK_DIR}/${taskId}.pid ${TASK_DIR}/${taskId}.cmd`,
       ])
-      .catch(() => {});
+      .catch((err) => log.warn({ err, workspaceId, taskId }, "failed to stop background task"));
     this.tasks.get(workspaceId)?.delete(taskId);
     return true;
   }
@@ -136,7 +136,10 @@ export class BackgroundTaskManager {
       `printf '%s\\t%s\\t%s\\n' "$id" "$pgid" "$cmd"; done`;
     const res = await this.docker
       .exec(containerName(workspaceId), ["/bin/bash", "-c", scan], { trimStdout: true })
-      .catch(() => null);
+      .catch((err) => {
+        log.warn({ err, workspaceId }, "failed to rehydrate background tasks");
+        return null;
+      });
     if (!res || res.code !== 0 || !res.stdout) return;
     const tasks = new Map<string, BackgroundTask>();
     for (const line of res.stdout.split("\n")) {

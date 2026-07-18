@@ -139,7 +139,10 @@ function readAllRecords(): TurnRecord[] {
       .split("\n")
       .filter((l) => l.trim())
       .map((l) => JSON.parse(l) as TurnRecord);
-  } catch {
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+      log.error({ err, filePath: FILE }, "failed to load usage store — using empty history");
+    }
     return [];
   }
 }

@@ -308,7 +308,7 @@ export class ContainerManager implements IContainerManager {
         // Fire-and-forget: kill the in-container process group, then drop the host-side client.
         this.docker
           .exec(name, ["/bin/bash", "-c", `kill -KILL -"$(cat ${pidFile} 2>/dev/null)" 2>/dev/null; rm -f ${pidFile}`])
-          .catch(() => {});
+          .catch((err) => log.warn({ err, workspaceId }, "failed to kill aborted foreground command inside container"));
         proc.kill("SIGKILL");
       };
 

@@ -8,9 +8,10 @@ import path from "path";
 import { WORKSPACES_ROOT } from "../paths";
 import { atomicSaveJson, readJson } from "../jsonPersist";
 import { globalSingleton } from "../globalSingleton";
-import { createLogger } from "../logger";
+import { createAuditLogger, createLogger } from "../logger";
 
 const log = createLogger("mcpConfig");
+const audit = createAuditLogger("mcpConfig");
 
 const FILE = path.join(WORKSPACES_ROOT, ".mcp-config.json");
 
@@ -58,7 +59,7 @@ export function getState(workspaceId: string): McpConfigEntry {
 export function setEnabled(workspaceId: string, enabled: boolean) {
   store[workspaceId] = { ...entry(workspaceId), enabled };
   save();
-  log.info({ workspaceId, enabled }, "workspace mcp enabled state changed");
+  audit.info({ workspaceId, enabled, event: "mcp_enabled_changed" }, "workspace mcp enabled state changed");
 }
 
 /** Mints (or rotates) the bearer secret and returns the plaintext once. Enables the MCP. */
@@ -66,7 +67,7 @@ export function mintSecret(workspaceId: string): string {
   const { plain, hash } = generateSecret();
   store[workspaceId] = { ...entry(workspaceId), secretHash: hash, enabled: true };
   save();
-  log.info({ workspaceId }, "workspace mcp secret minted");
+  audit.info({ workspaceId, event: "mcp_secret_minted" }, "workspace mcp secret minted");
   return plain;
 }
 
@@ -75,7 +76,7 @@ export function revokeSecret(workspaceId: string) {
     store[workspaceId] = { ...store[workspaceId], secretHash: null };
     save();
   }
-  log.info({ workspaceId }, "workspace mcp secret revoked");
+  audit.info({ workspaceId, event: "mcp_secret_revoked" }, "workspace mcp secret revoked");
 }
 
 export function setSelectedSkills(workspaceId: string, skillIds: string[]) {
@@ -84,14 +85,17 @@ export function setSelectedSkills(workspaceId: string, skillIds: string[]) {
   const cleaned = skillIds.filter((s) => typeof s === "string" && s && !seen.has(s) && seen.add(s));
   store[workspaceId] = { ...entry(workspaceId), selectedSkillIds: cleaned };
   save();
-  log.info({ workspaceId, count: cleaned.length }, "workspace mcp selected skills updated");
+  audit.info(
+    { workspaceId, count: cleaned.length, event: "mcp_selected_skills_updated" },
+    "workspace mcp selected skills updated",
+  );
 }
 
 export function deleteForWorkspace(workspaceId: string) {
   if (!(workspaceId in store)) return;
   delete store[workspaceId];
   save();
-  log.info({ workspaceId }, "workspace mcp config deleted");
+  audit.info({ workspaceId, event: "mcp_config_deleted" }, "workspace mcp config deleted");
 }
 
 /**
@@ -100,14 +104,6 @@ export function deleteForWorkspace(workspaceId: string) {
  */
 export function validateSecret(workspaceId: string, plain: string): boolean {
   const { enabled, secretHash } = entry(workspaceId);
-  if (!enabled || !secretHash) {
-    log.warn(
-      { workspaceId, reason: !enabled ? "disabled" : "no secret set" },
-      "workspace mcp secret validation failed",
-    );
-    return false;
-  }
-  const ok = timingSafeEqual(Buffer.from(hashSecret(plain)), Buffer.from(secretHash));
-  if (!ok) log.warn({ workspaceId }, "workspace mcp secret validation failed — bad secret");
-  return ok;
+  if (!enabled || !secretHash) return false;
+  return timingSafeEqual(Buffer.from(hashSecret(plain)), Buffer.from(secretHash));
 }

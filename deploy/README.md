@@ -275,22 +275,32 @@ Everything is line-delimited JSON, so `jq` works on all of it.
 Everything goes to container stdout — there is no log file on the host. Docker keeps 10 MB × 5
 files per service and rotates them for you.
 
+`--no-log-prefix` is required on every command piped into `jq`. Without it Compose prefixes each
+line with `app-1  | `, which is not JSON — `fromjson?` then discards the line and the filter returns
+nothing at all rather than failing.
+
 ```bash
 # Everything the app is doing, live. Use this first — errors, warnings and successful
 # requests all appear here.
-docker compose logs -f app | jq -R 'fromjson? // .'
-docker compose logs -f credproxy | jq -R 'fromjson? // .'
+docker compose logs -f --no-log-prefix app | jq -R 'fromjson? // .'
+docker compose logs -f --no-log-prefix credproxy | jq -R 'fromjson? // .'
 
 # Security events only: auth failures, rate-limit trips, credential lifecycle changes.
-docker compose logs app | jq -R 'fromjson? // empty | select(.audit)'
+docker compose logs --no-log-prefix app | jq -R 'fromjson? // empty | select(.audit)'
 
 # Who is failing to authenticate, and how often.
-docker compose logs app | jq -Rr 'fromjson? // empty | select(.event | startswith("auth_")) | "\(.ip) \(.event)"' \
+docker compose logs --no-log-prefix app \
+  | jq -Rr 'fromjson? // empty | select(.event | startswith("auth_")) | "\(.ip) \(.event)"' \
   | sort | uniq -c | sort -rn
 
 # Everything around an incident, newest last.
-docker compose logs --since 1h app | jq -R 'fromjson? // empty'
+docker compose logs --since 1h --no-log-prefix app | jq -R 'fromjson? // empty'
 ```
+
+A `suppressed: N` field means that line stands in for N more identical rejections in the same
+window. Rejection paths (rate limits, auth failures, CSRF blocks) are throttled because an
+unauthenticated caller controls how often they fire, and an unthrottled flood would rotate real
+history out of Docker's 50 MB window in minutes.
 
 Set `LOG_LEVEL` in `.env` to change verbosity (default `info`). Note it applies to audit events too,
 so raising it above `info` will hide the low-severity ones.

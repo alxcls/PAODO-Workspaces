@@ -1,4 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import fs, { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { tmpdir } from "node:os";
+import path from "node:path";
 
 const originalLogLevel = process.env.LOG_LEVEL;
 
@@ -9,10 +13,17 @@ beforeEach(() => {
   written = [];
   vi.stubEnv("NODE_ENV", "production");
   process.env.LOG_LEVEL = "info";
-  vi.spyOn(process.stdout, "write").mockImplementation((chunk) => {
-    written.push(JSON.parse(String(chunk)) as Record<string, unknown>);
-    return true;
-  });
+  // The logger writes through a synchronous pino destination (fs.writeSync on fd 1) rather than the
+  // process.stdout stream, so that a fatal record cannot be lost to an unflushed queue on exit.
+  // That makes fs.writeSync the capture point; intercept fd 1 only and let anything else through.
+  const realWriteSync = fs.writeSync.bind(fs);
+  vi.spyOn(fs, "writeSync").mockImplementation(((fd: number, data: unknown, ...rest: unknown[]) => {
+    if (fd !== 1) return (realWriteSync as (...a: unknown[]) => number)(fd, data, ...rest);
+    for (const line of String(data).split("\n").filter(Boolean)) {
+      written.push(JSON.parse(line) as Record<string, unknown>);
+    }
+    return String(data).length;
+  }) as typeof fs.writeSync);
   vi.resetModules();
 });
 
@@ -78,6 +89,29 @@ describe("logger", () => {
     expect(written[0].requestId).toBe("request-1");
     expect(written[1].requestId).toBeUndefined();
   });
+
+  // Regression: the logger used to write to process.stdout, which queues anything past the pipe
+  // buffer inside Node instead of blocking. server.ts's fatal() logs and calls process.exit(1)
+  // immediately, so the queue was discarded and the record explaining the crash never arrived —
+  // measured at 65,536 of 200,105 bytes in the production image. A synchronous destination has no
+  // queue to lose. Spawned for real because the failure only exists across a process boundary.
+  it("does not lose a record when the process exits immediately after writing", () => {
+    const script = path.join(mkdtempSync(path.join(tmpdir(), "paodo-logexit-")), "exit.ts");
+    const loggerModule = path.join(__dirname, "logger.ts");
+    writeFileSync(
+      script,
+      `import { createLogger } from ${JSON.stringify(loggerModule)};\n` +
+        `createLogger("test").fatal({ big: "x".repeat(200000) }, "process exiting");\n` +
+        `process.exit(1);\n`,
+    );
+
+    // stdio pipe, not inherit — a pipe is what a container's stdout is, and what truncated.
+    const { stdout } = spawnSync("npx", ["tsx", script], { encoding: "utf-8", stdio: "pipe" });
+    rmSync(path.dirname(script), { recursive: true, force: true });
+
+    expect(stdout.length).toBeGreaterThan(200_000);
+    expect(JSON.parse(stdout.trim().split("\n").at(-1)!).msg).toBe("process exiting");
+  }, 30_000);
 
   it("honours LOG_LEVEL", async () => {
     process.env.LOG_LEVEL = "error";

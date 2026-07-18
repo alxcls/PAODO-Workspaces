@@ -1,5 +1,5 @@
-// Shared pino logger. Call createLogger(context) for a child scoped to a module; use the exported
-// `logger` singleton for app-level messages.
+// Shared pino logger. Call createLogger(context) for a child scoped to a module, or
+// createAuditLogger(context) for one whose lines are tagged as security events.
 //
 // Everything goes to stdout as JSON and nothing is written to disk. Docker's json-file driver
 // (docker-compose.yml) already captures, caps and rotates stdout, so a durable log file would mean
@@ -53,10 +53,13 @@ const root = pino(
   // reachable from instrumentation.ts, Next tries to bundle it and the dev server fails every
   // request with "Can't resolve 'stream'". Pipe through `npm run dev | npx pino-pretty` instead.
   //
-  // Writing to process.stdout rather than pino's own fd-1 destination keeps writes synchronous on
-  // Linux pipes — which is what a container's stdout is — so a fatal error's last lines are on
-  // their way out before process.exit, with no flush plumbing to maintain.
-  process.stdout,
+  // sync: true, not process.stdout. A container's stdout is a pipe, and writing to a pipe stream
+  // queues anything past the ~64 KiB kernel buffer inside Node rather than blocking — so
+  // process.exit() in the fatal path discards the queue, losing the very line that explains the
+  // exit. Measured in this image: a 200 KB record through process.stdout arrives as 65,536 bytes,
+  // through a sync destination as all 200,105. fs.writeSync has no queue to lose, which also means
+  // no flush plumbing on the exit paths.
+  pino.destination({ fd: 1, sync: true }),
 );
 
 export function createLogger(context: string) {

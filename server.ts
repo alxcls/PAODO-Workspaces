@@ -7,6 +7,7 @@ import "dotenv/config";
 import { randomUUID } from "node:crypto";
 import { createServer } from "http";
 import { createAuditLogger, createLogger, runWithLogContext } from "./lib/infra/logger";
+import { throttleLog } from "./lib/infra/logThrottle";
 
 const log = createLogger("server");
 const audit = createAuditLogger("server");
@@ -78,16 +79,27 @@ httpServer.on("request", (req, res) => {
   const requestId = randomUUID();
   const start = process.hrtime.bigint();
   let logged = false;
+  // Set by the rejection paths below, which emit their own audit line. Without this a caller that
+  // keeps hammering an exhausted limit costs two lines per request instead of one.
+  let audited = false;
   const logRequest = () => {
     if (logged) return;
     logged = true;
+    // The audit record for a rejection carries everything this line would, plus the client address
+    // and the reason, and it is already throttled. Emitting both just doubles the flood.
+    if (audited) return;
     const durationNs = process.hrtime.bigint() - start;
     const durationMs = Number(durationNs) / 1_000_000;
     // `event` rather than a second `context` field: the child logger already binds context, and two
     // keys of the same name in one JSON object is malformed enough to break some readers.
     const meta = { method, pathname, status: res.statusCode, durationMs, requestId, event: "http_request" };
     if (res.statusCode >= 500) log.error(meta, "http request");
-    else if (res.statusCode >= 400) log.warn(meta, "http request");
+    // 429s from inside Next (the route-level limits in lib/api/guards.ts) are equally caller-driven,
+    // so they get the same throttle rather than a line each.
+    else if (res.statusCode === 429) {
+      const suppressed = throttleLog("http_rate_limited");
+      if (suppressed !== null) log.warn({ ...meta, suppressed }, "http request");
+    } else if (res.statusCode >= 400) log.warn(meta, "http request");
     // Successful requests are the baseline "is anything happening" signal, so they log at info and
     // reach Docker's output in production; at debug they were invisible there and nothing but errors
     // ever showed up. Static assets and upload chunks stay out — high volume, nothing to observe.
@@ -100,12 +112,21 @@ httpServer.on("request", (req, res) => {
   res.setHeader("X-Request-Id", requestId);
   req.headers["x-request-id"] = requestId;
 
+  // Rejection paths are reachable pre-auth, so an unauthenticated caller drives how often they log.
+  // Throttle them and mark the request audited, so one rejected request costs at most one line.
+  const auditRejection = (event: string, fields: Record<string, unknown>, msg: string) => {
+    audited = true;
+    const suppressed = throttleLog(event);
+    if (suppressed !== null) audit.warn({ ...fields, event, suppressed }, msg);
+  };
+
   const ip = getClientIp(req);
   if (pathname.startsWith("/api/")) {
     const rl = checkApiRateLimit(ip, method, pathname);
     if (!rl.ok) {
-      audit.warn(
-        { ip, method, pathname, policy: rl.policy, requestId, event: "api_rate_limited" },
+      auditRejection(
+        "api_rate_limited",
+        { ip, method, pathname, policy: rl.policy, requestId },
         "API rate limit exceeded",
       );
       res.writeHead(429, {
@@ -120,7 +141,7 @@ httpServer.on("request", (req, res) => {
 
   const authResult = authenticate(ip, req);
   if (authResult === "blocked") {
-    audit.warn({ ip, requestId, event: "auth_blocked" }, "auth blocked");
+    auditRejection("auth_blocked", { ip, requestId }, "auth blocked");
     res.writeHead(429, { "Retry-After": "60" });
     res.end("Too Many Requests");
     return;
@@ -132,7 +153,7 @@ httpServer.on("request", (req, res) => {
     return;
   }
   if (authResult === "unauthorized") {
-    audit.warn({ ip, requestId, event: "auth_unauthorized" }, "auth unauthorized");
+    auditRejection("auth_unauthorized", { ip, requestId }, "auth unauthorized");
     res.writeHead(401, { "WWW-Authenticate": 'Basic realm="App"' });
     res.end("Unauthorized");
     return;
@@ -144,7 +165,7 @@ httpServer.on("request", (req, res) => {
   }
 
   if (isCsrf({ method, pathname, secFetchSite: req.headers["sec-fetch-site"] as string | undefined })) {
-    audit.warn({ ip, method, pathname, requestId, event: "csrf_blocked" }, "csrf blocked");
+    auditRejection("csrf_blocked", { ip, method, pathname, requestId }, "csrf blocked");
     res.writeHead(403);
     res.end("Forbidden");
     return;
@@ -166,15 +187,23 @@ httpServer.on("upgrade", (req, socket, head) => {
     const requestId = randomUUID();
     const wsIp = getClientIp(req);
     const wsAuthResult = authenticate(wsIp, req);
+    // Same throttle as the HTTP rejections, and the same reason: an upgrade is just as cheap to
+    // repeat. The window is shared with the HTTP path — one flood, one line, whichever door it uses.
+    const auditWsRejection = (event: string, msg: string) => {
+      const suppressed = throttleLog(event);
+      if (suppressed !== null) {
+        audit.warn({ ip: wsIp, requestId, transport: "websocket", event, suppressed }, msg);
+      }
+    };
     if (wsAuthResult === "blocked") {
-      audit.warn({ ip: wsIp, requestId, transport: "websocket", event: "auth_blocked" }, "auth blocked");
+      auditWsRejection("auth_blocked", "auth blocked");
       socket.write("HTTP/1.1 429 Too Many Requests\r\nRetry-After: 60\r\n\r\n");
       socket.destroy();
       return;
     }
     if (wsAuthResult === "challenge" || wsAuthResult === "unauthorized") {
       if (wsAuthResult === "unauthorized") {
-        audit.warn({ ip: wsIp, requestId, transport: "websocket", event: "auth_unauthorized" }, "auth unauthorized");
+        auditWsRejection("auth_unauthorized", "auth unauthorized");
       }
       socket.write('HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: Basic realm="App"\r\n\r\n');
       socket.destroy();

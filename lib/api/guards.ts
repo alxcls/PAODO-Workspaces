@@ -21,6 +21,7 @@ import {
 } from "@/lib/infra/security/rateLimit";
 import { getClientIp } from "@/lib/infra/realtime/clientIp";
 import { createAuditLogger } from "@/lib/infra/logger";
+import { throttleLog } from "@/lib/infra/logThrottle";
 import { WorkspaceNameError } from "@/lib/workspace/workspaceName";
 
 /** The one and only "not found" body every route returns for a missing resource. */
@@ -54,7 +55,11 @@ const audit = createAuditLogger("api");
 /** Apply a route-level IP policy and return a standard 429 response when it is exhausted. */
 function rejection(rl: RateLimitResult, logContext: Record<string, unknown>, subject: string): Response | null {
   if (rl.ok) return null;
-  audit.warn({ ...logContext, subject, event: "rate_limited" }, "rate limit exceeded");
+  // Throttled: a caller that keeps calling after exhausting its limit is rejected here every time.
+  const suppressed = throttleLog("rate_limited");
+  if (suppressed !== null) {
+    audit.warn({ ...logContext, subject, event: "rate_limited", suppressed }, "rate limit exceeded");
+  }
   return new Response("Too Many Requests", {
     status: 429,
     headers: {

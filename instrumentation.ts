@@ -1,10 +1,10 @@
 import type { Instrumentation } from "next";
 
 // Next catches exceptions raised by route handlers and server rendering internally. The custom
-// HTTP server can see the resulting 500 status, but not the original exception; this hook preserves
-// that diagnostic in the durable operational log.
+// HTTP server can see the resulting 500 status, but not the original exception; this hook is what
+// gets that diagnostic into the log at all.
 //
-// Next also builds this module for Edge, where the filesystem-backed logger cannot resolve. The
+// Next also builds this module for Edge, where pino and node:async_hooks cannot resolve. The
 // import must therefore sit *inside* a positive `=== "nodejs"` branch: Next inlines NEXT_RUNTIME per
 // bundle, and webpack drops a dynamic import in a statically-false branch while it is parsing. The
 // equivalent early-return guard reads the same but does not work — the import stays reachable in the

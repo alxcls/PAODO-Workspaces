@@ -26,7 +26,8 @@ function LockedValue({ value, width }: { value: string; width: number }) {
 // Per-workspace LLM picker: provider + model + reasoning effort, persisted on the workspace via
 // PATCH /api/workspaces/:id. Provider and model lists come from /api/models (the code-owned model
 // catalog), so the models offered here are the ones the app maintains — to add or retire one, edit
-// lib/workspace/models.ts. A model still stored on a workspace after being retired stays selectable.
+// lib/workspace/models.ts. The provider list is narrowed to those with an API key set in .env. A
+// provider or model still stored on a workspace after dropping off either list stays selectable.
 
 export default function ModelBlock({ wsId }: { wsId: string }) {
   const [provider, setProvider] = useState<string>(DEFAULT.provider);
@@ -88,6 +89,10 @@ export default function ModelBlock({ wsId }: { wsId: string }) {
   // still stored on this workspace), so it stays selected until the user picks another.
   const modelOptions = model && !models.includes(model) ? [model, ...models] : models;
 
+  // Same for the provider: /api/models lists only providers with an API key configured, so a workspace
+  // selected before its key was removed from .env would otherwise render a blank dropdown.
+  const providerOptions = provider && !providers.includes(provider) ? [provider, ...providers] : providers;
+
   const save = async () => {
     if (!model.trim()) return;
     // Nothing changed — just leave edit mode without a needless PATCH.
@@ -130,7 +135,7 @@ export default function ModelBlock({ wsId }: { wsId: string }) {
                 setModel("");
               }}
             >
-              {providers.map((p) => (
+              {providerOptions.map((p) => (
                 <option key={p} value={p}>
                   {p}
                 </option>

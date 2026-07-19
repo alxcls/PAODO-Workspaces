@@ -5,6 +5,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import {
   anthropicThinkingConfig,
   buildModel,
+  configuredProviders,
   hasConfiguredProviderApiKey,
   SUPPORTED_PROVIDERS,
   providerApiKeyEnv,
@@ -100,6 +101,24 @@ describe("buildModel", () => {
 
   it("rejects a config with no model rather than constructing an unusable client", () => {
     expect(() => buildModel(config({ model: "" }))).toThrow(/no model selected/);
+  });
+});
+
+describe("configuredProviders", () => {
+  it("lists only providers whose key is set, so the picker can't offer an unauthenticated one", () => {
+    expect(configuredProviders({ ANTHROPIC_API_KEY: "sk-ant", DEEPSEEK_API_KEY: "sk-ds" })).toEqual([
+      "anthropic",
+      "deepseek",
+    ]);
+  });
+
+  it("treats blank and whitespace-only keys as unset", () => {
+    expect(configuredProviders({ OPENAI_API_KEY: " ", ANTHROPIC_API_KEY: "", DEEPSEEK_API_KEY: "\t" })).toEqual([]);
+  });
+
+  it("returns a subset of the supported providers", () => {
+    const all = configuredProviders({ ANTHROPIC_API_KEY: "k", OPENAI_API_KEY: "k", DEEPSEEK_API_KEY: "k" });
+    expect(all).toEqual(SUPPORTED_PROVIDERS);
   });
 });
 

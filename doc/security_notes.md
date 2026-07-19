@@ -66,4 +66,4 @@ This is a single-user, self-hosted app accessed exclusively over a private Tails
 **Operational**
 
 - Explicit audit events (auth failures, rate-limit trips, and credential lifecycle changes) are logged with an `audit: true` tag, alongside operational logs on container stdout, where Docker's `json-file` driver bounds and rotates them. Nothing is persisted to the host, so logs do not survive a container wipe — see `deploy/README.md` if that becomes a requirement.
-- Server refuses to start in production if `USERNAME` or `PASSWORD` are unset
+- Server refuses to start if `USERNAME` or `PASSWORD` are unset — every mode, no opt-out. Previously gated on `NODE_ENV`, which meant flipping a container to debug logging served every route unauthenticated.

@@ -72,8 +72,9 @@ describe("checkAuth", () => {
     tracker = new AuthFailureTracker();
   });
 
-  it("is disabled (allows all) when no credentials are configured", () => {
-    expect(checkAuth("ip", req({ pathname: "/anything" }), { user: "", pass: "" }, tracker)).toBe("ok");
+  // safeEqual("", "") is true, so unset credentials must fail closed before the comparison.
+  it("rejects unset credentials instead of matching them against an empty Basic header", () => {
+    expect(checkAuth("ip", req({ authorization: basic("", "") }), { user: "", pass: "" }, tracker)).toBe("unauthorized");
   });
 
   it("challenges when no Authorization header is present", () => {

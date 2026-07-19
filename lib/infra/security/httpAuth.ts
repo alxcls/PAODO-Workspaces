@@ -95,7 +95,9 @@ export function checkAuth(
   credentials: AuthCredentials,
   tracker: AuthFailureTracker,
 ): AuthResult {
-  if (!credentials.user || !credentials.pass) return "ok";
+  // Must reject before the comparison below: safeEqual("", "") is true, so `Basic Og==` would
+  // authenticate against unset credentials. server.ts also refuses to boot without them.
+  if (!credentials.user || !credentials.pass) return "unauthorized";
   if (tracker.isBlocked(ip)) return "blocked";
 
   // The agent endpoint authenticates via Bearer API key — exempt it from basic auth.

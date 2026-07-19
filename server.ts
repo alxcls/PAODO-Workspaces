@@ -295,10 +295,12 @@ wss.on("connection", (ws, req) => {
   });
 });
 
-if ((!UI_USER || !UI_PASS) && !dev) {
+// Unconditional by design. Gating this on NODE_ENV once meant a container flipped to debug logging
+// served every route unauthenticated.
+if (!UI_USER || !UI_PASS) {
   log.fatal(
     { event: "startup_credentials_missing", outcome: "process_exit" },
-    "USERNAME and PASSWORD must be set in production — refusing to start.",
+    "USERNAME and PASSWORD must be set — refusing to start. Copy .env.example to .env and set both.",
   );
   exitAfterLogs(1);
 }
@@ -355,7 +357,9 @@ if (!dev) {
 // Snapshots (workspace version history) shell out to the `git` binary, and those failures are
 // swallowed at runtime so a run never breaks. That makes a missing git invisible — which is exactly
 // how it silently disabled history in the production image once. Probe at boot: refuse to start in
-// production (like the Docker/credentials guards), warn in dev where snapshots are non-critical.
+// production (like the Docker guard), warn in dev where snapshots are non-critical. Unlike the
+// credentials guard above, staying gated on NODE_ENV is fine — missing history is a degraded feature,
+// not an open door.
 async function assertGitAvailable() {
   if (await getVersioning().isGitAvailable()) return;
   if (!dev) {

@@ -6,7 +6,7 @@ Each _workspace_ is an isolated Docker container running its own ReAct loop codi
 
 _Demo video of PAODO in action_ :
 
-[![PAODO Workspace demo video](https://img.youtube.com/vi/4nZ7X05ot4w/maxresdefault.jpg)](https://www.youtube.com/watch?v=4nZ7X05ot4w)
+[![PAODO Workspace demo video](https://img.youtube.com/vi/fxoLx7u8wSE/maxresdefault.jpg)](https://www.youtube.com/watch?v=fxoLx7u8wSE)
 
 ## Features
 

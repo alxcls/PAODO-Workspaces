@@ -309,7 +309,7 @@ export default function DashboardPage() {
               />
             </Link>
             <span className="font-semibold tracking-[-0.01em] text-lg leading-none inline-flex items-center">
-              PAODO WS agents
+              PAODO Workspace agents
             </span>
           </div>
         }

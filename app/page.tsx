@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import { useState, useEffect, useCallback } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import DescriptionBlock from "@/components/home/DescriptionBlock";
 import ApiAccessBlock from "@/components/home/ApiAccessBlock";
@@ -10,36 +10,10 @@ import ModelBlock from "@/components/home/ModelBlock";
 import EnvVarsBlock from "@/components/home/EnvVarsBlock";
 import McpBlock from "@/components/home/McpBlock";
 import TopBar from "@/components/layout/TopBar";
-
-interface WorkspaceItem {
-  id: string;
-  name: string;
-  createdAt: string;
-}
-
-interface TreeNode {
-  type: "file" | "directory";
-  children?: TreeNode[];
-}
-
-function countFiles(nodes: TreeNode[]): number {
-  let n = 0;
-  for (const node of nodes) {
-    if (node.type === "file") n++;
-    else n += countFiles(node.children ?? []);
-  }
-  return n;
-}
-
-/** Pull the server's `{ error }` message off a failed response, falling back to a generic message. */
-async function readErrorMessage(res: Response, fallback: string): Promise<string> {
-  try {
-    const body = (await res.json()) as { error?: string };
-    return body.error || fallback;
-  } catch {
-    return fallback;
-  }
-}
+import { useWorkspaces } from "@/lib/client/hooks/useWorkspaces";
+import { useWorkspaceDescription } from "@/lib/client/hooks/useWorkspaceDescription";
+import { useWorkspaceFileCount } from "@/lib/client/hooks/useWorkspaceFileCount";
+import { useAppConfig } from "@/lib/client/hooks/useAppConfig";
 
 function formatDate(iso: string) {
   try {
@@ -51,98 +25,27 @@ function formatDate(iso: string) {
 
 export default function HomePage() {
   const router = useRouter();
-  const [workspaces, setWorkspaces] = useState<WorkspaceItem[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+
+  const { workspaces, isCreating, create, rename, remove } = useWorkspaces();
+  const { description, save: saveDescription } = useWorkspaceDescription(selectedId);
+  const fileCount = useWorkspaceFileCount(selectedId);
+  const { graphEnabled } = useAppConfig();
+
+  // Form-local UI state: drafts and inline errors that live and die with the open form.
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [newName, setNewName] = useState("");
-  const [isCreating, setIsCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
-  const [fileCount, setFileCount] = useState<number | null>(null);
-  const [description, setDescription] = useState("");
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [renaming, setRenaming] = useState(false);
   const [renameDraft, setRenameDraft] = useState("");
   const [renameError, setRenameError] = useState<string | null>(null);
-  const [graphEnabled, setGraphEnabled] = useState(false);
-
-  const fetchWorkspaces = useCallback(async () => {
-    const res = await fetch("/api/workspaces");
-    if (res.ok) setWorkspaces((await res.json()) as WorkspaceItem[]);
-  }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-    fetch("/api/workspaces")
-      .then(async (res) => {
-        if (!res.ok) return;
-        const items = (await res.json()) as WorkspaceItem[];
-        if (!cancelled) setWorkspaces(items);
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  useEffect(() => {
-    fetch("/api/config")
-      .then((r) => r.json())
-      .then((cfg) => setGraphEnabled(cfg.graphEnabled ?? false))
-      .catch(() => {});
-  }, []);
 
   const selected = workspaces.find((w) => w.id === selectedId);
 
-  useEffect(() => {
-    if (!selectedId) return;
-    let cancelled = false;
-    fetch(`/api/workspaces/${selectedId}/files`)
-      .then((r) => r.json())
-      .then((data) => {
-        if (!cancelled) setFileCount(countFiles((data as { tree: TreeNode[] }).tree ?? []));
-      })
-      .catch(() => {
-        if (!cancelled) setFileCount(0);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [selectedId]);
-
-  useEffect(() => {
-    if (!selectedId) return;
-    let cancelled = false;
-    fetch(`/api/workspaces/${selectedId}`)
-      .then((r) => r.json())
-      .then((ws: { description?: string }) => {
-        if (!cancelled) setDescription(ws.description ?? "");
-      })
-      .catch(() => {
-        if (!cancelled) setDescription("");
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [selectedId]);
-
-  const handleDescriptionChange = async (next: string) => {
-    if (!selectedId) return;
-    const previous = description;
-    const normalized = next.trim();
-    setDescription(normalized);
-    const res = await fetch(`/api/workspaces/${selectedId}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ description: next }),
-    });
-    if (!res.ok) setDescription(previous);
-  };
-
+  // Description and file count reset themselves on every id change, so selecting only has to
+  // move the selection and close whatever was open for the previous workspace.
   const handleSelect = (id: string) => {
-    if (id !== selectedId) {
-      setFileCount(null);
-      setDescription("");
-    }
     setSelectedId(id);
     setConfirmDeleteId(null);
     setRenaming(false);
@@ -151,57 +54,34 @@ export default function HomePage() {
 
   const handleCreate = async () => {
     const name = newName.trim() || `workspace-${workspaces.length + 1}`;
-    setIsCreating(true);
     setCreateError(null);
-    try {
-      const res = await fetch("/api/workspaces", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name }),
-      });
-      if (res.ok) {
-        const ws = (await res.json()) as WorkspaceItem;
-        setNewName("");
-        setShowCreateForm(false);
-        await fetchWorkspaces();
-        setFileCount(null);
-        setDescription("");
-        setSelectedId(ws.id);
-      } else {
-        // Keep the form open so the user can fix the name (e.g. a duplicate or invalid name).
-        setCreateError(await readErrorMessage(res, "Failed to create workspace."));
-      }
-    } finally {
-      setIsCreating(false);
+    const result = await create(name);
+    if (!result.ok) {
+      // Keep the form open so the user can fix the name (e.g. a duplicate or invalid name).
+      setCreateError(result.error);
+      return;
     }
+    setNewName("");
+    setShowCreateForm(false);
+    setSelectedId(result.workspace.id);
   };
 
   const handleRename = async () => {
     if (!selectedId || !renameDraft.trim()) return;
     setRenameError(null);
-    const res = await fetch(`/api/workspaces/${selectedId}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: renameDraft.trim() }),
-    });
-    if (!res.ok) {
+    const result = await rename(selectedId, renameDraft.trim());
+    if (!result.ok) {
       // Keep the rename input open so the user can correct the name.
-      setRenameError(await readErrorMessage(res, "Failed to rename workspace."));
+      setRenameError(result.error);
       return;
     }
     setRenaming(false);
-    await fetchWorkspaces();
   };
 
   const handleDelete = async (id: string) => {
-    await fetch(`/api/workspaces/${id}`, { method: "DELETE" });
-    if (selectedId === id) {
-      setSelectedId(null);
-      setFileCount(null);
-      setDescription("");
-    }
+    if (selectedId === id) setSelectedId(null);
     setConfirmDeleteId(null);
-    await fetchWorkspaces();
+    await remove(id);
   };
 
   return (
@@ -448,7 +328,7 @@ export default function HomePage() {
               )}
 
               <div className="mt-9 mb-2 text-xs font-semibold uppercase tracking-[.08em] text-text-3">Description</div>
-              <DescriptionBlock key={`desc-${selected.id}`} value={description} onChange={handleDescriptionChange} />
+              <DescriptionBlock key={`desc-${selected.id}`} value={description} onChange={saveDescription} />
               <ApiAccessBlock key={`api-${selected.id}`} wsId={selected.id} />
               <McpBlock key={`mcp-${selected.id}`} wsId={selected.id} />
               <AgentLoopBlock key={`loop-${selected.id}`} wsId={selected.id} />

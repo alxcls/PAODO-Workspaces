@@ -66,11 +66,17 @@ services:
     image: paodo_ws_app
     container_name: paodo_ws_credproxy
     command: ["npx", "tsx", "proxyEntry.ts"]
-    env_file:
-      - .env
+    # No env_file: .env here — unlike the app, the sidecar reads only the four vars below (its whole
+    # import graph: proxyEntry.ts + lib/infra/{paths,logger}.ts). Inheriting the app's .env would put
+    # ANTHROPIC/OPENAI/DEEPSEEK keys + admin PASSWORD/USERNAME into the one container the untrusted
+    # sandbox can reach, for no functional reason. The secret-store encryption key is read from a FILE
+    # (data/.proxy-ca/secrets-enc.key), not env, so dropping .env does not affect decryption.
     environment:
       - WORKSPACES_ROOT=/app/data
       - CREDENTIAL_PROXY_PORT=9998
+      # Pin explicitly: without NODE_ENV the logger treats the sidecar as dev and logs at debug.
+      - NODE_ENV=production
+      - LOG_LEVEL=${LOG_LEVEL:-info}
     volumes:
       - workspaces:/app/data:ro
     depends_on:

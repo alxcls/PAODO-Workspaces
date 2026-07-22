@@ -11,6 +11,7 @@ describe("models catalog", () => {
   it("lists a provider's models from the curated catalog", () => {
     expect(listModels("anthropic")).toContain("claude-opus-4-8");
     expect(listModels("deepseek")).toContain("deepseek-v4-pro");
+    expect(listModels("moonshot")).toContain("kimi-k3");
   });
 
   it("returns an empty list for an unknown provider", () => {
@@ -39,6 +40,8 @@ describe("models catalog", () => {
       "xhigh",
     ]);
     expect(getProviderMetadata("deepseek").reasoningEfforts).toEqual([]);
+    // Kimi K3 accepts low|high|max — no medium, and it always thinks, so none/minimal aren't offered.
+    expect(getProviderMetadata("moonshot").reasoningEfforts).toEqual(["low", "high", "max"]);
   });
 
   it("has a resolvable price for every offered model", () => {

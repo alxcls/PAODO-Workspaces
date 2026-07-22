@@ -206,12 +206,16 @@ function usageTokens(chunk: AIMessageChunk | null) {
     inputTokens: chunk?.usage_metadata?.input_tokens ?? 0,
     outputTokens: chunk?.usage_metadata?.output_tokens ?? 0,
     reasoningTokens: chunk?.usage_metadata?.output_token_details?.reasoning ?? 0,
-    // DeepSeek exposes cache hits in prompt_cache_hit_tokens (top-level usage), not
-    // prompt_tokens_details.cached_tokens, so LangChain's OpenAI adapter misses it.
+    // DeepSeek exposes cache hits in prompt_cache_hit_tokens and Moonshot in cached_tokens — both at
+    // the TOP level of usage, not in prompt_tokens_details.cached_tokens where LangChain's OpenAI
+    // adapter looks, so it misses them. Left unread, a cache hit is billed as fresh input: on Kimi K3
+    // that is $3.00/Mtok instead of $0.30, a 10x overstatement on a mostly-cached agent turn.
     cachedInputTokens:
       chunk?.usage_metadata?.input_token_details?.cache_read ??
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (chunk?.response_metadata as any)?.usage?.prompt_cache_hit_tokens ??
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (chunk?.response_metadata as any)?.usage?.cached_tokens ??
       0,
     cacheCreationTokens: chunk?.usage_metadata?.input_token_details?.cache_creation ?? 0,
   };

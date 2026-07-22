@@ -4,7 +4,7 @@
 import { useState, useRef, useEffect } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { useAgentStream, toolLabel, type Message } from "@/lib/client/hooks/useAgentStream";
+import { useAgentStream, toolLabel } from "@/lib/client/hooks/useAgentStream";
 import type { InitialConversation } from "@/lib/client/hooks/useConversations";
 
 const mdComponents: Components = {
@@ -55,11 +55,8 @@ export default function ChatPanel({
   // always re-fetch — the payload can go stale once the conversation is used.
   const consumedInitialRef = useRef<string | null>(null);
 
-  const { messages, streaming, pendingTools, sendMessage, attachLive, hydrate, reset, detach, stop } = useAgentStream(
-    workspaceId,
-    conversationId,
-    { onTurnComplete: onAgentTurnComplete },
-  );
+  const { messages, streaming, pendingTools, sendMessage, attachLive, loadConversation, hydrate, reset, detach, stop } =
+    useAgentStream(workspaceId, conversationId, { onTurnComplete: onAgentTurnComplete });
 
   useEffect(() => {
     if (!pinnedRef.current) return;
@@ -88,29 +85,18 @@ export default function ChatPanel({
       reset();
       return;
     }
-    let cancelled = false;
     // Fast path: the inline payload that came with the conversation list, used once on first paint.
     if (initialConversation?.id === conversationId && consumedInitialRef.current !== conversationId) {
       consumedInitialRef.current = conversationId;
       hydrate(initialConversation.transcript);
       if (initialConversation.running) attachLive(initialConversation.userInput);
-      return () => {
-        cancelled = true;
-        detach();
-      };
+      return detach;
     }
-    (async () => {
-      const res = await fetch(`/api/workspaces/${workspaceId}/conversations/${conversationId}`);
-      if (cancelled || !res.ok) return;
-      const data = (await res.json()) as { transcript: Message[]; running: boolean; userInput: string | null };
-      hydrate(data.transcript);
-      if (data.running) attachLive(data.userInput);
-    })();
-    return () => {
-      cancelled = true;
-      detach();
-    };
-  }, [workspaceId, conversationId, hydrate, attachLive, reset, detach, initialConversation]);
+    // Stale-response guarding lives inside the hook now, keyed off the same detach() that runs here
+    // on switch — so an in-flight load can no longer paint into the wrong conversation.
+    loadConversation();
+    return detach;
+  }, [workspaceId, conversationId, hydrate, attachLive, loadConversation, reset, detach, initialConversation]);
 
   useEffect(() => {
     if (!streaming) return;
@@ -200,6 +186,13 @@ export default function ChatPanel({
             return (
               <div key={i} className="font-mono text-[12.5px] leading-[1.4] text-text-3 px-0.5 py-1">
                 ⚠ Iteration limit reached — response may be incomplete.
+              </div>
+            );
+          }
+          if (m.role === "disconnected") {
+            return (
+              <div key={i} className="font-mono text-[12.5px] leading-[1.4] text-text-3 px-0.5 py-1">
+                ⌁ Connection interrupted — reconnecting. The agent is still working.
               </div>
             );
           }

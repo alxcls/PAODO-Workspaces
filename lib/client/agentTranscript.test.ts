@@ -11,6 +11,8 @@ import {
   upsertAssistantText,
   upsertReasoningText,
   markAllToolsDone,
+  appendDisconnected,
+  clearDisconnected,
   toolLabel,
 } from "./agentTranscript";
 
@@ -242,6 +244,50 @@ describe("applyDiscreteEvent", () => {
     expect(applyDiscreteEvent(emptyTranscript(), { type: "error", message: "boom" }).messages).toEqual([
       { role: "error", content: "boom" },
     ]);
+  });
+});
+
+// A dropped viewer connection is transient: the run is server-owned and keeps going, so the notice
+// has to survive repeated reconnect attempts without stacking, and disappear once resolved.
+describe("disconnected notice", () => {
+  it("appends a notice", () => {
+    expect(appendDisconnected([{ role: "assistant", content: "hi" }])).toEqual([
+      { role: "assistant", content: "hi" },
+      { role: "disconnected" },
+    ]);
+  });
+
+  // Each failed reconnect attempt re-appends; the transcript must not fill with notices.
+  it("does not stack notices across repeated attempts", () => {
+    let messages = appendDisconnected([{ role: "user", content: "go" }]);
+    messages = appendDisconnected(messages);
+    messages = appendDisconnected(messages);
+    expect(messages.filter((m) => m.role === "disconnected")).toHaveLength(1);
+  });
+
+  // Only a trailing notice is the live one — an older notice mid-transcript (from an earlier drop
+  // that recovered) must not suppress a new one.
+  it("appends again when the notice is no longer the last message", () => {
+    const recovered: Message[] = [{ role: "disconnected" }, { role: "assistant", content: "answer" }];
+    expect(appendDisconnected(recovered).filter((m) => m.role === "disconnected")).toHaveLength(2);
+  });
+
+  it("clears every notice, leaving the rest untouched", () => {
+    const messages: Message[] = [
+      { role: "user", content: "go" },
+      { role: "disconnected" },
+      { role: "assistant", content: "answer" },
+      { role: "disconnected" },
+    ];
+    expect(clearDisconnected(messages)).toEqual([
+      { role: "user", content: "go" },
+      { role: "assistant", content: "answer" },
+    ]);
+  });
+
+  it("is a no-op on a transcript with no notices", () => {
+    const messages: Message[] = [{ role: "assistant", content: "answer" }];
+    expect(clearDisconnected(messages)).toEqual(messages);
   });
 });
 

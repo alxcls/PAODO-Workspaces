@@ -16,13 +16,7 @@ import { loadAgentConfig } from "@/lib/agent/buildTools";
 import { setSystemPrompt } from "@/lib/agent/messageSerialization";
 import * as conversations from "@/lib/workspace/conversationStore";
 import * as broker from "@/lib/agent/runBroker";
-
-const SSE_HEADERS = {
-  "Content-Type": "text/event-stream",
-  "Cache-Control": "no-cache, no-transform",
-  Connection: "keep-alive",
-  "X-Accel-Buffering": "no",
-} as const;
+import { SSE_HEADERS, startKeepalive } from "@/lib/agent/sse";
 
 function apiConversationStream(req: NextRequest, workspaceId: string, conversationId: string): Response {
   const encoder = new TextEncoder();
@@ -32,12 +26,17 @@ function apiConversationStream(req: NextRequest, workspaceId: string, conversati
       let response = "";
       let limitReached = false;
       let failure: Extract<AgentEvent, { type: "error" }> | undefined;
+      // This stream is quieter than the UI's: tokens are accumulated rather than forwarded, so a
+      // long run may send nothing at all between tool_start frames. Without a keepalive the caller
+      // (or a proxy in front of it) drops the connection long before the run finishes.
+      const stopKeepalive = startKeepalive(controller, encoder);
       const send = (event: object) => {
         if (!closed) controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
       };
       const close = () => {
         if (closed) return;
         closed = true;
+        stopKeepalive();
         sub?.unsubscribe();
         try {
           controller.close();

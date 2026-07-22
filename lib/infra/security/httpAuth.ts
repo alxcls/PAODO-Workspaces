@@ -60,12 +60,16 @@ const PUBLIC_API_RE = /^\/api\/workspaces\/[^/]+\/agent$/;
 const PUBLIC_MCP_RE = /^\/api\/workspaces\/[^/]+\/mcp$/;
 const MUTATING_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
-export type AuthResult = "ok" | "challenge" | "unauthorized" | "blocked";
+// "ok" means, and only means, that Basic credentials were presented and verified. Routes that carry
+// their own Bearer credential return "exempt": also a pass, but nothing about the caller has been
+// proven here. Callers must not treat the two as interchangeable when handing out anything that
+// grants access later — see the mint site in server.ts.
+export type AuthResult = "ok" | "exempt" | "challenge" | "unauthorized" | "blocked";
 export type AuthCredentials = { user: string; pass: string };
 
 // The primitives checkAuth/isCsrf need off a request — extracted so the core logic never touches
 // Node's http types and can be unit-tested with plain objects.
-export type AuthRequest = { method: string; pathname: string; authorization: string };
+export type AuthRequest = { method: string; pathname: string; authorization: string; cookie: string };
 
 export function authRequestFromIncoming(req: IncomingMessage): AuthRequest {
   const url = new URL(req.url ?? "/", "http://localhost");
@@ -73,6 +77,7 @@ export function authRequestFromIncoming(req: IncomingMessage): AuthRequest {
     method: req.method ?? "GET",
     pathname: url.pathname,
     authorization: req.headers["authorization"] ?? "",
+    cookie: req.headers["cookie"] ?? "",
   };
 }
 
@@ -101,9 +106,9 @@ export function checkAuth(
   if (tracker.isBlocked(ip)) return "blocked";
 
   // The agent endpoint authenticates via Bearer API key — exempt it from basic auth.
-  if (req.method === "POST" && PUBLIC_API_RE.test(req.pathname)) return "ok";
+  if (req.method === "POST" && PUBLIC_API_RE.test(req.pathname)) return "exempt";
   // The Workspace MCP endpoint authenticates via its own Bearer secret — exempt all methods.
-  if (PUBLIC_MCP_RE.test(req.pathname)) return "ok";
+  if (PUBLIC_MCP_RE.test(req.pathname)) return "exempt";
 
   const auth = req.authorization;
   if (!auth.startsWith("Basic ")) {
@@ -128,6 +133,25 @@ export function checkAuth(
 
   tracker.recordFailure(ip);
   return "unauthorized";
+}
+
+// Auth for the /ws upgrade. Basic is tried first so Chrome and Firefox — which do reuse the cached
+// credentials on a same-origin handshake — keep authenticating exactly as before, and so a failed
+// Basic attempt still feeds the brute-force tracker. The session cookie is the fallback for browsers
+// that send no Authorization at all on an upgrade (WebKit); it is minted only after Basic succeeded
+// on an earlier HTTP request, so it proves the same thing one hop removed.
+//
+// "exempt" is not accepted here: the Bearer-authenticated routes are HTTP-only and never upgrade.
+export function checkWsAuth(
+  ip: string,
+  req: AuthRequest,
+  credentials: AuthCredentials,
+  tracker: AuthFailureTracker,
+  verifyCookie: (cookieHeader: string) => boolean,
+): AuthResult {
+  const result = checkAuth(ip, req, credentials, tracker);
+  if (result === "ok" || result === "blocked") return result;
+  return verifyCookie(req.cookie) ? "ok" : result;
 }
 
 // CSRF guard: browsers attach cached Basic Auth to cross-origin requests too. Browsers always send

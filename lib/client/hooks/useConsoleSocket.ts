@@ -6,6 +6,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { isWsConnectionStale, wsReconnectDelayMs } from "@/lib/client/wsReconnect";
 
 export interface ConsoleLine {
   type: "stdout" | "stderr" | "info" | "tool";
@@ -42,6 +43,11 @@ export function useConsoleSocket(workspaceId: string) {
     let ws: WebSocket | null = null;
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
     let pingInterval: ReturnType<typeof setInterval> | null = null;
+    // Consecutive failures, reset on a successful open — see lib/client/wsReconnect.ts.
+    let attempt = 0;
+    // The stale advice is printed once per outage, not on every retry, so a long disconnect does not
+    // fill the buffer with copies of itself.
+    let staleNoticeShown = false;
 
     function connect() {
       if (cancelled) return;
@@ -52,6 +58,8 @@ export function useConsoleSocket(workspaceId: string) {
 
       socket.onopen = () => {
         setConnected(true);
+        attempt = 0;
+        staleNoticeShown = false;
         appendLine({ type: "info", text: `Connected to workspace ${workspaceId}` });
         pingInterval = setInterval(() => {
           if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: "ping" }));
@@ -65,8 +73,21 @@ export function useConsoleSocket(workspaceId: string) {
           pingInterval = null;
         }
         if (!cancelled && ws === socket) {
-          appendLine({ type: "info", text: "WebSocket disconnected. Reconnecting in 2s…" });
-          reconnectTimer = setTimeout(connect, 2_000);
+          attempt += 1;
+          const delay = wsReconnectDelayMs(attempt);
+          if (isWsConnectionStale(attempt) && !staleNoticeShown) {
+            staleNoticeShown = true;
+            // The likely cause at this point is a credential the browser can no longer present —
+            // the /ws session cookie does not survive a server restart — and no amount of retrying
+            // fixes that. A reload re-mints it from the cached Basic credentials.
+            appendLine({ type: "stderr", text: "Still disconnected — reload the page to reconnect." });
+          } else {
+            appendLine({
+              type: "info",
+              text: `WebSocket disconnected. Reconnecting in ${Math.round(delay / 1000)}s…`,
+            });
+          }
+          reconnectTimer = setTimeout(connect, delay);
         }
       };
 

@@ -35,10 +35,12 @@ import {
   AuthFailureTracker,
   authRequestFromIncoming,
   checkAuth,
+  checkWsAuth,
   getClientIp,
   isCsrf,
   type AuthResult,
 } from "./lib/infra/security/httpAuth";
+import { mintSessionCookie, sessionCookieNeedsRefresh, verifySessionCookie } from "./lib/infra/security/wsSession";
 import { buildSecurityHeaders } from "./lib/infra/security/securityHeaders";
 import { startScheduler, stopScheduler } from "./lib/infra/schedules/scheduler";
 import { startProxyReconciler, stopProxyReconciler } from "./lib/infra/docker/proxyReconciler";
@@ -73,6 +75,12 @@ let authLoggedOnce = false;
 // Thin adapter: extract the request primitives and delegate to the testable checkAuth.
 function authenticate(ip: string, req: import("http").IncomingMessage): AuthResult {
   return checkAuth(ip, authRequestFromIncoming(req), credentials, authFailures);
+}
+
+// Same adapter for the /ws upgrade, which additionally accepts the session cookie because no browser
+// can put Basic credentials on a handshake and WebKit does not reuse the cached ones.
+function authenticateWs(ip: string, req: import("http").IncomingMessage): AuthResult {
+  return checkWsAuth(ip, authRequestFromIncoming(req), credentials, authFailures, verifySessionCookie);
 }
 
 function setSecurityHeaders(res: import("http").ServerResponse): void {
@@ -187,6 +195,14 @@ httpServer.on("request", (req, res) => {
     audit.info({ requestId, event: "auth_ok" }, "auth configured and working");
   }
 
+  // Mint the /ws session cookie — only on "ok", never on "exempt". The exempt routes are the two
+  // Bearer-authenticated endpoints that deploy/Caddyfile.workspace-api publishes on the DNS-direct
+  // public host, and checkAuth passes them without inspecting any credential. Minting there would
+  // hand a working UI session to anyone who can reach that hostname.
+  if (authResult === "ok" && sessionCookieNeedsRefresh(req.headers["cookie"])) {
+    res.setHeader("Set-Cookie", mintSessionCookie({ isProduction: process.env.NODE_ENV === "production" }));
+  }
+
   if (isCsrf({ method, pathname, secFetchSite: req.headers["sec-fetch-site"] as string | undefined })) {
     auditRejection("csrf_blocked", { ip, method, pathname, requestId }, "csrf blocked");
     res.writeHead(403);
@@ -211,7 +227,7 @@ httpServer.on("upgrade", (req, socket, head) => {
   if (pathname === "/ws") {
     const requestId = randomUUID();
     const wsIp = getClientIp(req);
-    const wsAuthResult = authenticate(wsIp, req);
+    const wsAuthResult = authenticateWs(wsIp, req);
     // Same throttle as the HTTP rejections, and the same reason: an upgrade is just as cheap to
     // repeat. The window is shared with the HTTP path — one flood, one line, whichever door it uses.
     const auditWsRejection = (event: string, msg: string) => {
@@ -227,9 +243,13 @@ httpServer.on("upgrade", (req, socket, head) => {
       return;
     }
     if (wsAuthResult === "challenge" || wsAuthResult === "unauthorized") {
-      if (wsAuthResult === "unauthorized") {
-        auditWsRejection("auth_unauthorized", "auth unauthorized");
-      }
+      // Both cases audit. A rejected upgrade used to be logged only when credentials were malformed,
+      // so the common failure — no credential at all, which is every Safari handshake before the
+      // session cookie existed — left no server-side trace at all.
+      auditWsRejection(
+        wsAuthResult === "unauthorized" ? "auth_unauthorized" : "auth_challenge",
+        wsAuthResult === "unauthorized" ? "auth unauthorized" : "auth challenge",
+      );
       // Deliberately NO WWW-Authenticate here, unlike the HTTP rejections above. A browser cannot
       // attach an Authorization header to a WebSocket handshake, and WebKit — unlike Chrome and
       // Firefox — does not reuse the cached Basic credentials for it either. Sending a challenge

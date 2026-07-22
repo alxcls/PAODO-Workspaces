@@ -19,6 +19,8 @@ import {
   upsertAssistantText,
   upsertReasoningText,
   markAllToolsDone,
+  appendDisconnected,
+  clearDisconnected,
 } from "../agentTranscript";
 
 export type { Message };
@@ -28,11 +30,38 @@ interface Options {
   onTurnComplete?: () => void;
 }
 
+// How one pass over the SSE stream ended, which decides whether reconnecting is the right move:
+//   ok       — the stream closed normally after `done`
+//   aborted  — this viewer detached on purpose (tab switch / conversation change); not a failure
+//   dropped  — the connection died mid-stream. The run is server-owned and almost certainly still
+//              going, so this is recoverable and must not be reported as a failed turn.
+//   failed   — the request itself never landed; nothing is streaming and there is nothing to resume
+type StreamOutcome = "ok" | "aborted" | "dropped" | "failed";
+
+// Pause before each reconnect attempt. A dropped viewer is usually a blip (proxy idle-drop, wifi
+// switch, laptop wake), so back off briefly and rebuild rather than failing the turn outright.
+const RECONNECT_DELAYS_MS = [2_000, 4_000, 8_000];
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+interface ConversationSnapshot {
+  transcript: Message[];
+  running: boolean;
+  userInput: string | null;
+}
+
 export function useAgentStream(workspaceId: string, conversationId: string | null, { onTurnComplete }: Options = {}) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [streaming, setStreaming] = useState(false);
+  // True only while backing off between reconnect attempts. Folded into the exposed `streaming` so
+  // the composer stays disabled during the gap: the run is still going server-side, and a message
+  // sent into that window would only earn a 409 and strand the user's bubble.
+  const [reconnecting, setReconnecting] = useState(false);
   const [pendingTools, setPendingTools] = useState(0);
   const abortRef = useRef<AbortController | null>(null);
+  // Bumped by detach() so an in-flight reconnect loop can tell that the viewer moved on (tab
+  // switch, conversation change) and stop rebuilding a transcript nobody is looking at.
+  const genRef = useRef(0);
   const pendingTokenRef = useRef<string | null>(null);
   const pendingReasoningRef = useRef<string | null>(null);
   const tokenRafRef = useRef<number | null>(null);
@@ -80,7 +109,7 @@ export function useAgentStream(workspaceId: string, conversationId: string | nul
   // Shared SSE pump for both send and attach. `userBubble`, when given, is appended before the
   // stream opens (the user's own message echo).
   const consume = useCallback(
-    async (body: object, userBubble?: string) => {
+    async (body: object, userBubble?: string): Promise<StreamOutcome> => {
       if (userBubble !== undefined) {
         commit({
           ...transcriptRef.current,
@@ -94,6 +123,7 @@ export function useAgentStream(workspaceId: string, conversationId: string | nul
       let assistantContent = "";
       let reasoningContent = "";
       let wasAborted = false;
+      let outcome: StreamOutcome = "ok";
 
       try {
         abortRef.current = new AbortController();
@@ -105,13 +135,10 @@ export function useAgentStream(workspaceId: string, conversationId: string | nul
         });
 
         if (!res.ok || !res.body) {
-          if (res.status !== 409) {
-            commit({
-              ...transcriptRef.current,
-              messages: [...transcriptRef.current.messages, { role: "error", content: "Failed to reach server." }],
-            });
-          }
-          return;
+          // 409 means a run is already in progress for this conversation — not an error worth
+          // showing. Anything else means the request never landed, so there is nothing to resume.
+          outcome = res.status === 409 ? "ok" : "failed";
+          return outcome;
         }
 
         for await (const event of parseSseStream<AgentEvent>(res.body)) {
@@ -149,11 +176,11 @@ export function useAgentStream(workspaceId: string, conversationId: string | nul
       } catch (err) {
         if (err instanceof DOMException && err.name === "AbortError") {
           wasAborted = true;
+          outcome = "aborted";
         } else {
-          commit({
-            ...transcriptRef.current,
-            messages: [...transcriptRef.current.messages, { role: "error", content: "Failed to reach server." }],
-          });
+          // The feed died, not the run. Leave the transcript untouched and let the caller try to
+          // rebuild it — reporting a failure here would be wrong for a run that is still going.
+          outcome = "dropped";
         }
       } finally {
         if (tokenRafRef.current) {
@@ -174,16 +201,81 @@ export function useAgentStream(workspaceId: string, conversationId: string | nul
         setPendingTools(0);
         if (!wasAborted) onTurnCompleteRef.current?.();
       }
+      return outcome;
     },
     [workspaceId, commit, flushToken, flushReasoning],
+  );
+
+  // The conversation's saved history plus whether a run is still in flight.
+  const fetchSnapshot = useCallback(async (): Promise<ConversationSnapshot | null> => {
+    if (!conversationId) return null;
+    try {
+      const res = await fetch(`/api/workspaces/${workspaceId}/conversations/${conversationId}`);
+      if (!res.ok) return null;
+      return (await res.json()) as ConversationSnapshot;
+    } catch {
+      return null; // still unreachable; the caller decides whether to try again
+    }
+  }, [workspaceId, conversationId]);
+
+  // Render a conversation and, if its run is still going, watch it live. This exact order is what
+  // makes reconnecting safe: hydrate() replaces the transcript with the server's saved history
+  // (which, mid-run, is the history from *before* the run), so the broker's replay of everything
+  // since the run started rebuilds the live portion instead of duplicating what is already on
+  // screen. Used for both the initial load and every reconnect.
+  const openSnapshot = useCallback(
+    async (snapshot: ConversationSnapshot): Promise<StreamOutcome> => {
+      hydrate(snapshot.transcript);
+      if (!snapshot.running) return "ok";
+      return consume({ conversationId }, snapshot.userInput ?? undefined);
+    },
+    [hydrate, consume, conversationId],
+  );
+
+  // Drive one stream to completion, rebuilding through a dropped connection rather than reporting
+  // a failure the run never had. Only a genuinely unreachable server, after every attempt, surfaces
+  // as an error.
+  const runWithRecovery = useCallback(
+    async (body: object, userBubble?: string) => {
+      const gen = genRef.current;
+      let outcome = await consume(body, userBubble);
+
+      for (const delay of RECONNECT_DELAYS_MS) {
+        if (outcome !== "dropped" || genRef.current !== gen) break;
+        commit({ ...transcriptRef.current, messages: appendDisconnected(transcriptRef.current.messages) });
+        setReconnecting(true);
+        try {
+          await sleep(delay);
+          if (genRef.current !== gen) return;
+          const snapshot = await fetchSnapshot();
+          if (genRef.current !== gen) return;
+          if (!snapshot) continue; // server still unreachable — keep the notice up and retry
+          outcome = await openSnapshot(snapshot);
+        } finally {
+          setReconnecting(false);
+        }
+      }
+
+      if (genRef.current !== gen) return;
+      if (outcome === "dropped" || outcome === "failed") {
+        commit({
+          ...transcriptRef.current,
+          messages: [
+            ...clearDisconnected(transcriptRef.current.messages),
+            { role: "error", content: "Failed to reach server." },
+          ],
+        });
+      }
+    },
+    [consume, commit, fetchSnapshot, openSnapshot],
   );
 
   const sendMessage = useCallback(
     async (userMessage: string) => {
       if (!conversationId) return;
-      await consume({ message: userMessage, conversationId }, userMessage);
+      await runWithRecovery({ message: userMessage, conversationId }, userMessage);
     },
-    [conversationId, consume],
+    [conversationId, runWithRecovery],
   );
 
   // Reconnect to a conversation's in-flight run. `userInput` (the message that started it) is
@@ -191,13 +283,29 @@ export function useAgentStream(workspaceId: string, conversationId: string | nul
   const attachLive = useCallback(
     async (userInput?: string | null) => {
       if (!conversationId) return;
-      await consume({ conversationId }, userInput ?? undefined);
+      await runWithRecovery({ conversationId }, userInput ?? undefined);
     },
-    [conversationId, consume],
+    [conversationId, runWithRecovery],
   );
 
-  // Detach this viewer (stop reading the stream); the server-side run is unaffected.
-  const detach = useCallback(() => abortRef.current?.abort(), []);
+  // Initial load of a conversation: render its saved history, then watch any in-flight run — with
+  // the same drop recovery as every other stream.
+  const loadConversation = useCallback(async () => {
+    const gen = genRef.current;
+    const snapshot = await fetchSnapshot();
+    // The viewer may have switched conversations while this was in flight; hydrating now would
+    // paint the old conversation's history into the new one.
+    if (!snapshot || genRef.current !== gen) return;
+    hydrate(snapshot.transcript);
+    if (snapshot.running) await runWithRecovery({ conversationId }, snapshot.userInput ?? undefined);
+  }, [fetchSnapshot, hydrate, runWithRecovery, conversationId]);
+
+  // Detach this viewer (stop reading the stream); the server-side run is unaffected. Bumping the
+  // generation also cancels any reconnect loop that is mid-backoff.
+  const detach = useCallback(() => {
+    genRef.current++;
+    abortRef.current?.abort();
+  }, []);
 
   // Stop the run for everyone. The server emits `done` and the stream closes naturally.
   const stop = useCallback(async () => {
@@ -209,5 +317,16 @@ export function useAgentStream(workspaceId: string, conversationId: string | nul
     }
   }, [workspaceId, conversationId]);
 
-  return { messages, streaming, pendingTools, sendMessage, attachLive, hydrate, reset, detach, stop };
+  return {
+    messages,
+    streaming: streaming || reconnecting,
+    pendingTools,
+    sendMessage,
+    attachLive,
+    loadConversation,
+    hydrate,
+    reset,
+    detach,
+    stop,
+  };
 }

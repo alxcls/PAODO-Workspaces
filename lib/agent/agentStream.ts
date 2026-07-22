@@ -11,13 +11,7 @@ import type { Workspace } from "../workspace/workspaceStore";
 import { recordRunError, recordTurnUsage } from "../workspace/usageStore";
 import type { SessionOrigin } from "../workspace/usageStore";
 import { createWorkspaceRunTimeout } from "./runTimeout";
-
-const SSE_HEADERS = {
-  "Content-Type": "text/event-stream",
-  "Cache-Control": "no-cache, no-transform",
-  Connection: "keep-alive",
-  "X-Accel-Buffering": "no",
-} as const;
+import { SSE_HEADERS, startKeepalive } from "./sse";
 
 type SseState = { response: string; limitReached: boolean };
 type AgentStreamStatus = "success" | "failed" | "timeout" | "cancelled" | "limit_reached" | "incomplete";
@@ -60,6 +54,9 @@ export function makeAgentStream(ws: Workspace, message: string, log: Logger, dep
     async start(controller) {
       const startedAt = Date.now();
       const send = (event: object) => controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+      // Long tool calls emit nothing for minutes; without this the connection is dropped as idle
+      // while the run is still healthy. Stopped in the finally, before close. See ./sse.
+      const stopKeepalive = startKeepalive(controller, encoder);
       const state: SseState = { response: "", limitReached: false };
       const runTimeout = createWorkspaceRunTimeout(ws, [deps.signal]);
       let sentTimeout = false;
@@ -173,6 +170,7 @@ export function makeAgentStream(ws: Workspace, message: string, log: Logger, dep
         if (runTimeout.didTimeout()) sendTimeout();
         if (!terminalEventSeen && terminalStatus === "success") terminalStatus = "incomplete";
         runTimeout.dispose();
+        stopKeepalive();
         controller.close();
         log.info(
           {

@@ -13,6 +13,7 @@ import { loadAgentConfig } from "@/lib/agent/buildTools";
 import { setSystemPrompt } from "@/lib/agent/messageSerialization";
 import * as conversations from "@/lib/workspace/conversationStore";
 import * as broker from "@/lib/agent/runBroker";
+import { SSE_HEADERS, startKeepalive } from "@/lib/agent/sse";
 import { createLogger } from "@/lib/infra/logger";
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -52,6 +53,10 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const stream = new ReadableStream({
     start(controller) {
       let closed = false;
+      // A run emits nothing between tool_start and tool_result, which can be many minutes. Without
+      // this the proxy drops the idle connection and the viewer sees a failure for a run that is
+      // still going fine. See lib/agent/sse.ts.
+      const stopKeepalive = startKeepalive(controller, encoder);
       const send = (event: AgentEvent) => {
         if (closed) return;
         controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
@@ -59,6 +64,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       const close = () => {
         if (closed) return;
         closed = true;
+        stopKeepalive();
         sub?.unsubscribe();
         try {
           controller.close();
@@ -90,12 +96,5 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     },
   });
 
-  return new Response(stream, {
-    headers: {
-      "Content-Type": "text/event-stream",
-      "Cache-Control": "no-cache, no-transform",
-      Connection: "keep-alive",
-      "X-Accel-Buffering": "no",
-    },
-  });
+  return new Response(stream, { headers: SSE_HEADERS });
 }

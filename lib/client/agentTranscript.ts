@@ -6,7 +6,7 @@ import type { AgentEvent } from "@/lib/agent/runner";
 import type { CallAgentMeta } from "@/lib/agent/tools/agentCall";
 
 export interface Message {
-  role: "user" | "assistant" | "tool_start" | "error" | "limit_notice" | "reasoning" | "usage";
+  role: "user" | "assistant" | "tool_start" | "error" | "limit_notice" | "reasoning" | "usage" | "disconnected";
   content?: string;
   toolName?: string;
   // The provider's tool_call id, when it supplied one. Identifies which bubble a later
@@ -208,4 +208,18 @@ export function applyDiscreteEvent(state: TranscriptState, event: AgentEvent): T
     default:
       return state;
   }
+}
+
+// Losing the viewer's stream is not a failed run — the run is owned by the server and keeps going,
+// so this is a transient notice rather than an error. It has no AgentEvent behind it (the client's
+// own connection state produces it), which is why these are standalone helpers rather than another
+// case above. Appending is idempotent so repeated reconnect attempts cannot stack notices, and
+// clearing lets the caller resolve it once the real outcome is known.
+export function appendDisconnected(messages: Message[]): Message[] {
+  if (messages[messages.length - 1]?.role === "disconnected") return messages;
+  return [...messages, { role: "disconnected" }];
+}
+
+export function clearDisconnected(messages: Message[]): Message[] {
+  return messages.filter((m) => m.role !== "disconnected");
 }

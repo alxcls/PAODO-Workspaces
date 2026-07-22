@@ -108,6 +108,25 @@ const PROVIDERS: Record<string, ProviderDescriptor> = {
         },
       }),
   },
+  moonshot: {
+    apiKeyEnv: "MOONSHOT_API_KEY",
+    supportsPromptCaching: false,
+    // Kimi K3 takes low|high|max only — no medium, and none/minimal aren't offered because K3 always
+    // thinks. The narrower list is why the effort knob is validated per provider rather than globally.
+    reasoningEfforts: ["low", "high", "max"],
+    build: (config) =>
+      new ChatOpenAI({
+        model: config.model,
+        configuration: {
+          baseURL: "https://api.moonshot.ai/v1",
+          apiKey: config.apiKey,
+        },
+        // Sent via modelKwargs, not the `reasoningEffort` field: that field is typed to OpenAI's
+        // effort union, which has no "max" — Kimi's default and strongest level. modelKwargs is
+        // spread verbatim into the chat-completions body, so the value reaches the API untranslated.
+        modelKwargs: { reasoning_effort: config.reasoningEffort },
+      }),
+  },
 };
 
 export function buildModel(config: LLMProviderConfig): ChatOpenAI | ChatAnthropic {

@@ -98,6 +98,7 @@ nano .env
 | `OPENAI_API_KEY`               | If using OpenAI    | Your OpenAI API key                                                                                                     |
 | `ANTHROPIC_API_KEY`            | If using Anthropic | Your Anthropic API key                                                                                                  |
 | `DEEPSEEK_API_KEY`             | If using DeepSeek  | Your DeepSeek API key                                                                                                   |
+| `MOONSHOT_API_KEY`             | If using Kimi      | Your Moonshot AI (Kimi) API key                                                                                         |
 | `ANTHROPIC_CACHE_TTL_1H`       | No                 | Opt into Anthropic's 1-hour prompt cache TTL; leave unset for the default cache behavior                                |
 | `USERNAME`                     | Yes                | Login username                                                                                                          |
 | `PASSWORD`                     | Yes                | Login password                                                                                                          |

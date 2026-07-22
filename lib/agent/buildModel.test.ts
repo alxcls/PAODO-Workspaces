@@ -86,6 +86,7 @@ describe("buildModel", () => {
     ["anthropic", "claude-haiku-4-5"],
     ["openai", "gpt-5.5"],
     ["deepseek", "deepseek-v4-pro"],
+    ["moonshot", "kimi-k3"],
   ])("wires the selected model and key into the %s client", (provider, model) => {
     const m = buildModel(config({ provider, model, apiKey: `key-${provider}` })) as unknown as {
       model: string;
@@ -93,6 +94,17 @@ describe("buildModel", () => {
     };
     expect(m.model).toBe(model);
     expect(m.apiKey).toBe(`key-${provider}`);
+  });
+
+  // Kimi's strongest effort is "max", which OpenAI's effort union doesn't have — so it can't ride the
+  // typed `reasoningEffort` field and goes through modelKwargs instead. If that ever regresses to the
+  // typed field, "max" would be dropped or rejected and every turn would silently run at a lower
+  // effort, so assert the raw request field carries the value the workspace picked.
+  it("passes the Kimi reasoning effort through as a raw reasoning_effort request field", () => {
+    const m = buildModel(config({ provider: "moonshot", model: "kimi-k3", reasoningEffort: "max" })) as unknown as {
+      modelKwargs: Record<string, unknown>;
+    };
+    expect(m.modelKwargs).toEqual({ reasoning_effort: "max" });
   });
 
   it("rejects an unregistered provider instead of falling back to another vendor's builder", () => {
@@ -117,7 +129,9 @@ describe("configuredProviders", () => {
   });
 
   it("returns a subset of the supported providers", () => {
-    const all = configuredProviders({ ANTHROPIC_API_KEY: "k", OPENAI_API_KEY: "k", DEEPSEEK_API_KEY: "k" });
+    // Env built from the registry rather than a hand-listed set, so adding a provider can't leave
+    // this asserting a stale list.
+    const all = configuredProviders(Object.fromEntries(SUPPORTED_PROVIDERS.map((p) => [providerApiKeyEnv(p)!, "k"])));
     expect(all).toEqual(SUPPORTED_PROVIDERS);
   });
 });

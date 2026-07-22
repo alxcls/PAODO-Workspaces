@@ -1,6 +1,7 @@
-// LLM rate lookup. The data is a vendored copy of LiteLLM's public price list
-// (lib/workspace/model-pricing.json), trimmed to the providers this app supports. It is DATA WE OWN
-// — nothing hits the network at request time. Refresh it with `npm run update-pricing`.
+// LLM rate lookup. The data is a vendored copy of public price lists — LiteLLM for the bulk,
+// models.dev for models LiteLLM hasn't published yet (lib/workspace/model-pricing.json), trimmed to
+// the providers this app supports. It is DATA WE OWN — nothing hits the network at request time.
+// Refresh it with `npm run update-pricing`.
 //
 // getRate / computeCost turn the per-turn token counts the runner already records into a USD cost
 // (used by the usage dashboard). The set of models offered in the picker is a separate, code-owned
@@ -8,7 +9,9 @@
 import catalog from "./model-pricing.json";
 
 interface CatalogEntry {
-  litellm_provider: string;
+  provider: string;
+  /** Which upstream list this rate came from — carried for review, not used by the cost math. */
+  source: string;
   input_cost_per_token: number;
   output_cost_per_token: number;
   cache_read_input_token_cost?: number;
@@ -37,8 +40,16 @@ export interface TokenCounts {
 
 // Looks a model up by id. Catalog keys come in bare (`deepseek-v4-pro`) and provider-prefixed
 // (`deepseek/deepseek-v4-pro`) forms; we try the id as given, then the bare tail, so either works.
+//
+// OWN properties only. A workspace's llmModel is free-form (the PATCH route accepts a model that
+// isn't in the catalog yet), so a plain index would let ids like "constructor" or "toString" hit
+// Object.prototype and return a truthy non-entry — every rate then reads undefined and the cost
+// comes back NaN, which propagates through the per-session SUM in lib/client/usageSessions.ts.
+// "Unknown" is the contract for an unpriced model; NaN is not.
+const own = (key: string): CatalogEntry | undefined => (Object.hasOwn(CATALOG, key) ? CATALOG[key] : undefined);
+
 function lookup(modelId: string): CatalogEntry | undefined {
-  return CATALOG[modelId] ?? CATALOG[modelId.split("/").pop() ?? modelId];
+  return own(modelId) ?? own(modelId.split("/").pop() ?? modelId);
 }
 
 export function getRate(modelId: string | undefined): Rate | undefined {

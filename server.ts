@@ -230,7 +230,13 @@ httpServer.on("upgrade", (req, socket, head) => {
       if (wsAuthResult === "unauthorized") {
         auditWsRejection("auth_unauthorized", "auth unauthorized");
       }
-      socket.write('HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: Basic realm="App"\r\n\r\n');
+      // Deliberately NO WWW-Authenticate here, unlike the HTTP rejections above. A browser cannot
+      // attach an Authorization header to a WebSocket handshake, and WebKit — unlike Chrome and
+      // Firefox — does not reuse the cached Basic credentials for it either. Sending a challenge
+      // therefore made Safari open a credential dialog the handshake could never satisfy, and the
+      // hooks' auto-reconnect re-opened it every 2s forever. Failing without a challenge keeps the
+      // socket closed but leaves the browser nothing to prompt on.
+      socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
       socket.destroy();
       return;
     }

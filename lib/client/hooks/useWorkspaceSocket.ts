@@ -5,6 +5,7 @@
 "use client";
 
 import { useEffect, useRef, useCallback } from "react";
+import { wsReconnectDelayMs } from "@/lib/client/wsReconnect";
 
 export type WsMessage = { type: string; paths?: string[]; [key: string]: unknown };
 export type HandlerMap = { [type: string]: (msg: WsMessage) => void };
@@ -32,6 +33,9 @@ export function useWorkspaceSocket(workspaceId: string, handlers: HandlerMap): W
 
   useEffect(() => {
     cancelledRef.current = false;
+    // Consecutive failures, reset on a successful open. Drives the backoff so a handshake the
+    // browser cannot satisfy costs one request per 30s instead of one every 2s, forever.
+    let attempt = 0;
 
     function connect() {
       const ws = new WebSocket(
@@ -40,6 +44,7 @@ export function useWorkspaceSocket(workspaceId: string, handlers: HandlerMap): W
       wsRef.current = ws;
 
       ws.onopen = () => {
+        attempt = 0;
         pingRef.current = setInterval(() => {
           if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: "ping" }));
         }, 30_000);
@@ -61,7 +66,8 @@ export function useWorkspaceSocket(workspaceId: string, handlers: HandlerMap): W
         }
         // wsRef.current === ws guards against reconnects from a stale socket after workspaceId change.
         if (!cancelledRef.current && wsRef.current === ws) {
-          reconnectRef.current = setTimeout(connect, 2_000);
+          attempt += 1;
+          reconnectRef.current = setTimeout(connect, wsReconnectDelayMs(attempt));
         }
       };
     }

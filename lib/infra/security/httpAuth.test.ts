@@ -6,6 +6,7 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import {
   AuthFailureTracker,
   checkAuth,
+  checkWsAuth,
   isCsrf,
   safeEqual,
   authRequestFromIncoming,
@@ -20,7 +21,7 @@ function basic(user: string, pass: string): string {
 }
 
 function req(partial: Partial<AuthRequest> = {}): AuthRequest {
-  return { method: "GET", pathname: "/", authorization: "", ...partial };
+  return { method: "GET", pathname: "/", authorization: "", cookie: "", ...partial };
 }
 
 describe("safeEqual", () => {
@@ -74,7 +75,9 @@ describe("checkAuth", () => {
 
   // safeEqual("", "") is true, so unset credentials must fail closed before the comparison.
   it("rejects unset credentials instead of matching them against an empty Basic header", () => {
-    expect(checkAuth("ip", req({ authorization: basic("", "") }), { user: "", pass: "" }, tracker)).toBe("unauthorized");
+    expect(checkAuth("ip", req({ authorization: basic("", "") }), { user: "", pass: "" }, tracker)).toBe(
+      "unauthorized",
+    );
   });
 
   it("challenges when no Authorization header is present", () => {
@@ -105,7 +108,10 @@ describe("checkAuth", () => {
 
   it("exempts POST to the agent endpoint (Bearer API key auth)", () => {
     const r = req({ method: "POST", pathname: "/api/workspaces/ws1/agent" });
-    expect(checkAuth("ip", r, CREDS, tracker)).toBe("ok");
+    // "exempt", never "ok": nothing about this caller has been verified here, and server.ts hands
+    // out a /ws session cookie on "ok". This route is published on the DNS-direct public hostname,
+    // so conflating the two would mint a working UI session for any anonymous caller.
+    expect(checkAuth("ip", r, CREDS, tracker)).toBe("exempt");
     // ...but only for that exact route, and only for POST
     expect(checkAuth("ip", req({ method: "GET", pathname: "/api/workspaces/ws1/agent" }), CREDS, tracker)).toBe(
       "challenge",
@@ -117,7 +123,7 @@ describe("checkAuth", () => {
 
   it("exempts the Workspace MCP endpoint (own Bearer secret) for every method", () => {
     for (const method of ["POST", "GET", "DELETE"]) {
-      expect(checkAuth("ip", req({ method, pathname: "/api/workspaces/ws1/mcp" }), CREDS, tracker)).toBe("ok");
+      expect(checkAuth("ip", req({ method, pathname: "/api/workspaces/ws1/mcp" }), CREDS, tracker)).toBe("exempt");
     }
     // ...but not the management route or a sub-path
     expect(checkAuth("ip", req({ method: "GET", pathname: "/api/workspaces/ws1/mcp-config" }), CREDS, tracker)).toBe(
@@ -126,6 +132,57 @@ describe("checkAuth", () => {
     expect(checkAuth("ip", req({ method: "POST", pathname: "/api/workspaces/ws1/mcp/extra" }), CREDS, tracker)).toBe(
       "challenge",
     );
+  });
+});
+
+describe("checkWsAuth", () => {
+  let tracker: AuthFailureTracker;
+  const accept = () => true;
+  const reject = () => false;
+
+  beforeEach(() => {
+    tracker = new AuthFailureTracker();
+  });
+
+  it("accepts Basic credentials without consulting the cookie", () => {
+    // Chrome and Firefox do reuse the cached credentials on a same-origin handshake, so the Basic
+    // path must keep working unchanged — the cookie is a fallback, not a replacement.
+    const r = req({ pathname: "/ws", authorization: basic("admin", "hunter2") });
+    expect(checkWsAuth("ip", r, CREDS, tracker, reject)).toBe("ok");
+  });
+
+  it("accepts a valid session cookie when the handshake carries no Authorization", () => {
+    // The Safari case: no credential on the upgrade at all.
+    const r = req({ pathname: "/ws", cookie: "paodo_ws_session=valid" });
+    expect(checkWsAuth("ip", r, CREDS, tracker, accept)).toBe("ok");
+  });
+
+  it("rejects when neither credential is present", () => {
+    expect(checkWsAuth("ip", req({ pathname: "/ws" }), CREDS, tracker, reject)).toBe("challenge");
+  });
+
+  it("rejects a bad cookie the same as no cookie", () => {
+    const r = req({ pathname: "/ws", cookie: "paodo_ws_session=forged" });
+    expect(checkWsAuth("ip", r, CREDS, tracker, reject)).toBe("challenge");
+  });
+
+  it("rejects wrong Basic credentials even when they look well-formed", () => {
+    const r = req({ pathname: "/ws", authorization: basic("admin", "wrong") });
+    expect(checkWsAuth("ip", r, CREDS, tracker, reject)).toBe("unauthorized");
+  });
+
+  it("still blocks an IP over its failure budget, cookie or not", () => {
+    // Otherwise a forged-cookie flood would walk straight past the brute-force lockout.
+    const t = new AuthFailureTracker(1, 60_000);
+    t.recordFailure("bad-ip");
+    expect(checkWsAuth("bad-ip", req({ pathname: "/ws" }), CREDS, t, accept)).toBe("blocked");
+  });
+
+  it("does not accept the Bearer-route exemption as a pass", () => {
+    // Those routes are HTTP-only and never upgrade; treating "exempt" as authenticated here would
+    // let any caller open a socket by naming an exempt path.
+    const r = req({ method: "POST", pathname: "/api/workspaces/ws1/agent" });
+    expect(checkWsAuth("ip", r, CREDS, tracker, reject)).toBe("exempt");
   });
 });
 
@@ -154,13 +211,18 @@ describe("isCsrf", () => {
 });
 
 describe("authRequestFromIncoming / getClientIp", () => {
-  it("extracts method, pathname (stripping query), and authorization", () => {
+  it("extracts method, pathname (stripping query), authorization and cookie", () => {
     const r = authRequestFromIncoming({
       method: "POST",
       url: "/api/x?y=1",
-      headers: { authorization: "Basic zzz" },
+      headers: { authorization: "Basic zzz", cookie: "a=1; b=2" },
     } as never);
-    expect(r).toEqual({ method: "POST", pathname: "/api/x", authorization: "Basic zzz" });
+    expect(r).toEqual({ method: "POST", pathname: "/api/x", authorization: "Basic zzz", cookie: "a=1; b=2" });
+  });
+
+  it("defaults missing headers to empty strings rather than undefined", () => {
+    const r = authRequestFromIncoming({ method: "GET", url: "/", headers: {} } as never);
+    expect(r).toEqual({ method: "GET", pathname: "/", authorization: "", cookie: "" });
   });
 
   it("prefers cf-connecting-ip, falling back to the socket peer", () => {

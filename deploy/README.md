@@ -276,6 +276,23 @@ docker system df                                                    # disk usage
 tailscale status                                                    # VPN status
 ```
 
+### Backing up usage history
+
+Usage history, including prompts and tool output, lives in SQLite at `/app/data/.usage.db`. Do not
+copy that live file directly: the database uses WAL mode, so a raw file copy can omit committed
+pages. Create a consistent snapshot through the app, copy it to separately backed-up storage, then
+remove the temporary same-volume snapshot:
+
+```bash
+docker compose exec -T app npm run backup:usage -- /app/data/.usage-backup.db
+docker compose cp app:/app/data/.usage-backup.db /mnt/off-host-backups/paodo-usage.db
+docker compose exec -T app rm /app/data/.usage-backup.db
+```
+
+Automate those commands with the host scheduler and give snapshots dated names plus an explicit
+retention policy. `/mnt/off-host-backups` is only an example: it must be replicated or mounted from
+another system. Keeping the copy on the VPS does not protect against host or volume loss.
+
 ### Reading the logs over SSH
 
 Everything is line-delimited JSON, so `jq` works on all of it.

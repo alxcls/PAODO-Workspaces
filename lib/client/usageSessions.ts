@@ -2,7 +2,6 @@
 // one row per run (session), and format the scalar cells. Kept out of the page component so it's unit
 // testable and the component stays presentational.
 import type { LightTurnRecord, SessionOrigin } from "../workspace/usageStore";
-import { computeCost } from "../workspace/modelPricing";
 
 // One user message ("turn line") = one run = one sessionId, aggregated from the light per-turn
 // records. The row shows both IDs: the session id (the per-run identifier) and the conversation
@@ -51,9 +50,8 @@ export function groupBySessions(records: LightTurnRecord[]): LightSession[] {
     s.outputTokens += r.outputTokens;
     s.cachedInputTokens += r.cachedInputTokens;
     s.toolTotal += r.toolCalls.length;
-    // Cost is per-turn: each turn may run on a different model, so sum computeCost across turns.
-    // A turn whose model isn't in the catalog contributes nothing but doesn't invalidate the total.
-    const c = computeCost(r, r.model);
+    // Cost is frozen by the usage store; dashboard reads never re-price historical turns.
+    const c = r.cost;
     if (c !== undefined) s.cost = (s.cost ?? 0) + c;
     if (r.timestamp < s.timestamp) s.timestamp = r.timestamp;
   }

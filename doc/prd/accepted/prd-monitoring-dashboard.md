@@ -43,7 +43,8 @@ Once an agent run is over, users have little visibility into what actually happe
 
 **Cost as you work.** A small `↑ N  ↓ N` counter appears with each agent answer in the chat itself, so cost awareness is built into the normal workflow.
 
-**Kept across restarts.** Usage history survives server restarts; the most recent runs stay available to inspect and older history is trimmed automatically so it never grows unbounded.
+**Kept across restarts.** Complete usage history survives server restarts in SQLite. The dashboard
+loads a bounded recent window without deleting older database records.
 
 ### Nice to have (not implemented)
 
@@ -56,6 +57,13 @@ Once an agent run is over, users have little visibility into what actually happe
 
 ## Implementation notes
 
-The store (`lib/workspace/usageStore.ts`) appends one `TurnRecord` per model turn via `appendUsage`; `recordTurnUsage` folds a `turn_usage` event into the store under a session/workspace context and is shared by all three call sites (chat route, agent stream, nested skill calls) so the field mapping can't drift. Sessions are grouped client-side in the dashboard by `sessionId`, a UUID generated per HTTP request in the chat route. The in-chat counter is driven by the `turn_usage` SSE event forwarded from the chat route; the hook accumulates per-turn values and inserts a `usage` message into the message list on `done`.
+The store (`lib/workspace/usageStore.ts`) commits one `TurnRecord` and its ordered tool calls to
+SQLite per model turn via `appendUsage`; `recordTurnUsage` folds a `turn_usage` event into the store
+under a session/workspace context and is shared by all three call sites (chat route, agent stream,
+nested skill calls) so the field mapping can't drift. Lightweight list queries omit large text and
+tool I/O; full detail is selected by `sessionId` only when its drawer opens. Sessions are grouped
+client-side by `sessionId`, a UUID generated per HTTP request in the chat route. The in-chat counter
+is driven by the `turn_usage` SSE event forwarded from the chat route; the hook accumulates per-turn
+values and inserts a `usage` message into the message list on `done`.
 
 Confidentiality of the persisted detail (prompts, reasoning, raw tool I/O, which may include secrets) relies on network isolation rather than in-app auth — see [adr-usage-detail-plaintext-storage](../../adr/accepted/adr-usage-detail-plaintext-storage.md).

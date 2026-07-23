@@ -80,9 +80,14 @@ describe("groupBySessions", () => {
     expect(sessions.map((s) => s.sessionId)).toEqual(["new", "old"]);
   });
 
-  it("leaves cost undefined when no turn's model is in the pricing catalog", () => {
-    const [s] = groupBySessions([rec({ model: "not-a-real-model" })]);
+  it("does not re-price a historical turn whose stored cost is absent", () => {
+    const [s] = groupBySessions([rec({ model: "chatgpt-4o-latest" })]);
     expect(s.cost).toBeUndefined();
+  });
+
+  it("uses the cost frozen by the usage store", () => {
+    const [s] = groupBySessions([rec({ model: "not-a-real-model", cost: 0.123 })]);
+    expect(s.cost).toBe(0.123);
   });
 });
 

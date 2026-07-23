@@ -5,7 +5,7 @@
 // Dashboard list queries select only lightweight indexed fields; full text is fetched only when a
 // session drawer is opened. The database retains all records. MAX_DASHBOARD_TURNS bounds only a
 // single list response — it is not a retention policy.
-import { existsSync, mkdirSync, readFileSync, renameSync } from "fs";
+import { mkdirSync } from "fs";
 import path from "path";
 import Database from "better-sqlite3";
 import { WORKSPACES_ROOT } from "../infra/paths";
@@ -17,28 +17,7 @@ const log = createLogger("usage");
 // Runtime data is outside the application bundle; do not let Next's file tracer treat these
 // deployment paths as build inputs.
 const DB_FILE = path.join(/* turbopackIgnore: true */ WORKSPACES_ROOT, ".usage.db");
-const LEGACY_JSONL_FILE = path.join(/* turbopackIgnore: true */ WORKSPACES_ROOT, ".usage.jsonl");
 const MAX_DASHBOARD_TURNS = 5000;
-const LEGACY_IMPORT_KEY = "legacy_jsonl_imported";
-const LEGACY_PROJECTION_COLUMNS = [
-  "id",
-  "session_id",
-  "conversation_id",
-  "workspace_id",
-  "workspace_name",
-  "origin",
-  "model",
-  "timestamp",
-  "input_tokens",
-  "output_tokens",
-  "cached_input_tokens",
-  "cache_creation_tokens",
-  "reasoning_tokens",
-  "cost",
-  "tool_count",
-  "error_code",
-  "error_message",
-];
 
 // Outcome of a tool call, decided at the source (the runner) and persisted so the dashboard can
 // render it without re-parsing output. "needs_input" is the A2A non-terminal retry state.
@@ -164,11 +143,6 @@ type UsageGlobal = typeof global & {
 const g = global as UsageGlobal;
 
 const CREATE_SCHEMA_SQL = `
-  CREATE TABLE IF NOT EXISTS usage_meta (
-    key TEXT PRIMARY KEY,
-    value TEXT NOT NULL
-  ) WITHOUT ROWID;
-
   CREATE TABLE IF NOT EXISTS usage_turns (
     id TEXT PRIMARY KEY,
     session_id TEXT NOT NULL,
@@ -230,75 +204,6 @@ function isToolStatus(value: unknown): value is ToolStatus {
   return value === "ok" || value === "error" || value === "needs_input";
 }
 
-function numberOrZero(value: unknown): number {
-  return typeof value === "number" && Number.isFinite(value) ? value : 0;
-}
-
-function normalizeLegacyRecord(value: unknown): TurnRecord | undefined {
-  if (!value || typeof value !== "object") return undefined;
-  const raw = value as Record<string, unknown>;
-  if (
-    typeof raw.sessionId !== "string" ||
-    typeof raw.workspaceId !== "string" ||
-    typeof raw.workspaceName !== "string"
-  ) {
-    return undefined;
-  }
-
-  const toolCalls = Array.isArray(raw.toolCalls)
-    ? raw.toolCalls.flatMap((tool): ToolCallRecord[] => {
-        if (!tool || typeof tool !== "object") return [];
-        const item = tool as Record<string, unknown>;
-        if (typeof item.name !== "string") return [];
-        return [
-          {
-            name: item.name,
-            args:
-              item.args && typeof item.args === "object" && !Array.isArray(item.args)
-                ? (item.args as Record<string, unknown>)
-                : {},
-            output: typeof item.output === "string" ? item.output : "",
-            status: isToolStatus(item.status) ? item.status : "ok",
-          },
-        ];
-      })
-    : [];
-
-  const record: TurnRecord = {
-    id: typeof raw.id === "string" ? raw.id : crypto.randomUUID(),
-    sessionId: raw.sessionId,
-    conversationId: typeof raw.conversationId === "string" ? raw.conversationId : undefined,
-    workspaceId: raw.workspaceId,
-    workspaceName: raw.workspaceName,
-    origin: typeof raw.origin === "string" ? (raw.origin as SessionOrigin) : undefined,
-    timestamp: typeof raw.timestamp === "string" ? raw.timestamp : new Date().toISOString(),
-    userInput: typeof raw.userInput === "string" ? raw.userInput : undefined,
-    model: typeof raw.model === "string" ? raw.model : undefined,
-    inputTokens: numberOrZero(raw.inputTokens),
-    outputTokens: numberOrZero(raw.outputTokens),
-    reasoningTokens: numberOrZero(raw.reasoningTokens),
-    cachedInputTokens: numberOrZero(raw.cachedInputTokens),
-    cacheCreationTokens: numberOrZero(raw.cacheCreationTokens),
-    reasoningText: typeof raw.reasoningText === "string" ? raw.reasoningText : undefined,
-    outputText: typeof raw.outputText === "string" ? raw.outputText : undefined,
-    error:
-      raw.error && typeof raw.error === "object" && typeof (raw.error as Record<string, unknown>).message === "string"
-        ? {
-            code:
-              typeof (raw.error as Record<string, unknown>).code === "string"
-                ? ((raw.error as Record<string, unknown>).code as string)
-                : undefined,
-            message: (raw.error as Record<string, unknown>).message as string,
-          }
-        : undefined,
-    toolCalls,
-  };
-  const storedCost = raw.cost;
-  record.cost =
-    typeof storedCost === "number" && Number.isFinite(storedCost) ? storedCost : computeCost(record, record.model);
-  return record;
-}
-
 function turnParams(record: TurnRecord) {
   return {
     id: record.id,
@@ -341,106 +246,8 @@ function insertRecord(conn: Database.Database, record: TurnRecord): boolean {
   return true;
 }
 
-function importLegacyJsonl(conn: Database.Database): void {
-  const imported = conn.prepare("SELECT value FROM usage_meta WHERE key = ?").get(LEGACY_IMPORT_KEY);
-  if (imported || !existsSync(LEGACY_JSONL_FILE)) return;
-
-  let contents: string;
-  try {
-    contents = readFileSync(LEGACY_JSONL_FILE, "utf8");
-  } catch (err) {
-    log.error(
-      { event: "usage_legacy_import_read_failed", outcome: "import_deferred", err, filePath: LEGACY_JSONL_FILE },
-      "failed to read legacy usage JSONL",
-    );
-    return;
-  }
-
-  const records: TurnRecord[] = [];
-  let skipped = 0;
-  for (const line of contents.split("\n")) {
-    if (!line.trim()) continue;
-    try {
-      const record = normalizeLegacyRecord(JSON.parse(line));
-      if (record) records.push(record);
-      else skipped += 1;
-    } catch {
-      skipped += 1;
-    }
-  }
-
-  const migrate = conn.transaction(() => {
-    let inserted = 0;
-    for (const record of records) {
-      if (insertRecord(conn, record)) inserted += 1;
-    }
-    conn.prepare("INSERT INTO usage_meta (key, value) VALUES (?, ?)").run(LEGACY_IMPORT_KEY, new Date().toISOString());
-    return inserted;
-  });
-  const inserted = migrate();
-
-  log.info(
-    {
-      event: "usage_legacy_jsonl_imported",
-      outcome: "migration_complete",
-      inserted,
-      skipped,
-      source: LEGACY_JSONL_FILE,
-    },
-    "imported legacy usage JSONL into SQLite; legacy file retained as a migration artifact",
-  );
-}
-
-/**
- * Preserve and replace the short-lived JSONL-backed metrics projection.
- *
- * That implementation used the same database filename and table name, but SQLite was explicitly
- * rebuildable and the JSONL journal held the complete records. Recognize only its known column
- * signature. Corrupt or otherwise unknown schemas are left untouched and will fail visibly.
- */
-function archiveLegacyProjectionIfPresent(): void {
-  if (!existsSync(DB_FILE)) return;
-
-  const legacy = new Database(DB_FILE);
-  let shouldArchive = false;
-  try {
-    const columns = legacy.prepare("PRAGMA table_info(usage_turns)").all() as Array<{ name: string }>;
-    const names = new Set(columns.map((column) => column.name));
-    shouldArchive =
-      columns.length > 0 && !names.has("user_input") && LEGACY_PROJECTION_COLUMNS.every((column) => names.has(column));
-    if (!shouldArchive) return;
-
-    const checkpoint = legacy.pragma("wal_checkpoint(TRUNCATE)") as Array<{ busy: number }>;
-    if (checkpoint.some((result) => result.busy !== 0)) {
-      throw new Error("Cannot upgrade the legacy usage projection while another process is using it.");
-    }
-  } finally {
-    legacy.close();
-  }
-
-  if (!shouldArchive) return;
-  let archive = `${DB_FILE}.legacy-projection`;
-  if (existsSync(archive)) archive = `${archive}-${Date.now()}`;
-
-  renameSync(DB_FILE, archive);
-  for (const suffix of ["-wal", "-shm"]) {
-    const source = `${DB_FILE}${suffix}`;
-    if (existsSync(source)) renameSync(source, `${archive}${suffix}`);
-  }
-  log.warn(
-    {
-      event: "usage_legacy_projection_archived",
-      outcome: "new_sqlite_store_will_import_jsonl",
-      source: DB_FILE,
-      archive,
-    },
-    "archived the legacy usage metrics projection before creating the full SQLite store",
-  );
-}
-
 function openDatabase(): Database.Database {
   mkdirSync(path.dirname(DB_FILE), { recursive: true });
-  archiveLegacyProjectionIfPresent();
   const conn = new Database(DB_FILE);
   try {
     conn.pragma("journal_mode = WAL");
@@ -449,8 +256,6 @@ function openDatabase(): Database.Database {
     conn.pragma("foreign_keys = ON");
     conn.pragma("busy_timeout = 5000");
     conn.exec(CREATE_SCHEMA_SQL);
-    conn.pragma("user_version = 1");
-    importLegacyJsonl(conn);
     return conn;
   } catch (err) {
     conn.close();

@@ -1,6 +1,5 @@
 // SQLite is the sole usage store. These tests cover transactional full-content writes, lightweight
-// indexed reads, one-time JSONL migration, persistence across process/module restarts, and safe
-// online backups.
+// indexed reads, persistence across process/module restarts, and safe online backups.
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import Database from "better-sqlite3";
 import fs from "fs";
@@ -9,7 +8,7 @@ import path from "path";
 
 const ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "usagestore-test-"));
 const DB_FILE = path.join(ROOT, ".usage.db");
-const LEGACY_FILE = path.join(ROOT, ".usage.jsonl");
+const JSONL_FILE = path.join(ROOT, ".usage.jsonl");
 
 type ClosableDb = { open: boolean; close(): void };
 
@@ -72,7 +71,7 @@ describe("usageStore", () => {
     );
 
     expect(fs.existsSync(DB_FILE)).toBe(true);
-    expect(fs.existsSync(LEGACY_FILE)).toBe(false);
+    expect(fs.existsSync(JSONL_FILE)).toBe(false);
     expect(store.getSessionDetail("s1")).toMatchObject([
       {
         userInput: "fix the bug",
@@ -221,106 +220,6 @@ describe("usageStore", () => {
     const store = await loadStore();
     expect(() => store.listUsageLight()).toThrow();
     expect(fs.readFileSync(DB_FILE)).toEqual(damaged);
-  });
-
-  it("imports legacy JSONL once, including heavy content and default tool status", async () => {
-    await freshStore();
-    closeGlobalDb();
-    fs.rmSync(DB_FILE, { force: true });
-    fs.rmSync(`${DB_FILE}-shm`, { force: true });
-    fs.rmSync(`${DB_FILE}-wal`, { force: true });
-    fs.writeFileSync(
-      LEGACY_FILE,
-      [
-        JSON.stringify({
-          id: "legacy-1",
-          timestamp: "2026-01-01T00:00:00.000Z",
-          ...baseTurn({
-            reasoningText: "legacy reasoning",
-            toolCalls: [{ name: "legacy_tool", args: { a: 1 }, output: "legacy output" }],
-          }),
-        }),
-        "{malformed",
-      ].join("\n") + "\n",
-    );
-
-    const store = await loadStore();
-    expect(store.getSessionDetail("s1")).toMatchObject([
-      {
-        id: "legacy-1",
-        reasoningText: "legacy reasoning",
-        toolCalls: [{ name: "legacy_tool", args: { a: 1 }, output: "legacy output", status: "ok" }],
-      },
-    ]);
-    expect(fs.existsSync(LEGACY_FILE)).toBe(true);
-
-    closeGlobalDb();
-    const reopened = await loadStore();
-    expect(reopened.listUsageLight()).toHaveLength(1);
-  });
-
-  it("archives the known legacy metrics projection and rebuilds complete rows from JSONL", async () => {
-    await freshStore();
-    closeGlobalDb();
-    fs.rmSync(DB_FILE, { force: true });
-    fs.rmSync(`${DB_FILE}-shm`, { force: true });
-    fs.rmSync(`${DB_FILE}-wal`, { force: true });
-
-    const projection = new Database(DB_FILE);
-    projection.exec(`
-      CREATE TABLE usage_turns (
-        id TEXT PRIMARY KEY,
-        session_id TEXT NOT NULL,
-        conversation_id TEXT,
-        workspace_id TEXT NOT NULL,
-        workspace_name TEXT NOT NULL,
-        origin TEXT,
-        model TEXT,
-        timestamp TEXT NOT NULL,
-        input_tokens INTEGER NOT NULL,
-        output_tokens INTEGER NOT NULL,
-        cached_input_tokens INTEGER NOT NULL,
-        cache_creation_tokens INTEGER NOT NULL,
-        reasoning_tokens INTEGER NOT NULL,
-        cost REAL,
-        tool_count INTEGER NOT NULL DEFAULT 0,
-        error_code TEXT,
-        error_message TEXT
-      );
-      INSERT INTO usage_turns VALUES (
-        'legacy-projection-row', 's1', NULL, 'w1', 'WS', 'chat', 'chatgpt-4o-latest',
-        '2026-01-01T00:00:00.000Z', 100, 10, 60, 0, 2, 0.01, 1, NULL, NULL
-      );
-    `);
-    projection.close();
-    fs.writeFileSync(
-      LEGACY_FILE,
-      `${JSON.stringify({
-        id: "legacy-projection-row",
-        timestamp: "2026-01-01T00:00:00.000Z",
-        ...baseTurn({
-          userInput: "complete prompt",
-          outputText: "complete response",
-          toolCalls: [{ name: "read", args: { path: "a.ts" }, output: "contents", status: "ok" }],
-        }),
-      })}\n`,
-    );
-
-    const store = await loadStore();
-
-    expect(store.getSessionDetail("s1")).toMatchObject([
-      {
-        id: "legacy-projection-row",
-        userInput: "complete prompt",
-        outputText: "complete response",
-        toolCalls: [{ name: "read", args: { path: "a.ts" }, output: "contents", status: "ok" }],
-      },
-    ]);
-    const archive = fs.readdirSync(ROOT).find((file) => file.startsWith(".usage.db.legacy-projection"));
-    expect(archive).toBeDefined();
-    const archived = new Database(path.join(ROOT, archive!), { readonly: true });
-    expect(archived.prepare("SELECT id FROM usage_turns").get()).toEqual({ id: "legacy-projection-row" });
-    archived.close();
   });
 
   it("creates a consistent backup containing complete text and tool output", async () => {

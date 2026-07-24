@@ -7,8 +7,8 @@
 // single list response — it is not a retention policy.
 import type Database from "better-sqlite3";
 import { createLogger } from "../infra/logger";
+import { appDataDb as db, invalidateAppDataDb } from "../data/database";
 import { computeCost } from "./modelPricing";
-import { dataDb as db, invalidateDataDb } from "./dataDb";
 
 const log = createLogger("usage");
 
@@ -253,7 +253,7 @@ export function appendUsage(partial: NewTurnRecord): void {
     const conn = db();
     conn.transaction(() => insertRecord(conn, record))();
   } catch (err) {
-    invalidateDataDb();
+    invalidateAppDataDb();
     log.error(
       { event: "usage_record_insert_failed", outcome: "usage_record_not_persisted", err, id: record.id },
       "failed to persist usage record",

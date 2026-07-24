@@ -80,4 +80,7 @@ SQLite stores provider facts with explicit semantics:
 both UIs derive it as `max(0, input total - cache read)`. Cache writes remain separate for accurate
 cost calculation but count as uncached input in the compact presentation.
 
-Confidentiality of the persisted detail (prompts, reasoning, raw tool I/O, which may include secrets) relies on network isolation rather than in-app auth — see [adr-usage-detail-plaintext-storage](../../adr/accepted/adr-usage-detail-plaintext-storage.md).
+Conversation replay and execution history use separate authorities inside one application database.
+Confidentiality of their persisted plaintext relies on network isolation rather than in-app auth —
+see
+[adr-conversation-and-execution-data-sqlite](../../adr/accepted/adr-conversation-and-execution-data-sqlite.md).

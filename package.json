@@ -17,7 +17,7 @@
     "graph": "tsx dev_tools/viz/generate-graph.ts && open dev_tools/viz/graph.html",
     "query-graph": "tsx dev_tools/query/query-graph.ts",
     "update-pricing": "tsx scripts/update-pricing.ts",
-    "backup:workspace-data": "tsx scripts/backup-workspace-data.ts",
+    "backup:database": "tsx scripts/backup-database.ts",
     "check:mocks": "tsx scripts/check-mock-drift.ts",
     "test": "vitest run",
     "test:watch": "vitest",

@@ -1,14 +1,14 @@
 import path from "path";
-import { backupDataDb } from "../lib/workspace/dataDb";
+import { backupAppDataDb } from "../lib/data/database";
 
 async function main(): Promise<void> {
   const destination = process.argv[2];
   if (!destination) {
-    throw new Error("Usage: npm run backup:workspace-data -- /path/on/backup-storage/workspace.db");
+    throw new Error("Usage: npm run backup:database -- /path/on/backup-storage/paodo.db");
   }
   const resolved = path.resolve(destination);
-  await backupDataDb(resolved);
-  console.log(`Workspace data backed up to ${resolved}`);
+  await backupAppDataDb(resolved);
+  console.log(`Database backed up to ${resolved}`);
 }
 
 void main().catch((error: unknown) => {

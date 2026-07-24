@@ -7,17 +7,17 @@ import os from "os";
 import path from "path";
 
 const ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "usagestore-test-"));
-const DB_FILE = path.join(ROOT, ".workspace.db");
+const DB_FILE = path.join(ROOT, ".paodo.db");
 const JSONL_FILE = path.join(ROOT, ".usage.jsonl");
 
 type ClosableDb = { open: boolean; close(): void };
 
 function closeGlobalDb() {
   const g = global as Record<string, unknown>;
-  const conn = g._workspaceDataDb as ClosableDb | undefined;
+  const conn = g._paodoDataDb as ClosableDb | undefined;
   if (conn?.open) conn.close();
-  delete g._workspaceDataDb;
-  delete g._workspaceDataDbFile;
+  delete g._paodoDataDb;
+  delete g._paodoDataDbFile;
 }
 
 afterAll(() => {

@@ -2,7 +2,8 @@
 
 **Status:** Shipped  
 **Author:** @alxcls  
-**Related:** [VISION.md](../VISION.md)
+**Related:** [VISION.md](../VISION.md),
+[adr-conversation-and-execution-data-sqlite](../../adr/accepted/adr-conversation-and-execution-data-sqlite.md)
 
 ---
 
@@ -50,6 +51,10 @@ As a citizen developer, when an agent is taking too long or going the wrong way,
 - A conversation bar lets the user view, switch, and create conversations.
 - The user can stop an in-progress run.
 - A new run resumes the correct conversation's history.
+
+Conversation replay and monitoring execution records have separate authorities inside one
+application database. See the related ADR for their ownership, lifecycle, migration, and backup
+boundaries.
 
 ### Nice to have
 

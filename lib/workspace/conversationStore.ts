@@ -9,8 +9,8 @@ import type Database from "better-sqlite3";
 import type { BaseMessage, StoredMessage } from "@langchain/core/messages";
 import { createLogger } from "../infra/logger";
 import { serializeMessages, deserializeMessages } from "../agent/messageSerialization";
+import { appDataDb as db, invalidateAppDataDb } from "../data/database";
 import { broadcastToWorkspace } from "../infra/realtime/wsHub";
-import { dataDb as db, invalidateDataDb } from "./dataDb";
 
 const log = createLogger("conversations");
 
@@ -290,7 +290,7 @@ export function persist(workspaceId: string, convId: string): void {
       );
     notifyConversationsChanged(workspaceId);
   } catch (err) {
-    invalidateDataDb();
+    invalidateAppDataDb();
     log.error(
       {
         event: "conversation_persist_failed",

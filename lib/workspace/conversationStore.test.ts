@@ -16,10 +16,10 @@ beforeAll(async () => {
 });
 
 afterAll(() => {
-  const g = global as { _workspaceDataDb?: Database.Database; _workspaceDataDbFile?: string };
-  if (g._workspaceDataDb?.open) g._workspaceDataDb.close();
-  delete g._workspaceDataDb;
-  delete g._workspaceDataDbFile;
+  const g = global as { _paodoDataDb?: Database.Database; _paodoDataDbFile?: string };
+  if (g._paodoDataDb?.open) g._paodoDataDb.close();
+  delete g._paodoDataDb;
+  delete g._paodoDataDbFile;
   rmSync(root, { recursive: true, force: true });
 });
 
@@ -46,7 +46,7 @@ describe("conversationStore", () => {
 
     expect(conv.getMeta(ws, id)!.title).toBe(title);
 
-    const db = new Database(path.join(root, ".workspace.db"), { readonly: true });
+    const db = new Database(path.join(root, ".paodo.db"), { readonly: true });
     const row = db
       .prepare("SELECT title, messages_json FROM conversations WHERE workspace_id = ? AND id = ?")
       .get(ws, id) as { title: string; messages_json: string };
@@ -71,7 +71,7 @@ describe("conversationStore", () => {
     conv.getActiveId(ws);
     conv.deleteWorkspaceConversations(ws);
     expect(conv.listConversations(ws)).toEqual([]);
-    const db = new Database(path.join(root, ".workspace.db"), { readonly: true });
+    const db = new Database(path.join(root, ".paodo.db"), { readonly: true });
     expect(
       (db.prepare("SELECT count(*) AS count FROM conversations WHERE workspace_id = ?").get(ws) as { count: number })
         .count,

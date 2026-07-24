@@ -7,7 +7,7 @@ Status: Accepted
 The app keeps its live coordination state in the memory of one Node.js process (attached to the `global` object so it survives Next.js hot-reload — see `adr-global-object-hot-reload-survival.md`). Slow-changing data is mirrored to disk as JSON, but the _live_ state is process-local and has no shared backing store:
 
 - workspace registry — `global._workspaces` (`workspaceStore.ts`); registry metadata is persisted to `.workspaces.json`
-- conversation history + in-flight runs — `global._conversations` (`conversationStore.ts`) and `global._runBroker` (`runBroker.ts`); history is persisted to disk per conversation, but the live in-memory cache and the run's event buffer/subscribers are process-local
+- conversation history + in-flight runs — `global._conversations` (`conversationStore.ts`) and `global._runBroker` (`runBroker.ts`); replay state is persisted in SQLite, but the live in-memory cache and the run's event buffer/subscribers are process-local
 - API-key cache — `global._apiKeys` (`apiKeyStore.ts`), loaded from disk once at boot
 - open WebSocket connections — `wsHub.ts`
 - container idle timers and start-coalescing locks — `idleTimers` / `startLocks` on the `ContainerManager` singleton (`containerManager.ts`)

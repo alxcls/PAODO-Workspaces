@@ -63,33 +63,41 @@ describe("messagesToTranscript", () => {
     expect(t[3]).toEqual({ role: "assistant", content: "here is the answer" });
   });
 
-  it("replays the run-cumulative usage line before the terminal assistant bubble", () => {
+  it("joins per-turn tokens without storing their values in conversation messages", () => {
     const messages = [
-      new HumanMessage("hi"),
-      new AIMessage({ content: "answer", response_metadata: { runUsage: { inputTokens: 1200, outputTokens: 340 } } }),
-    ];
-    const t = messagesToTranscript(messages);
-    expect(t[0]).toEqual({ role: "user", content: "hi" });
-    expect(t[1]).toEqual({ role: "usage", inputTokens: 1200, outputTokens: 340 });
-    expect(t[2]).toEqual({ role: "assistant", content: "answer" });
-  });
-
-  it("emits no usage line when runUsage is absent or zero", () => {
-    const messages = [
-      new AIMessage("no usage"),
-      new AIMessage({ content: "zero usage", response_metadata: { runUsage: { inputTokens: 0, outputTokens: 0 } } }),
-    ];
-    const t = messagesToTranscript(messages);
-    expect(t.every((m) => m.role !== "usage")).toBe(true);
-  });
-
-  it("preserves response_metadata.runUsage across a serialize round-trip", () => {
-    const messages = [
-      new AIMessage({ content: "answer", response_metadata: { runUsage: { inputTokens: 5, outputTokens: 6 } } }),
+      new AIMessage({
+        content: "I will inspect it",
+        tool_calls: [{ id: "t1", name: "file_read", args: { file_path: "a.txt" } }],
+        response_metadata: { executionTurnId: "turn-tool" },
+      }),
+      new ToolMessage({ tool_call_id: "t1", content: "body" }),
+      new AIMessage({ content: "Done", response_metadata: { executionTurnId: "turn-final" } }),
     ];
     const back = deserializeMessages(serializeMessages(messages));
-    const t = messagesToTranscript(back);
-    expect(t[0]).toEqual({ role: "usage", inputTokens: 5, outputTokens: 6 });
+    const transcript = messagesToTranscript(
+      back,
+      new Map([
+        [
+          "turn-final",
+          {
+            inputTokensTotal: 250,
+            inputTokensCacheRead: 100,
+            outputTokensTotal: 30,
+          },
+        ],
+      ]),
+    );
+
+    expect(transcript.filter((message) => message.role === "usage")).toEqual([
+      {
+        role: "usage",
+        inputTokensTotal: 250,
+        inputTokensCacheRead: 100,
+        outputTokensTotal: 30,
+      },
+    ]);
+    expect(transcript.map((message) => message.role)).toEqual(["assistant", "tool_start", "usage", "assistant"]);
+    expect(JSON.stringify(serializeMessages(messages))).not.toContain("inputTokens");
   });
 
   it("rebuilds the call_agent session deep-link from the ToolMessage's additional_kwargs", () => {

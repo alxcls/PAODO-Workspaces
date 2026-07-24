@@ -9,11 +9,11 @@ function rec(over: Partial<LightTurnRecord> = {}): LightTurnRecord {
     workspaceId: "w1",
     workspaceName: "Alpha",
     timestamp: "2026-01-01T00:00:00.000Z",
-    inputTokens: 0,
-    outputTokens: 0,
-    reasoningTokens: 0,
-    cachedInputTokens: 0,
-    cacheCreationTokens: 0,
+    inputTokensTotal: 0,
+    inputTokensCacheRead: 0,
+    inputTokensCacheWrite: 0,
+    outputTokensTotal: 0,
+    outputTokensReasoning: 0,
     toolCalls: [],
     ...over,
   };
@@ -24,16 +24,16 @@ describe("groupBySessions", () => {
     const sessions = groupBySessions([
       rec({
         id: "a",
-        inputTokens: 100,
-        outputTokens: 10,
-        cachedInputTokens: 5,
+        inputTokensTotal: 100,
+        inputTokensCacheRead: 5,
+        outputTokensTotal: 10,
         toolCalls: [{ name: "glob", status: "ok" }],
       }),
       rec({
         id: "b",
-        inputTokens: 50,
-        outputTokens: 20,
-        cachedInputTokens: 5,
+        inputTokensTotal: 50,
+        inputTokensCacheRead: 5,
+        outputTokensTotal: 20,
         toolCalls: [
           { name: "exec", status: "error" },
           { name: "read", status: "ok" },
@@ -43,9 +43,9 @@ describe("groupBySessions", () => {
     expect(sessions).toHaveLength(1);
     expect(sessions[0]).toMatchObject({
       sessionId: "s1",
-      inputTokens: 150,
-      outputTokens: 30,
-      cachedInputTokens: 10,
+      inputTokensTotal: 150,
+      inputTokensCacheRead: 10,
+      outputTokensTotal: 30,
       toolTotal: 3,
     });
   });
@@ -80,9 +80,14 @@ describe("groupBySessions", () => {
     expect(sessions.map((s) => s.sessionId)).toEqual(["new", "old"]);
   });
 
-  it("leaves cost undefined when no turn's model is in the pricing catalog", () => {
-    const [s] = groupBySessions([rec({ model: "not-a-real-model" })]);
+  it("does not re-price a historical turn whose stored cost is absent", () => {
+    const [s] = groupBySessions([rec({ model: "chatgpt-4o-latest" })]);
     expect(s.cost).toBeUndefined();
+  });
+
+  it("uses the cost frozen by the usage store", () => {
+    const [s] = groupBySessions([rec({ model: "not-a-real-model", cost: 0.123 })]);
+    expect(s.cost).toBe(0.123);
   });
 });
 

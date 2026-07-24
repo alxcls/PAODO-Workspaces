@@ -21,6 +21,8 @@ import {
   markAllToolsDone,
   appendDisconnected,
   clearDisconnected,
+  emptyLoopTokenUsage,
+  foldTurnUsageForChat,
 } from "../agentTranscript";
 
 export type { Message };
@@ -67,8 +69,7 @@ export function useAgentStream(workspaceId: string, conversationId: string | nul
   const tokenRafRef = useRef<number | null>(null);
   const reasoningRafRef = useRef<number | null>(null);
 
-  // Single source of truth for the rendered transcript + per-turn token totals; setMessages
-  // only mirrors it for rendering.
+  // Single source of truth for the rendered transcript; setMessages only mirrors it for rendering.
   const transcriptRef = useRef<TranscriptState>(emptyTranscript());
   const commit = useCallback((next: TranscriptState) => {
     transcriptRef.current = next;
@@ -83,7 +84,7 @@ export function useAgentStream(workspaceId: string, conversationId: string | nul
   // Replace the whole transcript with a loaded conversation's saved history.
   const hydrate = useCallback(
     (loaded: Message[]) => {
-      commit({ messages: loaded, totalInput: 0, totalOutput: 0 });
+      commit({ messages: loaded });
     },
     [commit],
   );
@@ -114,10 +115,12 @@ export function useAgentStream(workspaceId: string, conversationId: string | nul
         commit({
           ...transcriptRef.current,
           messages: [...transcriptRef.current.messages, { role: "user", content: userBubble }],
-          totalInput: 0,
-          totalOutput: 0,
         });
       }
+      // Exact usage is known only when a model turn ends. Remember where that turn starts so its
+      // completed badge can be inserted above the reasoning/text/tool group it produced.
+      let turnStartIndex = transcriptRef.current.messages.length;
+      let loopUsage = emptyLoopTokenUsage();
       setStreaming(true);
 
       let assistantContent = "";
@@ -161,6 +164,10 @@ export function useAgentStream(workspaceId: string, conversationId: string | nul
               });
             }
           } else if (event.type === "tool_start") {
+            // Network events can beat the next animation frame. Commit the model's preamble before
+            // adding its tool row so the completed usage badge can precede the whole group.
+            flushToken();
+            flushReasoning();
             assistantContent = "";
             reasoningContent = "";
             setPendingTools((n) => n + 1);
@@ -168,8 +175,22 @@ export function useAgentStream(workspaceId: string, conversationId: string | nul
           } else if (event.type === "tool_result") {
             setPendingTools((n) => Math.max(0, n - 1));
             commit(applyDiscreteEvent(transcriptRef.current, event));
+          } else if (event.type === "turn_usage") {
+            flushToken();
+            flushReasoning();
+            const folded = foldTurnUsageForChat(loopUsage, event);
+            loopUsage = folded.totals;
+            // Tool-selection turns remain visible in the execution dashboard, but chat presents
+            // one run total attached only to the final human-readable assistant output.
+            if (folded.displayEvent) {
+              commit(applyDiscreteEvent(transcriptRef.current, folded.displayEvent, turnStartIndex));
+            }
+            turnStartIndex = transcriptRef.current.messages.length;
+          } else if (event.type === "limit_reached") {
+            commit(applyDiscreteEvent(transcriptRef.current, event));
+            turnStartIndex = transcriptRef.current.messages.length;
           } else {
-            // turn_usage, done, limit_reached, error — pure folds with no hook-side bookkeeping.
+            // done and error — pure folds with no hook-side bookkeeping.
             commit(applyDiscreteEvent(transcriptRef.current, event));
           }
         }

@@ -16,11 +16,11 @@ Once an agent run is over, users have little visibility into what actually happe
 - Users can drill into individual agent sessions and their tool calls
 - The dashboard survives server restarts and reflects all historical usage
 - Users get immediate per-response token feedback directly in the chat UI
+- Users can see the frozen USD cost of each completed run
 
 ## Non-goals
 
 - Per-user or multi-tenant billing
-- Dollar cost estimates
 - Quota enforcement
 
 ## User stories
@@ -35,27 +35,52 @@ Once an agent run is over, users have little visibility into what actually happe
 
 ### Implemented
 
-**Usage at a glance.** The dashboard lists recent runs across all workspaces, each with its token cost — sent, cached, and received — so you can see where cost is going without leaving the page.
+**Usage at a glance.** The dashboard lists recent runs across all workspaces with uncached input,
+cached input, output, and frozen USD cost, so you can see where cost is going without leaving the
+page.
 
 **A trace of every run.** Open a run to see exactly what happened, in order: your input, the system prompt the agent ran under, its reasoning, each tool it executed (marked success or failure), and its final response. That turns "this run was expensive" into "here's why."
 
 **Success or failure, at a glance.** Each tool execution carries a simple status — green for success, red for failure — so you can spot where a run went wrong and look at exactly what was sent and what came back.
 
-**Cost as you work.** A small `↑ N  ↓ N` counter appears with each agent answer in the chat itself, so cost awareness is built into the normal workflow.
+**Usage as you work.** A small `↑ uncached  ↻ cached  ↓ output` counter appears on the final visible
+answer for each complete agent loop. Cost stays in the dashboard rather than cluttering chat.
 
-**Kept across restarts.** Usage history survives server restarts; the most recent runs stay available to inspect and older history is trimmed automatically so it never grows unbounded.
+**Tool-level diagnosis.** Selecting a tool shows the same compact token breakdown for the LLM turn
+that requested it. Parallel tools share their parent turn's measurements; the application never
+invents per-tool token allocations.
+
+**Kept across restarts.** Complete usage history survives server restarts in SQLite. The dashboard
+loads a bounded recent window without deleting older database records.
 
 ### Nice to have (not implemented)
 
 - A workspace filter on the dashboard, so you can focus on a single workspace's history (the data already supports it; the UI doesn't yet expose it)
 - A breakdown by where the usage came from: direct chat vs. external API vs. one agent calling another
 - A usage-over-time chart (daily or weekly trend per workspace)
-- A dollar-cost estimate per workspace
 - A per-workspace quota with a visual warning as you approach a limit
 - Export of usage history as CSV
 
 ## Implementation notes
 
-The store (`lib/workspace/usageStore.ts`) appends one `TurnRecord` per model turn via `appendUsage`; `recordTurnUsage` folds a `turn_usage` event into the store under a session/workspace context and is shared by all three call sites (chat route, agent stream, nested skill calls) so the field mapping can't drift. Sessions are grouped client-side in the dashboard by `sessionId`, a UUID generated per HTTP request in the chat route. The in-chat counter is driven by the `turn_usage` SSE event forwarded from the chat route; the hook accumulates per-turn values and inserts a `usage` message into the message list on `done`.
+The store (`lib/workspace/usageStore.ts`) commits one `TurnRecord` and its ordered tool calls to
+SQLite per model turn via `appendUsage`; `recordTurnUsage` folds a `turn_usage` event into the store
+under a session/workspace context and is shared by all three call sites (chat route, agent stream,
+nested skill calls) so the field mapping can't drift. Lightweight list queries omit large text and
+tool I/O; full detail is selected by `sessionId` only when its drawer opens. Sessions are grouped
+client-side by `sessionId`, a UUID generated per HTTP request in the chat route. The in-chat counter
+is driven by the `turn_usage` SSE events forwarded from the chat route: the hook sums every model
+turn in the agent loop and shows one total on its final visible assistant output. Reopened
+conversations derive the same aggregate from SQLite. The dashboard retains the underlying per-turn
+records and tool-call detail.
 
-Confidentiality of the persisted detail (prompts, reasoning, raw tool I/O, which may include secrets) relies on network isolation rather than in-app auth — see [adr-usage-detail-plaintext-storage](../../adr/accepted/adr-usage-detail-plaintext-storage.md).
+SQLite stores provider facts with explicit semantics:
+`input_tokens_total`, `input_tokens_cache_read`, `input_tokens_cache_write`,
+`output_tokens_total`, and `output_tokens_reasoning`. Uncached input is never duplicated in storage;
+both UIs derive it as `max(0, input total - cache read)`. Cache writes remain separate for accurate
+cost calculation but count as uncached input in the compact presentation.
+
+Conversation replay and execution history use separate authorities inside one application database.
+Confidentiality of their persisted plaintext relies on network isolation rather than in-app auth —
+see
+[adr-conversation-and-execution-data-sqlite](../../adr/accepted/adr-conversation-and-execution-data-sqlite.md).

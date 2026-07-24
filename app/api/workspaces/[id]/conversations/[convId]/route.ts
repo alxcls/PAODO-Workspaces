@@ -7,6 +7,7 @@ import { requireWorkspace } from "@/lib/api/guards";
 import * as conversations from "@/lib/workspace/conversationStore";
 import * as broker from "@/lib/agent/runBroker";
 import { messagesToTranscript } from "@/lib/agent/messageSerialization";
+import { getConversationOutputTokens } from "@/lib/workspace/usageStore";
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string; convId: string }> }) {
   const { id, convId } = await params;
@@ -27,6 +28,6 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
     meta,
     running,
     userInput: running ? broker.peekUserInput(id, convId) : null,
-    transcript: messagesToTranscript(messages),
+    transcript: messagesToTranscript(messages, getConversationOutputTokens(id, convId)),
   });
 }

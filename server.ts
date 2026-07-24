@@ -47,6 +47,7 @@ import { startProxyReconciler, stopProxyReconciler } from "./lib/infra/docker/pr
 import { checkApiRateLimit } from "./lib/infra/security/rateLimit";
 import { hasConfiguredProviderApiKey } from "./lib/agent/buildModel";
 import { assertDataRootAvailable, assertWorkspaceRegistryAvailable } from "./lib/infra/startupChecks";
+import { appDataDb, PAODO_DB_FILE } from "./lib/data/database";
 
 const dev = process.env.NODE_ENV !== "production";
 const rawPort = process.env.PORT ?? "3000";
@@ -283,7 +284,7 @@ wss.on("connection", (ws, req) => {
   const wasEmpty = getConnectionCount(workspaceId) === 0;
   addConnection(workspaceId, ws);
   if (wasEmpty) {
-    // First connection — load saved conversations from disk so a returning user immediately sees
+    // First connection — load saved conversations from SQLite so a returning user immediately sees
     // their history. Conversations persist across restarts and disconnects (and a run keeps going
     // even with no one connected), so we deliberately no longer wipe message history here.
     // loadIndex owns its recoverable persistence error log and falls back to an empty index.
@@ -378,6 +379,24 @@ if (!dev) {
     );
     exitAfterLogs(1);
   }
+}
+
+try {
+  // Opening the application database applies every pending migration before any request, WebSocket,
+  // or scheduler can reach a feature store. An incompatible schema is a startup failure, never a
+  // partially working application.
+  appDataDb();
+} catch (err) {
+  log.fatal(
+    {
+      event: "startup_database_unavailable",
+      outcome: "process_exit",
+      err,
+      filePath: PAODO_DB_FILE,
+    },
+    "application database could not be opened or migrated — refusing to start",
+  );
+  exitAfterLogs(1);
 }
 
 // Snapshots (workspace version history) shell out to the `git` binary, and those failures are

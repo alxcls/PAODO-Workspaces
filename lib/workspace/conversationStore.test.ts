@@ -1,11 +1,11 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { mkdtempSync, rmSync, readFileSync, existsSync } from "fs";
+import { mkdtempSync, rmSync, existsSync } from "fs";
 import { tmpdir } from "os";
 import path from "path";
+import Database from "better-sqlite3";
 import { HumanMessage, AIMessage } from "@langchain/core/messages";
 
-// conversationStore resolves its on-disk location from WORKSPACES_ROOT (via paths.ts) at import
-// time, so the env must be set before the dynamic import below.
+// The shared SQLite path is resolved from WORKSPACES_ROOT at import time.
 let root: string;
 let conv: typeof import("./conversationStore");
 
@@ -15,7 +15,13 @@ beforeAll(async () => {
   conv = await import("./conversationStore");
 });
 
-afterAll(() => rmSync(root, { recursive: true, force: true }));
+afterAll(() => {
+  const g = global as { _paodoDataDb?: Database.Database; _paodoDataDbFile?: string };
+  if (g._paodoDataDb?.open) g._paodoDataDb.close();
+  delete g._paodoDataDb;
+  delete g._paodoDataDbFile;
+  rmSync(root, { recursive: true, force: true });
+});
 
 describe("conversationStore", () => {
   it("auto-creates an active conversation when none exist", () => {
@@ -29,7 +35,7 @@ describe("conversationStore", () => {
     expect(list[0].title).toBe(id.slice(0, 8));
   });
 
-  it("persists messages to disk and keeps the short stable title", () => {
+  it("persists replay state in SQLite and keeps the short stable title", () => {
     const ws = "ws-persist";
     const id = conv.getActiveId(ws);
     const title = conv.getMeta(ws, id)!.title;
@@ -40,9 +46,14 @@ describe("conversationStore", () => {
 
     expect(conv.getMeta(ws, id)!.title).toBe(title);
 
-    const file = JSON.parse(readFileSync(path.join(root, ".conversations", ws, `${id}.json`), "utf-8"));
-    expect(file.messages).toHaveLength(2);
-    expect(file.meta.title).toBe(title);
+    const db = new Database(path.join(root, ".paodo.db"), { readonly: true });
+    const row = db
+      .prepare("SELECT title, messages_json FROM conversations WHERE workspace_id = ? AND id = ?")
+      .get(ws, id) as { title: string; messages_json: string };
+    db.close();
+    expect(JSON.parse(row.messages_json)).toHaveLength(2);
+    expect(row.title).toBe(title);
+    expect(existsSync(path.join(root, ".conversations", ws))).toBe(false);
   });
 
   it("supports several conversations and switching the active one", () => {
@@ -55,12 +66,16 @@ describe("conversationStore", () => {
     expect(conv.listConversations(ws)).toHaveLength(2);
   });
 
-  it("removes all on-disk state when a workspace's conversations are deleted", () => {
+  it("removes replay state without deleting execution records", () => {
     const ws = "ws-del";
     conv.getActiveId(ws);
-    expect(existsSync(path.join(root, ".conversations", ws))).toBe(true);
     conv.deleteWorkspaceConversations(ws);
-    expect(existsSync(path.join(root, ".conversations", ws))).toBe(false);
     expect(conv.listConversations(ws)).toEqual([]);
+    const db = new Database(path.join(root, ".paodo.db"), { readonly: true });
+    expect(
+      (db.prepare("SELECT count(*) AS count FROM conversations WHERE workspace_id = ?").get(ws) as { count: number })
+        .count,
+    ).toBe(0);
+    db.close();
   });
 });

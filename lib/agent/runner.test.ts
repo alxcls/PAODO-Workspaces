@@ -139,6 +139,33 @@ describe("runAgent — history stays consistent across aborts", () => {
     expect(events.at(-1)).toEqual({ type: "done" });
   });
 
+  it("links every persisted AI message to its own execution-turn record", async () => {
+    const messages: BaseMessage[] = [];
+    const buildAgentTools = makeBuildTools([
+      [toolCallsChunk({ id: "call_1", args: '{"cmd":"ls"}' })],
+      [new AIMessageChunk({ content: "done" })],
+    ]);
+    const events: AgentEvent[] = [];
+
+    for await (const event of runAgent(messages, "list files", "/tmp/ws", "ws-1", {
+      ...noopDeps,
+      buildAgentTools,
+    })) {
+      events.push(event);
+    }
+
+    const turnIds = events
+      .filter((event): event is Extract<AgentEvent, { type: "turn_usage" }> => event.type === "turn_usage")
+      .map((event) => event.turnId);
+    const messageTurnIds = messages
+      .filter((message): message is AIMessage => message instanceof AIMessage)
+      .map((message) => message.response_metadata.executionTurnId);
+
+    expect(turnIds).toHaveLength(2);
+    expect(new Set(turnIds).size).toBe(2);
+    expect(messageTurnIds).toEqual(turnIds);
+  });
+
   it("records a returned tool error as an error outcome", async () => {
     const buildAgentTools = makeBuildTools(
       [[toolCallsChunk({ id: "call_1", args: '{"cmd":"false"}' })], [new AIMessageChunk({ content: "recovered" })]],

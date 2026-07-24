@@ -4,6 +4,7 @@
 import { useState, useRef, useEffect } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
+import TokenUsageLine from "@/components/usage/TokenUsageLine";
 import { useAgentStream, toolLabel } from "@/lib/client/hooks/useAgentStream";
 import type { InitialConversation } from "@/lib/client/hooks/useConversations";
 
@@ -205,14 +206,13 @@ export default function ChatPanel({
           }
           if (m.role === "usage") {
             return (
-              <div key={i} className="flex justify-start gap-2.5 px-0.5 text-2xs select-none">
-                <span title="Input tokens" className="text-sky-800">
-                  ↑ {m.inputTokens?.toLocaleString()}
-                </span>
-                <span title="Output tokens" className="text-orange-800">
-                  ↓ {m.outputTokens?.toLocaleString()}
-                </span>
-              </div>
+              <TokenUsageLine
+                key={i}
+                inputTokensTotal={m.inputTokensTotal ?? 0}
+                inputTokensCacheRead={m.inputTokensCacheRead ?? 0}
+                outputTokensTotal={m.outputTokensTotal ?? 0}
+                scope="for this agent loop"
+              />
             );
           }
           if (m.role === "assistant") {

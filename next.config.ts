@@ -5,7 +5,7 @@ import path from "path";
 
 const nextConfig: NextConfig = {
   devIndicators: false,
-  serverExternalPackages: ["pino"],
+  serverExternalPackages: ["better-sqlite3", "pino"],
   logging: {
     incomingRequests: false,
   },

@@ -1,4 +1,4 @@
-// Serialize/deserialize the agent's LangChain message history for on-disk persistence, and
+// Serialize/deserialize the agent's LangChain message history for durable persistence, and
 // project a message history into the client transcript shape used by the chat UI.
 //
 // The system prompt (a SystemMessage at index 0) is rebuilt fresh on every run from AGENTS.md
@@ -58,15 +58,32 @@ export function setSystemPrompt(messages: BaseMessage[], system: BaseMessage): v
 }
 
 /**
- * Project a saved message history into the client transcript (the same Message[] the live SSE
- * stream produces), so a reloaded conversation renders identically to one watched live. Reasoning
- * blocks are streaming-only and intentionally omitted from replay. The run-cumulative usage line,
- * stashed on the terminal AIMessage's response_metadata by the runner, IS replayed — emitted just
- * before the final assistant bubble to mirror the live stream's insertUsage placement.
+ * Project saved replay state into the client transcript. The execution ledger aggregates a
+ * session's model turns onto its final visible output and keys that total by the stable id on the
+ * corresponding AIMessage; the conversation never owns a second copy of those measurements.
  */
-export function messagesToTranscript(messages: BaseMessage[]): Message[] {
+export function messagesToTranscript(
+  messages: BaseMessage[],
+  outputUsage: ReadonlyMap<
+    string,
+    { inputTokensTotal: number; inputTokensCacheRead: number; outputTokensTotal: number }
+  > = new Map(),
+): Message[] {
   const out: Message[] = [];
   const bubbleByCallId = new Map<string, number>();
+
+  const appendUsage = (message: AIMessage) => {
+    const metadata = message.response_metadata as { executionTurnId?: unknown } | undefined;
+    const executionTurnId = typeof metadata?.executionTurnId === "string" ? metadata.executionTurnId : undefined;
+    const usage = executionTurnId ? outputUsage.get(executionTurnId) : undefined;
+    if (!usage || (usage.inputTokensTotal === 0 && usage.outputTokensTotal === 0)) return;
+    out.push({
+      role: "usage",
+      inputTokensTotal: usage.inputTokensTotal,
+      inputTokensCacheRead: usage.inputTokensCacheRead,
+      outputTokensTotal: usage.outputTokensTotal,
+    });
+  };
 
   for (const m of messages) {
     switch (m._getType()) {
@@ -74,21 +91,12 @@ export function messagesToTranscript(messages: BaseMessage[]): Message[] {
         out.push({ role: "user", content: contentToText(m.content) });
         break;
       case "ai": {
-        const text = contentToText(m.content);
-        const toolCalls = (m as AIMessage).tool_calls ?? [];
+        const ai = m as AIMessage;
+        const text = contentToText(ai.content);
+        const toolCalls = ai.tool_calls ?? [];
+        // Match the live transcript: usage introduces the model output or tool action it measures.
+        appendUsage(ai);
         if (toolCalls.length === 0) {
-          // The terminal turn carries the run-cumulative usage on response_metadata; emit it just
-          // before the final assistant bubble, matching the live stream's insertUsage placement.
-          const runUsage = (
-            m.response_metadata as { runUsage?: { inputTokens?: number; outputTokens?: number } } | undefined
-          )?.runUsage;
-          if (runUsage && ((runUsage.inputTokens ?? 0) > 0 || (runUsage.outputTokens ?? 0) > 0)) {
-            out.push({
-              role: "usage",
-              inputTokens: runUsage.inputTokens ?? 0,
-              outputTokens: runUsage.outputTokens ?? 0,
-            });
-          }
           if (text.trim()) out.push({ role: "assistant", content: text });
         } else {
           if (text.trim()) out.push({ role: "assistant", content: text, thinking: true });

@@ -2,7 +2,7 @@
 //   - the `WorkspaceStore` class (injectable map + persistence) for tests / isolated use
 //   - a default singleton + thin free-function exports (back-compat) used in production
 //
-// NOTE — conversation history lives in conversationStore.ts, persisted to disk per workspace and
+// NOTE — conversation history lives in conversationStore.ts, persisted in SQLite per workspace and
 // surviving across restarts/disconnects. A workspace no longer carries any message history.
 import path from "path";
 import { createLogger } from "../infra/logger";

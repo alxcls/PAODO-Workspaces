@@ -21,7 +21,12 @@ describe("modelPricing", () => {
     expect(getRate(undefined)).toBeUndefined();
     expect(
       computeCost(
-        { inputTokens: 100, outputTokens: 100, cachedInputTokens: 0, cacheCreationTokens: 0 },
+        {
+          inputTokensTotal: 100,
+          inputTokensCacheRead: 0,
+          inputTokensCacheWrite: 0,
+          outputTokensTotal: 100,
+        },
         "not-a-real-model",
       ),
     ).toBeUndefined();
@@ -36,7 +41,15 @@ describe("modelPricing", () => {
     (modelId) => {
       expect(getRate(modelId)).toBeUndefined();
       expect(
-        computeCost({ inputTokens: 100, outputTokens: 100, cachedInputTokens: 0, cacheCreationTokens: 0 }, modelId),
+        computeCost(
+          {
+            inputTokensTotal: 100,
+            inputTokensCacheRead: 0,
+            inputTokensCacheWrite: 0,
+            outputTokensTotal: 100,
+          },
+          modelId,
+        ),
       ).toBeUndefined();
     },
   );
@@ -44,7 +57,12 @@ describe("modelPricing", () => {
   it("computes cost without double-charging cached input", () => {
     const rate = getRate("deepseek-v4-pro")!;
     // 1000 input of which 400 cached, 500 output, no cache-creation.
-    const tokens = { inputTokens: 1000, outputTokens: 500, cachedInputTokens: 400, cacheCreationTokens: 0 };
+    const tokens = {
+      inputTokensTotal: 1000,
+      inputTokensCacheRead: 400,
+      inputTokensCacheWrite: 0,
+      outputTokensTotal: 500,
+    };
     const expected = 600 * rate.input + 400 * rate.cachedInput + 500 * rate.output;
     expect(computeCost(tokens, "deepseek-v4-pro")).toBeCloseTo(expected, 12);
   });
@@ -54,7 +72,12 @@ describe("modelPricing", () => {
     // Providers report input_tokens as the total: here 1000 = 600 base + 300 cache_read + 100
     // cache_creation. Only the 600 base should pay the plain input rate; the other buckets pay their
     // own rates. Without subtracting cache-creation, the 100 creation tokens would be billed twice.
-    const tokens = { inputTokens: 1000, outputTokens: 500, cachedInputTokens: 300, cacheCreationTokens: 100 };
+    const tokens = {
+      inputTokensTotal: 1000,
+      inputTokensCacheRead: 300,
+      inputTokensCacheWrite: 100,
+      outputTokensTotal: 500,
+    };
     const expected = 600 * rate.input + 300 * rate.cachedInput + 100 * rate.cacheCreation + 500 * rate.output;
     expect(computeCost(tokens, "claude-opus-4-8")).toBeCloseTo(expected, 12);
   });

@@ -62,12 +62,12 @@ RUN userdel -r ubuntu 2>/dev/null || true && \
 # setuid sudo — `no-new-privileges` would disable it anyway). The `apt_install` agent tool installs
 # packages by running apt-get via `docker exec -u 0` from the app server, which controls Docker.
 
-# nvm + Node LTS — installed as `dev`, who owns the install dirs and can therefore add Node versions
+# nvm + Node 22 — installed as `dev`, who owns the install dirs and can therefore add Node versions
 # at runtime. Real binaries (not the nvm wrapper) are symlinked into /usr/local/bin so node/npm/npx
 # resolve in any shell without sourcing nvm.sh.
 ENV NVM_DIR=/home/dev/.nvm
 RUN su - dev -c "curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash" && \
-    su - dev -c ". $NVM_DIR/nvm.sh && nvm install --lts && nvm alias default node" && \
+    su - dev -c ". $NVM_DIR/nvm.sh && nvm install 22 && nvm alias default 22" && \
     NVM_BIN=$(su - dev -c ". $NVM_DIR/nvm.sh && dirname \$(which node)") && \
     ln -sf "$NVM_BIN/node" /usr/local/bin/node && \
     ln -sf "$NVM_BIN/npm"  /usr/local/bin/npm  && \

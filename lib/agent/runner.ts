@@ -36,12 +36,14 @@ export type AgentEvent =
   | { type: "done" }
   | {
       type: "turn_usage";
+      /** Stable id shared by the persisted AIMessage and its execution record. */
+      turnId: string;
       model?: string;
-      inputTokens: number;
-      outputTokens: number;
-      reasoningTokens: number;
-      cachedInputTokens: number;
-      cacheCreationTokens: number;
+      inputTokensTotal: number;
+      inputTokensCacheRead: number;
+      inputTokensCacheWrite: number;
+      outputTokensTotal: number;
+      outputTokensReasoning: number;
       userInput?: string;
       reasoningText?: string;
       outputText?: string;
@@ -203,21 +205,21 @@ function extractContentFromChunk(chunk: AIMessageChunk): { tokens: string[]; rea
 // Extracts the per-turn token counts from the accumulated stream chunk's usage metadata.
 function usageTokens(chunk: AIMessageChunk | null) {
   return {
-    inputTokens: chunk?.usage_metadata?.input_tokens ?? 0,
-    outputTokens: chunk?.usage_metadata?.output_tokens ?? 0,
-    reasoningTokens: chunk?.usage_metadata?.output_token_details?.reasoning ?? 0,
+    inputTokensTotal: chunk?.usage_metadata?.input_tokens ?? 0,
+    outputTokensTotal: chunk?.usage_metadata?.output_tokens ?? 0,
+    outputTokensReasoning: chunk?.usage_metadata?.output_token_details?.reasoning ?? 0,
     // DeepSeek exposes cache hits in prompt_cache_hit_tokens and Moonshot in cached_tokens — both at
     // the TOP level of usage, not in prompt_tokens_details.cached_tokens where LangChain's OpenAI
     // adapter looks, so it misses them. Left unread, a cache hit is billed as fresh input: on Kimi K3
     // that is $3.00/Mtok instead of $0.30, a 10x overstatement on a mostly-cached agent turn.
-    cachedInputTokens:
+    inputTokensCacheRead:
       chunk?.usage_metadata?.input_token_details?.cache_read ??
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (chunk?.response_metadata as any)?.usage?.prompt_cache_hit_tokens ??
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (chunk?.response_metadata as any)?.usage?.cached_tokens ??
       0,
-    cacheCreationTokens: chunk?.usage_metadata?.input_token_details?.cache_creation ?? 0,
+    inputTokensCacheWrite: chunk?.usage_metadata?.input_token_details?.cache_creation ?? 0,
   };
 }
 
@@ -288,6 +290,7 @@ async function* synthesizeLimit(
   messages: BaseMessage[],
   signal: AbortSignal | undefined,
   wlog: Logger,
+  modelId?: string,
 ): AsyncGenerator<AgentEvent> {
   /* eslint-enable @typescript-eslint/no-explicit-any */
   wlog.debug("limit synthesis started");
@@ -299,15 +302,28 @@ async function* synthesizeLimit(
       ),
     ];
     const synthStream = await model.stream(synthMessages, { signal });
+    const turnId = crypto.randomUUID();
     let synthText = "";
+    let accumulatedChunk: AIMessageChunk | null = null;
     for await (const chunk of synthStream as AsyncIterable<AIMessageChunk>) {
+      accumulatedChunk = accumulatedChunk ? accumulatedChunk.concat(chunk) : chunk;
       const text = contentToText(chunk.content);
       if (text) {
         synthText += text;
         yield { type: "token", content: text };
       }
     }
-    if (synthText) messages.push(new AIMessage(synthText));
+    if (synthText) {
+      messages.push(new AIMessage({ content: synthText, response_metadata: { executionTurnId: turnId } }));
+      yield {
+        type: "turn_usage",
+        turnId,
+        ...usageTokens(accumulatedChunk),
+        ...(modelId ? { model: modelId } : {}),
+        outputText: synthText,
+        toolCalls: [],
+      };
+    }
     wlog.debug({ chars: synthText.length }, "limit synthesis done");
   } catch (err) {
     wlog.error(
@@ -439,21 +455,17 @@ export async function* runAgent(
   await tryCommitBaseline(versioning, workspaceId, workspaceDir, userInput, wlog);
 
   let iterations = 0;
-  // Run-cumulative token totals, summed across every turn. Mirrors the client's per-run usage
-  // line (agentTranscript.insertUsage): attached to the terminal assistant message below so a
-  // reloaded conversation shows the same single usage line the live stream did.
-  let runInputTokens = 0;
-  let runOutputTokens = 0;
   try {
     while (true) {
       if (iterations >= maxIterations) {
         wlog.warn({ iterations }, "agent loop limit reached");
         yield { type: "limit_reached" };
-        yield* synthesizeLimit(model, messages, signal, wlog);
+        yield* synthesizeLimit(model, messages, signal, wlog, modelId);
         yield { type: "done" };
         break;
       }
       iterations++;
+      const turnId = crypto.randomUUID();
 
       let fullText = "";
       let reasoningText = "";
@@ -478,24 +490,23 @@ export async function* runAgent(
       // terminal (no-tool) turn. Emitted AFTER tools settle (below) so tool outputs are included;
       // the no-tool final turn emits it here with no tool calls.
       const usageBase = {
+        turnId,
         ...usageTokens(accumulatedChunk),
         ...(modelId ? { model: modelId } : {}),
         ...(iterations === 1 ? { userInput } : {}),
         ...(reasoningText ? { reasoningText } : {}),
         ...(fullText ? { outputText: fullText } : {}),
       };
-      runInputTokens += usageBase.inputTokens;
-      runOutputTokens += usageBase.outputTokens;
 
       if (!toolCalls.length) {
         // Final text response — tokens already streamed as they arrived; just persist and exit.
         yield { type: "turn_usage", ...usageBase, toolCalls: [] };
-        // Stash the run-cumulative usage on the persisted message so messagesToTranscript can
-        // replay the usage line on reload (response_metadata survives serialization).
         messages.push(
           new AIMessage({
             content: fullText,
-            response_metadata: { runUsage: { inputTokens: runInputTokens, outputTokens: runOutputTokens } },
+            // The execution ledger owns token measurements. Replay state keeps only the stable
+            // reference used to join those measurements when a conversation is reopened.
+            response_metadata: { executionTurnId: turnId },
           }),
         );
         wlog.debug("agent loop done");
@@ -520,6 +531,7 @@ export async function* runAgent(
       const assistantTurn = new AIMessage({
         content: fullText,
         tool_calls: activeCalls.map((tc) => ({ id: tc.id, name: tc.name, args: tc.args })),
+        response_metadata: { executionTurnId: turnId },
       });
 
       for (const tc of activeCalls) {

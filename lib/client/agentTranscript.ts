@@ -19,19 +19,55 @@ export interface Message {
   calleeWorkspaceName?: string;
   calleeConversationId?: string;
   thinking?: boolean;
-  inputTokens?: number;
-  outputTokens?: number;
+  inputTokensTotal?: number;
+  inputTokensCacheRead?: number;
+  outputTokensTotal?: number;
 }
 
-// Running transcript: the rendered messages plus the per-turn token totals that the `done`
-// event folds into an inline usage message.
 export interface TranscriptState {
   messages: Message[];
-  totalInput: number;
-  totalOutput: number;
 }
 
-export const emptyTranscript = (): TranscriptState => ({ messages: [], totalInput: 0, totalOutput: 0 });
+export const emptyTranscript = (): TranscriptState => ({ messages: [] });
+
+type TurnUsageEvent = Extract<AgentEvent, { type: "turn_usage" }>;
+
+export interface LoopTokenUsage {
+  inputTokensTotal: number;
+  inputTokensCacheRead: number;
+  outputTokensTotal: number;
+}
+
+export const emptyLoopTokenUsage = (): LoopTokenUsage => ({
+  inputTokensTotal: 0,
+  inputTokensCacheRead: 0,
+  outputTokensTotal: 0,
+});
+
+/**
+ * Accumulate persisted model-turn usage for one agent loop. Only a terminal turn with visible
+ * prose produces a chat event; tool-selection turns remain execution-dashboard detail.
+ */
+export function foldTurnUsageForChat(
+  totals: LoopTokenUsage,
+  event: TurnUsageEvent,
+): { totals: LoopTokenUsage; displayEvent?: TurnUsageEvent } {
+  const next = {
+    inputTokensTotal: totals.inputTokensTotal + event.inputTokensTotal,
+    inputTokensCacheRead: totals.inputTokensCacheRead + event.inputTokensCacheRead,
+    outputTokensTotal: totals.outputTokensTotal + event.outputTokensTotal,
+  };
+  if (event.toolCalls.length > 0 || !event.outputText?.trim()) return { totals: next };
+  return {
+    totals: next,
+    displayEvent: {
+      ...event,
+      inputTokensTotal: next.inputTokensTotal,
+      inputTokensCacheRead: next.inputTokensCacheRead,
+      outputTokensTotal: next.outputTokensTotal,
+    },
+  };
+}
 
 // Extend this map to support new tools without modifying dispatch logic (OCP).
 const TOOL_LABELS: Record<string, string> = {
@@ -163,19 +199,32 @@ export function markAllToolsDone(messages: Message[]): Message[] {
   return messages.map((m) => (m.role === "tool_start" && !m.toolDone ? { ...m, toolDone: true } : m));
 }
 
-// Inserts the usage line just before the last completed assistant message (no-op if there
-// isn't one). Caller only invokes this when there are tokens to report.
-function insertUsage(messages: Message[], inputTokens: number, outputTokens: number): Message[] {
-  const lastIdx = [...messages].reverse().findIndex((m) => m.role === "assistant" && !m.thinking);
-  if (lastIdx === -1) return messages;
-  const idx = messages.length - 1 - lastIdx;
-  const usageMsg: Message = { role: "usage", inputTokens, outputTokens };
-  return [...messages.slice(0, idx), usageMsg, ...messages.slice(idx)];
+// The stream consumer aggregates model-turn usage for a complete loop, then passes that total here
+// when the final visible assistant output closes. `turnStartIndex` places the badge immediately
+// before that output.
+function insertUsage(
+  messages: Message[],
+  inputTokensTotal: number,
+  inputTokensCacheRead: number,
+  outputTokensTotal: number,
+  turnStartIndex = messages.length,
+): Message[] {
+  if (inputTokensTotal === 0 && outputTokensTotal === 0) return messages;
+  const index = Math.max(0, Math.min(turnStartIndex, messages.length));
+  return [
+    ...messages.slice(0, index),
+    { role: "usage", inputTokensTotal, inputTokensCacheRead, outputTokensTotal },
+    ...messages.slice(index),
+  ];
 }
 
 // Pure reducer for the non-streaming events (tokens/reasoning are coalesced in the hook).
 // Unrecognized events leave the state untouched.
-export function applyDiscreteEvent(state: TranscriptState, event: AgentEvent): TranscriptState {
+export function applyDiscreteEvent(
+  state: TranscriptState,
+  event: AgentEvent,
+  turnStartIndex?: number,
+): TranscriptState {
   switch (event.type) {
     case "tool_start":
       return { ...state, messages: appendToolStart(state.messages, event.name, event.args, event.id) };
@@ -194,13 +243,16 @@ export function applyDiscreteEvent(state: TranscriptState, event: AgentEvent): T
     case "turn_usage":
       return {
         ...state,
-        totalInput: state.totalInput + event.inputTokens,
-        totalOutput: state.totalOutput + event.outputTokens,
+        messages: insertUsage(
+          state.messages,
+          event.inputTokensTotal,
+          event.inputTokensCacheRead,
+          event.outputTokensTotal,
+          turnStartIndex,
+        ),
       };
     case "done":
-      return state.totalInput > 0 || state.totalOutput > 0
-        ? { ...state, messages: insertUsage(state.messages, state.totalInput, state.totalOutput) }
-        : state;
+      return state;
     case "limit_reached":
       return { ...state, messages: [...state.messages, { role: "limit_notice" }] };
     case "error":

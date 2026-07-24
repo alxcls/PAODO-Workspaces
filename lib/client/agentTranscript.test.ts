@@ -13,14 +13,12 @@ import {
   markAllToolsDone,
   appendDisconnected,
   clearDisconnected,
+  emptyLoopTokenUsage,
+  foldTurnUsageForChat,
   toolLabel,
 } from "./agentTranscript";
 
-const state = (messages: Message[], totalInput = 0, totalOutput = 0): TranscriptState => ({
-  messages,
-  totalInput,
-  totalOutput,
-});
+const state = (messages: Message[]): TranscriptState => ({ messages });
 
 describe("markAllToolsDone", () => {
   // On abort, every still-spinning tool row is switched to done (no spinner left running).
@@ -67,6 +65,102 @@ describe("upsertReasoningText", () => {
     const first = upsertReasoningText([], "th");
     expect(first).toEqual([{ role: "reasoning", content: "th" }]);
     expect(upsertReasoningText(first, "think")).toEqual([{ role: "reasoning", content: "think" }]);
+  });
+});
+
+describe("foldTurnUsageForChat", () => {
+  const turnUsage = (
+    overrides: Partial<Extract<AgentEvent, { type: "turn_usage" }>> = {},
+  ): Extract<AgentEvent, { type: "turn_usage" }> => ({
+    type: "turn_usage",
+    turnId: "turn",
+    inputTokensTotal: 100,
+    inputTokensCacheRead: 40,
+    inputTokensCacheWrite: 0,
+    outputTokensTotal: 10,
+    outputTokensReasoning: 0,
+    toolCalls: [],
+    ...overrides,
+  });
+
+  it("accumulates tool turns but exposes only the final visible output", () => {
+    const toolTurn = foldTurnUsageForChat(
+      emptyLoopTokenUsage(),
+      turnUsage({
+        turnId: "tool-turn",
+        outputText: "I will inspect it",
+        toolCalls: [{ name: "file_read", args: {}, output: "body", status: "ok" }],
+      }),
+    );
+    expect(toolTurn.displayEvent).toBeUndefined();
+
+    const finalTurn = foldTurnUsageForChat(
+      toolTurn.totals,
+      turnUsage({
+        turnId: "final-turn",
+        inputTokensTotal: 120,
+        inputTokensCacheRead: 20,
+        outputTokensTotal: 30,
+        outputText: "Done",
+      }),
+    );
+    expect(finalTurn.displayEvent).toMatchObject({
+      turnId: "final-turn",
+      inputTokensTotal: 220,
+      inputTokensCacheRead: 60,
+      outputTokensTotal: 40,
+    });
+  });
+
+  it("treats a visible limit summary as the loop's final aggregate output", () => {
+    const priorTurn = foldTurnUsageForChat(
+      emptyLoopTokenUsage(),
+      turnUsage({
+        turnId: "last-tool-turn",
+        toolCalls: [{ name: "execute_command", args: {}, output: "stopped", status: "ok" }],
+      }),
+    );
+    const summary = foldTurnUsageForChat(
+      priorTurn.totals,
+      turnUsage({
+        turnId: "limit-summary",
+        inputTokensTotal: 80,
+        inputTokensCacheRead: 30,
+        outputTokensTotal: 25,
+        outputText: "Here is what I completed before reaching the limit.",
+      }),
+    );
+
+    expect(summary.displayEvent).toMatchObject({
+      turnId: "limit-summary",
+      inputTokensTotal: 180,
+      inputTokensCacheRead: 70,
+      outputTokensTotal: 35,
+    });
+  });
+
+  it("rebuilds the same aggregate when buffered events are replayed after reconnect", () => {
+    const events = [
+      turnUsage({
+        turnId: "tool-turn",
+        toolCalls: [{ name: "glob", args: {}, output: "files", status: "ok" }],
+      }),
+      turnUsage({ turnId: "final-turn", outputText: "Done" }),
+    ];
+    const replay = () =>
+      events.reduce((state, event) => foldTurnUsageForChat(state.totals, event), {
+        totals: emptyLoopTokenUsage(),
+        displayEvent: undefined,
+      } as ReturnType<typeof foldTurnUsageForChat>);
+
+    const firstPass = replay();
+    const reconnectPass = replay();
+    expect(reconnectPass).toEqual(firstPass);
+    expect(reconnectPass.displayEvent).toMatchObject({
+      inputTokensTotal: 200,
+      inputTokensCacheRead: 80,
+      outputTokensTotal: 20,
+    });
   });
 });
 
@@ -204,34 +298,39 @@ describe("applyDiscreteEvent", () => {
     ]);
   });
 
-  // Token usage from each turn adds onto the running input/output totals.
-  it("turn_usage accumulates token totals", () => {
+  // Chat passes the loop aggregate only when the visible output closes; the reducer places that
+  // single total above the answer while preserving the preceding tool activity.
+  it("turn_usage inserts the loop total above the visible assistant output", () => {
     const event: AgentEvent = {
       type: "turn_usage",
-      inputTokens: 10,
-      outputTokens: 4,
-      reasoningTokens: 0,
-      cachedInputTokens: 0,
-      cacheCreationTokens: 0,
+      turnId: "turn-output",
+      inputTokensTotal: 30,
+      inputTokensCacheRead: 12,
+      inputTokensCacheWrite: 0,
+      outputTokensTotal: 8,
+      outputTokensReasoning: 0,
       toolCalls: [],
     };
-    const once = applyDiscreteEvent(emptyTranscript(), event);
-    expect([once.totalInput, once.totalOutput]).toEqual([10, 4]);
-    const twice = applyDiscreteEvent(once, event);
-    expect([twice.totalInput, twice.totalOutput]).toEqual([20, 8]);
-  });
+    const output: TranscriptState = {
+      messages: [
+        { role: "tool_start", toolName: "file_read", toolDone: true },
+        { role: "assistant", content: "Done" },
+      ],
+    };
 
-  // Finishing a turn drops a usage summary line above the last assistant answer.
-  it("done inserts a usage line before the last completed assistant turn", () => {
-    const start = state([{ role: "assistant", content: "answer" }], 12, 5);
-    expect(applyDiscreteEvent(start, { type: "done" }).messages).toEqual([
-      { role: "usage", inputTokens: 12, outputTokens: 5 },
-      { role: "assistant", content: "answer" },
+    expect(applyDiscreteEvent(output, event, 1).messages).toEqual([
+      { role: "tool_start", toolName: "file_read", toolDone: true },
+      {
+        role: "usage",
+        inputTokensTotal: 30,
+        inputTokensCacheRead: 12,
+        outputTokensTotal: 8,
+      },
+      { role: "assistant", content: "Done" },
     ]);
   });
 
-  // No tokens reported → no usage line is added.
-  it("done is a no-op when no tokens were reported", () => {
+  it("done is a no-op because usage is finalized with the visible output", () => {
     const start = state([{ role: "assistant", content: "answer" }]);
     expect(applyDiscreteEvent(start, { type: "done" }).messages).toEqual([{ role: "assistant", content: "answer" }]);
   });

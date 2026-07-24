@@ -276,6 +276,30 @@ docker system df                                                    # disk usage
 tailscale status                                                    # VPN status
 ```
 
+### Backing up workspace data
+
+Conversation replay state and execution history (including prompts and tool output) live in
+separate tables in SQLite at `/app/data/.paodo.db`. Do not copy that live file directly: the
+database uses WAL mode, so a raw file copy can omit committed pages. Create a consistent snapshot
+through the app, copy it to separately backed-up storage, then remove the temporary same-volume
+snapshot:
+
+```bash
+docker compose exec -T app npm run backup:database -- /app/data/.paodo-backup.db
+docker compose cp app:/app/data/.paodo-backup.db /mnt/off-host-backups/paodo.db
+docker compose exec -T app rm /app/data/.paodo-backup.db
+```
+
+Automate those commands with the host scheduler and give snapshots dated names plus an explicit
+retention policy. `/mnt/off-host-backups` is only an example: it must be replicated or mounted from
+another system. Keeping the copy on the VPS does not protect against host or volume loss.
+
+The database schema is forward-migrated at startup using SQLite `PRAGMA user_version`.
+`lib/data/migrations/` is the sole schema authority: add one sequential migration for each change
+and never edit a migration after it has shipped. Back up the database before deploying a version
+that introduces a migration. Startup fails and rolls back if a migration cannot complete, or if the
+database was created by a newer application version.
+
 ### Reading the logs over SSH
 
 Everything is line-delimited JSON, so `jq` works on all of it.

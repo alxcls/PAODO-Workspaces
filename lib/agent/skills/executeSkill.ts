@@ -56,7 +56,7 @@ export interface ExecuteSkillOptions {
   persistFn?: typeof persist;
   /** Fired the instant the callee's conversation is created (before the run finishes), so the
    *  caller's UI can show the session deep-link mid-call. createConversation already writes the
-   *  conversation to disk, so the link resolves immediately. */
+   *  conversation to SQLite, so the link resolves immediately. */
   onConversationStart?: (conversationId: string) => void;
   outputMaxRetries?: number;
 }
@@ -311,7 +311,7 @@ ${buildStructuredResponderBlock(skill)}`;
 
   // Announce the session only now — after the broker run is registered — so a caller that clicks
   // the "View session" link the instant it appears finds a live run to attach to, not an empty
-  // (not-yet-registered) session. createConversation already wrote it to disk, so it resolves.
+  // (not-yet-registered) session. createConversation already persisted it, so it resolves.
   const maxRetries = opts.outputMaxRetries ?? config.skillOutputMaxRetries;
   let input = firstInput;
   let lastError = "";
@@ -379,7 +379,7 @@ ${buildStructuredResponderBlock(skill)}`;
     runTimeout.dispose();
     (opts.persistFn ?? persist)(callee.id, conv.id);
     // Persist first, then close the live run: a client reconnecting at this instant replays from
-    // the just-written on-disk history and receives `done` to end its stream cleanly.
+    // the just-written committed history and receives `done` to end its stream cleanly.
     if (liveRun) {
       liveRun.publish({ type: "done" });
       liveRun.finish(runStatus);

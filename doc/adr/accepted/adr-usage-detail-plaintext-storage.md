@@ -5,7 +5,7 @@ Status: Accepted
 Context
 The usage dashboard records rich per-turn detail to help operators understand and debug agent
 runs: the user's prompt, the model's reasoning text, the agent's prose response, and every tool
-call's arguments and output. This content is persisted to `data/.usage.db` and
+call's arguments and output. This content is persisted to `data/.workspace.db` and
 served by two routes — `GET /api/usage` (light list: token counts + tool names/status only) and
 `GET /api/usage/[sessionId]` (full per-session detail). Tool outputs can contain file contents,
 command output, and secrets the agent encountered; prompts can contain sensitive instructions.
@@ -27,7 +27,7 @@ transaction using WAL mode with `synchronous=FULL`. Large text is stored in SQLi
 the dashboard list query; it is selected only for a requested session. Records are not automatically
 deleted. The dashboard API limits one list response to the newest 5000 turns, which is a response
 bound rather than a retention policy. Operators create consistent snapshots with
-`npm run backup:usage -- /path/on/separate-storage/usage.db`; the destination must be separately
+`npm run backup:workspace-data -- /path/on/separate-storage/workspace.db`; the destination must be separately
 backed up or remote storage, because another file on the same volume is not a disaster-recovery
 backup.
 

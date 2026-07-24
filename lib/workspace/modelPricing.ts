@@ -32,10 +32,10 @@ export interface Rate {
 // The token counts recorded per turn (a subset of TurnRecord). Kept structural so usageStore and the
 // dashboard can pass their records straight in without importing this module's shape.
 export interface TokenCounts {
-  inputTokens: number;
-  outputTokens: number;
-  cachedInputTokens: number;
-  cacheCreationTokens: number;
+  inputTokensTotal: number;
+  inputTokensCacheRead: number;
+  inputTokensCacheWrite: number;
+  outputTokensTotal: number;
 }
 
 // Looks a model up by id. Catalog keys come in bare (`deepseek-v4-pro`) and provider-prefixed
@@ -64,20 +64,18 @@ export function getRate(modelId: string | undefined): Rate | undefined {
   };
 }
 
-// USD cost for one turn's tokens. Providers report input_tokens as the grand total (cache reads AND
-// cache-creation are folded in — e.g. LangChain's Anthropic adapter sets input_tokens = base +
-// cache_read + cache_creation), and those buckets are billed separately below, so uncached input is
-// (input − cached − cache-creation) to avoid double-charging them. For OpenAI/DeepSeek cacheCreation
-// is 0, so this is a no-op there. Returns undefined when the model isn't in the catalog so callers
-// can render "unknown" rather than a misleading $0.
+// USD cost for one turn's tokens. inputTokensTotal includes cache reads and cache writes; those
+// buckets are billed separately below, so base input subtracts both to avoid double-charging.
+// Returns undefined when the model isn't in the catalog so callers can render "unknown" rather
+// than a misleading $0.
 export function computeCost(t: TokenCounts, modelId: string | undefined): number | undefined {
   const rate = getRate(modelId);
   if (!rate) return undefined;
-  const uncachedInput = Math.max(0, t.inputTokens - t.cachedInputTokens - t.cacheCreationTokens);
+  const uncachedInput = Math.max(0, t.inputTokensTotal - t.inputTokensCacheRead - t.inputTokensCacheWrite);
   return (
     uncachedInput * rate.input +
-    t.cachedInputTokens * rate.cachedInput +
-    t.cacheCreationTokens * rate.cacheCreation +
-    t.outputTokens * rate.output
+    t.inputTokensCacheRead * rate.cachedInput +
+    t.inputTokensCacheWrite * rate.cacheCreation +
+    t.outputTokensTotal * rate.output
   );
 }

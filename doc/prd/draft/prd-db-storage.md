@@ -40,5 +40,4 @@ Platform metadata — workspace registry, API keys, and the agent network graph 
 
 ### Nice to have
 
-- Automatic migration from existing JSON files so no data is lost on upgrade
 - Storage layer abstracted behind an interface to allow swapping backends without touching business logic

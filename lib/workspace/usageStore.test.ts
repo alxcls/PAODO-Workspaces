@@ -1,5 +1,5 @@
 // SQLite is the sole usage store. These tests cover transactional full-content writes, lightweight
-// indexed reads, persistence across process/module restarts, and safe online backups.
+// indexed reads, and persistence across process/module restarts.
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import Database from "better-sqlite3";
 import fs from "fs";
@@ -7,17 +7,17 @@ import os from "os";
 import path from "path";
 
 const ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "usagestore-test-"));
-const DB_FILE = path.join(ROOT, ".usage.db");
+const DB_FILE = path.join(ROOT, ".workspace.db");
 const JSONL_FILE = path.join(ROOT, ".usage.jsonl");
 
 type ClosableDb = { open: boolean; close(): void };
 
 function closeGlobalDb() {
   const g = global as Record<string, unknown>;
-  const conn = g._usageDb as ClosableDb | undefined;
+  const conn = g._workspaceDataDb as ClosableDb | undefined;
   if (conn?.open) conn.close();
-  delete g._usageDb;
-  delete g._usageDbFile;
+  delete g._workspaceDataDb;
+  delete g._workspaceDataDbFile;
 }
 
 afterAll(() => {
@@ -43,11 +43,11 @@ function baseTurn(over: Record<string, unknown> = {}) {
     sessionId: "s1",
     workspaceId: "w1",
     workspaceName: "WS",
-    inputTokens: 100,
-    outputTokens: 10,
-    reasoningTokens: 2,
-    cachedInputTokens: 60,
-    cacheCreationTokens: 0,
+    inputTokensTotal: 100,
+    inputTokensCacheRead: 60,
+    inputTokensCacheWrite: 0,
+    outputTokensTotal: 10,
+    outputTokensReasoning: 2,
     toolCalls: [],
     ...over,
   };
@@ -118,8 +118,8 @@ describe("usageStore", () => {
     expect(store.getSessionDetail("failed-session")).toMatchObject([
       {
         userInput: "do the work",
-        inputTokens: 0,
-        outputTokens: 0,
+        inputTokensTotal: 0,
+        outputTokensTotal: 0,
         toolCalls: [],
         error: { code: "TIMEOUT", message: "The workspace exceeded its limit." },
       },
@@ -128,6 +128,15 @@ describe("usageStore", () => {
       code: "TIMEOUT",
       message: "The workspace exceeded its limit.",
     });
+  });
+
+  it("generates an id when an optional id is explicitly undefined", async () => {
+    const store = await freshStore();
+    store.appendUsage(baseTurn({ id: undefined }));
+
+    expect(store.getSessionDetail("s1")[0].id).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+    );
   });
 
   it("selects only lightweight fields for the dashboard list", async () => {
@@ -146,7 +155,7 @@ describe("usageStore", () => {
     expect(record.userInput).toBeUndefined();
     expect(record.reasoningText).toBeUndefined();
     expect(record.outputText).toBeUndefined();
-    expect(light[0].inputTokens).toBe(100);
+    expect(light[0].inputTokensTotal).toBe(100);
     expect(light[0].toolCalls).toEqual([{ name: "execute_command", status: "error" }]);
   });
 
@@ -173,6 +182,28 @@ describe("usageStore", () => {
     ]);
   });
 
+  it("preserves recording order for turns that share a timestamp", async () => {
+    const store = await freshStore();
+    // Freeze the clock so every turn gets an identical millisecond timestamp — the case fast or
+    // zero-token turns hit in production. Order must come from the recording sequence, not the
+    // timestamp or the random UUID tiebreaker.
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-24T00:00:00.000Z"));
+    try {
+      // A caller workspace run that invokes a callee workspace run, recorded in that order.
+      store.appendUsage(baseTurn({ sessionId: "caller", workspaceId: "w-caller", userInput: "call the callee" }));
+      store.appendUsage(baseTurn({ sessionId: "callee", workspaceId: "w-callee", userInput: "do the work" }));
+      store.appendUsage(baseTurn({ sessionId: "caller", workspaceId: "w-caller", userInput: "wrap up" }));
+    } finally {
+      vi.useRealTimers();
+    }
+
+    // The dashboard list is newest-first in recording order, regardless of the shared timestamp.
+    expect(store.listUsageLight().map((r) => r.sessionId)).toEqual(["caller", "callee", "caller"]);
+    // The caller's own drawer keeps its two turns in the order they ran.
+    expect(store.getSessionDetail("caller").map((t) => t.userInput)).toEqual(["call the callee", "wrap up"]);
+  });
+
   it("filters the lightweight list by workspace", async () => {
     const store = await freshStore();
     store.appendUsage(baseTurn({ sessionId: "a", workspaceId: "w1" }));
@@ -180,6 +211,45 @@ describe("usageStore", () => {
 
     expect(store.listUsageLight("w1").map((record) => record.sessionId)).toEqual(["a"]);
     expect(store.listUsageLight("w2").map((record) => record.sessionId)).toEqual(["b"]);
+  });
+
+  it("keeps per-turn detail while projecting a session total onto its visible output", async () => {
+    const store = await freshStore();
+    const context = { sessionId: "run-1", conversationId: "conv-1", workspaceId: "w1", workspaceName: "WS" };
+    store.recordTurnUsage(context, {
+      turnId: "turn-tool",
+      inputTokensTotal: 100,
+      inputTokensCacheRead: 40,
+      inputTokensCacheWrite: 0,
+      outputTokensTotal: 10,
+      outputTokensReasoning: 0,
+      outputText: "I will inspect it",
+      toolCalls: [{ name: "file_read", args: { file_path: "a.txt" }, output: "body", status: "ok" }],
+    });
+    store.recordTurnUsage(context, {
+      turnId: "turn-output",
+      inputTokensTotal: 123,
+      inputTokensCacheRead: 20,
+      inputTokensCacheWrite: 0,
+      outputTokensTotal: 45,
+      outputTokensReasoning: 0,
+      outputText: "Done",
+      toolCalls: [],
+    });
+
+    expect(store.getConversationOutputTokens("w1", "conv-1")).toEqual(
+      new Map([
+        [
+          "turn-output",
+          {
+            inputTokensTotal: 223,
+            inputTokensCacheRead: 60,
+            outputTokensTotal: 55,
+          },
+        ],
+      ]),
+    );
+    expect(store.getSessionDetail("run-1").map((turn) => turn.id)).toEqual(["turn-tool", "turn-output"]);
   });
 
   it("freezes priced cost when the record is written", async () => {
@@ -220,35 +290,5 @@ describe("usageStore", () => {
     const store = await loadStore();
     expect(() => store.listUsageLight()).toThrow();
     expect(fs.readFileSync(DB_FILE)).toEqual(damaged);
-  });
-
-  it("creates a consistent backup containing complete text and tool output", async () => {
-    const store = await freshStore();
-    store.appendUsage(
-      baseTurn({
-        userInput: "backup prompt",
-        outputText: "backup response",
-        toolCalls: [{ name: "exec", args: { command: "pwd" }, output: "/workspace", status: "ok" }],
-      }),
-    );
-    const backupFile = path.join(ROOT, "backups", "usage.db");
-
-    await store.backupUsage(backupFile);
-
-    const backup = new Database(backupFile, { readonly: true });
-    expect(backup.prepare("SELECT user_input, output_text FROM usage_turns").get()).toEqual({
-      user_input: "backup prompt",
-      output_text: "backup response",
-    });
-    expect(backup.prepare("SELECT args_json, output FROM usage_tool_calls").get()).toEqual({
-      args_json: '{"command":"pwd"}',
-      output: "/workspace",
-    });
-    backup.close();
-  });
-
-  it("refuses to overwrite the live database with a backup", async () => {
-    const store = await freshStore();
-    await expect(store.backupUsage(DB_FILE)).rejects.toThrow("must not overwrite");
   });
 });

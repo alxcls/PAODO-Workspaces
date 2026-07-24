@@ -1,25 +1,16 @@
-// Disk-backed registry of a workspace's conversations. Each workspace holds several
-// conversations the user can switch between; each conversation owns its own message history.
-//
-// Layout (sibling to the workspace registry, keyed by stable workspace id so it is unaffected by
-// renames and never mounted into the agent's container or shown in the file tree):
-//
-//   WORKSPACES_ROOT/.conversations/<workspaceId>/
-//       index.json            ConversationMeta[], newest-first
-//       <conversationId>.json { id, meta, messages: StoredMessage[] }
+// SQLite-backed registry of a workspace's conversations. Each workspace holds several
+// conversations the user can switch between; each conversation owns its replayable message state.
 //
 // History is loaded lazily and held in memory; the runner mutates the live BaseMessage[] in place,
-// and persist() snapshots it to disk (called by the run broker at run end). Persisting only at run
-// end keeps the on-disk history and the in-flight event buffer non-overlapping, which is what makes
-// live reconnect reconstruct cleanly (see runBroker.ts).
-import path from "path";
-import { readFileSync, existsSync, rmSync } from "fs";
+// and persist() snapshots it to SQLite (called by the run broker at run end). Persisting only at
+// run end keeps the committed history and the in-flight event buffer non-overlapping, which is
+// what makes live reconnect reconstruct cleanly (see runBroker.ts).
+import type Database from "better-sqlite3";
 import type { BaseMessage, StoredMessage } from "@langchain/core/messages";
-import { atomicSaveJson } from "../infra/jsonPersist";
-import { WORKSPACES_ROOT } from "../infra/paths";
 import { createLogger } from "../infra/logger";
 import { serializeMessages, deserializeMessages } from "../agent/messageSerialization";
 import { broadcastToWorkspace } from "../infra/realtime/wsHub";
+import { dataDb as db, invalidateDataDb } from "./dataDb";
 
 const log = createLogger("conversations");
 
@@ -35,12 +26,6 @@ export interface ConversationMeta {
   lastMessageAt: string;
 }
 
-interface ConversationFile {
-  id: string;
-  meta: ConversationMeta;
-  messages: StoredMessage[];
-}
-
 interface WorkspaceConversations {
   loaded: boolean;
   metas: ConversationMeta[]; // newest-first
@@ -54,14 +39,51 @@ const g = global as typeof global & { _conversations?: Map<string, WorkspaceConv
 if (!g._conversations) g._conversations = new Map();
 const store = g._conversations;
 
-function convDir(workspaceId: string): string {
-  return path.join(WORKSPACES_ROOT, ".conversations", workspaceId);
+interface ConversationRow {
+  id: string;
+  title: string;
+  kind: string | null;
+  created_at: string;
+  updated_at: string;
+  last_message_at: string;
+  messages_json?: string;
 }
-function indexPath(workspaceId: string): string {
-  return path.join(convDir(workspaceId), "index.json");
+
+function rowToMeta(row: ConversationRow): ConversationMeta {
+  return {
+    id: row.id,
+    title: row.title,
+    ...(row.kind ? { kind: row.kind as ConversationMeta["kind"] } : {}),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    lastMessageAt: row.last_message_at,
+  };
 }
-function filePath(workspaceId: string, convId: string): string {
-  return path.join(convDir(workspaceId), `${convId}.json`);
+
+function insertConversation(
+  conn: Database.Database,
+  workspaceId: string,
+  meta: ConversationMeta,
+  messages: StoredMessage[],
+): void {
+  conn
+    .prepare(
+      `
+        INSERT INTO conversations (
+          workspace_id, id, title, kind, created_at, updated_at, last_message_at, messages_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+    )
+    .run(
+      workspaceId,
+      meta.id,
+      meta.title,
+      meta.kind ?? null,
+      meta.createdAt,
+      meta.updatedAt,
+      meta.lastMessageAt,
+      JSON.stringify(messages),
+    );
 }
 
 function state(workspaceId: string): WorkspaceConversations {
@@ -73,35 +95,38 @@ function state(workspaceId: string): WorkspaceConversations {
   return s;
 }
 
-// Reads index.json from disk once per process. Idempotent.
+// Reads conversation metadata from SQLite once per process. Idempotent.
 function ensureLoaded(workspaceId: string): WorkspaceConversations {
   const s = state(workspaceId);
   if (s.loaded) return s;
   try {
-    const raw = readFileSync(indexPath(workspaceId), "utf-8");
-    s.metas = JSON.parse(raw) as ConversationMeta[];
+    const conn = db();
+    const rows = conn
+      .prepare(
+        `
+          SELECT id, title, kind, created_at, updated_at, last_message_at
+          FROM conversations
+          WHERE workspace_id = ?
+          ORDER BY last_message_at DESC, updated_at DESC, id DESC
+        `,
+      )
+      .all(workspaceId) as ConversationRow[];
+    s.metas = rows.map(rowToMeta);
   } catch (err) {
-    if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
-      log.error(
-        {
-          event: "conversation_index_load_failed",
-          outcome: "empty_index_used",
-          err,
-          workspaceId,
-          filePath: indexPath(workspaceId),
-        },
-        "failed to load conversation index",
-      );
-    }
+    log.error(
+      {
+        event: "conversation_index_load_failed",
+        outcome: "empty_index_used",
+        err,
+        workspaceId,
+      },
+      "failed to load conversation index",
+    );
     s.metas = [];
   }
   s.activeId = s.metas[0]?.id ?? null;
   s.loaded = true;
   return s;
-}
-
-function saveIndex(workspaceId: string, s: WorkspaceConversations): void {
-  atomicSaveJson(indexPath(workspaceId), s.metas);
 }
 
 function notifyConversationsChanged(workspaceId: string): void {
@@ -154,18 +179,17 @@ export function createConversation(
     updatedAt: now,
     lastMessageAt: now,
   };
+  insertConversation(db(), workspaceId, meta, []);
   s.metas.unshift(meta);
   s.activeId = meta.id;
   s.messages.set(meta.id, []);
-  saveIndex(workspaceId, s);
-  atomicSaveJson(filePath(workspaceId, meta.id), { id: meta.id, meta, messages: [] } as ConversationFile);
   log.info({ workspaceId, conversationId: meta.id }, "conversation created");
   notifyConversationsChanged(workspaceId);
   return meta;
 }
 
 /**
- * Live message history for a conversation, loaded lazily from disk and cached. The returned array
+ * Live message history for a conversation, loaded lazily from SQLite and cached. The returned array
  * is the very array the runner appends to — callers must not replace it, only mutate in place.
  * Returns null if the conversation does not exist.
  */
@@ -175,9 +199,10 @@ export function getMessages(workspaceId: string, convId: string): BaseMessage[] 
   let msgs = s.messages.get(convId);
   if (!msgs) {
     try {
-      const raw = readFileSync(filePath(workspaceId, convId), "utf-8");
-      const file = JSON.parse(raw) as ConversationFile;
-      msgs = deserializeMessages(file.messages ?? []);
+      const row = db()
+        .prepare("SELECT messages_json FROM conversations WHERE workspace_id = ? AND id = ?")
+        .get(workspaceId, convId) as { messages_json: string } | undefined;
+      msgs = deserializeMessages(row ? (JSON.parse(row.messages_json) as StoredMessage[]) : []);
     } catch (err) {
       log.error(
         {
@@ -186,7 +211,6 @@ export function getMessages(workspaceId: string, convId: string): BaseMessage[] 
           err,
           workspaceId,
           convId,
-          filePath: filePath(workspaceId, convId),
         },
         "failed to load conversation messages",
       );
@@ -198,7 +222,7 @@ export function getMessages(workspaceId: string, convId: string): BaseMessage[] 
 }
 
 /**
- * The last-persisted (on-disk) history for a conversation, read fresh from disk and NOT cached.
+ * The last-persisted history for a conversation, read fresh from SQLite and NOT cached.
  * Unlike getMessages, this never reflects an in-flight run: the runner mutates the live in-memory
  * array (appending the user turn at run start), but persist() only snapshots to disk at run end.
  * Callers rendering the "persisted transcript" of a possibly-running conversation must use this so
@@ -209,9 +233,10 @@ export function getPersistedMessages(workspaceId: string, convId: string): BaseM
   const s = ensureLoaded(workspaceId);
   if (!s.metas.some((m) => m.id === convId)) return null;
   try {
-    const raw = readFileSync(filePath(workspaceId, convId), "utf-8");
-    const file = JSON.parse(raw) as ConversationFile;
-    return deserializeMessages(file.messages ?? []);
+    const row = db()
+      .prepare("SELECT messages_json FROM conversations WHERE workspace_id = ? AND id = ?")
+      .get(workspaceId, convId) as { messages_json: string } | undefined;
+    return deserializeMessages(row ? (JSON.parse(row.messages_json) as StoredMessage[]) : []);
   } catch (err) {
     log.error(
       {
@@ -220,7 +245,6 @@ export function getPersistedMessages(workspaceId: string, convId: string): BaseM
         err,
         workspaceId,
         convId,
-        filePath: filePath(workspaceId, convId),
       },
       "failed to load persisted conversation messages",
     );
@@ -232,7 +256,7 @@ export function getMeta(workspaceId: string, convId: string): ConversationMeta |
   return ensureLoaded(workspaceId).metas.find((m) => m.id === convId);
 }
 
-/** Snapshot a conversation's in-memory history to disk and refresh its index entry. */
+/** Snapshot a conversation's in-memory history to SQLite and refresh its metadata atomically. */
 export function persist(workspaceId: string, convId: string): void {
   const s = ensureLoaded(workspaceId);
   const meta = s.metas.find((m) => m.id === convId);
@@ -247,14 +271,26 @@ export function persist(workspaceId: string, convId: string): void {
   s.metas = [meta, ...s.metas.filter((m) => m.id !== convId)];
 
   try {
-    atomicSaveJson(filePath(workspaceId, convId), {
-      id: convId,
-      meta,
-      messages: serializeMessages(msgs),
-    } as ConversationFile);
-    saveIndex(workspaceId, s);
+    db()
+      .prepare(
+        `
+          UPDATE conversations
+          SET title = ?, kind = ?, updated_at = ?, last_message_at = ?, messages_json = ?
+          WHERE workspace_id = ? AND id = ?
+        `,
+      )
+      .run(
+        meta.title,
+        meta.kind ?? null,
+        meta.updatedAt,
+        meta.lastMessageAt,
+        JSON.stringify(serializeMessages(msgs)),
+        workspaceId,
+        convId,
+      );
     notifyConversationsChanged(workspaceId);
   } catch (err) {
+    invalidateDataDb();
     log.error(
       {
         event: "conversation_persist_failed",
@@ -262,21 +298,18 @@ export function persist(workspaceId: string, convId: string): void {
         err,
         workspaceId,
         convId,
-        conversationFilePath: filePath(workspaceId, convId),
-        indexFilePath: indexPath(workspaceId),
       },
       "failed to persist conversation",
     );
   }
 }
 
-/** Remove all on-disk and in-memory state for a workspace's conversations (on workspace delete). */
+/** Remove all replay state for a workspace without touching its execution records. */
 export function deleteWorkspaceConversations(workspaceId: string): void {
   store.delete(workspaceId);
   try {
-    const dir = convDir(workspaceId);
-    if (existsSync(dir)) rmSync(dir, { recursive: true, force: true });
+    db().prepare("DELETE FROM conversations WHERE workspace_id = ?").run(workspaceId);
   } catch (err) {
-    log.warn({ err, workspaceId }, "failed to delete conversation dir");
+    log.warn({ err, workspaceId }, "failed to delete workspace conversations");
   }
 }

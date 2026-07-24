@@ -283,7 +283,7 @@ wss.on("connection", (ws, req) => {
   const wasEmpty = getConnectionCount(workspaceId) === 0;
   addConnection(workspaceId, ws);
   if (wasEmpty) {
-    // First connection — load saved conversations from disk so a returning user immediately sees
+    // First connection — load saved conversations from SQLite so a returning user immediately sees
     // their history. Conversations persist across restarts and disconnects (and a run keeps going
     // even with no one connected), so we deliberately no longer wipe message history here.
     // loadIndex owns its recoverable persistence error log and falls back to an empty index.

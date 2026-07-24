@@ -5,18 +5,13 @@
 // Dashboard list queries select only lightweight indexed fields; full text is fetched only when a
 // session drawer is opened. The database retains all records. MAX_DASHBOARD_TURNS bounds only a
 // single list response — it is not a retention policy.
-import { mkdirSync } from "fs";
-import path from "path";
-import Database from "better-sqlite3";
-import { WORKSPACES_ROOT } from "../infra/paths";
+import type Database from "better-sqlite3";
 import { createLogger } from "../infra/logger";
 import { computeCost } from "./modelPricing";
+import { dataDb as db, invalidateDataDb } from "./dataDb";
 
 const log = createLogger("usage");
 
-// Runtime data is outside the application bundle; do not let Next's file tracer treat these
-// deployment paths as build inputs.
-const DB_FILE = path.join(/* turbopackIgnore: true */ WORKSPACES_ROOT, ".usage.db");
 const MAX_DASHBOARD_TURNS = 5000;
 
 // Outcome of a tool call, decided at the source (the runner) and persisted so the dashboard can
@@ -50,11 +45,12 @@ export interface TurnRecord {
   userInput?: string;
   /** The concrete model id this turn ran on. */
   model?: string;
-  inputTokens: number;
-  outputTokens: number;
-  reasoningTokens: number;
-  cachedInputTokens: number;
-  cacheCreationTokens: number;
+  /** Total model input, including cache reads and cache writes. */
+  inputTokensTotal: number;
+  inputTokensCacheRead: number;
+  inputTokensCacheWrite: number;
+  outputTokensTotal: number;
+  outputTokensReasoning: number;
   /** USD cost frozen at write time; undefined means the model was not in the pricing catalog. */
   cost?: number;
   reasoningText?: string;
@@ -63,10 +59,12 @@ export interface TurnRecord {
   toolCalls: ToolCallRecord[];
 }
 
+export type NewTurnRecord = Omit<TurnRecord, "id" | "timestamp" | "cost"> & { id?: string };
+
 export type TurnUsageFields = Omit<
   TurnRecord,
   "id" | "timestamp" | "sessionId" | "conversationId" | "workspaceId" | "workspaceName" | "cost"
->;
+> & { turnId: string };
 
 export interface UsageContext {
   sessionId: string;
@@ -86,17 +84,18 @@ export interface LightTurnRecord {
   origin?: SessionOrigin;
   timestamp: string;
   model?: string;
-  inputTokens: number;
-  outputTokens: number;
-  reasoningTokens: number;
-  cachedInputTokens: number;
-  cacheCreationTokens: number;
+  inputTokensTotal: number;
+  inputTokensCacheRead: number;
+  inputTokensCacheWrite: number;
+  outputTokensTotal: number;
+  outputTokensReasoning: number;
   cost?: number;
   error?: RunErrorRecord;
   toolCalls: Array<{ name: string; status: ToolStatus }>;
 }
 
 interface TurnRow {
+  seq: number;
   id: string;
   session_id: string;
   conversation_id: string | null;
@@ -106,11 +105,11 @@ interface TurnRow {
   timestamp: string;
   user_input: string | null;
   model: string | null;
-  input_tokens: number;
-  output_tokens: number;
-  reasoning_tokens: number;
-  cached_input_tokens: number;
-  cache_creation_tokens: number;
+  input_tokens_total: number;
+  input_tokens_cache_read: number;
+  input_tokens_cache_write: number;
+  output_tokens_total: number;
+  output_tokens_reasoning: number;
   cost_usd: number | null;
   reasoning_text: string | null;
   output_text: string | null;
@@ -135,63 +134,17 @@ interface LightJoinedRow
   tool_status: string | null;
 }
 
-type UsageGlobal = typeof global & {
-  _usageDb?: Database.Database;
-  _usageDbFile?: string;
-};
-
-const g = global as UsageGlobal;
-
-const CREATE_SCHEMA_SQL = `
-  CREATE TABLE IF NOT EXISTS usage_turns (
-    id TEXT PRIMARY KEY,
-    session_id TEXT NOT NULL,
-    conversation_id TEXT,
-    workspace_id TEXT NOT NULL,
-    workspace_name TEXT NOT NULL,
-    origin TEXT,
-    timestamp TEXT NOT NULL,
-    user_input TEXT,
-    model TEXT,
-    input_tokens INTEGER NOT NULL,
-    output_tokens INTEGER NOT NULL,
-    reasoning_tokens INTEGER NOT NULL,
-    cached_input_tokens INTEGER NOT NULL,
-    cache_creation_tokens INTEGER NOT NULL,
-    cost_usd REAL,
-    reasoning_text TEXT,
-    output_text TEXT,
-    error_code TEXT,
-    error_message TEXT
-  );
-
-  CREATE TABLE IF NOT EXISTS usage_tool_calls (
-    turn_id TEXT NOT NULL REFERENCES usage_turns(id) ON DELETE CASCADE,
-    position INTEGER NOT NULL,
-    name TEXT NOT NULL,
-    args_json TEXT NOT NULL,
-    output TEXT NOT NULL,
-    status TEXT NOT NULL CHECK (status IN ('ok', 'error', 'needs_input')),
-    PRIMARY KEY (turn_id, position)
-  ) WITHOUT ROWID;
-
-  CREATE INDEX IF NOT EXISTS usage_turns_timestamp_idx
-    ON usage_turns(timestamp DESC);
-  CREATE INDEX IF NOT EXISTS usage_turns_workspace_timestamp_idx
-    ON usage_turns(workspace_id, timestamp DESC);
-  CREATE INDEX IF NOT EXISTS usage_turns_session_timestamp_idx
-    ON usage_turns(session_id, timestamp ASC);
-`;
-
 const INSERT_TURN_SQL = `
   INSERT OR IGNORE INTO usage_turns (
     id, session_id, conversation_id, workspace_id, workspace_name, origin, timestamp,
-    user_input, model, input_tokens, output_tokens, reasoning_tokens, cached_input_tokens,
-    cache_creation_tokens, cost_usd, reasoning_text, output_text, error_code, error_message
+    user_input, model, input_tokens_total, input_tokens_cache_read, input_tokens_cache_write,
+    output_tokens_total, output_tokens_reasoning, cost_usd, reasoning_text, output_text,
+    error_code, error_message
   ) VALUES (
     @id, @session_id, @conversation_id, @workspace_id, @workspace_name, @origin, @timestamp,
-    @user_input, @model, @input_tokens, @output_tokens, @reasoning_tokens, @cached_input_tokens,
-    @cache_creation_tokens, @cost_usd, @reasoning_text, @output_text, @error_code, @error_message
+    @user_input, @model, @input_tokens_total, @input_tokens_cache_read, @input_tokens_cache_write,
+    @output_tokens_total, @output_tokens_reasoning, @cost_usd, @reasoning_text, @output_text,
+    @error_code, @error_message
   )
 `;
 
@@ -215,11 +168,11 @@ function turnParams(record: TurnRecord) {
     timestamp: record.timestamp,
     user_input: record.userInput ?? null,
     model: record.model ?? null,
-    input_tokens: record.inputTokens,
-    output_tokens: record.outputTokens,
-    reasoning_tokens: record.reasoningTokens,
-    cached_input_tokens: record.cachedInputTokens,
-    cache_creation_tokens: record.cacheCreationTokens,
+    input_tokens_total: record.inputTokensTotal,
+    input_tokens_cache_read: record.inputTokensCacheRead,
+    input_tokens_cache_write: record.inputTokensCacheWrite,
+    output_tokens_total: record.outputTokensTotal,
+    output_tokens_reasoning: record.outputTokensReasoning,
     cost_usd: record.cost ?? null,
     reasoning_text: record.reasoningText ?? null,
     output_text: record.outputText ?? null,
@@ -244,37 +197,6 @@ function insertRecord(conn: Database.Database, record: TurnRecord): boolean {
     });
   });
   return true;
-}
-
-function openDatabase(): Database.Database {
-  mkdirSync(path.dirname(DB_FILE), { recursive: true });
-  const conn = new Database(DB_FILE);
-  try {
-    conn.pragma("journal_mode = WAL");
-    // FULL favors committed-log durability over the small latency saving of NORMAL.
-    conn.pragma("synchronous = FULL");
-    conn.pragma("foreign_keys = ON");
-    conn.pragma("busy_timeout = 5000");
-    conn.exec(CREATE_SCHEMA_SQL);
-    return conn;
-  } catch (err) {
-    conn.close();
-    throw err;
-  }
-}
-
-function db(): Database.Database {
-  if (g._usageDb && g._usageDbFile === DB_FILE) return g._usageDb;
-  if (g._usageDb?.open) g._usageDb.close();
-  g._usageDb = openDatabase();
-  g._usageDbFile = DB_FILE;
-  return g._usageDb;
-}
-
-function invalidateDb(): void {
-  if (g._usageDb?.open) g._usageDb.close();
-  delete g._usageDb;
-  delete g._usageDbFile;
 }
 
 function errorFromRow(row: { error_code: string | null; error_message: string | null }): RunErrorRecord | undefined {
@@ -306,11 +228,11 @@ function rowToTurn(row: TurnRow): TurnRecord {
     timestamp: row.timestamp,
     userInput: row.user_input ?? undefined,
     model: row.model ?? undefined,
-    inputTokens: row.input_tokens,
-    outputTokens: row.output_tokens,
-    reasoningTokens: row.reasoning_tokens,
-    cachedInputTokens: row.cached_input_tokens,
-    cacheCreationTokens: row.cache_creation_tokens,
+    inputTokensTotal: row.input_tokens_total,
+    inputTokensCacheRead: row.input_tokens_cache_read,
+    inputTokensCacheWrite: row.input_tokens_cache_write,
+    outputTokensTotal: row.output_tokens_total,
+    outputTokensReasoning: row.output_tokens_reasoning,
     cost: row.cost_usd ?? undefined,
     reasoningText: row.reasoning_text ?? undefined,
     outputText: row.output_text ?? undefined,
@@ -319,11 +241,11 @@ function rowToTurn(row: TurnRow): TurnRecord {
   };
 }
 
-export function appendUsage(partial: Omit<TurnRecord, "id" | "timestamp" | "cost">): void {
+export function appendUsage(partial: NewTurnRecord): void {
   const record: TurnRecord = {
-    id: crypto.randomUUID(),
-    timestamp: new Date().toISOString(),
     ...partial,
+    id: partial.id ?? crypto.randomUUID(),
+    timestamp: new Date().toISOString(),
   };
   record.cost = computeCost(record, record.model);
 
@@ -331,7 +253,7 @@ export function appendUsage(partial: Omit<TurnRecord, "id" | "timestamp" | "cost
     const conn = db();
     conn.transaction(() => insertRecord(conn, record))();
   } catch (err) {
-    invalidateDb();
+    invalidateDataDb();
     log.error(
       { event: "usage_record_insert_failed", outcome: "usage_record_not_persisted", err, id: record.id },
       "failed to persist usage record",
@@ -342,11 +264,11 @@ export function appendUsage(partial: Omit<TurnRecord, "id" | "timestamp" | "cost
 export function recordTurnUsage(
   ctx: UsageContext,
   usage: TurnUsageFields & { type?: string },
-  append: (record: Omit<TurnRecord, "id" | "timestamp" | "cost">) => void = appendUsage,
+  append: (record: NewTurnRecord) => void = appendUsage,
 ): void {
-  const fields = { ...usage };
+  const { turnId, ...fields } = usage;
   delete fields.type;
-  append({ ...ctx, ...fields });
+  append({ ...ctx, ...fields, id: turnId });
 }
 
 /** Persist a terminal run error without pretending that an incomplete model turn consumed tokens. */
@@ -354,19 +276,98 @@ export function recordRunError(
   ctx: UsageContext,
   error: RunErrorRecord,
   userInput?: string,
-  append: (record: Omit<TurnRecord, "id" | "timestamp" | "cost">) => void = appendUsage,
+  append: (record: NewTurnRecord) => void = appendUsage,
 ): void {
   append({
     ...ctx,
     userInput,
-    inputTokens: 0,
-    outputTokens: 0,
-    reasoningTokens: 0,
-    cachedInputTokens: 0,
-    cacheCreationTokens: 0,
+    inputTokensTotal: 0,
+    inputTokensCacheRead: 0,
+    inputTokensCacheWrite: 0,
+    outputTokensTotal: 0,
+    outputTokensReasoning: 0,
     toolCalls: [],
     error,
   });
+}
+
+export interface OutputTokenUsage {
+  inputTokensTotal: number;
+  inputTokensCacheRead: number;
+  outputTokensTotal: number;
+}
+
+/**
+ * Session token totals keyed by the final visible-output turn. Execution detail remains per turn;
+ * this projection lets chat show one aggregate badge on the answer that completed the run.
+ */
+export function getConversationOutputTokens(
+  workspaceId: string,
+  conversationId: string,
+): Map<string, OutputTokenUsage> {
+  const rows = db()
+    .prepare(
+      `
+        WITH conversation_turns AS (
+          SELECT
+            seq,
+            id,
+            session_id,
+            input_tokens_total,
+            input_tokens_cache_read,
+            output_tokens_total,
+            output_text
+          FROM usage_turns
+          WHERE workspace_id = ? AND conversation_id = ?
+        ),
+        session_totals AS (
+          SELECT
+            session_id,
+            SUM(input_tokens_total) AS input_tokens_total,
+            SUM(input_tokens_cache_read) AS input_tokens_cache_read,
+            SUM(output_tokens_total) AS output_tokens_total
+          FROM conversation_turns
+          GROUP BY session_id
+        ),
+        final_outputs AS (
+          SELECT turn.session_id, MAX(turn.seq) AS final_seq
+          FROM conversation_turns AS turn
+          WHERE TRIM(COALESCE(turn.output_text, '')) <> ''
+            AND NOT EXISTS (
+              SELECT 1
+              FROM usage_tool_calls AS tool
+              WHERE tool.turn_id = turn.id
+            )
+          GROUP BY turn.session_id
+        )
+        SELECT
+          turn.id,
+          totals.input_tokens_total,
+          totals.input_tokens_cache_read,
+          totals.output_tokens_total
+        FROM final_outputs
+        JOIN conversation_turns AS turn ON turn.seq = final_outputs.final_seq
+        JOIN session_totals AS totals ON totals.session_id = final_outputs.session_id
+        ORDER BY turn.seq ASC
+      `,
+    )
+    .all(workspaceId, conversationId) as Array<{
+    id: string;
+    input_tokens_total: number;
+    input_tokens_cache_read: number;
+    output_tokens_total: number;
+  }>;
+
+  return new Map(
+    rows.map((row) => [
+      row.id,
+      {
+        inputTokensTotal: row.input_tokens_total,
+        inputTokensCacheRead: row.input_tokens_cache_read,
+        outputTokensTotal: row.output_tokens_total,
+      },
+    ]),
+  );
 }
 
 // Dashboard list payload — newest first, bounded for response size only. No heavy content columns
@@ -384,16 +385,16 @@ export function listUsageLight(workspaceId?: string): LightTurnRecord[] {
           tools.status AS tool_status
         FROM (
           SELECT
-            id, session_id, conversation_id, workspace_id, workspace_name, origin, timestamp,
-            model, input_tokens, output_tokens, reasoning_tokens, cached_input_tokens,
-            cache_creation_tokens, cost_usd, error_code, error_message
+            seq, id, session_id, conversation_id, workspace_id, workspace_name, origin, timestamp,
+            model, input_tokens_total, input_tokens_cache_read, input_tokens_cache_write,
+            output_tokens_total, output_tokens_reasoning, cost_usd, error_code, error_message
           FROM usage_turns
           ${where}
-          ORDER BY timestamp DESC, id DESC
+          ORDER BY seq DESC
           LIMIT ?
         ) AS recent
         LEFT JOIN usage_tool_calls AS tools ON tools.turn_id = recent.id
-        ORDER BY recent.timestamp DESC, recent.id DESC, tools.position ASC
+        ORDER BY recent.seq DESC, tools.position ASC
       `,
     )
     .all(...params) as LightJoinedRow[];
@@ -412,11 +413,11 @@ export function listUsageLight(workspaceId?: string): LightTurnRecord[] {
         origin: row.origin ? (row.origin as SessionOrigin) : undefined,
         timestamp: row.timestamp,
         model: row.model ?? undefined,
-        inputTokens: row.input_tokens,
-        outputTokens: row.output_tokens,
-        reasoningTokens: row.reasoning_tokens,
-        cachedInputTokens: row.cached_input_tokens,
-        cacheCreationTokens: row.cache_creation_tokens,
+        inputTokensTotal: row.input_tokens_total,
+        inputTokensCacheRead: row.input_tokens_cache_read,
+        inputTokensCacheWrite: row.input_tokens_cache_write,
+        outputTokensTotal: row.output_tokens_total,
+        outputTokensReasoning: row.output_tokens_reasoning,
         cost: row.cost_usd ?? undefined,
         error: errorFromRow(row),
         toolCalls: [],
@@ -449,7 +450,7 @@ export function getSessionDetail(sessionId: string): TurnRecord[] {
         FROM usage_turns AS turns
         LEFT JOIN usage_tool_calls AS tools ON tools.turn_id = turns.id
         WHERE turns.session_id = ?
-        ORDER BY turns.timestamp ASC, turns.id ASC, tools.position ASC
+        ORDER BY turns.seq ASC, tools.position ASC
       `,
     )
     .all(sessionId) as JoinedTurnRow[];
@@ -473,18 +474,4 @@ export function getSessionDetail(sessionId: string): TurnRecord[] {
     }
   }
   return result;
-}
-
-/**
- * Create a consistent snapshot of the live database.
- *
- * The caller must place `destination` on separately backed-up or remote storage for this to be a
- * real backup; another file in WORKSPACES_ROOT does not protect against volume or host loss.
- */
-export async function backupUsage(destination: string): Promise<void> {
-  if (!destination.trim()) throw new Error("A usage backup destination is required.");
-  const resolved = path.resolve(destination);
-  if (resolved === path.resolve(DB_FILE)) throw new Error("The usage backup must not overwrite the live database.");
-  mkdirSync(path.dirname(resolved), { recursive: true });
-  await db().backup(resolved);
 }

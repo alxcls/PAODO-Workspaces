@@ -6,7 +6,7 @@
 //
 // One run at a time per (workspace, conversation). The buffer holds every event since the run
 // started, so a late subscriber first replays the buffer (catching up) and then receives live
-// events. Conversations persist only at run end, so the on-disk history and this buffer never
+// events. Conversations persist only at run end, so the committed history and this buffer never
 // overlap — the reconnect path reconstructs from "saved history before the run" + "this buffer".
 import type { BaseMessage } from "@langchain/core/messages";
 import { runAgent, type AgentEvent } from "./runner";
@@ -308,7 +308,7 @@ export interface ExternalRun {
   /** Buffer + fan out one event to subscribers, exactly as the detached loop in startRun does. */
   publish: (event: AgentEvent) => void;
   /** Mark the run done and schedule eviction. Persist the conversation BEFORE calling this so a
-   *  client reconnecting at the end replays from a consistent on-disk history. */
+   *  client reconnecting at the end replays from consistent committed history. */
   finish: (status?: AgentRunStatus) => void;
   /** Fires when stop() is called for this conversation. The producer (executeSkill) must thread
    *  this into the callee's runner so a Stop on the callee's own tab actually halts it — otherwise

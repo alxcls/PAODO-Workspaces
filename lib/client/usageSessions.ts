@@ -16,9 +16,9 @@ export interface LightSession {
   // Distinct model ids used across the run's turns, in first-seen order. Usually one; a run that
   // switches models mid-flight lists each once.
   models: string[];
-  inputTokens: number;
-  outputTokens: number;
-  cachedInputTokens: number;
+  inputTokensTotal: number;
+  inputTokensCacheRead: number;
+  outputTokensTotal: number;
   toolTotal: number;
   // undefined until a priced turn contributes; stays undefined if no turn's model is in the catalog.
   cost: number | undefined;
@@ -37,18 +37,18 @@ export function groupBySessions(records: LightTurnRecord[]): LightSession[] {
         origin: r.origin ?? "manual",
         timestamp: r.timestamp,
         models: [],
-        inputTokens: 0,
-        outputTokens: 0,
-        cachedInputTokens: 0,
+        inputTokensTotal: 0,
+        inputTokensCacheRead: 0,
+        outputTokensTotal: 0,
         toolTotal: 0,
         cost: undefined,
       };
       map.set(r.sessionId, s);
     }
     if (r.model && !s.models.includes(r.model)) s.models.push(r.model);
-    s.inputTokens += r.inputTokens;
-    s.outputTokens += r.outputTokens;
-    s.cachedInputTokens += r.cachedInputTokens;
+    s.inputTokensTotal += r.inputTokensTotal;
+    s.inputTokensCacheRead += r.inputTokensCacheRead;
+    s.outputTokensTotal += r.outputTokensTotal;
     s.toolTotal += r.toolCalls.length;
     // Cost is frozen by the usage store; dashboard reads never re-price historical turns.
     const c = r.cost;

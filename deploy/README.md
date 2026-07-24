@@ -276,17 +276,18 @@ docker system df                                                    # disk usage
 tailscale status                                                    # VPN status
 ```
 
-### Backing up usage history
+### Backing up workspace data
 
-Usage history, including prompts and tool output, lives in SQLite at `/app/data/.usage.db`. Do not
-copy that live file directly: the database uses WAL mode, so a raw file copy can omit committed
-pages. Create a consistent snapshot through the app, copy it to separately backed-up storage, then
-remove the temporary same-volume snapshot:
+Conversation replay state and execution history (including prompts and tool output) live in
+separate tables in SQLite at `/app/data/.workspace.db`. Do not copy that live file directly: the
+database uses WAL mode, so a raw file copy can omit committed pages. Create a consistent snapshot
+through the app, copy it to separately backed-up storage, then remove the temporary same-volume
+snapshot:
 
 ```bash
-docker compose exec -T app npm run backup:usage -- /app/data/.usage-backup.db
-docker compose cp app:/app/data/.usage-backup.db /mnt/off-host-backups/paodo-usage.db
-docker compose exec -T app rm /app/data/.usage-backup.db
+docker compose exec -T app npm run backup:workspace-data -- /app/data/.workspace-backup.db
+docker compose cp app:/app/data/.workspace-backup.db /mnt/off-host-backups/paodo-workspace.db
+docker compose exec -T app rm /app/data/.workspace-backup.db
 ```
 
 Automate those commands with the host scheduler and give snapshots dated names plus an explicit

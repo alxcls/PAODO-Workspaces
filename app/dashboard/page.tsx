@@ -6,8 +6,10 @@ import Image from "next/image";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import TopBar from "@/components/layout/TopBar";
+import TokenUsageLine from "@/components/usage/TokenUsageLine";
 import { useDragResize } from "@/lib/client/hooks/useDragResize";
 import { toolLabel, toolArgSummary } from "@/lib/client/agentTranscript";
+import { uncachedInputTokens } from "@/lib/client/tokenUsage";
 import {
   groupBySessions,
   formatTokens,
@@ -75,8 +77,8 @@ function DetailDrawer({ session, onClose, width }: { session: LightSession; onCl
   // the one carrying userInput (iteration 1). Shown as an overview block in turn mode.
   const firstReasoning = useMemo(() => detail?.find((t) => t.userInput)?.reasoningText ?? "", [detail]);
   // The agent's final answer lives on the terminal turn — the one that made no tool calls.
-  // A limit-reached run has no such turn (the limit summary emits no usage record), so fall
-  // back to the latest turn's prose. detail is chronological, so the last entry is newest.
+  // Fall back to the latest turn's prose for a failed or incomplete run. detail is chronological,
+  // so the last entry is newest.
   const agentResponse = useMemo(
     () => detail?.find((t) => t.toolCalls.length === 0)?.outputText ?? detail?.at(-1)?.outputText ?? "",
     [detail],
@@ -89,7 +91,8 @@ function DetailDrawer({ session, onClose, width }: { session: LightSession; onCl
     return undefined;
   }, [detail]);
   const selTool = selected && detail ? detail[selected.turnIdx]?.toolCalls[selected.toolIdx] : null;
-  const selReasoning = selected && detail ? detail[selected.turnIdx]?.reasoningText : undefined;
+  const selTurn = selected && detail ? detail[selected.turnIdx] : null;
+  const selReasoning = selTurn?.reasoningText;
 
   return (
     <aside className="flex-none bg-bg flex flex-col min-h-0" style={{ width, minWidth: 320 }}>
@@ -126,6 +129,14 @@ function DetailDrawer({ session, onClose, width }: { session: LightSession; onCl
               {selTool.output || "—"}
             </pre>
           </Section>
+          {selTurn && (
+            <TokenUsageLine
+              inputTokensTotal={selTurn.inputTokensTotal}
+              inputTokensCacheRead={selTurn.inputTokensCacheRead}
+              outputTokensTotal={selTurn.outputTokensTotal}
+              scope="for the associated LLM turn"
+            />
+          )}
         </div>
       ) : (
         // ── turn mode ───────────────────────────────────────────────────────────────
@@ -345,8 +356,8 @@ export default function DashboardPage() {
                   <th className="text-left px-6 font-semibold align-middle">Channel</th>
                   <th className="text-left px-6 font-semibold align-middle">Model</th>
                   <th className="text-left px-6 font-semibold align-middle">Time</th>
-                  <th className="text-right px-6 font-semibold align-middle">In ↑</th>
-                  <th className="text-right px-6 font-semibold align-middle">Cached ↑</th>
+                  <th className="text-right px-6 font-semibold align-middle">Uncached ↑</th>
+                  <th className="text-right px-6 font-semibold align-middle">Cached ↻</th>
                   <th className="text-right px-6 font-semibold align-middle">Out ↓</th>
                   <th className="text-right px-6 font-semibold align-middle">Cost</th>
                   <th className="w-[40px]" />
@@ -389,11 +400,15 @@ export default function DashboardPage() {
                       {s.models.length ? s.models.join(", ") : "—"}
                     </td>
                     <td className="px-6 py-2.5 text-text-3">{formatDateTime(s.timestamp)}</td>
-                    <td className="px-6 py-2.5 text-right font-mono text-text-1">{formatTokens(s.inputTokens)}</td>
-                    <td className="px-6 py-2.5 text-right font-mono text-text-3">
-                      {formatTokens(s.cachedInputTokens)}
+                    <td className="px-6 py-2.5 text-right font-mono text-text-1">
+                      {formatTokens(uncachedInputTokens(s.inputTokensTotal, s.inputTokensCacheRead))}
                     </td>
-                    <td className="px-6 py-2.5 text-right font-mono text-text-1">{formatTokens(s.outputTokens)}</td>
+                    <td className="px-6 py-2.5 text-right font-mono text-text-3">
+                      {formatTokens(s.inputTokensCacheRead)}
+                    </td>
+                    <td className="px-6 py-2.5 text-right font-mono text-text-1">
+                      {formatTokens(s.outputTokensTotal)}
+                    </td>
                     <td
                       className="px-6 py-2.5 text-right font-mono text-text-1"
                       title={s.cost !== undefined ? `$${s.cost.toFixed(6)}` : "No pricing for this session's model(s)"}

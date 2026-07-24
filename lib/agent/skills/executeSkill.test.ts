@@ -294,17 +294,23 @@ describe("executeSkill — callee run and output contract", () => {
   it("records the callee's token usage under the CALLEE workspace, one session across retries", async () => {
     // Without this, nested runs are invisible in the usage dashboard — only the
     // caller's own runner is recorded by the chat route / agent stream.
-    const recorded: Array<{ sessionId: string; workspaceId: string; workspaceName: string; inputTokens: number }> = [];
+    const recorded: Array<{
+      sessionId: string;
+      workspaceId: string;
+      workspaceName: string;
+      inputTokensTotal: number;
+    }> = [];
     const responses = ["not json", GOOD_OUTPUT];
     let call = 0;
     const run = async function* (): AsyncGenerator<AgentEvent> {
       yield {
         type: "turn_usage",
-        inputTokens: 100 + call,
-        outputTokens: 5,
-        reasoningTokens: 0,
-        cachedInputTokens: 0,
-        cacheCreationTokens: 0,
+        turnId: `turn-${call}`,
+        inputTokensTotal: 100 + call,
+        inputTokensCacheRead: 0,
+        inputTokensCacheWrite: 0,
+        outputTokensTotal: 5,
+        outputTokensReasoning: 0,
         toolCalls: [],
       };
       yield { type: "token", content: responses[call++] };
@@ -327,7 +333,11 @@ describe("executeSkill — callee run and output contract", () => {
     );
     expect(res.state).toBe("completed");
     expect(recorded).toHaveLength(2); // initial run + one correction retry
-    expect(recorded[0]).toMatchObject({ workspaceId: CALLEE.id, workspaceName: "stock-agent", inputTokens: 100 });
+    expect(recorded[0]).toMatchObject({
+      workspaceId: CALLEE.id,
+      workspaceName: "stock-agent",
+      inputTokensTotal: 100,
+    });
     expect(recorded[1].sessionId).toBe(recorded[0].sessionId);
   });
 

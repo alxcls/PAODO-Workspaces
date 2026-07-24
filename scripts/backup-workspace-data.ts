@@ -1,14 +1,14 @@
 import path from "path";
-import { backupUsage } from "../lib/workspace/usageStore";
+import { backupDataDb } from "../lib/workspace/dataDb";
 
 async function main(): Promise<void> {
   const destination = process.argv[2];
   if (!destination) {
-    throw new Error("Usage: npm run backup:usage -- /path/on/backup-storage/usage.db");
+    throw new Error("Usage: npm run backup:workspace-data -- /path/on/backup-storage/workspace.db");
   }
   const resolved = path.resolve(destination);
-  await backupUsage(resolved);
-  console.log(`Usage database backed up to ${resolved}`);
+  await backupDataDb(resolved);
+  console.log(`Workspace data backed up to ${resolved}`);
 }
 
 void main().catch((error: unknown) => {

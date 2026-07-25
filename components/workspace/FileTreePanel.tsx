@@ -1,12 +1,30 @@
 "use client";
 
-import { useRef, useState, type ChangeEvent, type CSSProperties, type DragEvent } from "react";
+import { useRef, useState, type ChangeEvent, type CSSProperties, type DragEvent, type ReactNode } from "react";
 import { readDroppedEntries } from "@/lib/client/dropEntries";
 import { useFileOperations } from "@/lib/client/hooks/useFileOperations";
 import { useFileTreeMove } from "@/lib/client/hooks/useFileTreeMove";
 import { useFileTreeSelection } from "@/lib/client/hooks/useFileTreeSelection";
-import { useFileUpload } from "@/lib/client/hooks/useFileUpload";
+import { useFileUpload, type PathedFile } from "@/lib/client/hooks/useFileUpload";
+import { partitionByIgnore } from "@/lib/workspace/uploadIgnore";
 import { FileTreeList } from "./FileTreeList";
+
+/** A folder upload whose ignore-pattern exclusions are waiting on the user's confirmation. */
+interface PendingFolderUpload {
+  entries: PathedFile[];
+  included: PathedFile[];
+  excluded: Map<string, PathedFile[]>;
+}
+
+/** Shared chrome for the upload popups below — the one thing they actually have in common. */
+const Modal = ({ title, children }: { title: string; children: ReactNode }) => (
+  <div className="fixed inset-0 bg-[rgba(15,10,30,0.55)] flex items-center justify-center z-[1000]">
+    <div className="bg-white rounded-2xl shadow-[0_18px_40px_rgba(15,10,30,0.25)] p-[30px_34px] w-[min(460px,calc(100vw-48px))] border border-[rgba(15,10,30,0.08)]">
+      <div className="font-semibold text-[19px] mb-3 text-text">{title}</div>
+      {children}
+    </div>
+  </div>
+);
 
 const UploadIcon = () => (
   <svg
@@ -27,10 +45,11 @@ const UploadIcon = () => (
 
 const UploadMenu = ({
   status,
-  error,
   uploadFiles,
-  uploadFolder,
-}: Pick<ReturnType<typeof useFileUpload>, "status" | "error" | "uploadFiles" | "uploadFolder">) => {
+  onFolderSelected,
+}: Pick<ReturnType<typeof useFileUpload>, "status" | "uploadFiles"> & {
+  onFolderSelected: (entries: PathedFile[]) => void;
+}) => {
   const handleFiles = (event: ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(event.target.files ?? []);
     event.target.value = "";
@@ -38,9 +57,10 @@ const UploadMenu = ({
   };
 
   const handleFolder = (event: ChangeEvent<HTMLInputElement>) => {
+    // <input webkitdirectory> yields flat File[] with webkitRelativePath carrying the structure.
     const files = Array.from(event.target.files ?? []);
     event.target.value = "";
-    uploadFolder(files);
+    onFolderSelected(files.map((file) => ({ file, path: file.webkitRelativePath || file.name })));
   };
 
   const busy = status !== null;
@@ -77,7 +97,6 @@ const UploadMenu = ({
         </button>
       </div>
       {status && <div className="text-2xs text-text-3 px-1">{status}</div>}
-      {error && <div className="text-2xs text-danger px-1">{error}</div>}
     </div>
   );
 };
@@ -112,6 +131,14 @@ export default function FileTreePanel({
 }: Props) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [draggingUpload, setDraggingUpload] = useState(false);
+  const [pendingUpload, setPendingUpload] = useState<PendingFolderUpload | null>(null);
+  // Paths excluded by the ignore-pattern modal for the most recent upload — kept separately from
+  // upload.notUploaded (which only knows about paths the upload attempt itself touched) so the two
+  // can be shown together: one simple list of "didn't upload", no matter which reason applied.
+  const [lastExcludedPaths, setLastExcludedPaths] = useState<string[]>([]);
+  // Whether the user has already closed the results popup for the upload that just finished. Reset
+  // to false every time a new upload starts, so a fresh result always gets its own popup.
+  const [resultsDismissed, setResultsDismissed] = useState(true);
   const uploadDragCounter = useRef(0);
   const base = apiBase ?? `/api/workspaces/${workspaceId}`;
 
@@ -140,6 +167,44 @@ export default function FileTreePanel({
   });
 
   const uploadBusy = upload.status !== null;
+
+  // Folder uploads (the Folder button and directory drag-and-drop, but never the plain Files
+  // button or a flat-file drop) default-exclude node_modules — visibly, not silently: if anything
+  // would be excluded, hold the upload and show what/why instead of just proceeding.
+  const startFolderUpload = (entries: PathedFile[]) => {
+    setLastExcludedPaths([]);
+    const { included, excluded } = partitionByIgnore(entries);
+    if (excluded.size === 0) {
+      setResultsDismissed(false);
+      upload.uploadPathedFiles(entries);
+      return;
+    }
+    setPendingUpload({ entries, included, excluded });
+  };
+
+  const confirmPendingUpload = (includeEverything: boolean) => {
+    if (!pendingUpload) return;
+    const toUpload = includeEverything ? pendingUpload.entries : pendingUpload.included;
+    setLastExcludedPaths(
+      includeEverything ? [] : Array.from(pendingUpload.excluded.values()).flat().map((entry) => entry.path),
+    );
+    setPendingUpload(null);
+    setResultsDismissed(false);
+    upload.uploadPathedFiles(toUpload);
+  };
+
+  // The plain Files button and a non-directory drop never go through ignore-pattern filtering, but
+  // still clear any leftover excluded-paths list from a previous folder upload.
+  const uploadFlatFiles = (files: File[]) => {
+    setLastExcludedPaths([]);
+    setResultsDismissed(false);
+    return upload.uploadFiles(files);
+  };
+
+  const notUploadedPaths = [...lastExcludedPaths, ...upload.notUploaded];
+  // Only pop up once the upload has actually finished (status back to null) and there's something
+  // worth reporting — a plain, silent success shows nothing.
+  const showResults = !resultsDismissed && upload.status === null && (upload.error !== null || notUploadedPaths.length > 0);
 
   const handleExternalDragOver = (event: DragEvent) => {
     if (!Array.from(event.dataTransfer.types).includes("Files")) return;
@@ -172,8 +237,8 @@ export default function FileTreePanel({
 
     const { files, hasDirectory } = await readDroppedEntries(event.dataTransfer);
     if (files.length === 0) return;
-    if (hasDirectory) upload.uploadPathedFiles(files);
-    else upload.uploadFiles(files.map((file) => file.file));
+    if (hasDirectory) startFolderUpload(files);
+    else uploadFlatFiles(files.map((file) => file.file));
   };
 
   const toggleExpanded = (path: string) => {
@@ -199,12 +264,7 @@ export default function FileTreePanel({
       </div>
 
       <div className="flex gap-1.5 px-3 pb-2.5 border-b border-border">
-        <UploadMenu
-          status={upload.status}
-          error={upload.error}
-          uploadFiles={upload.uploadFiles}
-          uploadFolder={upload.uploadFolder}
-        />
+        <UploadMenu status={upload.status} uploadFiles={uploadFlatFiles} onFolderSelected={startFolderUpload} />
       </div>
 
       <div
@@ -300,6 +360,47 @@ export default function FileTreePanel({
           )}
           {treeMove.moveNote && <div className="text-xs text-text-3 mt-2 px-1">{treeMove.moveNote}</div>}
         </div>
+      )}
+
+      {pendingUpload && (
+        <Modal title="Some files won't be uploaded">
+          <p className="text-sm text-text-2 m-0 mb-3 leading-[1.5]">
+            {Array.from(pendingUpload.excluded.entries())
+              .map(([name, files]) => `${name} (${files.length} file${files.length === 1 ? "" : "s"})`)
+              .join(", ")}{" "}
+            {pendingUpload.excluded.size === 1 ? "isn't" : "aren't"} your source — {pendingUpload.excluded.size === 1 ? "it's" : "they're"} generated by a package
+            manager or build tool. Ask the agent to run the right install/build command (e.g. npm install, pip
+            install, ./gradlew build) and it&apos;ll recreate them, installing the toolchain first if the workspace
+            doesn&apos;t already have it.
+          </p>
+          <div className="flex gap-2.5 items-center flex-wrap">
+            <button className="btn btn-primary" onClick={() => confirmPendingUpload(false)}>
+              Upload {pendingUpload.included.length} file{pendingUpload.included.length === 1 ? "" : "s"}
+            </button>
+            <button className="btn" onClick={() => confirmPendingUpload(true)}>
+              Include everything instead
+            </button>
+            <button className="linkbtn" onClick={() => setPendingUpload(null)}>
+              Cancel
+            </button>
+          </div>
+        </Modal>
+      )}
+
+      {showResults && (
+        <Modal title="Upload results">
+          {upload.error && <p className="text-sm text-text-2 m-0 mb-3 leading-[1.5]">{upload.error}</p>}
+          {notUploadedPaths.length > 0 && (
+            <div className="rounded border border-border bg-bg-tint text-2xs text-text-3 p-2 mb-[26px] max-h-52 overflow-y-auto font-mono whitespace-pre-wrap">
+              {notUploadedPaths.join("\n")}
+            </div>
+          )}
+          <div className="flex gap-2.5 items-center flex-wrap">
+            <button className="btn btn-primary" onClick={() => setResultsDismissed(true)}>
+              Close
+            </button>
+          </div>
+        </Modal>
       )}
     </aside>
   );

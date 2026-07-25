@@ -1,0 +1,49 @@
+// writeContainerFile is the one chokepoint both file_write and file_edit's create branch write
+// through — this pins that a full disk is refused BEFORE any container exec runs (no mkdir, no
+// tee), the same "don't even try" stance the HTTP upload route takes via checkFreeSpace.
+
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import type { ExecRunner } from "../interfaces";
+
+const checkFreeSpace = vi.hoisted(() => vi.fn());
+vi.mock("../../workspace/diskSpace", () => ({ checkFreeSpace }));
+
+import { writeContainerFile } from "./containerWrite";
+
+function makeRunner() {
+  const exec = vi.fn(async () => ({ code: 0, stdout: "", stderr: "" }));
+  return { runner: { exec } as ExecRunner, exec };
+}
+
+beforeEach(() => {
+  checkFreeSpace.mockReset();
+  checkFreeSpace.mockResolvedValue({ ok: true, freeBytes: Infinity });
+});
+
+describe("writeContainerFile — disk-space guard", () => {
+  it("refuses to write and never touches the container when the workspace is out of disk space", async () => {
+    checkFreeSpace.mockResolvedValue({ ok: false, freeBytes: 0 });
+    const { runner, exec } = makeRunner();
+
+    const result = await writeContainerFile(runner, "/data/ws1", "notes.md", "hello");
+
+    expect(result).toMatch(/^Error:/);
+    expect(result).toContain("not enough free disk space");
+    expect(exec).not.toHaveBeenCalled();
+  });
+
+  it("sizes the check off the content being written", async () => {
+    const { runner } = makeRunner();
+    await writeContainerFile(runner, "/data/ws1", "notes.md", "hello");
+
+    expect(checkFreeSpace).toHaveBeenCalledWith("/data/ws1", Buffer.byteLength("hello"), expect.any(Number));
+  });
+
+  it("proceeds to mkdir + tee when there's room", async () => {
+    const { runner, exec } = makeRunner();
+    const result = await writeContainerFile(runner, "/data/ws1", "src/notes.md", "hello");
+
+    expect(result).toBeNull();
+    expect(exec).toHaveBeenCalledTimes(2); // mkdir -p, then tee
+  });
+});

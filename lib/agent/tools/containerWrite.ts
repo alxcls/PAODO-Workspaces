@@ -8,9 +8,19 @@
 import path from "path";
 import type { ExecRunner } from "../interfaces";
 import { toolError } from "../toolUtils";
+import { checkFreeSpace } from "../../workspace/diskSpace";
+import { RESERVED_FREE_BYTES } from "../../workspace/uploadLimits";
 
-export async function writeContainerFile(runner: ExecRunner, relpath: string, content: string): Promise<string | null> {
+export async function writeContainerFile(
+  runner: ExecRunner,
+  workspaceDir: string,
+  relpath: string,
+  content: string,
+): Promise<string | null> {
   try {
+    const space = await checkFreeSpace(workspaceDir, Buffer.byteLength(content), RESERVED_FREE_BYTES);
+    if (!space.ok) return "Error: not enough free disk space to write this file.";
+
     const dirRelpath = path.posix.dirname(relpath);
     if (dirRelpath && dirRelpath !== ".") {
       const mkdirR = await runner.exec(["mkdir", "-p", `/workspace/${dirRelpath}`]);

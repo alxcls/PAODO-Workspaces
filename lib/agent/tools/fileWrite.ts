@@ -5,7 +5,7 @@
 
 import { StructuredTool } from "@langchain/core/tools";
 import { z } from "zod";
-import { normalizeRelpath } from "../pathUtils";
+import { normalizeRelpath, resolveWorkspacePath } from "../pathUtils";
 import { writeContainerFile } from "./containerWrite";
 import type { ExecRunner } from "../interfaces";
 
@@ -22,14 +22,22 @@ Use for creating new files or complete rewrites. For targeted edits to existing 
 If the file already exists and you need to preserve or merge its content, read it first with file_read. If you are replacing it wholesale or creating a new file, skip the read.`;
   schema = schema;
 
-  constructor(private runner: ExecRunner) {
+  constructor(
+    private runner: ExecRunner,
+    private workspaceDir: string,
+  ) {
     super();
   }
 
   protected async _call({ file_path, content }: z.infer<typeof schema>): Promise<string> {
     const relpath = normalizeRelpath(file_path);
     if (relpath === null) return "Error: path is outside the workspace";
-    const err = await writeContainerFile(this.runner, relpath, content);
+    // Lexical check above catches "../"/absolute paths; this catches a symlink planted inside the
+    // workspace that redirects relpath elsewhere on disk (see lib/workspace/pathContainment.ts).
+    if ((await resolveWorkspacePath(this.workspaceDir, relpath)) === null) {
+      return "Error: path is outside the workspace";
+    }
+    const err = await writeContainerFile(this.runner, this.workspaceDir, relpath, content);
     return err ?? `Written ${file_path} (${content.length} chars)`;
   }
 }

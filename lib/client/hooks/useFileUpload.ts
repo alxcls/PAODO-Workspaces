@@ -1,7 +1,8 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { MAX_UPLOAD_BYTES } from "@/lib/workspace/uploadLimits";
+import { MAX_UPLOAD_BYTES, formatBytes } from "@/lib/workspace/uploadLimits";
+import { partitionByIgnore } from "@/lib/workspace/uploadIgnore";
 
 /** A file paired with its intended path inside the workspace (folder uploads keep structure). */
 export interface PathedFile {
@@ -108,30 +109,54 @@ export async function runUploadQueue(
   return { uploaded, notUploaded, hardFailure };
 }
 
+/** Result of the most recently finished upload batch, shown in the results popup. */
+export interface UploadSummary {
+  uploaded: number;
+  /**
+   * Every path that didn't make it in, for any reason — excluded by an ignore pattern, over the
+   * per-file size limit, rejected by the server, or never attempted because a systemic failure
+   * stopped the queue. `uploaded + failed.length` is always the size of the attempted batch.
+   */
+  failed: string[];
+  /**
+   * One line per triggered failure category — e.g. `node_modules excluded (12 files)`, `3 files
+   * over the 1 GB limit` — so the cause of a batch of failures reads as a single sentence instead
+   * of forcing the reader to infer it from the raw path list below.
+   */
+  notes: string[];
+  /** Set only when a systemic failure (507, 400, 500, network) stopped the batch early. */
+  stoppedReason: string | null;
+}
+
 /**
  * Shared upload logic for the file tree panel — used by both the Files/Folder buttons and the
  * drag-and-drop zone. Every entry point funnels into one per-file uploader.
  */
 export function useFileUpload(apiBase: string, onUploaded: () => void) {
   const [status, setStatus] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  // Flat list of paths that didn't make it in this run — oversized, or never attempted because a
-  // systemic failure stopped the queue. Shown verbatim in a simple text box by the caller so the
-  // user can see exactly what didn't upload, regardless of which of those reasons applied.
-  const [notUploaded, setNotUploaded] = useState<string[]>([]);
+  const [summary, setSummary] = useState<UploadSummary | null>(null);
   // Authoritative "one upload at a time" guard. A ref is synchronous and render-independent, so a
   // second call in the same tick is rejected immediately, unlike the status state which only
   // reflects after a re-render.
   const inFlight = useRef(false);
 
-  const uploadPathedFiles = async (entries: PathedFile[]) => {
+  const uploadEntries = async (entries: PathedFile[], applyIgnorePatterns: boolean) => {
     if (entries.length === 0) return;
     if (inFlight.current) return;
     inFlight.current = true;
-    setError(null);
-    setNotUploaded([]);
+    setSummary(null);
     // Set synchronously so the panel shows busy from the first click rather than appearing idle.
     setStatus("Uploading…");
+
+    // Folder uploads default-exclude generated directories (node_modules, .venv, ...) silently —
+    // no confirmation step, since it's just as easy to say so in the results list afterward as it
+    // is to ask first. Never applied to the plain Files button or a flat-file drop.
+    const excluded = applyIgnorePatterns ? partitionByIgnore(entries).excluded : new Map<string, PathedFile[]>();
+    const excludedPaths = Array.from(excluded.values())
+      .flat()
+      .map((entry) => entry.path);
+    const excludedSet = new Set(excludedPaths);
+    const candidates = entries.filter((entry) => !excludedSet.has(entry.path));
 
     // Checked before a single byte leaves the browser: an individually-oversized file is excluded
     // from the queue up front rather than discovered at file 16,000 of 18,000. This is a skip, not a
@@ -139,14 +164,31 @@ export function useFileUpload(apiBase: string, onUploaded: () => void) {
     // thousands of legitimate source files) has every reason to still upload. The server enforces the
     // same limit on every request regardless, so this is an optimization (skip the doomed request
     // entirely) plus an up-front explanation, not the actual guard.
-    const clientOversized = entries.filter((entry) => entry.file.size > MAX_UPLOAD_BYTES);
-    const queue = entries.filter((entry) => entry.file.size <= MAX_UPLOAD_BYTES);
+    const clientOversized = candidates.filter((entry) => entry.file.size > MAX_UPLOAD_BYTES).map((entry) => entry.path);
+    const queue = candidates.filter((entry) => entry.file.size <= MAX_UPLOAD_BYTES);
+
+    // One line per triggered category. A 413 only ever shows up in runUploadQueue's notUploaded when
+    // hardFailure is null — any other server error throws instead — so in that branch every entry in
+    // it is an over-limit rejection, same category as the client-side oversized skip above.
+    const notesFor = (overLimitCount: number): string[] => {
+      const notes = Array.from(excluded.entries()).map(
+        ([name, group]) => `${name} excluded (${group.length} file${group.length === 1 ? "" : "s"})`,
+      );
+      if (overLimitCount > 0) {
+        notes.push(`${overLimitCount} file${overLimitCount === 1 ? "" : "s"} over the ${formatBytes(MAX_UPLOAD_BYTES)} limit`);
+      }
+      return notes;
+    };
 
     if (queue.length === 0) {
-      // The whole selection was oversized — nothing to upload, so this IS a failure to report, not
-      // a caveat on a completed batch. No onUploaded() call: nothing in the workspace changed.
-      setError(clientOversized.length === 1 ? "Nothing was uploaded — the file is over the size limit." : "Nothing was uploaded — every file was over the size limit.");
-      setNotUploaded(clientOversized.map((entry) => entry.path));
+      // Nothing left to send — everything was excluded or oversized. No onUploaded() call: nothing
+      // in the workspace changed.
+      setSummary({
+        uploaded: 0,
+        failed: [...excludedPaths, ...clientOversized],
+        notes: notesFor(clientOversized.length),
+        stoppedReason: null,
+      });
       setStatus(null);
       inFlight.current = false;
       return;
@@ -161,25 +203,13 @@ export function useFileUpload(apiBase: string, onUploaded: () => void) {
           }
         },
       });
-
-      const notUploadedPaths = [...clientOversized.map((entry) => entry.path), ...result.notUploaded];
-      setNotUploaded(notUploadedPaths);
-
-      if (result.hardFailure) {
-        // Say plainly how far it got — this batch is partly applied, and implying otherwise would
-        // send the user looking for files that are already there.
-        setError(
-          result.uploaded === 0
-            ? `Nothing was uploaded — ${result.hardFailure}`
-            : `Upload stopped after ${result.uploaded} of ${entries.length} files — ${result.hardFailure}`,
-        );
-      } else if (notUploadedPaths.length > 0) {
-        // Completed without a systemic abort — the skips are a caveat on an otherwise finished
-        // upload, not a failure. The exact paths are in notUploaded, not repeated here.
-        setError(
-          `Uploaded ${result.uploaded} of ${entries.length} files — ${notUploadedPaths.length} file${notUploadedPaths.length === 1 ? "" : "s"} not uploaded.`,
-        );
-      }
+      const overLimitCount = clientOversized.length + (result.hardFailure ? 0 : result.notUploaded.length);
+      setSummary({
+        uploaded: result.uploaded,
+        failed: [...excludedPaths, ...clientOversized, ...result.notUploaded],
+        notes: notesFor(overLimitCount),
+        stoppedReason: result.hardFailure,
+      });
       onUploaded();
     } finally {
       setStatus(null);
@@ -188,11 +218,19 @@ export function useFileUpload(apiBase: string, onUploaded: () => void) {
   };
 
   // Single files: the name is the whole path, so they land at the root of the target directory.
-  const uploadFiles = (files: File[]) => uploadPathedFiles(files.map((file) => ({ file, path: file.name })));
+  const uploadFiles = (files: File[]) => uploadEntries(files.map((file) => ({ file, path: file.name })), false);
 
   // <input webkitdirectory> yields flat File[] with webkitRelativePath carrying the structure.
   const uploadFolder = (files: File[]) =>
-    uploadPathedFiles(files.map((file) => ({ file, path: file.webkitRelativePath || file.name })));
+    uploadEntries(
+      files.map((file) => ({ file, path: file.webkitRelativePath || file.name })),
+      true,
+    );
 
-  return { status, error, notUploaded, uploadFiles, uploadFolder, uploadPathedFiles };
+  // Used by drag-and-drop, which already has PathedFile[] in hand (built while walking the dropped
+  // entries) — applyIgnorePatterns is true only for a dropped folder, never a flat multi-file drop.
+  const uploadPathedFiles = (entries: PathedFile[], applyIgnorePatterns: boolean) =>
+    uploadEntries(entries, applyIgnorePatterns);
+
+  return { status, summary, uploadFiles, uploadFolder, uploadPathedFiles };
 }

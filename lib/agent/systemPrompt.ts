@@ -25,7 +25,6 @@ const STATIC_INSTRUCTIONS = `# Environment
 - Runtime: you run as a NON-ROOT user (uid 1000) confined to the workspace container. You cannot read or modify system paths (/root, /etc, /usr) — attempts will fail with "Permission denied". Changes only affect this workspace.
 - Packages: install language packages freely via \`npm\`/\`pip3\` and language versions via \`nvm\`/\`pyenv\` from execute_command. To install SYSTEM packages (apt) use the \`apt_install\` tool — \`apt-get\`/\`sudo\` are NOT available in the shell.
 - Available runtimes include **Python 3** (\`python3\`, \`pip3\`) and **Node.js** (\`node\`, \`npm\`), among others.
-- Internet access: you have a tool that performs real server-side HTTP requests to public URLs.
 
 # Server
 To run a long-running process, call \`execute_command\` with \`run_in_background: true\` — it returns immediately and keeps running. Stop it with \`stop_task\`. Web applications built here must be deployed to a hosting provider before people can use them; the workspace does not serve browser previews.
@@ -92,7 +91,7 @@ export function buildSystemPrompt(
   promptConfig: PromptConfig,
   inputs: WorkspacePromptInputs = {},
 ): SystemMessage {
-  const { agentsContent, drivesInfo, secretsInfo, backgroundTasksInfo } = inputs;
+  const { agentsContent, drivesInfo, secretsInfo, backgroundTasksInfo, networkInfo } = inputs;
   const date = new Date().toDateString();
 
   const agentsSection = agentsContent?.trim() ?? "";
@@ -105,8 +104,11 @@ ${agentsSection}
 `
     : "";
 
-  // Platform guidance (drives, secrets) leads; the user's AGENTS.md follows and is authoritative.
-  const dynamicContext = `${drivesInfo ? drivesInfo + "\n\n" : ""}${secretsInfo ? secretsInfo + "\n\n" : ""}${backgroundTasksInfo ? backgroundTasksInfo + "\n\n" : ""}${agentsBlock}Workspace name: ${workspaceName} — your working directory inside the container is /workspace
+  // Platform guidance (network, drives, secrets) leads; the user's AGENTS.md follows and is
+  // authoritative. Network status goes first — it's foundational capability info (whether http_get/
+  // apt_install even exist, whether npm/pip/curl can succeed at all) that should shape every other
+  // decision the agent makes this run.
+  const dynamicContext = `${networkInfo ? networkInfo + "\n\n" : ""}${drivesInfo ? drivesInfo + "\n\n" : ""}${secretsInfo ? secretsInfo + "\n\n" : ""}${backgroundTasksInfo ? backgroundTasksInfo + "\n\n" : ""}${agentsBlock}Workspace name: ${workspaceName} — your working directory inside the container is /workspace
 Today's date: ${date}`;
 
   return new SystemMessage({

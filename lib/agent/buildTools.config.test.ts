@@ -80,6 +80,33 @@ describe("loadAgentConfig", () => {
     expect(loadAgentConfig().apiKey).toBe("sk-ds-test");
   });
 
+  // internetAccess gates whether apt_install/http_get are bound at all (buildTools' tools array) —
+  // loadAgentConfig is where that workspace-stored flag first enters the config.
+  it("defaults internetAccess to true for a workspace with no explicit setting", () => {
+    seedWorkspace({
+      id: "ws-net-default",
+      name: "n",
+      dir: "/tmp/n",
+      createdAt: new Date(),
+      maxIterations: 30,
+      maxRunMinutes: 5,
+    });
+    expect(loadAgentConfig("ws-net-default").internetAccess).toBe(true);
+  });
+
+  it("follows the workspace's stored internetAccess setting", () => {
+    seedWorkspace({
+      id: "ws-net-off",
+      name: "n",
+      dir: "/tmp/n",
+      createdAt: new Date(),
+      maxIterations: 30,
+      maxRunMinutes: 5,
+      internetAccess: false,
+    });
+    expect(loadAgentConfig("ws-net-off").internetAccess).toBe(false);
+  });
+
   // Previously an unknown provider silently fell through to the OpenAI builder, which then failed with
   // a misleading "no openai model selected" (and, upstream, mis-attributed usage to an undefined model).
   it("rejects a provider with no registry entry instead of falling back to another vendor", () => {

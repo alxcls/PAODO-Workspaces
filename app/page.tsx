@@ -9,6 +9,7 @@ import AgentLoopBlock from "@/components/home/AgentLoopBlock";
 import ModelBlock from "@/components/home/ModelBlock";
 import EnvVarsBlock from "@/components/home/EnvVarsBlock";
 import McpBlock from "@/components/home/McpBlock";
+import InternetAccessBlock from "@/components/home/InternetAccessBlock";
 import TopBar from "@/components/layout/TopBar";
 import { useWorkspaces } from "@/lib/client/hooks/useWorkspaces";
 import { useWorkspaceDescription } from "@/lib/client/hooks/useWorkspaceDescription";
@@ -330,6 +331,7 @@ export default function HomePage() {
               <div className="mt-9 mb-2 text-xs font-semibold uppercase tracking-[.08em] text-text-3">Description</div>
               <DescriptionBlock key={`desc-${selected.id}`} value={description} onChange={saveDescription} />
               <ApiAccessBlock key={`api-${selected.id}`} wsId={selected.id} />
+              <InternetAccessBlock key={`net-${selected.id}`} wsId={selected.id} />
               <McpBlock key={`mcp-${selected.id}`} wsId={selected.id} />
               <AgentLoopBlock key={`loop-${selected.id}`} wsId={selected.id} />
               <ModelBlock key={`model-${selected.id}`} wsId={selected.id} />

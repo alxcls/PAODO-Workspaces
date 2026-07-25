@@ -17,11 +17,18 @@ export default function EnvVarsBlock({ wsId }: { wsId: string }) {
   const [adding, setAdding] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+  // Secrets are unreachable with no network route out, so there's nothing useful to view or add
+  // while off — hide the management UI entirely instead of showing controls that can't do anything.
+  const [internetAccess, setInternetAccess] = useState(false);
 
   useEffect(() => {
     fetch(`/api/workspaces/${wsId}/env-vars`)
       .then((r) => r.json())
       .then((d: SecretMeta[]) => setSecrets(d))
+      .catch(() => {});
+    fetch(`/api/workspaces/${wsId}/internet-access`)
+      .then((r) => r.json())
+      .then((d: { enabled: boolean }) => setInternetAccess(d.enabled))
       .catch(() => {});
   }, [wsId]);
 
@@ -72,6 +79,21 @@ export default function EnvVarsBlock({ wsId }: { wsId: string }) {
     setConfirmDelete(null);
     setSecrets((prev) => prev.filter((s) => s.name !== secretName));
   };
+
+  if (!internetAccess) {
+    return (
+      <div className="flex flex-col gap-2 mt-4 border border-border rounded-card p-[14px_16px] bg-bg-tint">
+        <div>
+          <span className="text-ms font-semibold text-text">Third-party secrets</span>
+          <span className="text-xs text-text-3 ml-2">unavailable while internet access is off</span>
+        </div>
+        <p className="m-0 text-xs text-text-3">
+          This workspace has no network route out, so secrets can&apos;t be reached anyway. Turn internet
+          access back on above to view or add them.
+        </p>
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col gap-3 mt-4 border border-border rounded-card p-[14px_16px] bg-bg-tint">

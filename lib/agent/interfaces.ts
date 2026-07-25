@@ -83,6 +83,7 @@ export interface SkillConfig {
 
 export interface AgentConfig extends LLMProviderConfig, ExecConfig, SkillConfig {
   graphEnabled: boolean;
+  internetAccess: boolean;
 }
 
 // Context threaded to each PostDispatchFn after a tool turn settles. Handlers receive the live

@@ -33,6 +33,9 @@ vi.mock("@/lib/workspace/uploadLimits", async (importOriginal) => ({
   MAX_UPLOAD_BYTES: LIMIT,
 }));
 
+const checkFreeSpace = vi.hoisted(() => vi.fn().mockResolvedValue({ ok: true, freeBytes: Infinity }));
+vi.mock("@/lib/workspace/diskSpace", () => ({ checkFreeSpace }));
+
 vi.mock("@/lib/infra/services", () => ({
   getStore: () => ({ getWorkspace: (id: string) => (id === "ws" ? { id: "ws", name: "ws", dir: WS_DIR } : undefined) }),
   getVersioning: () => ({ commitResult: async () => ({ sha: "test", changed: false }) }),
@@ -57,6 +60,7 @@ const strayTempFiles = () => fs.readdirSync(WS_DIR).filter((name) => name.endsWi
 beforeEach(() => {
   for (const name of fs.readdirSync(WS_DIR)) fs.rmSync(path.join(WS_DIR, name), { recursive: true, force: true });
   fs.rmSync(ESCAPE_TARGET, { force: true });
+  checkFreeSpace.mockResolvedValue({ ok: true, freeBytes: Infinity });
 });
 afterAll(() => fs.rmSync(ROOT, { recursive: true, force: true }));
 
@@ -130,5 +134,18 @@ describe("files/upload POST — size limit", () => {
 
     expect(res.status).toBe(200);
     expect(fs.statSync(path.join(WS_DIR, "exact.bin")).size).toBe(LIMIT);
+  });
+});
+
+describe("files/upload POST — disk space", () => {
+  it("refuses an upload when the host is out of free space, and writes nothing", async () => {
+    checkFreeSpace.mockResolvedValue({ ok: false, freeBytes: 0 });
+
+    const res = await post(`?path=${encodeURIComponent("no-room.bin")}`, { body: "x".repeat(LIMIT) });
+
+    expect(res.status).toBe(507);
+    expect((await res.json()).error).toMatch(/not enough free disk space/i);
+    expect(fs.existsSync(path.join(WS_DIR, "no-room.bin"))).toBe(false);
+    expect(strayTempFiles()).toEqual([]);
   });
 });

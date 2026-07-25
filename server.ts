@@ -44,6 +44,7 @@ import { mintSessionCookie, sessionCookieNeedsRefresh, verifySessionCookie } fro
 import { buildSecurityHeaders } from "./lib/infra/security/securityHeaders";
 import { startScheduler, stopScheduler } from "./lib/infra/schedules/scheduler";
 import { startProxyReconciler, stopProxyReconciler } from "./lib/infra/docker/proxyReconciler";
+import { startUploadSweeper, stopUploadSweeper } from "./lib/workspace/uploadSweeper";
 import { checkApiRateLimit } from "./lib/infra/security/rateLimit";
 import { hasConfiguredProviderApiKey } from "./lib/agent/buildModel";
 import { assertDataRootAvailable, assertWorkspaceRegistryAvailable } from "./lib/infra/startupChecks";
@@ -463,6 +464,8 @@ assertGitAvailable()
     // Fire workspace schedules on their recurrence (in-process tick loop). Started after boot so
     // the store/services are ready; missed slots from any downtime are skipped, not replayed.
     startScheduler();
+    // Reclaim upload temp files orphaned by a process kill mid-upload.
+    startUploadSweeper();
   })
   .catch((err) => fatal("startup", err));
 
@@ -498,6 +501,7 @@ function shutdown(signal: NodeJS.Signals) {
     wss.close();
     stopScheduler();
     stopProxyReconciler();
+    stopUploadSweeper();
     stopAllWatchers();
   } catch (err) {
     failShutdown(err);

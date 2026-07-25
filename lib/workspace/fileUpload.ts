@@ -22,7 +22,8 @@ import { pipeline } from "stream/promises";
 import path from "path";
 import { randomBytes } from "crypto";
 import { createLogger } from "@/lib/infra/logger";
-import { MAX_UPLOAD_BYTES, formatBytes } from "@/lib/workspace/uploadLimits";
+import { MAX_UPLOAD_BYTES, RESERVED_FREE_BYTES, formatBytes } from "@/lib/workspace/uploadLimits";
+import { checkFreeSpace } from "@/lib/workspace/diskSpace";
 
 export interface UploadBackend {
   dir: string;
@@ -67,6 +68,24 @@ export async function handleUpload(req: NextRequest, be: UploadBackend): Promise
     );
   };
 
+  // Distinct from tooLarge: this file may be well within the per-file limit, but the host itself
+  // is out of room. Telling the two apart matters because one is the user's problem and the other
+  // is ours.
+  const insufficientStorage = (filePath: string, neededBytes: number, freeBytes: number) => {
+    log.error(
+      {
+        ...be.logContext,
+        event: "upload_insufficient_storage",
+        outcome: "upload_rejected",
+        filePath,
+        neededBytes,
+        freeBytes,
+      },
+      "upload rejected — not enough free disk space",
+    );
+    return NextResponse.json({ error: "Not enough free disk space to accept this upload." }, { status: 507 });
+  };
+
   const { searchParams } = new URL(req.url);
   const filePath = searchParams.get("path");
   if (!filePath) return NextResponse.json({ error: "path required" }, { status: 400 });
@@ -82,6 +101,12 @@ export async function handleUpload(req: NextRequest, be: UploadBackend): Promise
   if (Number.isFinite(declared) && declared > MAX_UPLOAD_BYTES) {
     return tooLarge(filePath, declared, "content_length");
   }
+
+  // Chunked bodies declare no length, so assume the worst case (the per-file cap) rather than
+  // skip the check — same conservative stance the size limit above takes.
+  const neededBytes = Number.isFinite(declared) && declared > 0 ? declared : MAX_UPLOAD_BYTES;
+  const space = await checkFreeSpace(dir, neededBytes, RESERVED_FREE_BYTES);
+  if (!space.ok) return insufficientStorage(filePath, neededBytes, space.freeBytes);
 
   await fs.mkdir(path.dirname(resolved), { recursive: true });
   // Temp sibling in the destination directory, so it shares a filesystem and the rename is atomic.

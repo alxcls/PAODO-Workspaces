@@ -1,7 +1,9 @@
-// Handles file uploads into a shared drive directory (single file or ZIP archive).
+// Handles file uploads into a shared drive directory. A folder upload arrives as one request per file.
 // Drives are passive host storage: the shared upload core runs with a bare backend (no git snapshot).
 export const runtime = "nodejs";
-export const maxDuration = 120;
+// No maxDuration here: this app runs as a custom Node server (server.ts), not on Vercel, where
+// maxDuration is enforced. Request duration for uploads is governed by server.ts's
+// httpServer.requestTimeout instead.
 
 import { type NextRequest, NextResponse } from "next/server";
 import { requireDrive, rateLimited } from "@/lib/api/guards";

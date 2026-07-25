@@ -1,7 +1,9 @@
-// Handles file uploads into a workspace directory (single file or ZIP archive).
+// Handles file uploads into a workspace directory. A folder upload arrives as one request per file.
 // The shared upload core (lib/workspace/fileUpload.ts) does the work; the workspace backend adds a git snapshot.
 export const runtime = "nodejs";
-export const maxDuration = 120;
+// No maxDuration here: this app runs as a custom Node server (server.ts), not on Vercel, where
+// maxDuration is enforced. Request duration for uploads is governed by server.ts's
+// httpServer.requestTimeout instead.
 
 import { type NextRequest, NextResponse } from "next/server";
 import { getVersioning } from "@/lib/infra/services";

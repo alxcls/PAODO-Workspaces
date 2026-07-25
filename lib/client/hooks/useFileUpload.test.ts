@@ -63,6 +63,28 @@ describe("runUploadQueue", () => {
     expect(new Set(result.notUploaded)).toEqual(new Set(["big.bin", "broken.txt"]));
   });
 
+  it("still accounts for a sibling file that was genuinely in flight when another file's hard failure aborted the batch", async () => {
+    // fails.txt resolves immediately with a systemic failure; slow.txt's request never resolves on
+    // its own — it only rejects (like a real aborted fetch would) once the shared AbortSignal fires.
+    // Both are dequeued into the same CONCURRENCY pool before either settles, so slow.txt is
+    // genuinely in flight — not still sitting in `queue` — at the moment fails.txt trips the abort.
+    const fetchMock = vi.fn((url: string, init: { signal: AbortSignal }) => {
+      if (url.includes("fails.txt")) return Promise.resolve(jsonResponse(500, { error: "internal error" }));
+      return new Promise<Response>((_resolve, reject) => {
+        init.signal.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")));
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await runUploadQueue([entry("fails.txt"), entry("slow.txt")], { apiBase: "/api/x" });
+
+    expect(result.hardFailure).toBeTruthy();
+    expect(result.uploaded).toBe(0);
+    // Without accounting for the abort inside the worker, slow.txt would vanish entirely — neither
+    // uploaded nor notUploaded — breaking the "uploaded + failed.length is the whole batch" invariant.
+    expect(new Set(result.notUploaded)).toEqual(new Set(["fails.txt", "slow.txt"]));
+  });
+
   it("reports a systemic failure (507) as hardFailure and lists the failing path in notUploaded", async () => {
     vi.stubGlobal(
       "fetch",

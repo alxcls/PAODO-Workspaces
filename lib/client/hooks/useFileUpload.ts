@@ -89,10 +89,34 @@ export async function runUploadQueue(
     }
   };
 
+  // Set by whichever worker hits the first systemic failure. Workers never throw out to
+  // Promise.all below — if one did, Promise.all would settle (and this function would return) the
+  // moment that first worker rejects, without waiting for its siblings to unwind, so a sibling file
+  // that was genuinely in flight at that instant would never get its own notUploaded push recorded.
+  // Recording the failure and returning normally instead means Promise.all genuinely waits for every
+  // worker to finish draining or aborting before this function reads its results.
+  //
+  // Held in an object (not a plain `let`) because TS's control-flow narrowing doesn't account for a
+  // captured variable being reassigned inside these closures — it would otherwise narrow the type to
+  // `null` at the read site below regardless of what the workers actually did.
+  const failure: { first: Error | null } = { first: null };
+
   const worker = async () => {
     while (queue.length > 0) {
       const entry = queue.shift()!;
-      const res = await send(entry);
+      let res: Response;
+      try {
+        res = await send(entry);
+      } catch (err) {
+        // Either a genuine per-request failure (network drop, ...) or this worker got aborted
+        // because a sibling already failed the batch — either way, this entry didn't upload.
+        notUploaded.push(entry.path);
+        if (!controller.signal.aborted) {
+          failure.first = err instanceof Error ? err : new Error("Upload failed.");
+          controller.abort();
+        }
+        return;
+      }
       if (res.status === 413) {
         notUploaded.push(entry.path);
         overLimit.push(entry.path);
@@ -100,18 +124,18 @@ export async function runUploadQueue(
       }
       if (!res.ok) {
         notUploaded.push(entry.path);
-        throw new Error(`${entry.path} — ${await failureReason(res)}`);
+        failure.first = new Error(`${entry.path} — ${await failureReason(res)}`);
+        controller.abort();
+        return;
       }
       uploaded += 1;
       opts.onProgress?.(uploaded);
     }
   };
 
-  try {
-    await Promise.all(Array.from({ length: Math.min(CONCURRENCY, queue.length) }, worker));
-  } catch (err) {
-    controller.abort();
-    hardFailure = err instanceof Error ? err.message : "Upload failed.";
+  await Promise.all(Array.from({ length: Math.min(CONCURRENCY, queue.length) }, worker));
+  if (failure.first) {
+    hardFailure = failure.first.message;
     // Whatever was still sitting in the queue when the abort fired was never attempted at all.
     notUploaded.push(...queue.map((entry) => entry.path));
   }

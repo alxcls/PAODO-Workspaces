@@ -1,6 +1,7 @@
 // In-memory token-bucket limiter plus the application's central rate-limit policy. The custom
 // server applies the global and control-plane layers to every API request; public Bearer endpoints
-// and uploads add their narrower route-level policy after that.
+// add their narrower route-level policy after that. Uploads are the one exception — they bypass the
+// global bucket entirely, for the reason given in checkApiRateLimit.
 const LOOPBACK = new Set(["::1", "127.0.0.1", "::ffff:127.0.0.1"]);
 
 export class RateLimiter {
@@ -59,7 +60,11 @@ export const RATE_LIMIT_POLICIES = {
   controlWrite: { max: 120, bucket: "control:write" },
   destructive: { max: 30, bucket: "control:destructive" },
   uiAgent: { max: 30, bucket: "agent:ui" },
-  upload: { max: 200, bucket: "upload" },
+  // Sized for whole-folder uploads, which send one request per file: a large tree is thousands of
+  // requests from one user action. The bucket starts full, so a burst of this many goes straight
+  // through and the rest refill at 50/s — fast enough that the limiter never becomes the bottleneck
+  // on a real upload, while still capping a runaway client.
+  upload: { max: 3000, bucket: "upload" },
   publicAgentIp: { max: 60, bucket: "agent:public:ip" },
   workspaceAgent: { max: 20, bucket: "agent:workspace" },
   publicMcpIp: { max: 120, bucket: "mcp:public:ip" },
@@ -103,6 +108,12 @@ export function checkApiRateLimit(
 ): RateLimitResult & {
   policy: RateLimitPolicy;
 } {
+  // Uploads answer to the `upload` policy alone. Charging one-request-per-file uploads to the shared
+  // global bucket would stall a large folder partway through AND starve the rest of the UI — tree
+  // refreshes, saves, agent calls — of its global budget for the remainder of the minute. This layer
+  // applies the policy per IP; the upload routes apply it again scoped per workspace.
+  if (UPLOAD.test(pathname)) return { ...checkRateLimitPolicy(subject, "upload"), policy: "upload" };
+
   const global = checkRateLimitPolicy(subject, "global");
   if (!global.ok) return { ...global, policy: "global" };
 

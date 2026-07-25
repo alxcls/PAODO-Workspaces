@@ -92,6 +92,11 @@ function setSecurityHeaders(res: import("http").ServerResponse): void {
 }
 
 const httpServer = createServer();
+// Node's 5-minute default would abort a legitimate upload of a file near MAX_UPLOAD_BYTES on a slow
+// link (a repo's .git pack file is routinely hundreds of MB), and the client would see a dropped
+// connection rather than a reason. headersTimeout is deliberately left at its default — headers
+// always arrive promptly, so it keeps covering slowloris while this only relaxes the body deadline.
+httpServer.requestTimeout = 30 * 60_000;
 httpServer.on("error", (err) => {
   log.fatal(
     { event: "startup_http_listener_failed", outcome: "process_exit", err, port },

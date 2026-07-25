@@ -34,7 +34,7 @@ vi.mock("@/lib/workspace/uploadLimits", async (importOriginal) => ({
 }));
 
 const checkFreeSpace = vi.hoisted(() => vi.fn().mockResolvedValue({ ok: true, freeBytes: Infinity }));
-vi.mock("@/lib/workspace/diskSpace", () => ({ checkFreeSpace }));
+vi.mock("@/lib/workspace/diskSpace", () => ({ checkFreeSpace, RESERVED_FREE_BYTES: 1024 * 1024 * 1024 }));
 
 vi.mock("@/lib/infra/services", () => ({
   getStore: () => ({ getWorkspace: (id: string) => (id === "ws" ? { id: "ws", name: "ws", dir: WS_DIR } : undefined) }),

@@ -6,8 +6,8 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import os from "os";
 import type { ExecRunner } from "../interfaces";
 
-const checkFreeSpace = vi.hoisted(() => vi.fn());
-vi.mock("../../workspace/diskSpace", () => ({ checkFreeSpace }));
+const requireFreeSpace = vi.hoisted(() => vi.fn());
+vi.mock("../../workspace/diskSpace", () => ({ requireFreeSpace }));
 
 import { FileEditTool } from "./fileEdit";
 
@@ -24,13 +24,13 @@ function makeRunner(fileContent: string) {
 }
 
 beforeEach(() => {
-  checkFreeSpace.mockReset();
-  checkFreeSpace.mockResolvedValue({ ok: true, freeBytes: Infinity });
+  requireFreeSpace.mockReset();
+  requireFreeSpace.mockResolvedValue(null);
 });
 
 describe("FileEditTool edit-existing-file branch — disk-space guard", () => {
   it("refuses the edit and never writes when the workspace is out of disk space", async () => {
-    checkFreeSpace.mockResolvedValue({ ok: false, freeBytes: 0 });
+    requireFreeSpace.mockResolvedValue("Error: not enough free disk space to write this file.");
     const { runner, exec } = makeRunner("hello world");
     const tool = new FileEditTool(runner, WORKSPACE_DIR);
 

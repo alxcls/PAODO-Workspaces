@@ -22,8 +22,8 @@ import { pipeline } from "stream/promises";
 import path from "path";
 import { randomBytes } from "crypto";
 import { createLogger } from "@/lib/infra/logger";
-import { MAX_UPLOAD_BYTES, RESERVED_FREE_BYTES, formatBytes } from "@/lib/workspace/uploadLimits";
-import { checkFreeSpace } from "@/lib/workspace/diskSpace";
+import { MAX_UPLOAD_BYTES, formatBytes } from "@/lib/workspace/uploadLimits";
+import { checkFreeSpace, RESERVED_FREE_BYTES } from "@/lib/workspace/diskSpace";
 import { resolveContained } from "@/lib/workspace/pathContainment";
 
 export interface UploadBackend {

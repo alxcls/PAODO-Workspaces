@@ -6,8 +6,7 @@ import { StructuredTool } from "@langchain/core/tools";
 import type { RunnableConfig } from "@langchain/core/runnables";
 import { z } from "zod";
 import { createLogger } from "../../infra/logger";
-import { checkFreeSpace } from "../../workspace/diskSpace";
-import { RESERVED_FREE_BYTES } from "../../workspace/uploadLimits";
+import { checkFreeSpace, RESERVED_FREE_BYTES } from "../../workspace/diskSpace";
 import type { StreamingExecFn, BackgroundExecFn, ExecConfig } from "../interfaces";
 
 const schema = z.object({

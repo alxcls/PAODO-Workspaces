@@ -8,8 +8,7 @@
 import path from "path";
 import type { ExecRunner } from "../interfaces";
 import { toolError } from "../toolUtils";
-import { checkFreeSpace } from "../../workspace/diskSpace";
-import { RESERVED_FREE_BYTES } from "../../workspace/uploadLimits";
+import { requireFreeSpace } from "../../workspace/diskSpace";
 
 export async function writeContainerFile(
   runner: ExecRunner,
@@ -18,8 +17,8 @@ export async function writeContainerFile(
   content: string,
 ): Promise<string | null> {
   try {
-    const space = await checkFreeSpace(workspaceDir, Buffer.byteLength(content), RESERVED_FREE_BYTES);
-    if (!space.ok) return "Error: not enough free disk space to write this file.";
+    const spaceErr = await requireFreeSpace(workspaceDir, Buffer.byteLength(content));
+    if (spaceErr) return spaceErr;
 
     const dirRelpath = path.posix.dirname(relpath);
     if (dirRelpath && dirRelpath !== ".") {

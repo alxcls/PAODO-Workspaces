@@ -5,7 +5,7 @@
 
 import { StructuredTool } from "@langchain/core/tools";
 import { z } from "zod";
-import { normalizeRelpath, resolveWorkspacePath } from "../pathUtils";
+import { containWorkspacePath } from "../pathUtils";
 import { writeContainerFile } from "./containerWrite";
 import type { ExecRunner } from "../interfaces";
 
@@ -30,13 +30,10 @@ If the file already exists and you need to preserve or merge its content, read i
   }
 
   protected async _call({ file_path, content }: z.infer<typeof schema>): Promise<string> {
-    const relpath = normalizeRelpath(file_path);
+    // Realpath-contains against a symlink planted inside the workspace, not just a lexical "../"
+    // check (see lib/workspace/pathContainment.ts).
+    const relpath = await containWorkspacePath(this.workspaceDir, file_path);
     if (relpath === null) return "Error: path is outside the workspace";
-    // Lexical check above catches "../"/absolute paths; this catches a symlink planted inside the
-    // workspace that redirects relpath elsewhere on disk (see lib/workspace/pathContainment.ts).
-    if ((await resolveWorkspacePath(this.workspaceDir, relpath)) === null) {
-      return "Error: path is outside the workspace";
-    }
     const err = await writeContainerFile(this.runner, this.workspaceDir, relpath, content);
     return err ?? `Written ${file_path} (${content.length} chars)`;
   }

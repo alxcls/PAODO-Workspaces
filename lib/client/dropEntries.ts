@@ -42,7 +42,7 @@ async function walk(entry: FsEntry, prefix: string, out: PathedFile[]): Promise<
 
 export interface DroppedFiles {
   files: PathedFile[];
-  /** True when any dropped item was a folder — callers zip these instead of uploading individually. */
+  /** True when any dropped item was a folder — callers route these through the folder-upload path (ignore-pattern exclusion modal) rather than a plain flat-file upload. */
   hasDirectory: boolean;
 }
 

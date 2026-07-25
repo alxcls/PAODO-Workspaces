@@ -4,7 +4,7 @@ import { describe, it, expect, afterAll } from "vitest";
 import fs from "fs";
 import os from "os";
 import path from "path";
-import { normalizeRelpath, normalizeDirPath, resolveWorkspacePath } from "./pathUtils";
+import { normalizeRelpath, normalizeDirPath, resolveWorkspacePath, containWorkspacePath } from "./pathUtils";
 
 // The single most important invariant in this app: the agent can never
 // address a path outside its own workspace. normalizeRelpath/normalizeDirPath
@@ -74,5 +74,28 @@ describe("resolveWorkspacePath — realpath-based containment", () => {
   it("rejects a symlink planted inside the workspace that redirects outside — what normalizeRelpath alone cannot catch", async () => {
     fs.symlinkSync(OUTSIDE, path.join(WORKSPACE, "escape-link"));
     expect(await resolveWorkspacePath(WORKSPACE, "escape-link/payload.txt")).toBeNull();
+  });
+});
+
+describe("containWorkspacePath — normalize + contain in one step", () => {
+  const ROOT = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "path-utils-test-")));
+  const WORKSPACE = path.join(ROOT, "workspace");
+  const OUTSIDE = path.join(ROOT, "outside");
+  fs.mkdirSync(WORKSPACE);
+  fs.mkdirSync(OUTSIDE);
+
+  afterAll(() => fs.rmSync(ROOT, { recursive: true, force: true }));
+
+  it("returns the normalized relpath for a legitimate path", async () => {
+    expect(await containWorkspacePath(WORKSPACE, "src/./a/../b.ts")).toBe("src/b.ts");
+  });
+
+  it("rejects a lexical escape", async () => {
+    expect(await containWorkspacePath(WORKSPACE, "../outside/escape.txt")).toBeNull();
+  });
+
+  it("rejects a symlink escape", async () => {
+    fs.symlinkSync(OUTSIDE, path.join(WORKSPACE, "escape-link"));
+    expect(await containWorkspacePath(WORKSPACE, "escape-link/payload.txt")).toBeNull();
   });
 });

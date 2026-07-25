@@ -34,3 +34,14 @@ export async function resolveWorkspacePath(workspaceDir: string, relpath: string
   if (normalized === null) return null;
   return resolveContained(workspaceDir, normalized);
 }
+
+/**
+ * Normalize a caller-supplied file path and realpath-contain it in one step — the check every
+ * write tool (file_write, file_edit) needs before touching disk. Returns the normalized,
+ * workspace-relative path, or null if it escapes lexically or via a symlink.
+ */
+export async function containWorkspacePath(workspaceDir: string, filePath: string): Promise<string | null> {
+  const relpath = normalizeRelpath(filePath);
+  if (relpath === null) return null;
+  return (await resolveWorkspacePath(workspaceDir, relpath)) === null ? null : relpath;
+}

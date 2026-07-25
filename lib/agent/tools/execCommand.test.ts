@@ -10,7 +10,7 @@ import { ExecCommandTool } from "./execCommand";
 import type { StreamingExecFn, BackgroundExecFn } from "../interfaces";
 
 const checkFreeSpace = vi.hoisted(() => vi.fn());
-vi.mock("../../workspace/diskSpace", () => ({ checkFreeSpace }));
+vi.mock("../../workspace/diskSpace", () => ({ checkFreeSpace, RESERVED_FREE_BYTES: 1024 * 1024 * 1024 }));
 
 beforeEach(() => {
   checkFreeSpace.mockReset();

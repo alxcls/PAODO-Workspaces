@@ -5,8 +5,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { ExecRunner } from "../interfaces";
 
-const checkFreeSpace = vi.hoisted(() => vi.fn());
-vi.mock("../../workspace/diskSpace", () => ({ checkFreeSpace }));
+const requireFreeSpace = vi.hoisted(() => vi.fn());
+vi.mock("../../workspace/diskSpace", () => ({ requireFreeSpace }));
 
 import { writeContainerFile } from "./containerWrite";
 
@@ -16,13 +16,13 @@ function makeRunner() {
 }
 
 beforeEach(() => {
-  checkFreeSpace.mockReset();
-  checkFreeSpace.mockResolvedValue({ ok: true, freeBytes: Infinity });
+  requireFreeSpace.mockReset();
+  requireFreeSpace.mockResolvedValue(null);
 });
 
 describe("writeContainerFile — disk-space guard", () => {
   it("refuses to write and never touches the container when the workspace is out of disk space", async () => {
-    checkFreeSpace.mockResolvedValue({ ok: false, freeBytes: 0 });
+    requireFreeSpace.mockResolvedValue("Error: not enough free disk space to write this file.");
     const { runner, exec } = makeRunner();
 
     const result = await writeContainerFile(runner, "/data/ws1", "notes.md", "hello");
@@ -36,7 +36,7 @@ describe("writeContainerFile — disk-space guard", () => {
     const { runner } = makeRunner();
     await writeContainerFile(runner, "/data/ws1", "notes.md", "hello");
 
-    expect(checkFreeSpace).toHaveBeenCalledWith("/data/ws1", Buffer.byteLength("hello"), expect.any(Number));
+    expect(requireFreeSpace).toHaveBeenCalledWith("/data/ws1", Buffer.byteLength("hello"));
   });
 
   it("proceeds to mkdir + tee when there's room", async () => {

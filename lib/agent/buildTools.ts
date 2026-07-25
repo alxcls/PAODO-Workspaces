@@ -107,12 +107,12 @@ export function buildTools(
   const broadcast = (msg: string) => broadcastToWorkspace(workspaceId, msg);
 
   const tools = [
-    new ExecCommandTool(streamExec, backgroundExec, broadcast, config),
+    new ExecCommandTool(streamExec, backgroundExec, broadcast, config, workspaceDir),
     new StopTaskTool(workspaceId, containers),
     new AptInstallTool(runner),
     new FileReadTool(runner),
-    new FileEditTool(runner),
-    new FileWriteTool(runner),
+    new FileEditTool(runner, workspaceDir),
+    new FileWriteTool(runner, workspaceDir),
     new TodoWriteTool(workspaceId),
     new CompactContextTool(),
     new WebFetchTool(),

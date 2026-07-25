@@ -11,10 +11,16 @@
 // docker integration tier, not normalizeRelpath.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import os from "os";
 import { FileReadTool } from "./fileRead";
 import { FileWriteTool } from "./fileWrite";
 import { FileEditTool } from "./fileEdit";
 import type { ExecRunner } from "../interfaces";
+
+// FileWriteTool/FileEditTool now also realpath-check against a real workspaceDir (see
+// lib/workspace/pathContainment.ts), so this needs a real, existing directory — the OS temp dir
+// always exists and nothing is actually written under it (runner.exec is mocked below).
+const WORKSPACE_DIR = os.tmpdir();
 
 // Records every exec so we can assert it was NEVER called on an escaping path. Returns code 0 so
 // the legitimate-path cases proceed far enough to issue at least one exec.
@@ -43,14 +49,19 @@ describe("file tools wire the workspace containment guard", () => {
   // both reach exec — the guard must cover both.
   const cases: { name: string; call: (filePath: string) => Promise<string> }[] = [
     { name: "file_read", call: (file_path) => callOf(new FileReadTool(runner))({ file_path }) },
-    { name: "file_write", call: (file_path) => callOf(new FileWriteTool(runner))({ file_path, content: "x" }) },
+    {
+      name: "file_write",
+      call: (file_path) => callOf(new FileWriteTool(runner, WORKSPACE_DIR))({ file_path, content: "x" }),
+    },
     {
       name: "file_edit (edit branch)",
-      call: (file_path) => callOf(new FileEditTool(runner))({ file_path, old_string: "a", new_string: "b" }),
+      call: (file_path) =>
+        callOf(new FileEditTool(runner, WORKSPACE_DIR))({ file_path, old_string: "a", new_string: "b" }),
     },
     {
       name: "file_edit (create branch)",
-      call: (file_path) => callOf(new FileEditTool(runner))({ file_path, old_string: "", new_string: "b" }),
+      call: (file_path) =>
+        callOf(new FileEditTool(runner, WORKSPACE_DIR))({ file_path, old_string: "", new_string: "b" }),
     },
   ];
 

@@ -27,10 +27,9 @@ const UploadIcon = () => (
 
 const UploadMenu = ({
   status,
-  error,
   uploadFiles,
   uploadFolder,
-}: Pick<ReturnType<typeof useFileUpload>, "status" | "error" | "uploadFiles" | "uploadFolder">) => {
+}: Pick<ReturnType<typeof useFileUpload>, "status" | "uploadFiles" | "uploadFolder">) => {
   const handleFiles = (event: ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(event.target.files ?? []);
     event.target.value = "";
@@ -77,7 +76,6 @@ const UploadMenu = ({
         </button>
       </div>
       {status && <div className="text-2xs text-text-3 px-1">{status}</div>}
-      {error && <div className="text-2xs text-danger px-1">{error}</div>}
     </div>
   );
 };
@@ -112,6 +110,9 @@ export default function FileTreePanel({
 }: Props) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [draggingUpload, setDraggingUpload] = useState(false);
+  // Whether the user has already closed the results popup for the upload that just finished. Reset
+  // to false every time a new upload starts, so a fresh result always gets its own popup.
+  const [resultsDismissed, setResultsDismissed] = useState(true);
   const uploadDragCounter = useRef(0);
   const base = apiBase ?? `/api/workspaces/${workspaceId}`;
 
@@ -140,6 +141,21 @@ export default function FileTreePanel({
   });
 
   const uploadBusy = upload.status !== null;
+
+  // Every upload entry point flips this before kicking off the hook call, so that once the hook
+  // finishes and sets a summary, showResults below picks it up on the next render.
+  const uploadFiles = (files: File[]) => {
+    setResultsDismissed(false);
+    return upload.uploadFiles(files);
+  };
+  const uploadFolder = (files: File[]) => {
+    setResultsDismissed(false);
+    return upload.uploadFolder(files);
+  };
+
+  // Only pop up once the upload has actually finished (status back to null) and something failed
+  // to upload — a plain, silent success shows nothing.
+  const showResults = !resultsDismissed && upload.status === null && upload.summary !== null && upload.summary.failed.length > 0;
 
   const handleExternalDragOver = (event: DragEvent) => {
     if (!Array.from(event.dataTransfer.types).includes("Files")) return;
@@ -172,7 +188,8 @@ export default function FileTreePanel({
 
     const { files, hasDirectory } = await readDroppedEntries(event.dataTransfer);
     if (files.length === 0) return;
-    if (hasDirectory) upload.uploadPathedFiles(files);
+    setResultsDismissed(false);
+    if (hasDirectory) upload.uploadPathedFiles(files, true);
     else upload.uploadFiles(files.map((file) => file.file));
   };
 
@@ -199,12 +216,7 @@ export default function FileTreePanel({
       </div>
 
       <div className="flex gap-1.5 px-3 pb-2.5 border-b border-border">
-        <UploadMenu
-          status={upload.status}
-          error={upload.error}
-          uploadFiles={upload.uploadFiles}
-          uploadFolder={upload.uploadFolder}
-        />
+        <UploadMenu status={upload.status} uploadFiles={uploadFiles} uploadFolder={uploadFolder} />
       </div>
 
       <div
@@ -299,6 +311,40 @@ export default function FileTreePanel({
             <div className="text-xs text-danger whitespace-pre-wrap mt-2 px-1">{operations.moveError}</div>
           )}
           {treeMove.moveNote && <div className="text-xs text-text-3 mt-2 px-1">{treeMove.moveNote}</div>}
+        </div>
+      )}
+
+      {showResults && upload.summary && (
+        <div className="fixed inset-0 bg-[rgba(15,10,30,0.55)] flex items-center justify-center z-[1000]">
+          <div className="bg-white rounded-2xl shadow-[0_18px_40px_rgba(15,10,30,0.25)] p-[34px_38px] w-[min(880px,calc(100vw-48px))] border border-[rgba(15,10,30,0.08)]">
+            <div className="font-semibold text-[19px] mb-3 text-text">Upload results</div>
+            <p className="text-sm text-text-2 m-0 mb-2 leading-[1.5]">
+              Uploaded {upload.summary.uploaded} of {upload.summary.uploaded + upload.summary.failed.length} file
+              {upload.summary.uploaded + upload.summary.failed.length === 1 ? "" : "s"} —{" "}
+              {upload.summary.failed.length} failed.
+            </p>
+            {/* Any genuine error (disk full, path rejected, network failure, ...) that stopped the
+                batch early gets its own plain-text line — separate from the count above and from
+                the routine exclusion notes below, so it doesn't read as just another bullet. */}
+            {upload.summary.stoppedReason && (
+              <p className="text-sm text-text-2 m-0 mb-2 leading-[1.5]">{upload.summary.stoppedReason}</p>
+            )}
+            {upload.summary.notes.length > 0 && (
+              <ul className="text-sm text-text-2 m-0 mb-3 pl-5 leading-[1.6] list-disc">
+                {upload.summary.notes.map((note) => (
+                  <li key={note}>{note}</li>
+                ))}
+              </ul>
+            )}
+            <div className="rounded border border-border bg-bg-tint text-2xs text-text-3 p-3 mb-[26px] max-h-[480px] overflow-y-auto font-mono whitespace-pre-wrap">
+              {upload.summary.failed.map((path) => `✗ ${path}`).join("\n")}
+            </div>
+            <div className="flex gap-2.5 items-center flex-wrap">
+              <button className="btn btn-primary" onClick={() => setResultsDismissed(true)}>
+                Close
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </aside>

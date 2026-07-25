@@ -6,6 +6,7 @@ import { StructuredTool } from "@langchain/core/tools";
 import type { RunnableConfig } from "@langchain/core/runnables";
 import { z } from "zod";
 import { createLogger } from "../../infra/logger";
+import { checkFreeSpace, RESERVED_FREE_BYTES } from "../../workspace/diskSpace";
 import type { StreamingExecFn, BackgroundExecFn, ExecConfig } from "../interfaces";
 
 const schema = z.object({
@@ -65,6 +66,7 @@ You run as a NON-ROOT user, confined to the workspace. apt-get/sudo are NOT avai
     private readonly backgroundExec: BackgroundExecFn,
     private readonly broadcast: (msg: string) => void,
     private readonly execConfig: ExecConfig,
+    private readonly workspaceDir: string,
   ) {
     super();
   }
@@ -74,6 +76,15 @@ You run as a NON-ROOT user, confined to the workspace. apt-get/sudo are NOT avai
     _runManager?: unknown,
     config?: RunnableConfig,
   ): Promise<string> {
+    // Refuse to even start a command — foreground or background — on a workspace that's already out
+    // of room. Unlike an HTTP upload there's no declared size for an arbitrary shell command, so this
+    // is a headroom gate ("is there still room at all"), not a size check.
+    const space = await checkFreeSpace(this.workspaceDir, 0, RESERVED_FREE_BYTES);
+    if (!space.ok) {
+      this.log.warn({ event: "exec_insufficient_storage", freeBytes: space.freeBytes }, "command refused — low disk space");
+      return "Error: workspace is out of free disk space. Free up space (e.g. delete unneeded files) before running more commands.";
+    }
+
     // Background path: launch detached and return immediately. Deliberately skips the
     // heartbeat/AbortController machinery below — a background process is fire-and-forget, so no
     // silence/max timeout kill can ever reach it (that kill is exactly what broke servers before).
@@ -122,6 +133,11 @@ You run as a NON-ROOT user, confined to the workspace. apt-get/sudo are NOT avai
         finish(`[killed] ${reason}`); // unblock the agent immediately
       };
 
+      // statfs is I/O, so the disk check below runs alongside (not inside) the synchronous
+      // timeout/silence checks each tick — guarded against overlap since a check can outlive one 5s
+      // interval.
+      let diskCheckInFlight = false;
+
       const heartbeat = setInterval(() => {
         const now = Date.now();
         const silentMs = now - lastOutputAt;
@@ -138,6 +154,21 @@ You run as a NON-ROOT user, confined to the workspace. apt-get/sudo are NOT avai
         }
         if (silentMs >= 5_000) {
           this.broadcast(JSON.stringify({ type: "stdout", data: `⏳ still running... (${elapsed}s elapsed)\n` }));
+        }
+
+        // A long-running command (git clone, npm install, a build) can fill the disk after it
+        // already passed the pre-flight check above — this is the mid-run counterpart, reusing the
+        // exact same kill machinery as the timeout guards, just a distinct reason string.
+        if (!diskCheckInFlight) {
+          diskCheckInFlight = true;
+          checkFreeSpace(this.workspaceDir, 0, RESERVED_FREE_BYTES)
+            .then((result) => {
+              if (!result.ok) killWith("Command killed: workspace ran out of disk space.");
+            })
+            .catch((err) => this.log.warn({ err }, "disk-space check during command execution failed"))
+            .finally(() => {
+              diskCheckInFlight = false;
+            });
         }
       }, 5_000);
 

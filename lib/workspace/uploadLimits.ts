@@ -14,14 +14,6 @@
  */
 export const MAX_UPLOAD_BYTES = 1024 * 1024 * 1024; // 1 GB
 
-/**
- * Free space the destination filesystem must keep beyond what an upload needs. There is no
- * aggregate upload limit, so without this a user dragging in a few large folders could run the
- * host's disk to zero — taking down logging, git, and the sqlite store for every workspace, not
- * just theirs. Same round number as MAX_UPLOAD_BYTES so the two read as one policy.
- */
-export const RESERVED_FREE_BYTES = 1024 * 1024 * 1024; // 1 GB
-
 /** Byte size for limit messages — "1 GB", "734.2 MB", "512 B". */
 export function formatBytes(bytes: number): string {
   const units = ["B", "KB", "MB", "GB", "TB"];

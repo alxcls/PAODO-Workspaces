@@ -8,9 +8,18 @@
 import path from "path";
 import type { ExecRunner } from "../interfaces";
 import { toolError } from "../toolUtils";
+import { requireFreeSpace } from "../../workspace/diskSpace";
 
-export async function writeContainerFile(runner: ExecRunner, relpath: string, content: string): Promise<string | null> {
+export async function writeContainerFile(
+  runner: ExecRunner,
+  workspaceDir: string,
+  relpath: string,
+  content: string,
+): Promise<string | null> {
   try {
+    const spaceErr = await requireFreeSpace(workspaceDir, Buffer.byteLength(content));
+    if (spaceErr) return spaceErr;
+
     const dirRelpath = path.posix.dirname(relpath);
     if (dirRelpath && dirRelpath !== ".") {
       const mkdirR = await runner.exec(["mkdir", "-p", `/workspace/${dirRelpath}`]);

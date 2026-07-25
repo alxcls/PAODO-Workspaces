@@ -1,9 +1,21 @@
 // ExecCommandTool must surface a non-zero exit code as an explicit "Error:" line so both the
 // agent and the usage dashboard (via runner.classifyToolStatus) can tell the command failed —
 // the combined stdout/stderr alone hides exit status. Code 0 stays plain output.
-import { describe, it, expect } from "vitest";
+//
+// checkFreeSpace is mocked (not exercised against a real filesystem) so every test below controls
+// disk state deterministically — most tests just need it to stay out of the way (ok: true), and the
+// dedicated disk-space-guard tests flip it to simulate a full disk.
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { ExecCommandTool } from "./execCommand";
 import type { StreamingExecFn, BackgroundExecFn } from "../interfaces";
+
+const checkFreeSpace = vi.hoisted(() => vi.fn());
+vi.mock("../../workspace/diskSpace", () => ({ checkFreeSpace, RESERVED_FREE_BYTES: 1024 * 1024 * 1024 }));
+
+beforeEach(() => {
+  checkFreeSpace.mockReset();
+  checkFreeSpace.mockResolvedValue({ ok: true, freeBytes: Infinity });
+});
 
 // A streamExec stub that emits the given stdout/stderr then resolves with the given exit code.
 function fakeExec(out: { stdout?: string; stderr?: string; code: number | null }): StreamingExecFn {
@@ -38,7 +50,13 @@ function fakeBackground(): { fn: BackgroundExecFn; calls: string[] } {
 }
 
 function makeTool(exec: StreamingExecFn, background: BackgroundExecFn = fakeBackground().fn) {
-  return new ExecCommandTool(exec, background, () => {}, { silenceTimeoutMs: 60_000, maxTimeoutMs: 60_000 });
+  return new ExecCommandTool(
+    exec,
+    background,
+    () => {},
+    { silenceTimeoutMs: 60_000, maxTimeoutMs: 60_000 },
+    "/workspace/test",
+  );
 }
 
 describe("ExecCommandTool exit-code surfacing", () => {
@@ -151,5 +169,59 @@ describe("ExecCommandTool user abort (escape)", () => {
 
     expect(sawAbort()).toBe(true);
     expect(result).toContain("Stopped by user");
+  });
+});
+
+describe("ExecCommandTool disk-space guard", () => {
+  // A shell command has no declared size the way an HTTP upload does — the only thing worth
+  // checking up front is "is there still room at all."
+  it("refuses to start a foreground command when the workspace is already out of disk space", async () => {
+    checkFreeSpace.mockResolvedValue({ ok: false, freeBytes: 0 });
+    let execCalled = false;
+    const exec: StreamingExecFn = async () => {
+      execCalled = true;
+      return { code: 0 };
+    };
+    const tool = makeTool(exec);
+
+    const result = await tool.invoke({ command: "git clone https://example.com/huge.git" });
+
+    expect(result).toMatch(/^Error:/);
+    expect(result).toContain("out of free disk space");
+    expect(execCalled).toBe(false);
+  });
+
+  it("refuses to start a background command when the workspace is already out of disk space", async () => {
+    checkFreeSpace.mockResolvedValue({ ok: false, freeBytes: 0 });
+    const { fn, calls } = fakeBackground();
+    const tool = makeTool(fakeExec({ code: 0 }), fn);
+
+    const result = await tool.invoke({ command: "npm install", run_in_background: true });
+
+    expect(result).toMatch(/^Error:/);
+    expect(calls).toEqual([]);
+  });
+
+  it("kills a long-running command mid-run once the workspace runs out of disk space", async () => {
+    vi.useFakeTimers();
+    try {
+      const { exec, sawAbort } = hangingExec();
+      const tool = makeTool(exec);
+
+      const resultP = tool.invoke({ command: "git clone https://example.com/huge.git" });
+      // Let the pre-flight check (ok: true) resolve and streamExec start hanging.
+      await vi.advanceTimersByTimeAsync(0);
+
+      // Disk fills up partway through the run — the periodic heartbeat check should catch it on
+      // its next 5s tick.
+      checkFreeSpace.mockResolvedValue({ ok: false, freeBytes: 0 });
+      await vi.advanceTimersByTimeAsync(5_000);
+
+      const result = await resultP;
+      expect(sawAbort()).toBe(true);
+      expect(result).toContain("ran out of disk space");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

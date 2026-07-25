@@ -7,9 +7,10 @@
 
 import { StructuredTool } from "@langchain/core/tools";
 import { z } from "zod";
-import { normalizeRelpath } from "../pathUtils";
+import { containWorkspacePath } from "../pathUtils";
 import { toolError } from "../toolUtils";
 import { writeContainerFile } from "./containerWrite";
+import { requireFreeSpace } from "../../workspace/diskSpace";
 import type { ExecRunner } from "../interfaces";
 
 const schema = z.object({
@@ -29,17 +30,23 @@ export class FileEditTool extends StructuredTool<typeof schema> {
 - Set old_string to "" to create a new file (new_string becomes the full content).`;
   schema = schema;
 
-  constructor(private runner: ExecRunner) {
+  constructor(
+    private runner: ExecRunner,
+    private workspaceDir: string,
+  ) {
     super();
   }
 
   protected async _call({ file_path, old_string, new_string, replace_all }: z.infer<typeof schema>): Promise<string> {
-    const relpath = normalizeRelpath(file_path);
+    // Realpath-contains against a symlink planted inside the workspace, not just a lexical "../"
+    // check (see lib/workspace/pathContainment.ts). Covers both branches below since relpath is
+    // resolved once, up front.
+    const relpath = await containWorkspacePath(this.workspaceDir, file_path);
     if (relpath === null) return "Error: path is outside the workspace";
 
     if (old_string === "") {
       // Create new file branch — same mkdir + write as file_write.
-      const err = await writeContainerFile(this.runner, relpath, new_string);
+      const err = await writeContainerFile(this.runner, this.workspaceDir, relpath, new_string);
       return err ?? `Created ${file_path}`;
     }
 
@@ -60,6 +67,9 @@ export class FileEditTool extends StructuredTool<typeof schema> {
       const updated = replace_all
         ? content.replaceAll(old_string, new_string)
         : content.replace(old_string, new_string);
+
+      const spaceErr = await requireFreeSpace(this.workspaceDir, Buffer.byteLength(updated));
+      if (spaceErr) return spaceErr;
 
       const writeR = await this.runner.exec(["tee", `/workspace/${relpath}`], { stdin: updated });
       if (writeR.code !== 0) return `Error: ${writeR.stderr || "write failed"}`;

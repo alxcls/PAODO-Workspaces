@@ -9,11 +9,11 @@
 // caller-named archive entries otherwise create.
 //
 // Containment: the target directory is realpath'd once, then the write target is resolved against it
-// and must stay under it (string boundary check — it does not require the path to exist yet). Bytes
-// land in a sibling temp file that is renamed into place only once the whole body has arrived, so an
-// interrupted or over-limit upload cannot leave a truncated file at the real path. The two callers
-// differ only in the optional `afterWrite` git snapshot (workspaces take one; drives are passive
-// host storage and do not).
+// via the shared resolveContained() helper (lib/workspace/pathContainment.ts — also used by the
+// agent's own file tools) and must stay under it. Bytes land in a sibling temp file that is renamed
+// into place only once the whole body has arrived, so an interrupted or over-limit upload cannot
+// leave a truncated file at the real path. The two callers differ only in the optional `afterWrite`
+// git snapshot (workspaces take one; drives are passive host storage and do not).
 import { type NextRequest, NextResponse } from "next/server";
 import fs from "fs/promises";
 import { createWriteStream } from "fs";
@@ -22,8 +22,9 @@ import { pipeline } from "stream/promises";
 import path from "path";
 import { randomBytes } from "crypto";
 import { createLogger } from "@/lib/infra/logger";
-import { MAX_UPLOAD_BYTES, RESERVED_FREE_BYTES, formatBytes } from "@/lib/workspace/uploadLimits";
-import { checkFreeSpace } from "@/lib/workspace/diskSpace";
+import { MAX_UPLOAD_BYTES, formatBytes } from "@/lib/workspace/uploadLimits";
+import { checkFreeSpace, RESERVED_FREE_BYTES } from "@/lib/workspace/diskSpace";
+import { resolveContained } from "@/lib/workspace/pathContainment";
 
 export interface UploadBackend {
   dir: string;
@@ -91,8 +92,8 @@ export async function handleUpload(req: NextRequest, be: UploadBackend): Promise
   if (!filePath) return NextResponse.json({ error: "path required" }, { status: 400 });
 
   const dir = await fs.realpath(be.dir);
-  const resolved = path.normalize(path.resolve(dir, filePath));
-  if (!resolved.startsWith(dir + path.sep)) return NextResponse.json({ error: "invalid path" }, { status: 400 });
+  const resolved = await resolveContained(dir, filePath);
+  if (resolved === null) return NextResponse.json({ error: "invalid path" }, { status: 400 });
 
   // Refuse on the declared size before reading a byte. Browsers always set Content-Length for a
   // File body, so this is the path a real oversized upload takes — and it avoids spooling the

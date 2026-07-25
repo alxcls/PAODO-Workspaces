@@ -5,7 +5,7 @@
 // NOTE — conversation history lives in conversationStore.ts, persisted in SQLite per workspace and
 // surviving across restarts/disconnects. A workspace no longer carries any message history.
 import path from "path";
-import { createLogger } from "../infra/logger";
+import { createLogger, createAuditLogger } from "../infra/logger";
 import { atomicSaveJson, readJson } from "../infra/jsonPersist";
 import { scaffoldWorkspaceDir } from "./workspaceScaffold";
 import { validateWorkspaceName, normalizeForUniqueness, WorkspaceNameError } from "./workspaceName";
@@ -23,6 +23,7 @@ import { assertWorkspaceRegistryRecords } from "../infra/startupChecks";
 export { WORKSPACES_ROOT };
 
 const log = createLogger("store");
+const audit = createAuditLogger("store");
 
 export interface WorkspaceMetadata {
   id: string;
@@ -347,6 +348,7 @@ export class WorkspaceStore implements IWorkspaceStore {
     if (!ws) return false;
     ws.internetAccess = enabled;
     this.saveUpdate(id, "set_internet_access");
+    audit.info({ wsId: id, enabled, event: "workspace_internet_access_toggled" }, "internet access toggled");
     return true;
   }
 }

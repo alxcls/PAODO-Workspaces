@@ -1,30 +1,11 @@
 // Home page block for a workspace's internet-access toggle. Binary on/off: when off, the container's
 // Docker network has no route out at all — http_get, apt_install, and npm/pip/curl from
 // execute_command are all blocked at the network layer, not just hidden from the agent.
+// Controlled by the parent (via useWorkspaceInternetAccess) so EnvVarsBlock's "third-party secrets"
+// visibility can share the same state and update immediately when this toggle flips.
 "use client";
 
-import { useState, useEffect } from "react";
-
-export default function InternetAccessBlock({ wsId }: { wsId: string }) {
-  const [enabled, setEnabled] = useState(false);
-
-  useEffect(() => {
-    fetch(`/api/workspaces/${wsId}/internet-access`)
-      .then((r) => r.json())
-      .then((d: { enabled: boolean }) => setEnabled(d.enabled))
-      .catch(() => {});
-  }, [wsId]);
-
-  const toggle = async () => {
-    const next = !enabled;
-    setEnabled(next);
-    await fetch(`/api/workspaces/${wsId}/internet-access`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ enabled: next }),
-    });
-  };
-
+export default function InternetAccessBlock({ enabled, onToggle }: { enabled: boolean; onToggle: () => void }) {
   return (
     <div className="flex flex-col gap-4 mt-4 border border-border rounded-card p-[16px_18px] bg-bg-tint">
       <div className="flex items-center justify-between">
@@ -36,7 +17,7 @@ export default function InternetAccessBlock({ wsId }: { wsId: string }) {
         </div>
         <button
           className={`relative w-9 h-5 rounded-[10px] border-0 cursor-pointer transition-colors duration-200 p-0 flex-shrink-0 ${enabled ? "bg-primary" : "bg-border"}`}
-          onClick={toggle}
+          onClick={onToggle}
           aria-label={enabled ? "Disable internet access" : "Enable internet access"}
         >
           <span

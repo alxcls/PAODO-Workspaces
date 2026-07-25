@@ -27,15 +27,18 @@ export type { BackgroundTask } from "./backgroundTaskManager";
 const log = createLogger("container");
 
 // Label recording which secrets were baked into the container's env at creation time (as a
-// hash of their sorted names plus the proxy-token format — token values are derived from
-// name+workspaceId alone, so this detects additions/removals and forces a safe recreation when the
-// opaque token format changes; domain-only changes don't affect env args).
+// hash of their sorted names, the proxy-token format, and the internetAccess flag — token values
+// are derived from name+workspaceId alone, so this detects additions/removals and forces a safe
+// recreation when the opaque token format changes; domain-only changes don't affect env args).
+// internetAccess is folded in too: buildCredentialEnv omits secret env entirely when it's off, so a
+// toggle must force a recreate — otherwise a running/stopped container would just be reattached or
+// restarted with the same (stale) env Docker can't amend in place.
 const SECRETS_LABEL = "paodo.workspace-secrets-hash";
 
-function hashSecretNames(secrets: { name: string }[]): string {
+function hashSecretNames(secrets: { name: string }[], internetAccess: boolean): string {
   const sorted = secrets.map((s) => s.name).sort();
   return createHash("sha256")
-    .update(`${PROXY_TOKEN_FORMAT_VERSION}\0${sorted.join(",")}`)
+    .update(`${PROXY_TOKEN_FORMAT_VERSION}\0${internetAccess}\0${sorted.join(",")}`)
     .digest("hex");
 }
 
@@ -149,7 +152,7 @@ export class ContainerManager implements IContainerManager {
       stage = "hash_workspace_image";
       const hash = await this.imageManager.getCurrentHash("Dockerfile.workspace");
       stage = "read_workspace_secrets";
-      const secretsHash = hashSecretNames(listSecretMeta(workspaceId));
+      const secretsHash = hashSecretNames(listSecretMeta(workspaceId), internetAccess);
 
       if (status === "running" || status === "stopped") {
         stage = "inspect_container_image";
@@ -215,7 +218,7 @@ export class ContainerManager implements IContainerManager {
       // Build the credential-proxy + secret env args (tokens only — real values stay in the proxy).
       // See containerCredentials.ts for how tokens, the proxy URL, and the CA-trust vars are derived.
       stage = "build_credential_environment";
-      const { envArgs: credentialEnvArgs, hasProxyCA } = buildCredentialEnv(workspaceId);
+      const { envArgs: credentialEnvArgs, hasProxyCA } = buildCredentialEnv(workspaceId, internetAccess);
       // Attach the sidecar to this workspace's network so the proxy alias resolves inside the
       // container. Only when this workspace actually has a proxy CA (attach() itself no-ops in
       // local dev — no sidecar, proxy is in-process) AND internet access is on — an off workspace's

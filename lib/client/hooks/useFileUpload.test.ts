@@ -25,7 +25,7 @@ describe("runUploadQueue", () => {
 
     const result = await runUploadQueue([entry("a.txt"), entry("b.txt"), entry("c.txt")], { apiBase: "/api/x" });
 
-    expect(result).toEqual({ uploaded: 3, notUploaded: [], hardFailure: null });
+    expect(result).toEqual({ uploaded: 3, notUploaded: [], overLimit: [], hardFailure: null });
   });
 
   it("skips a 413 and keeps draining the rest of the queue", async () => {
@@ -39,9 +39,28 @@ describe("runUploadQueue", () => {
 
     expect(result.uploaded).toBe(2);
     expect(result.notUploaded).toEqual(["big.bin"]);
+    expect(result.overLimit).toEqual(["big.bin"]);
     expect(result.hardFailure).toBeNull();
     // Every file was still attempted — a 413 never aborts the controller.
     expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("tracks a 413 in overLimit even when a concurrent sibling's systemic failure sets hardFailure", async () => {
+    // Both requests are in flight under the same CONCURRENCY pool: one is rejected as oversized
+    // (413, skip-and-continue), the other fails systemically (500, aborts the batch). Both land in
+    // notUploaded, but only the 413 belongs in overLimit — it must not be dropped just because
+    // hardFailure also got set in the same run.
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url.includes("big.bin")) return jsonResponse(413, { error: "File is 2 GB, which is over the 1 GB limit." });
+      return jsonResponse(500, { error: "internal error" });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await runUploadQueue([entry("big.bin"), entry("broken.txt")], { apiBase: "/api/x" });
+
+    expect(result.hardFailure).toBeTruthy();
+    expect(result.overLimit).toEqual(["big.bin"]);
+    expect(new Set(result.notUploaded)).toEqual(new Set(["big.bin", "broken.txt"]));
   });
 
   it("reports a systemic failure (507) as hardFailure and lists the failing path in notUploaded", async () => {
@@ -94,7 +113,7 @@ describe("runUploadQueue", () => {
       await vi.runAllTimersAsync();
       const result = await resultP;
 
-      expect(result).toEqual({ uploaded: 1, notUploaded: [], hardFailure: null });
+      expect(result).toEqual({ uploaded: 1, notUploaded: [], overLimit: [], hardFailure: null });
       expect(calls).toBe(2);
     } finally {
       vi.useRealTimers();

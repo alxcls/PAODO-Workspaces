@@ -1,7 +1,7 @@
-// partitionByIgnore decides what a folder upload silently sends vs. visibly leaves out. The
-// invariants worth pinning: whole-segment matching only (no false positives on similarly-named
-// files), nested occurrences are still caught, and the excluded bucket is grouped by which ignored
-// name matched — that grouping is what lets the UI say "excluded: node_modules (14,200 files)"
+// partitionByIgnore decides what a folder upload sends vs. leaves out. The invariants worth
+// pinning: whole-segment matching only (no false positives on similarly-named files), nested
+// occurrences are still caught, and the excluded bucket is grouped by which ignored name matched —
+// that grouping is what lets the results summary say "node_modules excluded (14,200 files)"
 // instead of just a bare count.
 
 import { describe, it, expect } from "vitest";

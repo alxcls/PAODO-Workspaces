@@ -40,6 +40,14 @@ export interface UploadQueueResult {
    * failure, the file that failed plus everything still queued behind it (never attempted).
    */
   notUploaded: string[];
+  /**
+   * Subset of `notUploaded` that were rejected as over the per-file size limit (413). Tracked
+   * separately rather than inferred from whether `hardFailure` is set: with bounded concurrency,
+   * a sibling worker can hit a 413 (skip, keep draining) in the same run where another worker's
+   * failure later aborts the batch, so both categories can legitimately appear in `notUploaded`
+   * together.
+   */
+  overLimit: string[];
   /** Set only on a systemic failure (507, 400, 500, network) that stopped the remaining queue. */
   hardFailure: string | null;
 }
@@ -55,6 +63,7 @@ export async function runUploadQueue(
 ): Promise<UploadQueueResult> {
   const queue = [...initialQueue];
   const notUploaded: string[] = [];
+  const overLimit: string[] = [];
   let uploaded = 0;
   let hardFailure: string | null = null;
 
@@ -86,6 +95,7 @@ export async function runUploadQueue(
       const res = await send(entry);
       if (res.status === 413) {
         notUploaded.push(entry.path);
+        overLimit.push(entry.path);
         continue;
       }
       if (!res.ok) {
@@ -106,7 +116,7 @@ export async function runUploadQueue(
     notUploaded.push(...queue.map((entry) => entry.path));
   }
 
-  return { uploaded, notUploaded, hardFailure };
+  return { uploaded, notUploaded, overLimit, hardFailure };
 }
 
 /** Result of the most recently finished upload batch, shown in the results popup. */
@@ -167,9 +177,7 @@ export function useFileUpload(apiBase: string, onUploaded: () => void) {
     const clientOversized = candidates.filter((entry) => entry.file.size > MAX_UPLOAD_BYTES).map((entry) => entry.path);
     const queue = candidates.filter((entry) => entry.file.size <= MAX_UPLOAD_BYTES);
 
-    // One line per triggered category. A 413 only ever shows up in runUploadQueue's notUploaded when
-    // hardFailure is null — any other server error throws instead — so in that branch every entry in
-    // it is an over-limit rejection, same category as the client-side oversized skip above.
+    // One line per triggered category.
     const notesFor = (overLimitCount: number): string[] => {
       const notes = Array.from(excluded.entries()).map(
         ([name, group]) => `${name} excluded (${group.length} file${group.length === 1 ? "" : "s"})`,
@@ -203,7 +211,7 @@ export function useFileUpload(apiBase: string, onUploaded: () => void) {
           }
         },
       });
-      const overLimitCount = clientOversized.length + (result.hardFailure ? 0 : result.notUploaded.length);
+      const overLimitCount = clientOversized.length + result.overLimit.length;
       setSummary({
         uploaded: result.uploaded,
         failed: [...excludedPaths, ...clientOversized, ...result.notUploaded],

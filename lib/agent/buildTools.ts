@@ -82,7 +82,7 @@ export function loadAgentConfig(workspaceId?: string): AgentConfig {
     model,
     apiKey: apiKeyEnv ? process.env[apiKeyEnv] : undefined,
     graphEnabled: process.env.GRAPH_ENABLED !== "false",
-    internetAccess: ws?.internetAccess ?? true,
+    internetAccess: ws ? (ws.internetAccess ?? true) : false,
     anthropicCacheTtl1h: process.env.ANTHROPIC_CACHE_TTL_1H === "true",
     silenceTimeoutMs: parseInt(process.env.EXEC_SILENCE_TIMEOUT_MS ?? "", 10) || 60_000,
     maxTimeoutMs: parseInt(process.env.EXEC_MAX_TIMEOUT_MS ?? "", 10) || 30 * 60_000,

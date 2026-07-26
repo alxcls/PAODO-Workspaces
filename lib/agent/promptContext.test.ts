@@ -45,7 +45,7 @@ beforeEach(() => {
   listSecretMeta.mockReset();
   listSecretMeta.mockReturnValue([]);
   getWorkspace.mockReset();
-  getWorkspace.mockReturnValue(undefined); // no explicit setting → internetAccess defaults to true
+  getWorkspace.mockReturnValue(undefined); // no workspace record at all → internetAccess fails closed to false
 });
 
 afterEach(() => {
@@ -90,6 +90,7 @@ describe("buildWorkspacePromptInputs", () => {
   });
 
   it("lists each secret's allowed hosts and proxy-compatible usage guidance", () => {
+    getWorkspace.mockReturnValue({ internetAccess: true });
     listSecretMeta.mockReturnValue([{ name: "VERCEL_TOKEN", domains: ["api.vercel.com"], createdAt: "2026-01-01" }]);
     const { secretsInfo } = buildWorkspacePromptInputs("ws1", dir);
     expect(secretsInfo).toContain("VERCEL_TOKEN → api.vercel.com");

@@ -17,7 +17,7 @@ import type { ReasoningEffort } from "../agent/interfaces";
 import { deleteAllForWorkspace } from "../infra/security/workspaceSecretStore";
 import { deleteForWorkspace as deleteMcpConfig } from "../infra/security/mcpConfigStore";
 import { getCredentialProxy } from "../infra/proxy";
-import { deleteInternetAccessPolicy } from "../infra/proxy/internetAccessPolicy";
+import { setInternetAccessPolicy, deleteInternetAccessPolicy } from "../infra/proxy/internetAccessPolicy";
 import { DEFAULT_MAX_RUN_MINUTES, normalizeMaxRunMinutes } from "./workspaceLimits";
 import { assertWorkspaceRegistryRecords } from "../infra/startupChecks";
 export { WORKSPACES_ROOT };
@@ -246,6 +246,11 @@ export class WorkspaceStore implements IWorkspaceStore {
         // caller can return a 500 without duplicating the same persistence exception.
         throw err;
       }
+      // New workspaces are internet-off by default (see `internetAccess: false` above) — the
+      // proxy's sparse policy store must record that immediately, not just on first explicit
+      // toggle, or the defense-in-depth layer (internetAccessPolicy.ts) reads "enabled" for a
+      // workspace the primary network layer already has fully isolated.
+      setInternetAccessPolicy(id, false);
       return workspace;
     });
   }

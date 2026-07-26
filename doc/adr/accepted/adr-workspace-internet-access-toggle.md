@@ -54,13 +54,29 @@ Consequences
   inter-workspace `call_agent` traffic are untouched by this flag by design — they are separate,
   explicitly-opted-into channels, not "internet." An off workspace can still be handed
   attacker-influenced text via those paths; it simply cannot act on it by reaching out further.
-- Several call sites fall back to `internetAccess ?? true` when a workspace record is entirely
-  missing (as opposed to present-but-defaulted), which is fail-open relative to the "new workspaces
-  default off" posture. Low practical exposure (a running agent's workspace record should always
-  exist) but worth tightening to fail-closed.
-- One more moving part on toggle: three writes (store, policy file, container stop) must all
-  succeed for the flag to fully take effect; a partial failure is logged loudly (`setInternetAccessPolicy`
-  throws on a failed persist) rather than silently leaving a workspace in a mixed state.
+- Every call site that reads `internetAccess` (`containerManager.ts`, `buildTools.ts`,
+  `promptContext.ts`) fails closed — `false` — when a workspace record is entirely missing, not just
+  present-but-defaulted. Only a record that predates this field defaults to `true` via `hydrate()`.
+- The proxy's policy file (`internetAccessPolicy.ts`) is synced at workspace creation, not only on
+  toggle: `workspaceStore.createWorkspace()` calls `setInternetAccessPolicy(id, false)` right after
+  persisting the new (internet-off-by-default) record, so the defense-in-depth layer can't disagree
+  with the primary (network) layer from the moment a workspace exists — before this, a sparse
+  policy file (absent key = enabled) read as "on" for any workspace never yet explicitly toggled.
+- The toggle route's three writes (store, policy file, container stop) are not fully atomic, but
+  failures are handled asymmetrically by design: a policy-file write failure rolls the store field
+  back to its previous value (the two must never disagree — one is the primary boundary's source of
+  truth, the other its defense-in-depth check), while a container-stop failure does *not* roll back
+  an already-consistent store/policy — reverting a user's explicit toggle because Docker hiccuped
+  would be worse than a delayed cutover, and it self-heals: the secrets hash `ensure()` checks on
+  every wake folds in `internetAccess`, so the next wake forces a correct recreate regardless of
+  whether the explicit `stop()` succeeded.
+- `ContainerManager.ensure()` and `.stop()` are mutually exclusive per workspace (a shared,
+  kind-tagged lock keyed by workspace id): a `stop()` from the toggle route can't interleave with a
+  concurrent agent tool call's `ensure()` reattaching the sidecar (or vice versa) mid-transition.
+  Concurrent `ensure()` calls still coalesce onto one shared promise as before; a concurrent
+  `ensure()` racing a `stop()` instead waits for the `stop()` to finish and then runs its own fresh
+  pass, since piggybacking on a `stop()`'s promise would incorrectly report "ready" for a container
+  that was just torn down.
 
 Alternatives considered
 - Filter/allowlist egress instead of removing the network: rejected — still requires trusting a

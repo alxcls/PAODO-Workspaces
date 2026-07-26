@@ -66,8 +66,12 @@ export class ContainerManager implements IContainerManager {
     this.proxy = new ProxyNetworkManager(docker);
   }
   private idleTimers = new Map<string, ReturnType<typeof setTimeout>>();
-  // Prevents concurrent docker run/start calls for the same workspace.
-  private startLocks = new Map<string, Promise<void>>();
+  // Prevents concurrent docker run/start/stop calls for the same workspace. Tagged by kind so
+  // ensure() can still coalesce concurrent ensure() calls onto one shared promise (same desired
+  // outcome), while a stop() in flight is never handed out that way — its promise resolves to
+  // "stopped," not "ready," so a concurrent ensure() must wait it out and then run its own fresh
+  // pass instead of piggybacking on it. See ensure()/stop() below.
+  private startLocks = new Map<string, { kind: "ensure" | "stop"; promise: Promise<void> }>();
 
   // Creates the workspace's isolated network, or recreates it if its --internal flag doesn't match
   // the workspace's current internetAccess setting. Docker can't flip --internal on an existing
@@ -143,10 +147,12 @@ export class ContainerManager implements IContainerManager {
 
   private async _ensureContainer(workspaceId: string, workspaceDir: string): Promise<void> {
     let stage = "inspect_container";
-    // Defaults to true (existing behavior) for a workspace with no explicit setting or one the
-    // store doesn't (yet) know about. Read once so the network-create and proxy-attach decisions
-    // below can't disagree with each other partway through this method.
-    const internetAccess = defaultWorkspaceStore.getWorkspace(workspaceId)?.internetAccess ?? true;
+    // Fails closed (no internet) if the workspace record can't be found at all — only a record
+    // that exists but predates this field defaults to true (see workspaceStore.ts hydration).
+    // Read once so the network-create and proxy-attach decisions below can't disagree with each
+    // other partway through this method.
+    const ws = defaultWorkspaceStore.getWorkspace(workspaceId);
+    const internetAccess = ws ? (ws.internetAccess ?? true) : false;
     try {
       const status = await this.getContainerStatus(workspaceId);
       stage = "hash_workspace_image";
@@ -314,9 +320,17 @@ export class ContainerManager implements IContainerManager {
   }
 
   async ensure(workspaceId: string, workspaceDir: string): Promise<void> {
-    // Coalesce concurrent calls: if a start is already in flight, piggyback on it.
-    const inflight = this.startLocks.get(workspaceId);
-    if (inflight) return inflight;
+    // Coalesce concurrent ensure() calls onto one in-flight promise. But a concurrent stop() (e.g.
+    // the internet-access toggle route) is never piggybacked on — its promise resolves to
+    // "stopped," which is the opposite of what an ensure() caller wants — so wait it out and then
+    // run our own fresh ensure. The check-then-set below has no `await` in between, so nothing else
+    // can claim the slot while we're mid-loop.
+    for (;;) {
+      const inflight = this.startLocks.get(workspaceId);
+      if (!inflight) break;
+      if (inflight.kind === "ensure") return inflight.promise;
+      await inflight.promise.catch(() => {});
+    }
 
     const p = (async () => {
       await this._ensureContainer(workspaceId, workspaceDir);
@@ -324,8 +338,10 @@ export class ContainerManager implements IContainerManager {
       // workspace's network. Self-heals a dropped attachment and fails loudly if it can't, rather
       // than letting the agent black-hole on cryptic "could not resolve proxy" DNS errors. Skipped
       // entirely for an off workspace — verify()'s whole purpose is to *reattach* a dropped
-      // connection, which would silently undo the isolation an off workspace depends on.
-      const internetAccess = defaultWorkspaceStore.getWorkspace(workspaceId)?.internetAccess ?? true;
+      // connection, which would silently undo the isolation an off workspace depends on. Fails
+      // closed (skips reattach) if the workspace record can't be found at all.
+      const wakeWs = defaultWorkspaceStore.getWorkspace(workspaceId);
+      const internetAccess = wakeWs ? (wakeWs.internetAccess ?? true) : false;
       if (internetAccess) {
         try {
           await this.proxy.verify(workspaceId);
@@ -344,10 +360,10 @@ export class ContainerManager implements IContainerManager {
         }
       }
     })().finally(() => {
-      this.startLocks.delete(workspaceId);
+      if (this.startLocks.get(workspaceId)?.promise === p) this.startLocks.delete(workspaceId);
       this.resetIdleTimer(workspaceId);
     });
-    this.startLocks.set(workspaceId, p);
+    this.startLocks.set(workspaceId, { kind: "ensure", promise: p });
     return p;
   }
 
@@ -478,26 +494,46 @@ export class ContainerManager implements IContainerManager {
 
   // On boot, reconnect the credproxy sidecar to every running workspace network that should have
   // one (prod-only) — excludes internet-access-off workspaces, see ProxyNetworkManager.reattachAll.
+  // Fails closed (excluded) if the workspace record can't be found at all.
   async reattachProxyNetworks(): Promise<void> {
-    await this.proxy.reattachAll(
-      (workspaceId) => defaultWorkspaceStore.getWorkspace(workspaceId)?.internetAccess ?? true,
-    );
+    await this.proxy.reattachAll((workspaceId) => {
+      const ws = defaultWorkspaceStore.getWorkspace(workspaceId);
+      return ws ? (ws.internetAccess ?? true) : false;
+    });
   }
 
   async stop(workspaceId: string): Promise<void> {
-    const t = this.idleTimers.get(workspaceId);
-    if (t) {
-      clearTimeout(t);
-      this.idleTimers.delete(workspaceId);
+    // Wait out anything already in flight (an ensure() or another stop()) before claiming the slot
+    // for our own teardown, so a concurrent ensure() (e.g. an agent tool call racing the
+    // internet-access toggle route) can't interleave with this — reattaching the sidecar right as
+    // we're trying to tear the network down, or vice versa. See ensure() above for the matching half.
+    for (;;) {
+      const inflight = this.startLocks.get(workspaceId);
+      if (!inflight) break;
+      await inflight.promise.catch(() => {});
     }
-    // Background processes die with the container (tini reaps the tree) — just drop the bookkeeping.
-    this.background.clear(workspaceId);
-    const r = await this.docker.cmd("stop", containerName(workspaceId));
-    if (r.code !== 0) log.warn({ workspaceId, stderr: r.stderr }, "docker stop failed");
-    await this.docker.cmd("network", "disconnect", networkName(workspaceId), containerName(workspaceId));
-    await this.proxy.detach(workspaceId);
-    const net = await this.docker.cmd("network", "rm", networkName(workspaceId));
-    if (net.code !== 0) log.debug({ workspaceId, stderr: net.stderr }, "network rm on stop (may not exist)");
+
+    const p = (async () => {
+      const t = this.idleTimers.get(workspaceId);
+      if (t) {
+        clearTimeout(t);
+        this.idleTimers.delete(workspaceId);
+      }
+      // Background processes die with the container (tini reaps the tree) — just drop the bookkeeping.
+      this.background.clear(workspaceId);
+      const r = await this.docker.cmd("stop", containerName(workspaceId));
+      if (r.code !== 0) log.warn({ workspaceId, stderr: r.stderr }, "docker stop failed");
+      await this.docker.cmd("network", "disconnect", networkName(workspaceId), containerName(workspaceId));
+      await this.proxy.detach(workspaceId);
+      const net = await this.docker.cmd("network", "rm", networkName(workspaceId));
+      if (net.code !== 0) log.debug({ workspaceId, stderr: net.stderr }, "network rm on stop (may not exist)");
+    })();
+    this.startLocks.set(workspaceId, { kind: "stop", promise: p });
+    try {
+      await p;
+    } finally {
+      if (this.startLocks.get(workspaceId)?.promise === p) this.startLocks.delete(workspaceId);
+    }
   }
 
   async remove(workspaceId: string): Promise<void> {

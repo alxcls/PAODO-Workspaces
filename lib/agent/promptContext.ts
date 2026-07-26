@@ -37,7 +37,8 @@ function readAgentsMd(workspaceDir: string): string | undefined {
 // there's nothing to say, network status is foundational capability info the agent should never be
 // left to guess about, on or off.
 function buildNetworkInfo(workspaceId: string): string {
-  const enabled = getStore().getWorkspace(workspaceId)?.internetAccess ?? true;
+  const ws = getStore().getWorkspace(workspaceId);
+  const enabled = ws ? (ws.internetAccess ?? true) : false;
   return enabled
     ? `# Internet access
 This workspace has internet access. \`http_get\` fetches public URLs; \`apt_install\` installs system packages; \`npm\`/\`pip3\`/\`git\` work normally from execute_command.`
@@ -61,7 +62,8 @@ function buildSecretsInfo(workspaceId: string): string | undefined {
   // Secrets are only ever substituted on outgoing HTTPS traffic (credentialProxy.ts) — with no
   // network route out, there is no request for the proxy to inject them into, so documenting them
   // would just teach the agent to reference variables that can never resolve to anything.
-  const enabled = getStore().getWorkspace(workspaceId)?.internetAccess ?? true;
+  const ws = getStore().getWorkspace(workspaceId);
+  const enabled = ws ? (ws.internetAccess ?? true) : false;
   if (!enabled) return undefined;
   const secrets = listSecretMeta(workspaceId);
   if (!secrets.length) return undefined;

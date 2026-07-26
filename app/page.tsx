@@ -9,10 +9,12 @@ import AgentLoopBlock from "@/components/home/AgentLoopBlock";
 import ModelBlock from "@/components/home/ModelBlock";
 import EnvVarsBlock from "@/components/home/EnvVarsBlock";
 import McpBlock from "@/components/home/McpBlock";
+import InternetAccessBlock from "@/components/home/InternetAccessBlock";
 import TopBar from "@/components/layout/TopBar";
 import { useWorkspaces } from "@/lib/client/hooks/useWorkspaces";
 import { useWorkspaceDescription } from "@/lib/client/hooks/useWorkspaceDescription";
 import { useWorkspaceFileCount } from "@/lib/client/hooks/useWorkspaceFileCount";
+import { useWorkspaceInternetAccess } from "@/lib/client/hooks/useWorkspaceInternetAccess";
 import { useAppConfig } from "@/lib/client/hooks/useAppConfig";
 
 function formatDate(iso: string) {
@@ -30,6 +32,7 @@ export default function HomePage() {
   const { workspaces, isCreating, create, rename, remove } = useWorkspaces();
   const { description, save: saveDescription } = useWorkspaceDescription(selectedId);
   const fileCount = useWorkspaceFileCount(selectedId);
+  const { enabled: internetAccess, toggle: toggleInternetAccess } = useWorkspaceInternetAccess(selectedId);
   const { graphEnabled } = useAppConfig();
 
   // Form-local UI state: drafts and inline errors that live and die with the open form.
@@ -333,7 +336,12 @@ export default function HomePage() {
               <McpBlock key={`mcp-${selected.id}`} wsId={selected.id} />
               <AgentLoopBlock key={`loop-${selected.id}`} wsId={selected.id} />
               <ModelBlock key={`model-${selected.id}`} wsId={selected.id} />
-              <EnvVarsBlock key={`env-${selected.id}`} wsId={selected.id} />
+              <InternetAccessBlock
+                key={`net-${selected.id}`}
+                enabled={internetAccess}
+                onToggle={toggleInternetAccess}
+              />
+              {internetAccess && <EnvVarsBlock key={`env-${selected.id}`} wsId={selected.id} />}
             </div>
           ) : (
             <div className="mt-20 text-center text-text-2">

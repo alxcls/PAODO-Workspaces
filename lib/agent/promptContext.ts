@@ -8,12 +8,13 @@ import path from "path";
 import { createLogger } from "../infra/logger";
 import { getDrivesForWorkspace, formatDriveLine } from "../workspace/driveStore";
 import { listSecretMeta } from "../infra/security/workspaceSecretStore";
-import { getContainers } from "../infra/services";
+import { getContainers, getStore } from "../infra/services";
 
 const log = createLogger("promptContext");
 
 export interface WorkspacePromptInputs {
   agentsContent?: string;
+  networkInfo?: string;
   drivesInfo?: string;
   secretsInfo?: string;
   backgroundTasksInfo?: string;
@@ -32,6 +33,19 @@ function readAgentsMd(workspaceDir: string): string | undefined {
   }
 }
 
+// Always returned (never undefined) — unlike the other blocks below, which omit themselves when
+// there's nothing to say, network status is foundational capability info the agent should never be
+// left to guess about, on or off.
+function buildNetworkInfo(workspaceId: string): string {
+  const ws = getStore().getWorkspace(workspaceId);
+  const enabled = ws ? (ws.internetAccess ?? true) : false;
+  return enabled
+    ? `# Internet access
+This workspace has internet access. \`http_get\` fetches public URLs; \`apt_install\` installs system packages; \`npm\`/\`pip3\`/\`git\` work normally from execute_command.`
+    : `# Internet access — DISABLED
+This workspace has NO internet access. Its container has no network route out. \`http_get\` and \`apt_install\` are not available as tools. Any \`curl\`/\`wget\`/\`npm install\`/\`pip install\`/\`git clone\` against an external host from execute_command will fail immediately — do not retry them, they cannot succeed until the workspace owner re-enables internet access in the UI. Work only with what's already in the workspace.`;
+}
+
 function buildDrivesInfo(workspaceId: string): string | undefined {
   const drives = getDrivesForWorkspace(workspaceId);
   if (!drives.length) return undefined;
@@ -45,6 +59,12 @@ After downloading a file from a drive, delete your local copy once you are done 
 }
 
 function buildSecretsInfo(workspaceId: string): string | undefined {
+  // Secrets are only ever substituted on outgoing HTTPS traffic (credentialProxy.ts) — with no
+  // network route out, there is no request for the proxy to inject them into, so documenting them
+  // would just teach the agent to reference variables that can never resolve to anything.
+  const ws = getStore().getWorkspace(workspaceId);
+  const enabled = ws ? (ws.internetAccess ?? true) : false;
+  if (!enabled) return undefined;
   const secrets = listSecretMeta(workspaceId);
   if (!secrets.length) return undefined;
   const lines = secrets.map((s) => `- ${s.name} → ${s.domains.join(", ")}`).join("\n");
@@ -70,6 +90,7 @@ ${lines}`;
 export function buildWorkspacePromptInputs(workspaceId: string, workspaceDir: string): WorkspacePromptInputs {
   return {
     agentsContent: readAgentsMd(workspaceDir),
+    networkInfo: buildNetworkInfo(workspaceId),
     drivesInfo: buildDrivesInfo(workspaceId),
     secretsInfo: buildSecretsInfo(workspaceId),
     backgroundTasksInfo: buildBackgroundTasksInfo(workspaceId),

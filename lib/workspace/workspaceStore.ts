@@ -5,7 +5,7 @@
 // NOTE — conversation history lives in conversationStore.ts, persisted in SQLite per workspace and
 // surviving across restarts/disconnects. A workspace no longer carries any message history.
 import path from "path";
-import { createLogger } from "../infra/logger";
+import { createLogger, createAuditLogger } from "../infra/logger";
 import { atomicSaveJson, readJson } from "../infra/jsonPersist";
 import { scaffoldWorkspaceDir } from "./workspaceScaffold";
 import { validateWorkspaceName, normalizeForUniqueness, WorkspaceNameError } from "./workspaceName";
@@ -17,11 +17,13 @@ import type { ReasoningEffort } from "../agent/interfaces";
 import { deleteAllForWorkspace } from "../infra/security/workspaceSecretStore";
 import { deleteForWorkspace as deleteMcpConfig } from "../infra/security/mcpConfigStore";
 import { getCredentialProxy } from "../infra/proxy";
+import { setInternetAccessPolicy, deleteInternetAccessPolicy } from "../infra/proxy/internetAccessPolicy";
 import { DEFAULT_MAX_RUN_MINUTES, normalizeMaxRunMinutes } from "./workspaceLimits";
 import { assertWorkspaceRegistryRecords } from "../infra/startupChecks";
 export { WORKSPACES_ROOT };
 
 const log = createLogger("store");
+const audit = createAuditLogger("store");
 
 export interface WorkspaceMetadata {
   id: string;
@@ -38,6 +40,13 @@ export interface WorkspaceMetadata {
   llmProvider?: string;
   llmModel?: string;
   reasoningEffort?: ReasoningEffort;
+  // Whether this workspace's container has any network route to the internet at all. Defaults to
+  // false for newly created workspaces — opt-in, so an agent can't reach the network until the
+  // owner explicitly turns it on. Enforced at the Docker network layer (containerManager.ts) and
+  // the credential proxy (internetAccessPolicy.ts), not just by gating agent tools. Pre-existing
+  // registry records from before this field existed still hydrate to true (see hydrate() below) so
+  // workspaces that predate the toggle keep their historical access.
+  internetAccess: boolean;
 }
 
 export type Workspace = WorkspaceMetadata;
@@ -53,6 +62,7 @@ interface WorkspaceRecord {
   llmProvider?: string;
   llmModel?: string;
   reasoningEffort?: ReasoningEffort;
+  internetAccess?: boolean;
 }
 
 const REGISTRY_FILE = path.join(WORKSPACES_ROOT, ".workspaces.json");
@@ -134,6 +144,7 @@ export class WorkspaceStore implements IWorkspaceStore {
         llmProvider: r.llmProvider,
         llmModel: r.llmModel,
         reasoningEffort: r.reasoningEffort,
+        internetAccess: r.internetAccess ?? true,
       });
     }
   }
@@ -149,6 +160,7 @@ export class WorkspaceStore implements IWorkspaceStore {
       llmProvider: w.llmProvider,
       llmModel: w.llmModel,
       reasoningEffort: w.reasoningEffort,
+      internetAccess: w.internetAccess,
     }));
     this.persistFn(records);
   }
@@ -223,6 +235,7 @@ export class WorkspaceStore implements IWorkspaceStore {
         createdAt: new Date(),
         maxIterations: 30,
         maxRunMinutes: DEFAULT_MAX_RUN_MINUTES,
+        internetAccess: false,
       };
 
       this.workspaces.set(id, workspace);
@@ -233,6 +246,11 @@ export class WorkspaceStore implements IWorkspaceStore {
         // caller can return a 500 without duplicating the same persistence exception.
         throw err;
       }
+      // New workspaces are internet-off by default (see `internetAccess: false` above) — the
+      // proxy's sparse policy store must record that immediately, not just on first explicit
+      // toggle, or the defense-in-depth layer (internetAccessPolicy.ts) reads "enabled" for a
+      // workspace the primary network layer already has fully isolated.
+      setInternetAccessPolicy(id, false);
       return workspace;
     });
   }
@@ -329,6 +347,15 @@ export class WorkspaceStore implements IWorkspaceStore {
     this.saveUpdate(id, "set_llm");
     return true;
   }
+
+  setWorkspaceInternetAccess(id: string, enabled: boolean): boolean {
+    const ws = this.workspaces.get(id);
+    if (!ws) return false;
+    ws.internetAccess = enabled;
+    this.saveUpdate(id, "set_internet_access");
+    audit.info({ wsId: id, enabled, event: "workspace_internet_access_toggled" }, "internet access toggled");
+    return true;
+  }
 }
 
 // ---- Default production singleton ----
@@ -372,6 +399,7 @@ export const defaultWorkspaceStore = new WorkspaceStore({
     deleteAllForWorkspace(id);
     deleteMcpConfig(id);
     getCredentialProxy().clearRules(id);
+    deleteInternetAccessPolicy(id);
   },
 });
 
@@ -393,3 +421,5 @@ export const setWorkspaceLlm = (
   id: string,
   sel: { provider: string; model: string; reasoningEffort: ReasoningEffort },
 ) => defaultWorkspaceStore.setWorkspaceLlm(id, sel);
+export const setWorkspaceInternetAccess = (id: string, enabled: boolean) =>
+  defaultWorkspaceStore.setWorkspaceInternetAccess(id, enabled);

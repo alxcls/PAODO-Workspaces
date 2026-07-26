@@ -3,7 +3,7 @@
 // but needs no TLS/CA harness. Focus: an `Expect: 100-continue` client must get an interim 100 and
 // still have its body delivered upstream — previously it would hang forever.
 
-import { describe, it, expect, afterEach, beforeAll } from "vitest";
+import { describe, it, expect, vi, afterEach, beforeAll } from "vitest";
 import * as net from "net";
 import * as http from "http";
 import * as https from "https";
@@ -13,8 +13,32 @@ import { mkdtempSync } from "fs";
 import { tmpdir } from "os";
 import path from "path";
 import forge from "node-forge";
+
+// credentialProxy.ts now reads the internet-access policy store, which persists to a file under
+// WORKSPACES_ROOT — redirect it to a throwaway temp dir before that import chain runs, so this
+// suite's setInternetAccessPolicy calls below never touch the real ./data. Mirrors apiKeyStore.test.ts.
+vi.hoisted(() => {
+  const os = require("os");
+  const fs = require("fs");
+  const path = require("path");
+  process.env.WORKSPACES_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "credproxy-server-test-"));
+});
+
 import { CredentialProxy } from "./credentialProxy";
 import { ensureCA, deriveProxySecret } from "./proxyCA";
+import { setInternetAccessPolicy } from "./internetAccessPolicy";
+
+// The proxy now requires a verified workspace identity on every connection (not just for
+// domain-scoped injection), so every test below needs the HMAC key that backs verifyProxySecret —
+// set it up once, up front, before any describe block's tests run.
+beforeAll(() => {
+  ensureCA(mkdtempSync(path.join(tmpdir(), "proxy-server-test-ca-")));
+});
+
+// Shared across every describe below — a valid `Proxy-Authorization` header for `wsId`.
+function authHeader(wsId: string): string {
+  return `Proxy-Authorization: Basic ${Buffer.from(`${wsId}:${deriveProxySecret(wsId)}`).toString("base64")}\r\n`;
+}
 
 const cleanups: Array<() => void> = [];
 afterEach(() => {
@@ -104,6 +128,7 @@ describe("CredentialProxy Expect: 100-continue", () => {
       `Content-Type: application/x-www-form-urlencoded\r\n` +
       `Content-Length: ${body.length}\r\n` +
       `Expect: 100-continue\r\n` +
+      authHeader("ws-100continue") +
       `\r\n`;
     client.write(head);
 
@@ -123,7 +148,7 @@ describe("CredentialProxy SSRF guard", () => {
     cleanups.push(() => client.destroy());
     await once(client, "connect");
 
-    client.write(`GET http://127.0.0.1:6379/ HTTP/1.1\r\nHost: 127.0.0.1:6379\r\n\r\n`);
+    client.write(`GET http://127.0.0.1:6379/ HTTP/1.1\r\nHost: 127.0.0.1:6379\r\n${authHeader("ws-ssrf-http")}\r\n`);
     const received = await readUntil(client, (s) => s.includes("\r\n"));
     expect(received).toContain("403");
     expect(received).not.toContain("200");
@@ -136,7 +161,7 @@ describe("CredentialProxy SSRF guard", () => {
     cleanups.push(() => client.destroy());
     await once(client, "connect");
 
-    client.write(`CONNECT 127.0.0.1:6379 HTTP/1.1\r\nHost: 127.0.0.1:6379\r\n\r\n`);
+    client.write(`CONNECT 127.0.0.1:6379 HTTP/1.1\r\nHost: 127.0.0.1:6379\r\n${authHeader("ws-ssrf-connect")}\r\n`);
     const received = await readUntil(client, (s) => s.includes("\r\n"));
     expect(received).toContain("403");
     expect(received).not.toContain("Connection Established");
@@ -153,10 +178,145 @@ describe("CredentialProxy SSRF guard", () => {
     cleanups.push(() => client.destroy());
     await once(client, "connect");
 
-    client.write(`CONNECT 127.0.0.1:${stubPort} HTTP/1.1\r\nHost: 127.0.0.1:${stubPort}\r\n\r\n`);
+    client.write(
+      `CONNECT 127.0.0.1:${stubPort} HTTP/1.1\r\nHost: 127.0.0.1:${stubPort}\r\n${authHeader("ws-ssrf-allowed")}\r\n`,
+    );
     const received = await readUntil(client, (s) => s.includes("HELLO"));
     expect(received).toContain("200 Connection Established");
     expect(received).toContain("HELLO");
+  });
+});
+
+// The internet-access policy check runs immediately after auth resolution, ahead of both the CONNECT
+// and plain-HTTP paths, and ahead of any domain-rule logic — a workspace can be refused here even
+// when it has a configured secret rule for the exact host it's trying to reach. This is the
+// application-layer backstop behind the real boundary (the workspace's Docker network being
+// --internal, containerManager.ts) — these tests only cover this layer in isolation.
+describe("CredentialProxy internet-access policy", () => {
+  const WS = "ws-net-off";
+
+  beforeAll(() => {
+    ensureCA(mkdtempSync(path.join(tmpdir(), "proxy-netpolicy-test-")));
+  });
+
+  it("refuses a CONNECT tunnel with a 403 when the workspace is off, even to an allowed destination", async () => {
+    const stub = net.createServer((sock) => sock.write("HELLO"));
+    cleanups.push(() => stub.close());
+    const stubPort = await listeningPort(stub);
+
+    setInternetAccessPolicy(WS, false);
+    const proxyPort = await startProxy(allowAll);
+    const client = net.connect(proxyPort, "127.0.0.1");
+    cleanups.push(() => client.destroy());
+    await once(client, "connect");
+
+    client.write(`CONNECT 127.0.0.1:${stubPort} HTTP/1.1\r\nHost: 127.0.0.1:${stubPort}\r\n${authHeader(WS)}\r\n`);
+    const received = await readUntil(client, (s) => s.includes("\r\n"));
+    expect(received).toContain("403");
+    expect(received).not.toContain("Connection Established");
+    expect(received).not.toContain("HELLO");
+  });
+
+  it("refuses a plain-HTTP forward with a 403 when the workspace is off", async () => {
+    const upstream = await startUpstream();
+    setInternetAccessPolicy(WS, false);
+    const proxyPort = await startProxy(allowAll);
+
+    const client = net.connect(proxyPort, "127.0.0.1");
+    cleanups.push(() => client.destroy());
+    await once(client, "connect");
+
+    client.write(
+      `GET http://127.0.0.1:${upstream.port}/ HTTP/1.1\r\nHost: 127.0.0.1:${upstream.port}\r\n${authHeader(WS)}\r\n`,
+    );
+    const received = await readUntil(client, (s) => s.includes("\r\n"));
+    expect(received).toContain("403");
+    expect(received).not.toContain("200");
+  });
+
+  it("still refuses even when a domain rule is configured for the exact host requested", async () => {
+    // Proves ordering: the off-check runs ahead of, not instead of, domain-scoped secret injection.
+    const stub = net.createServer((sock) => sock.write("HELLO"));
+    cleanups.push(() => stub.close());
+    const stubPort = await listeningPort(stub);
+
+    setInternetAccessPolicy(WS, false);
+    const proxy = new CredentialProxy(allowAll);
+    proxy.setRules(WS, [{ domain: "127.0.0.1", tokenMap: new Map([["__pxy_t__", "real"]]) }]);
+    const server = (proxy as unknown as { server: net.Server }).server;
+    proxy.listen(0);
+    await once(server, "listening");
+    cleanups.push(() => server.close());
+    const proxyPort = (server.address() as net.AddressInfo).port;
+
+    const client = net.connect(proxyPort, "127.0.0.1");
+    cleanups.push(() => client.destroy());
+    await once(client, "connect");
+
+    client.write(`CONNECT 127.0.0.1:${stubPort} HTTP/1.1\r\nHost: 127.0.0.1:${stubPort}\r\n${authHeader(WS)}\r\n`);
+    const received = await readUntil(client, (s) => s.includes("\r\n"));
+    expect(received).toContain("403");
+  });
+
+  it("re-enabling the workspace restores the tunnel", async () => {
+    const stub = net.createServer((sock) => sock.write("HELLO"));
+    cleanups.push(() => stub.close());
+    const stubPort = await listeningPort(stub);
+
+    setInternetAccessPolicy(WS, false);
+    setInternetAccessPolicy(WS, true);
+    const proxyPort = await startProxy(allowAll);
+
+    const client = net.connect(proxyPort, "127.0.0.1");
+    cleanups.push(() => client.destroy());
+    await once(client, "connect");
+
+    client.write(`CONNECT 127.0.0.1:${stubPort} HTTP/1.1\r\nHost: 127.0.0.1:${stubPort}\r\n${authHeader(WS)}\r\n`);
+    const received = await readUntil(client, (s) => s.includes("HELLO"));
+    expect(received).toContain("200 Connection Established");
+  });
+
+  it("refuses an unauthenticated connection outright (no Proxy-Authorization header)", async () => {
+    // Was the actual bypass: an absent header used to skip the off-check entirely (it's keyed on
+    // auth.wsId, and auth is null with no header) and still get a plain tunnel through. Now any
+    // connection without a verified identity is refused before the off-check is even reached.
+    const stub = net.createServer((sock) => sock.write("HELLO"));
+    cleanups.push(() => stub.close());
+    const stubPort = await listeningPort(stub);
+
+    const proxyPort = await startProxy(allowAll);
+
+    const client = net.connect(proxyPort, "127.0.0.1");
+    cleanups.push(() => client.destroy());
+    await once(client, "connect");
+
+    client.write(`CONNECT 127.0.0.1:${stubPort} HTTP/1.1\r\nHost: 127.0.0.1:${stubPort}\r\n\r\n`);
+    const received = await readUntil(client, (s) => s.includes("\r\n"));
+    expect(received).toContain("407");
+    expect(received).not.toContain("Connection Established");
+    expect(received).not.toContain("HELLO");
+  });
+
+  it("refuses a connection that claims another workspace's id with a wrong/guessed secret (spoofed identity)", async () => {
+    // The other half of the bypass: isInternetAccessEnabled defaults to true for any id never
+    // toggled off, so claiming an unrelated (or made-up) wsId used to sail past the off-check even
+    // though the secret was never verified. Now the identity itself must verify before anything else
+    // runs, so a wrong secret is refused regardless of whose id it claims.
+    const stub = net.createServer((sock) => sock.write("HELLO"));
+    cleanups.push(() => stub.close());
+    const stubPort = await listeningPort(stub);
+
+    const proxyPort = await startProxy(allowAll);
+    const client = net.connect(proxyPort, "127.0.0.1");
+    cleanups.push(() => client.destroy());
+    await once(client, "connect");
+
+    const forged = `Proxy-Authorization: Basic ${Buffer.from("some-other-workspace:not-the-real-secret").toString("base64")}\r\n`;
+    client.write(`CONNECT 127.0.0.1:${stubPort} HTTP/1.1\r\nHost: 127.0.0.1:${stubPort}\r\n${forged}\r\n`);
+    const received = await readUntil(client, (s) => s.includes("\r\n"));
+    expect(received).toContain("407");
+    expect(received).not.toContain("Connection Established");
+    expect(received).not.toContain("HELLO");
   });
 });
 
@@ -319,7 +479,9 @@ describe("CredentialProxy header cap", () => {
     const good = net.connect(proxyPort, "127.0.0.1");
     cleanups.push(() => good.destroy());
     await once(good, "connect");
-    good.write(`GET http://127.0.0.1:${upstream.port}/ HTTP/1.1\r\nHost: 127.0.0.1:${upstream.port}\r\n\r\n`);
+    good.write(
+      `GET http://127.0.0.1:${upstream.port}/ HTTP/1.1\r\nHost: 127.0.0.1:${upstream.port}\r\n${authHeader("ws-headercap")}\r\n`,
+    );
     const received = await readUntil(good, (s) => s.includes("200"));
     expect(received).toContain("200");
   });

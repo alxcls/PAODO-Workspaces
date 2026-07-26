@@ -21,11 +21,12 @@ import * as tls from "tls";
 import * as http from "http";
 import * as https from "https";
 import { Transform } from "stream";
-import { signDomainCert } from "./proxyCA";
+import { signDomainCert, verifyProxySecret } from "./proxyCA";
 import { isBlockedAddress, makeGuardedLookup } from "./destinationGuard";
 import { createAuditLogger, createLogger } from "../logger";
 import { throttleLog } from "../logThrottle";
 import { WorkspaceRuleStore } from "./workspaceRuleStore";
+import { isInternetAccessEnabled } from "./internetAccessPolicy";
 import { readHttpHeaders, collectBody, pipeBody, bodyMode } from "./httpWire";
 import type { DomainRule } from "../security/workspaceSecretStore";
 
@@ -275,9 +276,43 @@ export class CredentialProxy {
 
     const { statusLine, headers, remaining } = await readHttpHeaders(socket);
     const auth = parseProxyAuth(headers["proxy-authorization"]);
-    // Resolve which injection rules this connection may use — empty (fail closed) unless the
-    // presented secret matches the id's derived secret. See WorkspaceRuleStore.resolve.
+
+    // Every connection must present a workspace identity we can cryptographically verify — an
+    // absent, malformed, or spoofed Proxy-Authorization no longer gets a silent pass-through tunnel.
+    // Without this, the internet-access-off check below is trivial to dodge: a caller that simply
+    // omits the header (auth === null) or claims a wsId it can't prove (isInternetAccessEnabled
+    // defaults to true for any id never toggled off) skipped the check entirely and still got
+    // tunneled through. Every legitimate caller already presents its real credentials — they're
+    // baked into HTTP_PROXY by containerCredentials.ts and every mainstream HTTP client sends them
+    // automatically — so this only refuses connections that were never going to identify themselves
+    // honestly in the first place.
+    if (!auth || !verifyProxySecret(auth.wsId, auth.secret)) {
+      audit.warn({ wsId: auth?.wsId, event: "proxy_auth_required" }, "refusing connection — no verified workspace identity");
+      socket.write("HTTP/1.1 407 Proxy Authentication Required\r\n\r\n");
+      socket.destroy();
+      return;
+    }
+
+    // Resolve which injection rules this connection may use — empty unless this workspace has one
+    // configured for the requested host. Identity is already verified above, so this can't fail
+    // closed on a bad secret; it's just "does this workspace happen to have a rule for this host".
     const rules = this.ruleStore.resolve(auth);
+
+    // Internet-access off is a hard stop, ahead of (not instead of) domain-scoped injection rules —
+    // a workspace with a configured secret for some domain still gets refused here while off. This
+    // is defense-in-depth: the workspace's Docker network (containerManager.ts) is the primary
+    // boundary (--internal, no route out; the sidecar isn't even attached), so a legitimately-off
+    // workspace should never reach this far. This check only matters if those layers are ever
+    // misconfigured (a stale attachment, a race during redeploy).
+    if (!isInternetAccessEnabled(auth.wsId)) {
+      audit.warn(
+        { wsId: auth.wsId, event: "proxy_internet_access_blocked" },
+        "refusing connection — internet access is disabled for this workspace",
+      );
+      socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
+      socket.destroy();
+      return;
+    }
 
     if (statusLine.startsWith("CONNECT ")) {
       const target = statusLine.split(" ")[1] ?? "";

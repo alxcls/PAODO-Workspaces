@@ -92,10 +92,15 @@ export class ProxyNetworkManager {
     if (r.code !== 0) log.debug({ workspaceId, stderr: r.stderr }, "detach credential proxy (may not be attached)");
   }
 
-  // On boot, reconnect the sidecar to every running workspace network. A redeploy recreates the
-  // sidecar (and the app), dropping its attachments while workspace containers keep running; without
-  // this their egress would black-hole until they are recreated. No-op in local dev.
-  async reattachAll(): Promise<void> {
+  // On boot, reconnect the sidecar to every running workspace network that should have one. A
+  // redeploy recreates the sidecar (and the app), dropping its attachments while workspace
+  // containers keep running; without this their egress would black-hole until they are recreated.
+  // No-op in local dev. `shouldAttach` lets the caller (containerManager, which owns workspace
+  // policy) exclude internet-access-off workspaces — reattaching the sidecar to one of those would
+  // hand its network a live route back to the real internet via the sidecar's other interface, even
+  // though the workspace's own network stays --internal. This class stays free of workspaceStore
+  // itself; it only knows container/network names.
+  async reattachAll(shouldAttach: (workspaceId: string) => boolean = () => true): Promise<void> {
     if (!this.enabled) return;
     const r = await this.docker.cmd("ps", "--filter", "name=^ws_", "--format", "{{.Names}}");
     if (r.code !== 0) {
@@ -106,7 +111,9 @@ export class ProxyNetworkManager {
       .split("\n")
       .map((s) => s.trim())
       .filter(Boolean)) {
-      await this.attach(name.replace(/^ws_/, ""));
+      const workspaceId = name.replace(/^ws_/, "");
+      if (!shouldAttach(workspaceId)) continue;
+      await this.attach(workspaceId);
     }
   }
 }

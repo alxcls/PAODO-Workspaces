@@ -44,9 +44,12 @@ export interface CredentialEnv {
 // Build the `docker run` env args that expose a workspace's secrets and route it through the
 // credential proxy. Secret values NEVER leave the proxy — only opaque tokens are placed in the env;
 // the proxy swaps each token for its real value on scoped HTTPS traffic.
-export function buildCredentialEnv(workspaceId: string): CredentialEnv {
+// When internetAccess is false, secret env vars are omitted entirely — the workspace's network has
+// no route out anyway (see ensureNetwork's --internal), but the agent should never be able to see or
+// report a token (e.g. by running `env`) for an integration the user has switched off.
+export function buildCredentialEnv(workspaceId: string, internetAccess: boolean): CredentialEnv {
   // Per-workspace secret token env vars (tokens only — real values stay in the proxy).
-  const secrets = listSecretMeta(workspaceId);
+  const secrets = internetAccess ? listSecretMeta(workspaceId) : [];
   const secretEnvArgs = secrets.flatMap((s) => ["-e", `${s.name}=${proxyToken(workspaceId, s.name)}`]);
   // Alias the github.com-scoped secret to GH_TOKEN so git (via the static credential helper in the
   // image) and gh both authenticate transparently, regardless of what the user named the secret.

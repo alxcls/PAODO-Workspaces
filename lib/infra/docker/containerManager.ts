@@ -19,6 +19,7 @@ import { buildCredentialEnv, installProxyCA } from "./containerCredentials";
 import { containerName, networkName } from "./naming";
 import { BackgroundTaskManager, type BackgroundTask } from "./backgroundTaskManager";
 import { ProxyNetworkManager } from "./proxyNetworkManager";
+import { defaultWorkspaceStore } from "../../workspace/workspaceStore";
 
 // Re-exported for back-compat: consumers (interfaces.ts) still import BackgroundTask from here.
 export type { BackgroundTask } from "./backgroundTaskManager";
@@ -26,15 +27,18 @@ export type { BackgroundTask } from "./backgroundTaskManager";
 const log = createLogger("container");
 
 // Label recording which secrets were baked into the container's env at creation time (as a
-// hash of their sorted names plus the proxy-token format — token values are derived from
-// name+workspaceId alone, so this detects additions/removals and forces a safe recreation when the
-// opaque token format changes; domain-only changes don't affect env args).
+// hash of their sorted names, the proxy-token format, and the internetAccess flag — token values
+// are derived from name+workspaceId alone, so this detects additions/removals and forces a safe
+// recreation when the opaque token format changes; domain-only changes don't affect env args).
+// internetAccess is folded in too: buildCredentialEnv omits secret env entirely when it's off, so a
+// toggle must force a recreate — otherwise a running/stopped container would just be reattached or
+// restarted with the same (stale) env Docker can't amend in place.
 const SECRETS_LABEL = "paodo.workspace-secrets-hash";
 
-function hashSecretNames(secrets: { name: string }[]): string {
+function hashSecretNames(secrets: { name: string }[], internetAccess: boolean): string {
   const sorted = secrets.map((s) => s.name).sort();
   return createHash("sha256")
-    .update(`${PROXY_TOKEN_FORMAT_VERSION}\0${sorted.join(",")}`)
+    .update(`${PROXY_TOKEN_FORMAT_VERSION}\0${internetAccess}\0${sorted.join(",")}`)
     .digest("hex");
 }
 
@@ -62,14 +66,39 @@ export class ContainerManager implements IContainerManager {
     this.proxy = new ProxyNetworkManager(docker);
   }
   private idleTimers = new Map<string, ReturnType<typeof setTimeout>>();
-  // Prevents concurrent docker run/start calls for the same workspace.
-  private startLocks = new Map<string, Promise<void>>();
+  // Prevents concurrent docker run/start/stop calls for the same workspace. Tagged by kind so
+  // ensure() can still coalesce concurrent ensure() calls onto one shared promise (same desired
+  // outcome), while a stop() in flight is never handed out that way — its promise resolves to
+  // "stopped," not "ready," so a concurrent ensure() must wait it out and then run its own fresh
+  // pass instead of piggybacking on it. See ensure()/stop() below.
+  private startLocks = new Map<string, { kind: "ensure" | "stop"; promise: Promise<void> }>();
 
-  private async ensureNetwork(workspaceId: string): Promise<void> {
+  // Creates the workspace's isolated network, or recreates it if its --internal flag doesn't match
+  // the workspace's current internetAccess setting. Docker can't flip --internal on an existing
+  // network, so a mismatch (e.g. a network that survived an unclean exit before a toggle, or one
+  // created under the old policy) is deleted and recreated rather than left stale — leaving it stale
+  // would silently keep an "off" workspace on a network with a real route out, or vice versa.
+  private async ensureNetwork(workspaceId: string, internetAccess: boolean): Promise<void> {
     const name = networkName(workspaceId);
-    const inspect = await this.docker.cmd("network", "inspect", name);
-    if (inspect.code === 0) return;
-    const r = await this.docker.cmd("network", "create", "--driver", "bridge", name);
+    const inspect = await this.docker.cmd("network", "inspect", name, "--format", "{{.Internal}}");
+    if (inspect.code === 0) {
+      const isInternal = inspect.stdout.trim() === "true";
+      if (isInternal === !internetAccess) return;
+      log.debug({ workspaceId, isInternal, internetAccess }, "network internet-access flag mismatch — recreating");
+      // A container (or the credproxy sidecar) that reached this state without going through our own
+      // stop() (unclean exit, manual `docker stop`, daemon restart) can still hold an endpoint on
+      // this network even while stopped — network rm fails with "has active endpoints" until every
+      // endpoint is disconnected. Force both loose first; the clean case with nothing attached just
+      // no-ops on each.
+      await this.docker.cmd("network", "disconnect", "-f", name, containerName(workspaceId));
+      await this.proxy.detach(workspaceId);
+      const rm = await this.docker.cmd("network", "rm", name);
+      if (rm.code !== 0) throw new Error(`docker network rm failed while recreating with new policy: ${rm.stderr}`);
+    }
+    const args = ["network", "create", "--driver", "bridge"];
+    if (!internetAccess) args.push("--internal");
+    args.push(name);
+    const r = await this.docker.cmd(...args);
     if (r.code !== 0) throw new Error(`docker network create failed: ${r.stderr}`);
   }
 
@@ -118,12 +147,18 @@ export class ContainerManager implements IContainerManager {
 
   private async _ensureContainer(workspaceId: string, workspaceDir: string): Promise<void> {
     let stage = "inspect_container";
+    // Fails closed (no internet) if the workspace record can't be found at all — only a record
+    // that exists but predates this field defaults to true (see workspaceStore.ts hydration).
+    // Read once so the network-create and proxy-attach decisions below can't disagree with each
+    // other partway through this method.
+    const ws = defaultWorkspaceStore.getWorkspace(workspaceId);
+    const internetAccess = ws ? (ws.internetAccess ?? true) : false;
     try {
       const status = await this.getContainerStatus(workspaceId);
       stage = "hash_workspace_image";
       const hash = await this.imageManager.getCurrentHash("Dockerfile.workspace");
       stage = "read_workspace_secrets";
-      const secretsHash = hashSecretNames(listSecretMeta(workspaceId));
+      const secretsHash = hashSecretNames(listSecretMeta(workspaceId), internetAccess);
 
       if (status === "running" || status === "stopped") {
         stage = "inspect_container_image";
@@ -140,15 +175,19 @@ export class ContainerManager implements IContainerManager {
             stage = "rehydrate_background_tasks";
             await this.background.rehydrate(workspaceId);
             // A redeploy can recreate the credproxy sidecar and drop its attachment to this
-            // still-running workspace's network, black-holing egress. Reattach idempotently.
-            stage = "attach_credential_proxy";
-            await this.proxy.attach(workspaceId);
+            // still-running workspace's network, black-holing egress. Reattach idempotently — but
+            // only when this workspace should have egress at all; an off workspace's network was
+            // never internet-reachable in the first place, so there's nothing to reattach.
+            if (internetAccess) {
+              stage = "attach_credential_proxy";
+              await this.proxy.attach(workspaceId);
+            }
             return;
           }
           // Stopped, image unchanged, secrets unchanged — just restart it.
           log.debug({ workspaceId }, "starting stopped container");
           stage = "ensure_network";
-          await this.ensureNetwork(workspaceId);
+          await this.ensureNetwork(workspaceId, internetAccess);
           stage = "connect_container_network";
           const connect = await this.docker.cmd(
             "network",
@@ -160,8 +199,10 @@ export class ContainerManager implements IContainerManager {
           stage = "start_container";
           const r = await this.docker.cmd("start", containerName(workspaceId));
           if (r.code !== 0) throw new Error(`docker start failed: ${r.stderr}`);
-          stage = "attach_credential_proxy";
-          await this.proxy.attach(workspaceId);
+          if (internetAccess) {
+            stage = "attach_credential_proxy";
+            await this.proxy.attach(workspaceId);
+          }
           return;
         } else if (!secretsMatch) {
           // Workspace secrets were added/removed since this container was created (or it
@@ -178,16 +219,17 @@ export class ContainerManager implements IContainerManager {
       // missing (or just removed) — create and start
       log.debug({ workspaceId }, "creating container");
       stage = "ensure_network";
-      await this.ensureNetwork(workspaceId);
+      await this.ensureNetwork(workspaceId, internetAccess);
 
       // Build the credential-proxy + secret env args (tokens only — real values stay in the proxy).
       // See containerCredentials.ts for how tokens, the proxy URL, and the CA-trust vars are derived.
       stage = "build_credential_environment";
-      const { envArgs: credentialEnvArgs, hasProxyCA } = buildCredentialEnv(workspaceId);
+      const { envArgs: credentialEnvArgs, hasProxyCA } = buildCredentialEnv(workspaceId, internetAccess);
       // Attach the sidecar to this workspace's network so the proxy alias resolves inside the
-      // container. Only when this workspace actually has a proxy CA; attach() itself no-ops in local
-      // dev (no sidecar — proxy is in-process).
-      if (hasProxyCA) {
+      // container. Only when this workspace actually has a proxy CA (attach() itself no-ops in
+      // local dev — no sidecar, proxy is in-process) AND internet access is on — an off workspace's
+      // network has no route out at all, so there is nothing for the sidecar to usefully reach here.
+      if (hasProxyCA && internetAccess) {
         stage = "attach_credential_proxy";
         await this.proxy.attach(workspaceId);
       }
@@ -278,35 +320,50 @@ export class ContainerManager implements IContainerManager {
   }
 
   async ensure(workspaceId: string, workspaceDir: string): Promise<void> {
-    // Coalesce concurrent calls: if a start is already in flight, piggyback on it.
-    const inflight = this.startLocks.get(workspaceId);
-    if (inflight) return inflight;
+    // Coalesce concurrent ensure() calls onto one in-flight promise. But a concurrent stop() (e.g.
+    // the internet-access toggle route) is never piggybacked on — its promise resolves to
+    // "stopped," which is the opposite of what an ensure() caller wants — so wait it out and then
+    // run our own fresh ensure. The check-then-set below has no `await` in between, so nothing else
+    // can claim the slot while we're mid-loop.
+    for (;;) {
+      const inflight = this.startLocks.get(workspaceId);
+      if (!inflight) break;
+      if (inflight.kind === "ensure") return inflight.promise;
+      await inflight.promise.catch(() => {});
+    }
 
     const p = (async () => {
       await this._ensureContainer(workspaceId, workspaceDir);
       // Enforce the egress invariant on every wake: the credproxy sidecar must be attached to this
       // workspace's network. Self-heals a dropped attachment and fails loudly if it can't, rather
-      // than letting the agent black-hole on cryptic "could not resolve proxy" DNS errors.
-      try {
-        await this.proxy.verify(workspaceId);
-      } catch (err) {
-        log.error(
-          {
-            event: "workspace_container_start_failed",
-            outcome: "workspace_container_unavailable",
-            err,
-            workspaceId,
-            stage: "verify_proxy_network",
-          },
-          "workspace container failed to start",
-        );
-        throw err;
+      // than letting the agent black-hole on cryptic "could not resolve proxy" DNS errors. Skipped
+      // entirely for an off workspace — verify()'s whole purpose is to *reattach* a dropped
+      // connection, which would silently undo the isolation an off workspace depends on. Fails
+      // closed (skips reattach) if the workspace record can't be found at all.
+      const wakeWs = defaultWorkspaceStore.getWorkspace(workspaceId);
+      const internetAccess = wakeWs ? (wakeWs.internetAccess ?? true) : false;
+      if (internetAccess) {
+        try {
+          await this.proxy.verify(workspaceId);
+        } catch (err) {
+          log.error(
+            {
+              event: "workspace_container_start_failed",
+              outcome: "workspace_container_unavailable",
+              err,
+              workspaceId,
+              stage: "verify_proxy_network",
+            },
+            "workspace container failed to start",
+          );
+          throw err;
+        }
       }
     })().finally(() => {
-      this.startLocks.delete(workspaceId);
+      if (this.startLocks.get(workspaceId)?.promise === p) this.startLocks.delete(workspaceId);
       this.resetIdleTimer(workspaceId);
     });
-    this.startLocks.set(workspaceId, p);
+    this.startLocks.set(workspaceId, { kind: "ensure", promise: p });
     return p;
   }
 
@@ -435,25 +492,48 @@ export class ContainerManager implements IContainerManager {
     return this.background.list(workspaceId);
   }
 
-  // On boot, reconnect the credproxy sidecar to every running workspace network (prod-only).
+  // On boot, reconnect the credproxy sidecar to every running workspace network that should have
+  // one (prod-only) — excludes internet-access-off workspaces, see ProxyNetworkManager.reattachAll.
+  // Fails closed (excluded) if the workspace record can't be found at all.
   async reattachProxyNetworks(): Promise<void> {
-    await this.proxy.reattachAll();
+    await this.proxy.reattachAll((workspaceId) => {
+      const ws = defaultWorkspaceStore.getWorkspace(workspaceId);
+      return ws ? (ws.internetAccess ?? true) : false;
+    });
   }
 
   async stop(workspaceId: string): Promise<void> {
-    const t = this.idleTimers.get(workspaceId);
-    if (t) {
-      clearTimeout(t);
-      this.idleTimers.delete(workspaceId);
+    // Wait out anything already in flight (an ensure() or another stop()) before claiming the slot
+    // for our own teardown, so a concurrent ensure() (e.g. an agent tool call racing the
+    // internet-access toggle route) can't interleave with this — reattaching the sidecar right as
+    // we're trying to tear the network down, or vice versa. See ensure() above for the matching half.
+    for (;;) {
+      const inflight = this.startLocks.get(workspaceId);
+      if (!inflight) break;
+      await inflight.promise.catch(() => {});
     }
-    // Background processes die with the container (tini reaps the tree) — just drop the bookkeeping.
-    this.background.clear(workspaceId);
-    const r = await this.docker.cmd("stop", containerName(workspaceId));
-    if (r.code !== 0) log.warn({ workspaceId, stderr: r.stderr }, "docker stop failed");
-    await this.docker.cmd("network", "disconnect", networkName(workspaceId), containerName(workspaceId));
-    await this.proxy.detach(workspaceId);
-    const net = await this.docker.cmd("network", "rm", networkName(workspaceId));
-    if (net.code !== 0) log.debug({ workspaceId, stderr: net.stderr }, "network rm on stop (may not exist)");
+
+    const p = (async () => {
+      const t = this.idleTimers.get(workspaceId);
+      if (t) {
+        clearTimeout(t);
+        this.idleTimers.delete(workspaceId);
+      }
+      // Background processes die with the container (tini reaps the tree) — just drop the bookkeeping.
+      this.background.clear(workspaceId);
+      const r = await this.docker.cmd("stop", containerName(workspaceId));
+      if (r.code !== 0) log.warn({ workspaceId, stderr: r.stderr }, "docker stop failed");
+      await this.docker.cmd("network", "disconnect", networkName(workspaceId), containerName(workspaceId));
+      await this.proxy.detach(workspaceId);
+      const net = await this.docker.cmd("network", "rm", networkName(workspaceId));
+      if (net.code !== 0) log.debug({ workspaceId, stderr: net.stderr }, "network rm on stop (may not exist)");
+    })();
+    this.startLocks.set(workspaceId, { kind: "stop", promise: p });
+    try {
+      await p;
+    } finally {
+      if (this.startLocks.get(workspaceId)?.promise === p) this.startLocks.delete(workspaceId);
+    }
   }
 
   async remove(workspaceId: string): Promise<void> {

@@ -21,6 +21,7 @@ export interface IWorkspaceStore {
   setWorkspaceMaxRunMinutes(id: string, minutes: number): boolean;
   setWorkspaceDescription(id: string, description: string): boolean;
   setWorkspaceLlm(id: string, sel: { provider: string; model: string; reasoningEffort: ReasoningEffort }): boolean;
+  setWorkspaceInternetAccess(id: string, enabled: boolean): boolean;
 }
 
 export interface HistoryEntry {

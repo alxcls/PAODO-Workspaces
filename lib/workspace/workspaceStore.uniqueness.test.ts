@@ -16,6 +16,7 @@ import type { WorkspaceStore } from "./workspaceStore";
 
 let ROOT: string;
 let store: WorkspaceStore;
+let isInternetAccessEnabled: (typeof import("../infra/proxy/internetAccessPolicy"))["isInternetAccessEnabled"];
 
 beforeEach(async () => {
   ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "wsstore-uniq-"));
@@ -23,6 +24,9 @@ beforeEach(async () => {
   vi.resetModules();
   const mod = await import("./workspaceStore");
   store = new mod.WorkspaceStore({ persist: vi.fn() });
+  // Freshly re-imported (vi.resetModules()) so its globalSingleton picks up the temp ROOT above,
+  // same reason workspaceStore itself is re-imported per test.
+  ({ isInternetAccessEnabled } = await import("../infra/proxy/internetAccessPolicy"));
 });
 
 afterEach(() => {
@@ -70,6 +74,16 @@ describe("createWorkspace — name policy", () => {
   it("rejects a name containing a path separator", async () => {
     await expect(store.createWorkspace("team/invoices")).rejects.toMatchObject(invalid);
     expect(store.listWorkspaces()).toHaveLength(0);
+  });
+});
+
+describe("createWorkspace — internet-access policy sync", () => {
+  it("records the workspace as off in the proxy's policy store immediately, before any toggle", async () => {
+    const ws = await store.createWorkspace("no-internet-yet");
+    expect(ws.internetAccess).toBe(false);
+    // Without this, the proxy's sparse policy file (absent key = enabled) would disagree with the
+    // store from the moment the workspace exists, until the first explicit PATCH toggle.
+    expect(isInternetAccessEnabled(ws.id)).toBe(false);
   });
 });
 

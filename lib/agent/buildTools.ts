@@ -82,6 +82,7 @@ export function loadAgentConfig(workspaceId?: string): AgentConfig {
     model,
     apiKey: apiKeyEnv ? process.env[apiKeyEnv] : undefined,
     graphEnabled: process.env.GRAPH_ENABLED !== "false",
+    internetAccess: ws ? (ws.internetAccess ?? true) : false,
     anthropicCacheTtl1h: process.env.ANTHROPIC_CACHE_TTL_1H === "true",
     silenceTimeoutMs: parseInt(process.env.EXEC_SILENCE_TIMEOUT_MS ?? "", 10) || 60_000,
     maxTimeoutMs: parseInt(process.env.EXEC_MAX_TIMEOUT_MS ?? "", 10) || 30 * 60_000,
@@ -109,13 +110,16 @@ export function buildTools(
   const tools = [
     new ExecCommandTool(streamExec, backgroundExec, broadcast, config, workspaceDir),
     new StopTaskTool(workspaceId, containers),
-    new AptInstallTool(runner),
+    // apt_install and http_get are both entirely internet-dependent and non-functional when this
+    // workspace's network has no route out — dropped from the bound tool list (not just left to
+    // error) so the model can't even attempt them, matching the network-layer boundary.
+    ...(config.internetAccess ? [new AptInstallTool(runner)] : []),
     new FileReadTool(runner),
     new FileEditTool(runner, workspaceDir),
     new FileWriteTool(runner, workspaceDir),
     new TodoWriteTool(workspaceId),
     new CompactContextTool(),
-    new WebFetchTool(),
+    ...(config.internetAccess ? [new WebFetchTool(runner)] : []),
     new GlobTool(runner),
     new ListDirectoryTool(runner),
     new WorkspaceHistoryTool(workspaceId, workspaceDir, versioning),

@@ -212,19 +212,22 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   );
 }
 
-// Collapsed by default, lazily fetches the workspace's CURRENT system prompt on first expand
-// (it isn't stored per turn — see /api/workspaces/[id]/system-prompt). Large, so kept folded.
+// Collapsed by default, fetches the workspace's CURRENT system prompt every time it's expanded
+// (it isn't stored per turn — see /api/workspaces/[id]/system-prompt). Re-fetching on each expand
+// (rather than caching after the first) matters here: internet-access / secrets can be toggled
+// live while this drawer stays open, and a stale cached prompt would silently misreport them.
 function SystemPromptSection({ workspaceId }: { workspaceId: string }) {
   const [open, setOpen] = useState(false);
   const [prompt, setPrompt] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!open || prompt !== null) return;
+    if (!open) return;
+    setPrompt(null);
     fetch(`/api/workspaces/${workspaceId}/system-prompt`)
       .then((r) => r.json())
       .then((d) => setPrompt(d.prompt ?? ""))
       .catch(() => setPrompt(""));
-  }, [open, prompt, workspaceId]);
+  }, [open, workspaceId]);
 
   return (
     <div className="flex flex-col gap-1.5">

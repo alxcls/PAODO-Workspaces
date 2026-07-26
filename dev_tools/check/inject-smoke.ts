@@ -54,6 +54,7 @@ async function main(): Promise<void> {
     createdAt: new Date(),
     maxIterations: 30,
     maxRunMinutes: 5,
+    internetAccess: true,
   };
   const isolatedStore = new WorkspaceStore({
     map: new Map([[wsId, ws]]),

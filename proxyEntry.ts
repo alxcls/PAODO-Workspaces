@@ -22,6 +22,7 @@ import {
   reloadSecretStore,
   SECRET_STORE_FILE,
 } from "./lib/infra/security/workspaceSecretStore";
+import { reloadInternetAccessPolicy, INTERNET_ACCESS_POLICY_FILE } from "./lib/infra/proxy/internetAccessPolicy";
 
 const log = createLogger("credproxyEntry");
 
@@ -121,6 +122,10 @@ async function main(): Promise<void> {
   proxy.listen(CREDENTIAL_PROXY_PORT);
 
   let ids = applyAllRules(proxy, new Set());
+  // internetAccessPolicy's globalSingleton already loads INTERNET_ACCESS_POLICY_FILE at import time;
+  // reload explicitly here (rather than relying on import ordering) so its first read happens at a
+  // predictable point after the CA wait, matching how secret rules are applied above.
+  reloadInternetAccessPolicy();
   log.info({ workspaces: ids.size, port: CREDENTIAL_PROXY_PORT }, "credential proxy sidecar ready");
 
   // Reload on secret change. watchFile (stat polling) is robust to atomicSaveJson's temp-then-rename
@@ -128,6 +133,13 @@ async function main(): Promise<void> {
   fs.watchFile(SECRET_STORE_FILE, { interval: 1000 }, () => {
     ids = applyAllRules(proxy, ids);
     log.info({ workspaces: ids.size }, "reloaded proxy rules after secret change");
+  });
+
+  // Same rationale, for the internet-access on/off policy — a separate file (internetAccessPolicy.ts)
+  // since it's consulted before any rule/domain logic runs at all, not folded into the secret store.
+  fs.watchFile(INTERNET_ACCESS_POLICY_FILE, { interval: 1000 }, () => {
+    reloadInternetAccessPolicy();
+    log.info("reloaded internet-access policy after change");
   });
 }
 

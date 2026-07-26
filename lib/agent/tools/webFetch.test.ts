@@ -1,104 +1,173 @@
-// ssrfGuard.test.ts proves assertPublicUrl rejects private/internal addresses in isolation. This
-// file proves the http_get tool actually WIRES that guard: the tool must run the SSRF check and
-// bail BEFORE issuing any network request when the URL points at an internal address, and it must
-// dial only the IP the guard validated (the anti-rebinding pin). The bug class is a tool that
-// forgets the guard (or moves the request above it) — the guard can be perfect and the agent still
-// reach 169.254.169.254. So the assertion is twofold: a blocked URL (a) surfaces an error and (b)
-// never reaches the requester, while a legitimate public URL does reach it with the pinned IP.
+// http_get runs its fetch INSIDE the workspace container, through the credential proxy. That
+// placement is the security property — not an implementation detail — so these tests pin the
+// invariants that make it hold, rather than re-testing curl:
 //
-// The guard itself is NOT mocked — that would defeat the point. We use real assertPublicUrl with
-// literal IPs (which short-circuit before DNS, keeping the test network-free) and inject a fake
-// requester as the network sink, exactly as pathGuard.test.ts uses a real normalizeRelpath and a
-// fake exec runner.
+//   - the URL is passed as its OWN argv element (never interpolated into a shell string), so a
+//     hostile URL cannot become a command;
+//   - --noproxy is NEVER passed. HTTP_PROXY is env-var convention, not iptables: the moment this
+//     tool opts out of the proxy it also opts out of destinationGuard's SSRF checks and audit
+//     logging, which is the whole reason the old app-side ssrfGuard.ts could be retired;
+//   - http:// is upgraded to https://, and non-http(s) schemes are refused before any exec — the
+//     proxy only substitutes secrets over HTTPS, and cleartext must stay off the table;
+//   - redirects are curl's job (-L, capped), because each hop then transits the guarded proxy —
+//     but they stay pinned to https (--proto-redir), since normalizeUrl never sees a Location.
+//
+// The runner is faked (canned stdout/stderr/exit code) so no container or socket is involved.
 
 import { describe, it, expect, vi } from "vitest";
-import { WebFetchTool, type GuardedResponse, type Requester } from "./webFetch";
+import { WebFetchTool, buildCurlArgs } from "./webFetch";
+import type { ExecRunner, ExecResult } from "../interfaces";
 
-// protected _call invoked directly — we are testing the guard wiring, not zod/invoke wrapping.
+// protected _call invoked directly — we are testing transport + parsing, not zod/invoke wrapping.
 type Callable = { _call(input: unknown): Promise<string> };
 const callOf = (t: unknown) => (t as unknown as Callable)._call.bind(t);
 
-const okResponse = (body = "ok", contentType = "text/plain"): GuardedResponse => ({
-  status: 200,
-  statusText: "OK",
-  contentType,
-  location: null,
-  body,
-});
+// curl's -w writes the three metadata fields to stderr (%{stderr}); stdout is the raw body.
+const meta = (status: number, contentType = "text/plain", finalUrl = "https://example.com/") =>
+  `${status}\t${contentType}\t${finalUrl}`;
 
-// Literal private/internal addresses the guard must block. All are IP literals so assertPublicUrl
-// short-circuits before DNS — no network, fully deterministic.
-const BLOCKED = [
-  "https://127.0.0.1/", // loopback
-  "https://169.254.169.254/", // cloud metadata
-  "https://10.0.0.1/", // RFC1918
-  "https://[::1]/", // IPv6 loopback
-];
+function makeRunner(result: Partial<ExecResult>) {
+  const exec = vi.fn(async (): Promise<ExecResult> => ({ code: 0, stdout: "", stderr: meta(200), ...result }));
+  return { exec } as ExecRunner & { exec: ReturnType<typeof vi.fn> };
+}
 
-describe("http_get wires the SSRF guard", () => {
-  const makeTool = (requester: Requester) => ({
-    requester: vi.fn(requester),
-    call(input: { url: string }) {
-      return callOf(new WebFetchTool(this.requester))(input);
-    },
+const call = (runner: ExecRunner, input: { url: string; prompt?: string }) => callOf(new WebFetchTool(runner))(input);
+
+describe("http_get argv construction", () => {
+  it("passes the URL as its own argv element, never interpolated into a shell string", () => {
+    // A URL carrying shell metacharacters must ride as one opaque argv entry. If it were ever
+    // folded into a `sh -c` string this assertion is what breaks.
+    const hostile = "https://example.com/?x=$(id)&y=`whoami`;rm -rf /";
+    const args = buildCurlArgs(hostile);
+    expect(args[args.length - 1]).toBe(hostile);
+    expect(args[0]).toBe("curl");
+    expect(args.some((a) => a.includes("sh") && a.includes("-c"))).toBe(false);
   });
 
-  for (const url of BLOCKED) {
-    it(`blocks "${url}" without touching the network`, async () => {
-      const t = makeTool(async () => okResponse());
-      const result = await t.call({ url });
+  it("never passes --noproxy, so traffic stays on the guarded credential-proxy path", () => {
+    const args = buildCurlArgs("https://example.com/");
+    expect(args).not.toContain("--noproxy");
+    expect(args.join(" ")).not.toContain("noproxy");
+  });
+
+  it("bounds redirects, time and response size", () => {
+    const args = buildCurlArgs("https://example.com/");
+    expect(args).toContain("-L");
+    expect(args[args.indexOf("--max-redirs") + 1]).toBe("5");
+    // --max-time is also the hang guard: ExecRunner.exec() cannot be aborted from the app side.
+    expect(args[args.indexOf("--max-time") + 1]).toBe("15");
+    expect(args[args.indexOf("--max-filesize") + 1]).toBe(String(8 * 1024 * 1024));
+  });
+
+  it("holds redirect hops to https, so -L cannot follow a 302 into cleartext", () => {
+    // normalizeUrl validates the entry URL only. Without these, a hostile (or merely sloppy) site
+    // could redirect the fetch onto plain HTTP and take the request off TLS mid-chain.
+    const args = buildCurlArgs("https://example.com/");
+    expect(args[args.indexOf("--proto") + 1]).toBe("=https");
+    expect(args[args.indexOf("--proto-redir") + 1]).toBe("=https");
+  });
+});
+
+describe("http_get scheme handling", () => {
+  it("upgrades http to https before fetching", async () => {
+    const runner = makeRunner({ stdout: "body" });
+    await call(runner, { url: "http://example.com/page" });
+    expect(runner.exec.mock.calls[0]?.[0]).toContain("https://example.com/page");
+  });
+
+  it("upgrades an uppercase HTTP:// scheme rather than refusing it", async () => {
+    // URL lowercases the protocol, so a case-sensitive prefix test would drop this into the
+    // "only HTTPS" refusal — contradicting the tool description the model is bound against.
+    const runner = makeRunner({ stdout: "body" });
+    await call(runner, { url: "HTTP://example.com/page" });
+    expect(runner.exec.mock.calls[0]?.[0]).toContain("https://example.com/page");
+  });
+
+  for (const url of ["ftp://example.com", "file:///etc/passwd"]) {
+    it(`refuses "${url}" without executing anything`, async () => {
+      const runner = makeRunner({});
+      const result = await call(runner, { url });
       expect(result).toMatch(/error/i);
-      expect(t.requester).not.toHaveBeenCalled();
+      expect(runner.exec).not.toHaveBeenCalled();
     });
   }
 
-  it("reaches the network for a legitimate public URL, pinned to the validated IP", async () => {
-    // Public IP literal — guard returns without DNS, so the requester is reached.
-    const t = makeTool(async () => okResponse());
-    await t.call({ url: "https://1.1.1.1/" });
-    expect(t.requester).toHaveBeenCalledTimes(1);
-    // The requester is called with (url, pinnedIp, signal). For an IP-literal URL the pin IS the
-    // literal — this is the anti-rebinding guarantee crossing the tool boundary.
-    expect(t.requester.mock.calls[0]?.[0]).toBe("https://1.1.1.1/");
-    expect(t.requester.mock.calls[0]?.[1]).toBe("1.1.1.1");
-  });
-
-  // The redirect bypass: a public host that 3xx-redirects to an internal address. Auto-follow would
-  // open the private target unchecked; manual follow must re-guard the Location and refuse it. We
-  // never request the internal host, and the call surfaces the block as an error.
-  it("re-guards redirects and refuses one pointing at an internal address", async () => {
-    const t = makeTool(async (target: string) => {
-      if (target === "https://1.1.1.1/")
-        return {
-          status: 302,
-          statusText: "Found",
-          contentType: "",
-          location: "https://169.254.169.254/latest/meta-data",
-          body: "",
-        };
-      return okResponse("SECRET");
-    });
-
-    const result = await t.call({ url: "https://1.1.1.1/" });
-
+  it("refuses a malformed URL without executing anything", async () => {
+    const runner = makeRunner({});
+    const result = await call(runner, { url: "not a url" });
     expect(result).toMatch(/error/i);
-    expect(result).not.toContain("SECRET");
-    // The internal redirect target was never requested.
-    expect(t.requester.mock.calls.map((c) => c[0])).not.toContain("https://169.254.169.254/latest/meta-data");
+    expect(runner.exec).not.toHaveBeenCalled();
+  });
+});
+
+describe("http_get response handling", () => {
+  it("returns the body and the final (post-redirect) URL", async () => {
+    const runner = makeRunner({ stdout: "hello world", stderr: meta(200, "text/plain", "https://example.com/final") });
+    const result = await call(runner, { url: "https://example.com/" });
+    expect(result).toContain("hello world");
+    expect(result).toContain("https://example.com/final");
   });
 
-  it("follows a redirect to another public address and returns its body", async () => {
-    const t = makeTool(async (target: string) => {
-      if (target === "https://1.1.1.1/")
-        return { status: 302, statusText: "Found", contentType: "", location: "https://8.8.8.8/page", body: "" };
-      return okResponse("hello");
+  it("includes the prompt when one is given", async () => {
+    const runner = makeRunner({ stdout: "data" });
+    const result = await call(runner, { url: "https://example.com/", prompt: "find the price" });
+    expect(result).toContain("find the price");
+    expect(result).toContain("data");
+  });
+
+  it("strips tags from html responses", async () => {
+    const runner = makeRunner({
+      stdout: "<html><script>evil()</script><p>Real content</p></html>",
+      stderr: meta(200, "text/html; charset=utf-8"),
     });
+    const result = await call(runner, { url: "https://example.com/" });
+    expect(result).toContain("Real content");
+    expect(result).not.toContain("evil()");
+    expect(result).not.toContain("<p>");
+  });
 
-    const result = await t.call({ url: "https://1.1.1.1/" });
+  it("truncates an oversized body", async () => {
+    const runner = makeRunner({ stdout: "x".repeat(25_000) });
+    const result = await call(runner, { url: "https://example.com/" });
+    expect(result).toContain("content truncated");
+    expect(result.length).toBeLessThan(21_000);
+  });
 
-    expect(result).toContain("hello");
-    expect(result).toContain("https://8.8.8.8/page"); // final URL reported
-    // The follow-up hop was pinned to the redirect target's IP literal.
-    expect(t.requester.mock.calls[1]?.[1]).toBe("8.8.8.8");
+  it("surfaces a non-2xx status as an error instead of returning the body", async () => {
+    const runner = makeRunner({ stdout: "Not Found page", stderr: meta(404, "text/html") });
+    const result = await call(runner, { url: "https://example.com/" });
+    expect(result).toMatch(/error/i);
+    expect(result).toContain("404");
+    expect(result).not.toContain("Not Found page");
+  });
+
+  it("surfaces a curl failure using its stderr message", async () => {
+    // The proxy refusing a blocked destination reaches us as a non-zero curl exit.
+    const runner = makeRunner({ code: 7, stdout: "", stderr: "curl: (7) Failed to connect" });
+    const result = await call(runner, { url: "https://example.com/" });
+    expect(result).toMatch(/error/i);
+    expect(result).toContain("Failed to connect");
+  });
+
+  it("keeps curl's -w block out of the error message when a failure emits both", async () => {
+    // curl still writes -w on failure (as `000\t\t`). The diagnostic and the metadata share stderr,
+    // so the reported error must not carry that trailing metadata line as if it were the message.
+    const runner = makeRunner({ code: 7, stdout: "", stderr: "curl: (7) Failed to connect\n000\t\t" });
+    const result = await call(runner, { url: "https://example.com/" });
+    expect(result).toContain("Failed to connect");
+    expect(result).not.toContain("000");
+  });
+
+  it("reads the -w block even when curl also logged a diagnostic before it", async () => {
+    const runner = makeRunner({ stdout: "body", stderr: `warning: something\n${meta(200)}` });
+    const result = await call(runner, { url: "https://example.com/" });
+    expect(result).toContain("body");
+    expect(result).not.toMatch(/error/i);
+  });
+
+  it("errors rather than guessing when the status metadata is unreadable", async () => {
+    const runner = makeRunner({ stdout: "body", stderr: "" });
+    const result = await call(runner, { url: "https://example.com/" });
+    expect(result).toMatch(/error/i);
   });
 });

@@ -119,7 +119,7 @@ export function buildTools(
     new FileWriteTool(runner, workspaceDir),
     new TodoWriteTool(workspaceId),
     new CompactContextTool(),
-    ...(config.internetAccess ? [new WebFetchTool()] : []),
+    ...(config.internetAccess ? [new WebFetchTool(runner)] : []),
     new GlobTool(runner),
     new ListDirectoryTool(runner),
     new WorkspaceHistoryTool(workspaceId, workspaceDir, versioning),

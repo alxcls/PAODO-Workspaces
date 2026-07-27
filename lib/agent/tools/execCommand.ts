@@ -138,6 +138,11 @@ You run as a NON-ROOT user, confined to the workspace. apt-get/sudo are NOT avai
       // interval.
       let diskCheckInFlight = false;
 
+      // "Still running" is reassurance, not information — it only needs to be frequent while the
+      // user is still deciding whether the command hung. Past 30s of silence it backs off to every
+      // 30s, so a quiet 5-minute install prints ~15 lines instead of ~59.
+      let lastHeartbeatAt = 0;
+
       const heartbeat = setInterval(() => {
         const now = Date.now();
         const silentMs = now - lastOutputAt;
@@ -153,7 +158,11 @@ You run as a NON-ROOT user, confined to the workspace. apt-get/sudo are NOT avai
           return;
         }
         if (silentMs >= 5_000) {
-          this.broadcast(JSON.stringify({ type: "stdout", data: `⏳ still running... (${elapsed}s elapsed)\n` }));
+          const interval = silentMs < 30_000 ? 5_000 : 30_000;
+          if (now - lastHeartbeatAt >= interval) {
+            lastHeartbeatAt = now;
+            this.broadcast(JSON.stringify({ type: "stdout", data: `⏳ still running... (${elapsed}s elapsed)\n` }));
+          }
         }
 
         // A long-running command (git clone, npm install, a build) can fill the disk after it

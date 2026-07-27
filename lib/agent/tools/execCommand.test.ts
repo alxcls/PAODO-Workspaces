@@ -172,6 +172,79 @@ describe("ExecCommandTool user abort (escape)", () => {
   });
 });
 
+describe("ExecCommandTool silence heartbeat", () => {
+  // The "still running" line is reassurance, not information. It must appear quickly (so a slow
+  // command doesn't look hung) but then back off, or a quiet multi-minute build buries the terminal
+  // in identical lines.
+  it("emits every 5s for the first 30s of silence, then every 30s", async () => {
+    vi.useFakeTimers();
+    try {
+      const lines: string[] = [];
+      const { exec } = hangingExec();
+      const tool = new ExecCommandTool(
+        exec,
+        fakeBackground().fn,
+        (msg) => {
+          const parsed = JSON.parse(msg);
+          if (typeof parsed.data === "string" && parsed.data.includes("still running")) lines.push(parsed.data);
+        },
+        { silenceTimeoutMs: 5 * 60_000, maxTimeoutMs: 30 * 60_000 },
+        "/workspace/test",
+      );
+
+      void tool.invoke({ command: "npm install" });
+      await vi.advanceTimersByTimeAsync(0); // let the pre-flight disk check resolve
+
+      // First 30s: ticks at 5,10,15,20,25s emit (the 30s tick has silentMs === 30_000, already backed off).
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(lines).toHaveLength(5);
+
+      // Next 60s at the backed-off cadence adds only two more, not twelve.
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(lines).toHaveLength(7);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // Real output resets the silence window, so the fast cadence returns for the next quiet stretch
+  // rather than staying stuck at the 30s backoff.
+  it("returns to the 5s cadence after the command produces output", async () => {
+    vi.useFakeTimers();
+    try {
+      const lines: string[] = [];
+      let emit: ((text: string) => void) | undefined;
+      const exec: StreamingExecFn = (_cmd, { onStdout, signal }) =>
+        new Promise((resolve) => {
+          emit = onStdout;
+          signal?.addEventListener("abort", () => resolve({ code: null }));
+        });
+      const tool = new ExecCommandTool(
+        exec,
+        fakeBackground().fn,
+        (msg) => {
+          const parsed = JSON.parse(msg);
+          if (typeof parsed.data === "string" && parsed.data.includes("still running")) lines.push(parsed.data);
+        },
+        { silenceTimeoutMs: 5 * 60_000, maxTimeoutMs: 30 * 60_000 },
+        "/workspace/test",
+      );
+
+      void tool.invoke({ command: "npm install" });
+      await vi.advanceTimersByTimeAsync(0);
+
+      await vi.advanceTimersByTimeAsync(60_000); // 5 fast + 1 backed-off tick
+      const backedOff = lines.length;
+
+      emit?.("added 1200 packages\n"); // output resets lastOutputAt
+      await vi.advanceTimersByTimeAsync(15_000); // ticks at 5s and 10s of fresh silence
+      expect(lines.length).toBe(backedOff + 3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
 describe("ExecCommandTool disk-space guard", () => {
   // A shell command has no declared size the way an HTTP upload does — the only thing worth
   // checking up front is "is there still room at all."

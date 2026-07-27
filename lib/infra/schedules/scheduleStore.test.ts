@@ -90,6 +90,53 @@ describe("scheduleStore", () => {
     expect(store.getSchedule("w1")?.nextRunAt).toBe("2026-07-20T09:00:00.000Z");
   });
 
+  it("clearSchedule removes the entry", () => {
+    store.setSchedule(entry(store));
+    store.clearSchedule("w1");
+    expect(store.getSchedule("w1")).toBeNull();
+    expect(store.listAll()).toEqual([]);
+  });
+
+  it("clearSchedule leaves other workspaces' schedules untouched", () => {
+    store.setSchedule(entry(store, { workspaceId: "w1" }));
+    store.setSchedule(entry(store, { workspaceId: "w2", id: "s2" }));
+    store.clearSchedule("w1");
+    expect(store.getSchedule("w1")).toBeNull();
+    expect(store.getSchedule("w2")?.id).toBe("s2");
+  });
+
+  it("clearSchedule is a no-op when the workspace has no schedule", () => {
+    store.setSchedule(entry(store));
+    const before = fs.readFileSync(FILE, "utf8");
+    const mtimeBefore = fs.statSync(FILE).mtimeMs;
+
+    expect(() => store.clearSchedule("never-scheduled")).not.toThrow();
+
+    // Guard-when-absent means no disk write at all, not just an unchanged result.
+    expect(fs.readFileSync(FILE, "utf8")).toBe(before);
+    expect(fs.statSync(FILE).mtimeMs).toBe(mtimeBefore);
+    expect(store.getSchedule("w1")).not.toBeNull();
+  });
+
+  it("clearSchedule with no file on disk does not throw", () => {
+    expect(fs.existsSync(FILE)).toBe(false);
+    expect(() => store.clearSchedule("w1")).not.toThrow();
+    expect(fs.existsSync(FILE)).toBe(false);
+  });
+
+  it("removal persists to disk and survives a reload", async () => {
+    store.setSchedule(entry(store));
+    store.clearSchedule("w1");
+
+    // Reload without wiping the temp dir — the deletion must be on disk, not just in memory.
+    process.env.WORKSPACES_ROOT = ROOT;
+    clearSingletons();
+    vi.resetModules();
+    const reloaded = await import("./scheduleStore");
+    expect(reloaded.getSchedule("w1")).toBeNull();
+    expect(reloaded.listAll()).toEqual([]);
+  });
+
   it("persists to disk and reloads in a fresh module instance", async () => {
     store.setSchedule(entry(store, { prompt: "persist me" }));
     expect(fs.existsSync(FILE)).toBe(true);

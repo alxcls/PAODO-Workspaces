@@ -18,6 +18,7 @@ import { deleteAllForWorkspace } from "../infra/security/workspaceSecretStore";
 import { deleteForWorkspace as deleteMcpConfig } from "../infra/security/mcpConfigStore";
 import { getCredentialProxy } from "../infra/proxy";
 import { setInternetAccessPolicy, deleteInternetAccessPolicy } from "../infra/proxy/internetAccessPolicy";
+import { clearSchedule } from "../infra/schedules/scheduleStore";
 import { DEFAULT_MAX_RUN_MINUTES, normalizeMaxRunMinutes } from "./workspaceLimits";
 import { assertWorkspaceRegistryRecords } from "../infra/startupChecks";
 export { WORKSPACES_ROOT };
@@ -400,6 +401,7 @@ export const defaultWorkspaceStore = new WorkspaceStore({
     deleteMcpConfig(id);
     getCredentialProxy().clearRules(id);
     deleteInternetAccessPolicy(id);
+    clearSchedule(id);
   },
 });
 

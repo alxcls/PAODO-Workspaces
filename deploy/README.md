@@ -111,7 +111,7 @@ nano .env
 | `CONTAINER_MEMORY`             | No                 | Memory cap per workspace container (default: `1g`)                                                                      |
 | `CONTAINER_CPUS`               | No                 | CPU cap per workspace container (default: `1.0`)                                                                        |
 | `CONTAINER_IDLE_MS`            | No                 | Idle timeout before a workspace container stops (default: `600000` = 10 min)                                            |
-| `EXEC_SILENCE_TIMEOUT_MS`      | No                 | Kills a shell command if it produces no output for this long (default: `60000` = 1 min)                                 |
+| `EXEC_SILENCE_TIMEOUT_MS`      | No                 | Kills a shell command if it produces no output for this long (default: `300000` = 5 min)                                |
 | `EXEC_MAX_TIMEOUT_MS`          | No                 | Kills a shell command after this total elapsed time regardless of output (default: `1800000` = 30 min)                  |
 
 Production startup requires at least one of the three LLM provider API keys.

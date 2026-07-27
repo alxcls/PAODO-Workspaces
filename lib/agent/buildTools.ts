@@ -84,7 +84,10 @@ export function loadAgentConfig(workspaceId?: string): AgentConfig {
     graphEnabled: process.env.GRAPH_ENABLED !== "false",
     internetAccess: ws ? (ws.internetAccess ?? true) : false,
     anthropicCacheTtl1h: process.env.ANTHROPIC_CACHE_TTL_1H === "true",
-    silenceTimeoutMs: parseInt(process.env.EXEC_SILENCE_TIMEOUT_MS ?? "", 10) || 60_000,
+    // 5 minutes, not 1: a quiet command is usually a slow one (npm install, docker pull, a test suite
+    // that only prints at the end), not a hung one. The max-runtime guard below is what bounds a
+    // genuinely stuck command.
+    silenceTimeoutMs: parseInt(process.env.EXEC_SILENCE_TIMEOUT_MS ?? "", 10) || 5 * 60_000,
     maxTimeoutMs: parseInt(process.env.EXEC_MAX_TIMEOUT_MS ?? "", 10) || 30 * 60_000,
     skillInputMaxRetries: parseInt(process.env.SKILL_INPUT_MAX_RETRIES ?? "", 10) || 2,
     skillOutputMaxRetries: parseInt(process.env.SKILL_OUTPUT_MAX_RETRIES ?? "", 10) || 2,

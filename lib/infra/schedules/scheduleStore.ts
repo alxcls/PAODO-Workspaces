@@ -86,6 +86,24 @@ export function setNextRunAt(workspaceId: string, nextRunAt: string | null): voi
   save({ workspaceId, scheduleId: entry.id, operation: "set_next_run" });
 }
 
+/**
+ * Remove a workspace's schedule entirely. Called only from the workspace-deletion cascade — a
+ * schedule must not outlive the workspace it fires. Turning a schedule off is a separate,
+ * non-destructive operation (setSchedule with enabled: false), so this is deliberately not
+ * reachable over HTTP.
+ */
+export function clearSchedule(workspaceId: string): void {
+  const entry = store[workspaceId];
+  // No-op when absent: avoids a pointless disk write and log line for the common case of deleting
+  // a workspace that never had a schedule. Matches mcpConfigStore/workspaceSecretStore.
+  if (!entry) return;
+  // Read the id before deleting — save()'s context requires it.
+  const scheduleId = entry.id;
+  delete store[workspaceId];
+  save({ workspaceId, scheduleId, operation: "clear_schedule" });
+  log.info({ workspaceId, scheduleId }, "schedule cleared");
+}
+
 /** Record the outcome of a run and advance the next-run pointer in one atomic write. */
 export function recordRun(
   workspaceId: string,

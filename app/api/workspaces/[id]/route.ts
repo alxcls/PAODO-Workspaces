@@ -7,6 +7,7 @@ import { disconnectWorkspace } from "@/lib/workspace/driveStore";
 import { removeWorkspaceFromGraph } from "@/lib/workspace/workspaceGraph";
 import { deleteKey } from "@/lib/infra/security/apiKeyStore";
 import { rm } from "fs/promises";
+import { existsSync } from "fs";
 import path from "path";
 import { WORKSPACES_ROOT } from "@/lib/infra/paths";
 import { SUPPORTED_PROVIDERS, getProviderMetadata } from "@/lib/agent/buildModel";
@@ -24,6 +25,12 @@ async function runDeleteCleanup(
 ): Promise<void> {
   try {
     await cleanup();
+    // Per-stage success trace: on a partial failure this is what tells you how far the delete got
+    // before the error, which stages already completed, and therefore what a retry still has to do.
+    log.debug(
+      { event: "workspace_delete_stage_completed", outcome: "diagnostic_recorded", workspaceId, stage },
+      "workspace deletion stage completed",
+    );
   } catch (err) {
     log.error(
       {
@@ -154,14 +161,38 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const ws = getStore().getWorkspace(id);
-  if (!ws) return NextResponse.json({ deleted: false });
-  await runDeleteCleanup(id, "workspace_registry_and_owned_resources", () => getStore().deleteWorkspace(id));
+  // A missing registry entry is not treated as "nothing to do". It also describes a delete that
+  // failed partway through an earlier attempt, and returning early there would strand the surviving
+  // resources permanently — nothing else in the system ever sweeps them. Every stage below is keyed
+  // by the workspace id and no-ops when its resource is already gone, so repeating them is safe.
+  const resuming = !ws;
+  // The registry is the only place the directory path is recorded, so derive it when resuming.
+  // It is built from the immutable id, exactly as the store builds it on create.
+  const dir = ws?.dir ?? path.join(WORKSPACES_ROOT, id);
+  // Deleting the directory spawns a throwaway root container in production. On the resume path,
+  // where the id may simply be unknown, only pay that cost when there is residue to remove. The
+  // normal path is left unconditional so a data volume the app cannot stat is never a silent skip.
+  const deleteDirectory = !resuming || existsSync(dir);
+
+  audit.info(
+    {
+      event: "workspace_delete_started",
+      outcome: "workspace_deletion_started",
+      workspaceId: id,
+      workspaceName: ws?.name,
+      resuming,
+    },
+    resuming ? "resuming an incomplete workspace deletion" : "workspace deletion started",
+  );
+
   await runDeleteCleanup(id, "drive_connections", () => disconnectWorkspace(id));
   await runDeleteCleanup(id, "agent_graph", () => removeWorkspaceFromGraph(id));
   await runDeleteCleanup(id, "api_key", () => deleteKey(id));
   await Promise.all([
     runDeleteCleanup(id, "container", () => getContainers().remove(id)),
-    runDeleteCleanup(id, "workspace_directory", () => getContainers().deleteWorkspaceDir(ws.dir)),
+    ...(deleteDirectory
+      ? [runDeleteCleanup(id, "workspace_directory", () => getContainers().deleteWorkspaceDir(dir))]
+      : []),
     // Version history must not outlive the workspace.
     runDeleteCleanup(id, "version_history", () => getVersioning().deleteRepo(id)),
     // Agent-permissions file written by the permission model — best-effort, may not exist.
@@ -169,14 +200,19 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
       rm(path.join(WORKSPACES_ROOT, ".agent-permissions", `${id}.json`), { force: true }),
     ),
   ]);
+  // The registry entry goes last, with the id-keyed stores it owns. Anything that fails above leaves
+  // the workspace listed and deletable again, instead of orphaning resources behind an entry that no
+  // longer exists — the retry then re-runs these same stages and finishes the job.
+  await runDeleteCleanup(id, "workspace_registry_and_owned_resources", () => getStore().deleteWorkspace(id));
   audit.info(
     {
       event: "workspace_deleted",
       outcome: "workspace_and_owned_resources_deleted",
       workspaceId: id,
-      workspaceName: ws.name,
+      workspaceName: ws?.name,
+      resumed: resuming,
     },
-    "workspace deleted",
+    resuming ? "incomplete workspace deletion completed" : "workspace deleted",
   );
-  return NextResponse.json({ deleted: true });
+  return NextResponse.json({ deleted: !resuming, ...(resuming ? { resumed: true } : {}) });
 }

@@ -294,16 +294,23 @@ export class WorkspaceStore implements IWorkspaceStore {
 
   async deleteWorkspace(id: string): Promise<boolean> {
     const ws = this.workspaces.get(id);
+    // Owned-resource cleanup runs even when the registry entry is already gone, so a delete that
+    // failed partway through an earlier attempt can be completed by simply deleting again. Every
+    // cleanup is keyed by the workspace id and no-ops when its resource is absent.
+    await this.onDeleteFn(id);
     if (!ws) return false;
     this.workspaces.delete(id);
-    await this.onDeleteFn(id);
     try {
       this.save();
     } catch (err) {
+      // Put the workspace back. The in-memory map and the on-disk registry must not disagree: a
+      // workspace that vanished from the UI but reappears on restart is harder to reason about than
+      // one that never left. The caller surfaces the failure and the delete stays retryable.
+      this.workspaces.set(id, ws);
       log.error(
         {
           event: "workspace_registry_delete_persist_failed",
-          outcome: "workspace_deleted_in_memory_only",
+          outcome: "workspace_restored_pending_retry",
           err,
           workspaceId: id,
           filePath: REGISTRY_FILE,

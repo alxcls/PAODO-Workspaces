@@ -13,7 +13,7 @@ const h = vi.hoisted(() => ({
   deleteWorkspace: vi.fn(async (_id: string) => true),
   disconnectWorkspace: vi.fn(),
   removeWorkspaceFromGraph: vi.fn(),
-  deleteKey: vi.fn(),
+  removeWorkspaceCredentials: vi.fn(),
   removeContainer: vi.fn(async (_id: string) => {}),
   deleteWorkspaceDir: vi.fn(async (_dir: string) => {}),
   deleteRepo: vi.fn(async (_id: string) => {}),
@@ -60,10 +60,10 @@ vi.mock("@/lib/workspace/workspaceGraph", () => ({
     return h.removeWorkspaceFromGraph(id);
   },
 }));
-vi.mock("@/lib/infra/security/apiKeyStore", () => ({
-  deleteKey: (id: string) => {
-    track("api_key");
-    return h.deleteKey(id);
+vi.mock("@/lib/infra/security/credentialStore", () => ({
+  removeWorkspace: (id: string) => {
+    track("credentials");
+    return h.removeWorkspaceCredentials(id);
   },
 }));
 vi.mock("fs/promises", () => ({ rm: h.rm }));
@@ -85,7 +85,7 @@ beforeEach(() => {
   for (const fn of [
     h.disconnectWorkspace,
     h.removeWorkspaceFromGraph,
-    h.deleteKey,
+    h.removeWorkspaceCredentials,
     h.removeContainer,
     h.deleteWorkspaceDir,
     h.deleteRepo,
@@ -131,7 +131,7 @@ describe("DELETE /api/workspaces/[id]", () => {
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ deleted: false, resumed: true });
     // Every id-keyed stage runs again; none of them may be skipped just because the entry is gone.
-    expect(h.calls).toEqual(expect.arrayContaining(["drives", "graph", "api_key", "container", "version_history"]));
+    expect(h.calls).toEqual(expect.arrayContaining(["drives", "graph", "credentials", "container", "version_history"]));
     expect(h.deleteWorkspace).toHaveBeenCalledWith("ws-1");
   });
 

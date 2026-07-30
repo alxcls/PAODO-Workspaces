@@ -7,7 +7,7 @@ import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { ListToolsRequestSchema, CallToolRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import type { Tool, CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { loadSkills } from "../workspace/skillStore";
-import { getState } from "../infra/security/mcpConfigStore";
+import { getSelectedSkills } from "../infra/security/mcpSkillStore";
 import { executeSkill } from "../agent/skills/executeSkill";
 import { getStore, getContainers } from "../infra/services";
 import { createLogger } from "../infra/logger";
@@ -27,7 +27,7 @@ export interface WorkspaceMcpDeps {
 function selectedSkills(workspaceId: string, deps: WorkspaceMcpDeps): Promise<SkillDefinition[]> {
   const dir = (deps.getWorkspaceDir ?? ((id) => getStore().getWorkspace(id)?.dir))(workspaceId);
   if (!dir) return Promise.resolve([]);
-  const selected = new Set((deps.getSelectedSkillIds ?? ((id) => getState(id).selectedSkillIds))(workspaceId));
+  const selected = new Set((deps.getSelectedSkillIds ?? getSelectedSkills)(workspaceId));
   return (deps.loadSkillsFn ?? loadSkills)(dir).then((skills) => skills.filter((s) => selected.has(s.id)));
 }
 

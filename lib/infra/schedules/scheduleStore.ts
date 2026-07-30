@@ -4,7 +4,7 @@
 //
 // Stored as a sibling of the other app-level JSON files under WORKSPACES_ROOT (never inside a
 // workspace directory or container, so it survives container recreation). Mirrors the shape and
-// persistence pattern of apiKeyStore.ts.
+// persistence pattern of credentialStore.ts.
 import path from "path";
 import { WORKSPACES_ROOT } from "../paths";
 import { atomicSaveJson, readJson } from "../jsonPersist";

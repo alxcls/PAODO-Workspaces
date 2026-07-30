@@ -20,8 +20,11 @@ const WORKSPACES: Record<string, { id: string; name: string; maxRunMinutes: numb
   "ws-b": { id: "ws-b", name: "beta", maxRunMinutes: 10 },
 };
 
-vi.mock("@/lib/infra/security/apiKeyStore", () => ({
-  validateKey: (id: string, plain: string) => KEYS[id] === plain,
+// Asserting on the kind matters: passing "platform" here would validate an instance-wide CLI token
+// against a workspace-scoped request.
+vi.mock("@/lib/infra/security/credentialStore", () => ({
+  validate: (kind: string, subject: string | null, plain: string) =>
+    kind === "workspace-api" && subject !== null && KEYS[subject] === plain,
 }));
 vi.mock("@/lib/infra/services", () => ({
   getStore: () => ({ getWorkspace: (id: string) => WORKSPACES[id] }),

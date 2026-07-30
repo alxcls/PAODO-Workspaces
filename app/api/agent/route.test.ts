@@ -8,17 +8,20 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-// Two workspaces, each with its own key. validateKey is the real scoping primitive (tested in
-// apiKeyStore.test.ts); here we fake it so the test owns the key→workspace mapping and these
-// tests assert that the ROUTE consults it with the right workspace id.
+// Two workspaces, each with its own key. credentialStore.validate is the real scoping primitive
+// (tested in credentialStore.test.ts); here we fake it so the test owns the key→workspace mapping and
+// these tests assert that the ROUTE consults it with the right kind and workspace id. Asserting on
+// the kind matters: passing "platform" would validate an instance-wide token against a
+// workspace-scoped request.
 const KEYS: Record<string, string> = { "ws-a": "key-a", "ws-b": "key-b" };
 const WORKSPACES: Record<string, { id: string; name: string }> = {
   alpha: { id: "ws-a", name: "alpha" },
   beta: { id: "ws-b", name: "beta" },
 };
 
-vi.mock("@/lib/infra/security/apiKeyStore", () => ({
-  validateKey: (id: string, plain: string) => KEYS[id] === plain,
+vi.mock("@/lib/infra/security/credentialStore", () => ({
+  validate: (kind: string, subject: string | null, plain: string) =>
+    kind === "workspace-api" && subject !== null && KEYS[subject] === plain,
 }));
 vi.mock("@/lib/infra/services", () => ({
   getStore: () => ({ getWorkspaceByName: (name: string) => WORKSPACES[name] }),

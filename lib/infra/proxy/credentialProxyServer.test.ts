@@ -16,7 +16,8 @@ import forge from "node-forge";
 
 // credentialProxy.ts now reads the internet-access policy store, which persists to a file under
 // WORKSPACES_ROOT — redirect it to a throwaway temp dir before that import chain runs, so this
-// suite's setInternetAccessPolicy calls below never touch the real ./data. Mirrors apiKeyStore.test.ts.
+// suite's setInternetAccessPolicy calls below never touch the real ./data. Mirrors
+// credentialStore.test.ts.
 vi.hoisted(() => {
   const os = require("os");
   const fs = require("fs");

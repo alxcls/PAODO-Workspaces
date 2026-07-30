@@ -1,36 +1,24 @@
-// REST endpoint for managing a workspace's API key.
-// GET returns current key state; POST generates a new key (returning the plaintext once); DELETE revokes it; PATCH toggles it on/off.
+// REST endpoint for managing a workspace's agent API key.
+// GET returns the current state; POST mints/rotates the key (plaintext returned once); DELETE revokes
+// it; PATCH toggles the channel. Everything but GET comes from the shared credential handlers.
 export const runtime = "nodejs";
 
-import { generateKey, setKey, revokeKey, setEnabled, getState } from "@/lib/infra/security/apiKeyStore";
+import { NextResponse } from "next/server";
+import { credentialHandlers, publicBaseUrl } from "@/lib/api/credentialRoutes";
+import { state } from "@/lib/infra/security/credentialStore";
 
-export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
-  const { id } = await params;
-  const { keyHash, enabled } = getState(id);
-  const publicBaseUrl = process.env.WORKSPACE_API_DOMAIN?.trim()
-    ? `https://${process.env.WORKSPACE_API_DOMAIN.trim()
-        .replace(/^https?:\/\//, "")
-        .replace(/\/+$/, "")}`
-    : null;
-  return Response.json({ enabled, hasKey: keyHash !== null, publicBaseUrl });
-}
+type Params = { id: string };
 
-export async function POST(_req: Request, { params }: { params: Promise<{ id: string }> }) {
-  const { id } = await params;
-  const { plain, hash } = generateKey();
-  setKey(id, hash);
-  return Response.json({ plain });
-}
+const handlers = credentialHandlers<Params>("workspace-api", async ({ id }) => id);
 
-export async function DELETE(_req: Request, { params }: { params: Promise<{ id: string }> }) {
-  const { id } = await params;
-  revokeKey(id);
-  return Response.json({ ok: true });
-}
+export const POST = handlers.POST;
+export const DELETE = handlers.DELETE;
+export const PATCH = handlers.PATCH;
 
-export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
+export async function GET(_req: Request, { params }: { params: Promise<Params> }) {
   const { id } = await params;
-  const { enabled } = (await req.json()) as { enabled: boolean };
-  setEnabled(id, enabled);
-  return Response.json({ ok: true });
+  return NextResponse.json(
+    { ...state("workspace-api", id), publicBaseUrl: publicBaseUrl() },
+    { headers: { "Cache-Control": "no-store" } },
+  );
 }

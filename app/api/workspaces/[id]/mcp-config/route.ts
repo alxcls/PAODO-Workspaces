@@ -2,18 +2,34 @@
 // distinct path from the MCP protocol endpoint (/mcp). GET returns state + the skills available to
 // select; PATCH toggles enabled; POST mints the bearer secret (returned once); DELETE revokes it;
 // PUT sets the selected (published) skill ids.
+//
+// The credential verbs come from the shared handlers — the MCP secret is a credential like any other.
+// Only the skill selection is specific to MCP, so only that stays here.
 export const runtime = "nodejs";
 
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
-import { getState, setEnabled, mintSecret, revokeSecret, setSelectedSkills } from "@/lib/infra/security/mcpConfigStore";
+import { credentialHandlers, publicBaseUrl } from "@/lib/api/credentialRoutes";
+import { state } from "@/lib/infra/security/credentialStore";
+import { getSelectedSkills, setSelectedSkills } from "@/lib/infra/security/mcpSkillStore";
 import { loadSkills } from "@/lib/workspace/skillStore";
 import { requireWorkspace } from "@/lib/api/guards";
 import type { Workspace } from "@/lib/workspace/workspaceStore";
 
-async function guard(id: string): Promise<Workspace | Response> {
+type Params = { id: string };
+
+function guard(id: string): Workspace | NextResponse {
   return requireWorkspace(id);
 }
+
+const handlers = credentialHandlers<Params>("workspace-mcp", async ({ id }) => {
+  const ws = guard(id);
+  return ws instanceof NextResponse ? ws : id;
+});
+
+export const POST = handlers.POST;
+export const DELETE = handlers.DELETE;
+export const PATCH = handlers.PATCH;
 
 async function jsonBody(req: NextRequest): Promise<Record<string, unknown> | null> {
   try {
@@ -24,66 +40,30 @@ async function jsonBody(req: NextRequest): Promise<Record<string, unknown> | nul
   }
 }
 
-export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export async function GET(_req: NextRequest, { params }: { params: Promise<Params> }) {
   const { id } = await params;
-  const ws = await guard(id);
-  if (ws instanceof Response) return ws;
+  const ws = guard(id);
+  if (ws instanceof NextResponse) return ws;
 
-  const { enabled, secretHash, selectedSkillIds } = getState(id);
   const availableSkills = (await loadSkills(ws.dir)).map((s) => ({
     id: s.id,
     description: s.description,
   }));
-  const publicBaseUrl = process.env.WORKSPACE_API_DOMAIN?.trim()
-    ? `https://${process.env.WORKSPACE_API_DOMAIN.trim()
-        .replace(/^https?:\/\//, "")
-        .replace(/\/+$/, "")}`
-    : null;
-  return NextResponse.json({
-    enabled,
-    hasSecret: secretHash !== null,
-    selectedSkillIds,
-    availableSkills,
-    publicBaseUrl,
-  });
+  return NextResponse.json(
+    {
+      ...state("workspace-mcp", id),
+      selectedSkillIds: getSelectedSkills(id),
+      availableSkills,
+      publicBaseUrl: publicBaseUrl(),
+    },
+    { headers: { "Cache-Control": "no-store" } },
+  );
 }
 
-export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export async function PUT(req: NextRequest, { params }: { params: Promise<Params> }) {
   const { id } = await params;
-  const ws = await guard(id);
-  if (ws instanceof Response) return ws;
-
-  const body = await jsonBody(req);
-  const enabled = body?.enabled;
-  if (typeof enabled !== "boolean") {
-    return NextResponse.json({ error: "enabled must be a boolean" }, { status: 400 });
-  }
-  setEnabled(id, enabled);
-  return NextResponse.json({ ok: true });
-}
-
-export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const { id } = await params;
-  const ws = await guard(id);
-  if (ws instanceof Response) return ws;
-
-  const plain = mintSecret(id);
-  return NextResponse.json({ plain });
-}
-
-export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const { id } = await params;
-  const ws = await guard(id);
-  if (ws instanceof Response) return ws;
-
-  revokeSecret(id);
-  return NextResponse.json({ ok: true });
-}
-
-export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const { id } = await params;
-  const ws = await guard(id);
-  if (ws instanceof Response) return ws;
+  const ws = guard(id);
+  if (ws instanceof NextResponse) return ws;
 
   const body = await jsonBody(req);
   const selectedSkillIds = body?.selectedSkillIds;

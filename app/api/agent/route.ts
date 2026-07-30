@@ -3,7 +3,7 @@ export const runtime = "nodejs";
 
 import { type NextRequest } from "next/server";
 import { getStore, getContainers } from "@/lib/infra/services";
-import { validateKey } from "@/lib/infra/security/apiKeyStore";
+import { validate } from "@/lib/infra/security/credentialStore";
 import { getClientIp } from "@/lib/infra/realtime/clientIp";
 import { createAuditLogger, createLogger } from "@/lib/infra/logger";
 import { makeAgentStream } from "@/lib/agent/agentStream";
@@ -25,7 +25,7 @@ export async function POST(req: NextRequest) {
   const ws = getStore().getWorkspaceByName(body.workspace.trim());
   if (!ws) return new Response("Workspace not found", { status: 404 });
 
-  if (!plain || !validateKey(ws.id, plain)) {
+  if (!plain || !validate("workspace-api", ws.id, plain)) {
     audit.warn(
       {
         ip,

@@ -1,6 +1,6 @@
 // Workspace MCP protocol endpoint (Streamable HTTP). External AI clients POST JSON-RPC here to
 // discover and call the workspace's selected skills as MCP tools. Authenticated by the workspace's
-// own bearer secret (mcpConfigStore), NOT the site-wide Basic Auth — the path is exempted in
+// own bearer secret (credentialStore's "workspace-mcp" kind), NOT the site-wide Basic Auth — the path is exempted in
 // httpAuth.ts. Runs stateless with buffered JSON responses, so each POST is a self-contained
 // exchange and there is no server->client SSE channel (GET/DELETE therefore return 405).
 export const runtime = "nodejs";
@@ -8,7 +8,7 @@ export const runtime = "nodejs";
 import type { NextRequest } from "next/server";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { buildWorkspaceMcpServer } from "@/lib/mcp/workspaceMcpServer";
-import { validateSecret } from "@/lib/infra/security/mcpConfigStore";
+import { validate } from "@/lib/infra/security/credentialStore";
 import { rateLimited, subjectRateLimited } from "@/lib/api/guards";
 import { getClientIp } from "@/lib/infra/realtime/clientIp";
 import { createAuditLogger, createLogger } from "@/lib/infra/logger";
@@ -53,7 +53,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   });
   if (limited) return limited;
 
-  if (!validateSecret(id, bearer(req))) {
+  if (!validate("workspace-mcp", id, bearer(req))) {
     // Reachable by anyone on the internet — this is one of the two routes the public Caddy gateway
     // forwards — so the caller decides how often it logs. Per-IP rate limiting above bounds a single
     // source; the throttle is what bounds a flood spread across many.

@@ -15,7 +15,7 @@ import { deleteWorkspaceConversations } from "./conversationStore";
 import type { IWorkspaceStore } from "../infra/interfaces";
 import type { ReasoningEffort } from "../agent/interfaces";
 import { deleteAllForWorkspace } from "../infra/security/workspaceSecretStore";
-import { deleteForWorkspace as deleteMcpConfig } from "../infra/security/mcpConfigStore";
+import { removeWorkspace as deleteMcpSkills } from "../infra/security/mcpSkillStore";
 import { getCredentialProxy } from "../infra/proxy";
 import { setInternetAccessPolicy, deleteInternetAccessPolicy } from "../infra/proxy/internetAccessPolicy";
 import { clearSchedule } from "../infra/schedules/scheduleStore";
@@ -405,7 +405,7 @@ export const defaultWorkspaceStore = new WorkspaceStore({
   onDelete: (id) => {
     deleteWorkspaceConversations(id);
     deleteAllForWorkspace(id);
-    deleteMcpConfig(id);
+    deleteMcpSkills(id);
     getCredentialProxy().clearRules(id);
     deleteInternetAccessPolicy(id);
     clearSchedule(id);

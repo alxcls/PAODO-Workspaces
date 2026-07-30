@@ -5,7 +5,7 @@ import { getStore, getContainers, getVersioning } from "@/lib/infra/services";
 import { requireWorkspace, notFound, workspaceNameErrorResponse } from "@/lib/api/guards";
 import { disconnectWorkspace } from "@/lib/workspace/driveStore";
 import { removeWorkspaceFromGraph } from "@/lib/workspace/workspaceGraph";
-import { deleteKey } from "@/lib/infra/security/apiKeyStore";
+import { removeWorkspace as removeWorkspaceCredentials } from "@/lib/infra/security/credentialStore";
 import { rm } from "fs/promises";
 import { existsSync } from "fs";
 import path from "path";
@@ -187,7 +187,8 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
 
   await runDeleteCleanup(id, "drive_connections", () => disconnectWorkspace(id));
   await runDeleteCleanup(id, "agent_graph", () => removeWorkspaceFromGraph(id));
-  await runDeleteCleanup(id, "api_key", () => deleteKey(id));
+  // Both of the workspace's minted secrets (agent API key and MCP secret) go in one step.
+  await runDeleteCleanup(id, "credentials", () => removeWorkspaceCredentials(id));
   await Promise.all([
     runDeleteCleanup(id, "container", () => getContainers().remove(id)),
     ...(deleteDirectory

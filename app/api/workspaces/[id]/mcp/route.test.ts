@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const h = vi.hoisted(() => ({
   limited: null as Response | null,
   workspaceLimited: null as Response | null,
-  validateSecret: vi.fn(() => false),
+  validateCredential: vi.fn(() => false),
   buildServer: vi.fn(() => ({ connect: vi.fn(async () => {}), close: vi.fn(async () => {}) })),
   handleRequest: vi.fn(async (_req: Request) => Response.json({ jsonrpc: "2.0", id: 7, result: { tools: [] } })),
 }));
@@ -14,7 +14,7 @@ vi.mock("@/lib/api/guards", () => ({
   rateLimited: () => h.limited,
   subjectRateLimited: () => h.workspaceLimited,
 }));
-vi.mock("@/lib/infra/security/mcpConfigStore", () => ({ validateSecret: h.validateSecret }));
+vi.mock("@/lib/infra/security/credentialStore", () => ({ validate: h.validateCredential }));
 vi.mock("@/lib/mcp/workspaceMcpServer", () => ({ buildWorkspaceMcpServer: h.buildServer }));
 vi.mock("@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js", () => ({
   WebStandardStreamableHTTPServerTransport: class {
@@ -41,7 +41,7 @@ const post = (body: unknown, secret?: string) =>
 beforeEach(() => {
   h.limited = null;
   h.workspaceLimited = null;
-  h.validateSecret.mockReset().mockReturnValue(false);
+  h.validateCredential.mockReset().mockReturnValue(false);
   h.buildServer.mockClear();
   h.handleRequest.mockClear();
 });
@@ -50,7 +50,9 @@ describe("workspace MCP route", () => {
   it("rejects a missing or invalid bearer secret before constructing an MCP server", async () => {
     const res = await post({ jsonrpc: "2.0", id: 1, method: "tools/list" });
     expect(res.status).toBe(401);
-    expect(h.validateSecret).toHaveBeenCalledWith("ws-1", "");
+    // The kind is part of the assertion: "workspace-mcp" is what scopes this to the MCP secret rather
+    // than accepting the workspace's agent API key or the instance-wide CLI token.
+    expect(h.validateCredential).toHaveBeenCalledWith("workspace-mcp", "ws-1", "");
     expect(h.buildServer).not.toHaveBeenCalled();
   });
 
@@ -58,12 +60,12 @@ describe("workspace MCP route", () => {
     h.limited = new Response("Too Many Requests", { status: 429 });
     const res = await post({ jsonrpc: "2.0", id: 1, method: "tools/list" }, "valid");
     expect(res.status).toBe(429);
-    expect(h.validateSecret).not.toHaveBeenCalled();
+    expect(h.validateCredential).not.toHaveBeenCalled();
     expect(h.buildServer).not.toHaveBeenCalled();
   });
 
   it("passes an authenticated JSON-RPC request to the transport", async () => {
-    h.validateSecret.mockReturnValue(true);
+    h.validateCredential.mockReturnValue(true);
     const res = await post({ jsonrpc: "2.0", id: 7, method: "tools/list" }, "valid");
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ jsonrpc: "2.0", id: 7, result: { tools: [] } });
@@ -72,7 +74,7 @@ describe("workspace MCP route", () => {
   });
 
   it("applies the authenticated workspace quota before constructing an MCP server", async () => {
-    h.validateSecret.mockReturnValue(true);
+    h.validateCredential.mockReturnValue(true);
     h.workspaceLimited = new Response("Too Many Requests", { status: 429 });
     const res = await post({ jsonrpc: "2.0", id: 7, method: "tools/list" }, "valid");
     expect(res.status).toBe(429);
@@ -80,7 +82,7 @@ describe("workspace MCP route", () => {
   });
 
   it("returns a JSON-RPC internal error if MCP setup fails", async () => {
-    h.validateSecret.mockReturnValue(true);
+    h.validateCredential.mockReturnValue(true);
     h.buildServer.mockImplementationOnce(() => {
       throw new Error("boom");
     });

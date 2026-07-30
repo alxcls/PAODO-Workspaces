@@ -7,7 +7,7 @@ import fs from "fs";
 import path from "path";
 
 // Redirect the store file to a throwaway dir BEFORE paths.ts reads WORKSPACES_ROOT at import
-// time (vi.hoisted runs above imports — same pattern as apiKeyStore.test.ts).
+// time (vi.hoisted runs above imports — same pattern as credentialStore.test.ts).
 const { ROOT } = vi.hoisted(() => {
   const os = require("os");
   const fs = require("fs");

@@ -133,6 +133,68 @@ describe("checkAuth", () => {
       "challenge",
     );
   });
+
+  it("accepts a valid platform token only on explicitly shared read routes", () => {
+    const validate = vi.fn((token: string) => token === "cli_good");
+    for (const pathname of ["/api/status", "/api/workspaces", "/api/workspaces/ws-1"]) {
+      expect(
+        checkAuth("ip", req({ method: "GET", pathname, authorization: "Bearer cli_good" }), CREDS, tracker, validate),
+      ).toBe("platform");
+    }
+    // The validator only ever sees the secret. Authorization is the policy table's job, which is why
+    // the loop below denies unmapped routes while handing this same validator the same valid token.
+    expect(validate).toHaveBeenCalledWith("cli_good");
+
+    for (const [method, pathname] of [
+      ["POST", "/api/workspaces"],
+      ["PATCH", "/api/workspaces/ws-1"],
+      ["GET", "/api/workspaces/ws-1/files"],
+      // The route that mints and rotates the platform token itself: a CLI token reaching this would
+      // let a leaked credential renew itself, so it must never map to a permission.
+      ["GET", "/api/settings/cli-access"],
+      ["POST", "/api/settings/cli-access"],
+      ["DELETE", "/api/settings/cli-access"],
+    ]) {
+      expect(
+        checkAuth("ip", req({ method, pathname, authorization: "Bearer cli_good" }), CREDS, tracker, validate),
+      ).toBe("unauthorized");
+    }
+  });
+
+  it("does not count an authorization denial toward the brute-force lockout", () => {
+    // The tracker is shared with the UI's Basic auth. A valid token used on a route that simply is
+    // not shared is a misconfigured client, not a credential guess — counting it would let a script
+    // polling an unshared route lock its own operator out of the web interface. Ten attempts here is
+    // twice the lockout threshold.
+    const spy = vi.spyOn(tracker, "recordFailure");
+    for (let attempt = 0; attempt < 10; attempt++) {
+      expect(
+        checkAuth(
+          "ip",
+          req({ method: "GET", pathname: "/api/workspaces/ws-1/files", authorization: "Bearer cli_good" }),
+          CREDS,
+          tracker,
+          (token) => token === "cli_good",
+        ),
+      ).toBe("unauthorized");
+    }
+    expect(spy).not.toHaveBeenCalled();
+    // ...and the UI's own credentials still work from that IP.
+    expect(checkAuth("ip", req({ authorization: basic("admin", "hunter2") }), CREDS, tracker)).toBe("ok");
+  });
+
+  it("rejects an invalid platform token and records a failure", () => {
+    const spy = vi.spyOn(tracker, "recordFailure");
+    const result = checkAuth(
+      "ip",
+      req({ method: "GET", pathname: "/api/workspaces", authorization: "Bearer cli_wrong" }),
+      CREDS,
+      tracker,
+      () => false,
+    );
+    expect(result).toBe("unauthorized");
+    expect(spy).toHaveBeenCalledWith("ip");
+  });
 });
 
 describe("checkWsAuth", () => {

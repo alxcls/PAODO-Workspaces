@@ -6,6 +6,7 @@
 // extracts primitives off the Node request and calls these functions.
 import type { IncomingMessage } from "http";
 import { timingSafeEqual } from "crypto";
+import { platformPermissionFor } from "./platformAccessPolicy";
 
 // Constant-time string comparison. Used for the Basic-Auth username/password so a byte-by-byte
 // timing difference can't be measured to recover the secret.
@@ -53,19 +54,23 @@ export class AuthFailureTracker {
 
 // The agent endpoint authenticates via Bearer API key, not Basic Auth — exempt POSTs to it.
 const PUBLIC_API_RE = /^\/api\/workspaces\/[^/]+\/agent$/;
-// The Workspace MCP endpoint authenticates via its own Bearer secret (mcpConfigStore), not Basic
+// The Workspace MCP endpoint authenticates via its own Bearer secret (credentialStore's
+// "workspace-mcp" kind), not Basic
 // Auth, so exempt every method here. POST is the protocol channel: the route validates the secret
 // and returns 401 on failure. GET/DELETE carry no secret and the route rejects them with 405 before
 // any workspace state is touched, so exempting them leaks nothing.
 const PUBLIC_MCP_RE = /^\/api\/workspaces\/[^/]+\/mcp$/;
 const MUTATING_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
-// "ok" means, and only means, that Basic credentials were presented and verified. Routes that carry
-// their own Bearer credential return "exempt": also a pass, but nothing about the caller has been
-// proven here. Callers must not treat the two as interchangeable when handing out anything that
-// grants access later — see the mint site in server.ts.
-export type AuthResult = "ok" | "exempt" | "challenge" | "unauthorized" | "blocked";
+// "ok" means Basic UI credentials were verified; "platform" means an instance token was verified
+// for this exact method/path. "exempt" is reserved for agent/MCP routes that validate their own
+// credential inside the route. Only "ok" may mint a browser session cookie.
+export type AuthResult = "ok" | "platform" | "exempt" | "challenge" | "unauthorized" | "blocked";
 export type AuthCredentials = { user: string; pass: string };
+// Takes only the secret: the platform credential is instance-wide, and what it may reach is decided
+// by platformAccessPolicy.ts below, not by the credential. An earlier version passed the matched
+// permission in here, which advertised per-permission scoping that no validator implemented.
+export type PlatformTokenValidator = (plain: string) => boolean;
 
 // The primitives checkAuth/isCsrf need off a request — extracted so the core logic never touches
 // Node's http types and can be unit-tested with plain objects.
@@ -99,6 +104,7 @@ export function checkAuth(
   req: AuthRequest,
   credentials: AuthCredentials,
   tracker: AuthFailureTracker,
+  validatePlatformToken: PlatformTokenValidator = () => false,
 ): AuthResult {
   // Must reject before the comparison below: safeEqual("", "") is true, so `Basic Og==` would
   // authenticate against unset credentials. server.ts also refuses to boot without them.
@@ -111,6 +117,27 @@ export function checkAuth(
   if (PUBLIC_MCP_RE.test(req.pathname)) return "exempt";
 
   const auth = req.authorization;
+  if (auth.startsWith("Bearer ")) {
+    const token = auth.slice(7);
+
+    // Authentication first, and it is the only thing that feeds the brute-force tracker: a bad secret
+    // is a credential guess.
+    if (!validatePlatformToken(token)) {
+      tracker.recordFailure(ip);
+      return "unauthorized";
+    }
+
+    // Authorization second, and deliberately NOT a tracked failure. Default-deny: a route with no
+    // mapped permission never accepts the platform credential, so adding a UI route cannot silently
+    // create a programmatic capability. Counting these would be wrong and actively harmful — the
+    // tracker is shared with the UI's Basic auth, so a misconfigured script polling an unshared route
+    // would lock its own operator out of the web interface after five requests.
+    if (!platformPermissionFor(req.method, req.pathname)) return "unauthorized";
+
+    tracker.clear(ip);
+    return "platform";
+  }
+
   if (!auth.startsWith("Basic ")) {
     // No credentials sent — normal browser challenge-response handshake, not an attack
     return "challenge";
@@ -141,7 +168,7 @@ export function checkAuth(
 // that send no Authorization at all on an upgrade (WebKit); it is minted only after Basic succeeded
 // on an earlier HTTP request, so it proves the same thing one hop removed.
 //
-// "exempt" is not accepted here: the Bearer-authenticated routes are HTTP-only and never upgrade.
+// Neither "platform" nor "exempt" is accepted here: those credentials are HTTP-only.
 export function checkWsAuth(
   ip: string,
   req: AuthRequest,

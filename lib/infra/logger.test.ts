@@ -114,6 +114,7 @@ describe("logger", () => {
     const bearer = "eyJhbGciOiJIUzI1NiJ9.payload.signature";
     const openAiKey = "sk-proj-abcdefghijklmnopqrstuvwxyz";
     const mcpSecret = `mcp_${"a".repeat(64)}`;
+    const cliKey = `cli_${"b".repeat(64)}`;
     const proxyPassword = "proxy-password-abcdefghijklmnopqrstuvwxyz";
 
     createLogger("test").error(
@@ -121,6 +122,7 @@ describe("logger", () => {
         err: new Error(`provider rejected Authorization: Bearer ${bearer}`),
         stderr: `git failed for https://workspace:${proxyPassword}@example.com/repo`,
         agentError: `Invalid API key: ${openAiKey}`,
+        cliOutput: `PAODO rejected ${cliKey}`,
         event: "mcp_auth_unauthorized",
       },
       `MCP request failed with secret=${mcpSecret}`,
@@ -131,6 +133,7 @@ describe("logger", () => {
     expect(serialized).not.toContain(bearer);
     expect(serialized).not.toContain(openAiKey);
     expect(serialized).not.toContain(mcpSecret);
+    expect(serialized).not.toContain(cliKey);
     expect(serialized).not.toContain(proxyPassword);
     expect(serialized).toContain("[Redacted]");
 
@@ -138,6 +141,7 @@ describe("logger", () => {
       err: { type: string; message: string; stack: string };
       stderr: string;
       agentError: string;
+      cliOutput: string;
       msg: string;
     };
     expect(record.err.type).toBe("Error");
@@ -145,6 +149,7 @@ describe("logger", () => {
     expect(record.err.stack).toContain("provider rejected Authorization: Bearer [Redacted]");
     expect(record.stderr).toContain("https://workspace:[Redacted]@example.com/repo");
     expect(record.agentError).toBe("Invalid API key: [Redacted]");
+    expect(record.cliOutput).toBe("PAODO rejected [Redacted]");
     expect(record.msg).toBe("MCP request failed with secret=[Redacted]");
     expect(written[0].event).toBe("mcp_auth_unauthorized");
   });

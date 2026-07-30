@@ -49,6 +49,7 @@ import { checkApiRateLimit } from "./lib/infra/security/rateLimit";
 import { hasConfiguredProviderApiKey } from "./lib/agent/buildModel";
 import { assertDataRootAvailable, assertWorkspaceRegistryAvailable } from "./lib/infra/startupChecks";
 import { appDataDb, PAODO_DB_FILE } from "./lib/data/database";
+import { validate as validateCredential } from "./lib/infra/security/credentialStore";
 
 const dev = process.env.NODE_ENV !== "production";
 const rawPort = process.env.PORT ?? "3000";
@@ -74,9 +75,13 @@ if (!Number.isInteger(port) || port < 1 || port > 65_535) {
 const authFailures = new AuthFailureTracker();
 let authLoggedOnce = false;
 
-// Thin adapter: extract the request primitives and delegate to the testable checkAuth.
+// Thin adapter: extract the request primitives and delegate to the testable checkAuth. The platform
+// credential is instance-wide, so it takes no subject; which routes it may reach is decided by
+// platformAccessPolicy.ts inside checkAuth, not by the credential itself.
 function authenticate(ip: string, req: import("http").IncomingMessage): AuthResult {
-  return checkAuth(ip, authRequestFromIncoming(req), credentials, authFailures);
+  return checkAuth(ip, authRequestFromIncoming(req), credentials, authFailures, (plain) =>
+    validateCredential("platform", null, plain),
+  );
 }
 
 // Same adapter for the /ws upgrade, which additionally accepts the session cookie because no browser
@@ -192,20 +197,19 @@ httpServer.on("request", (req, res) => {
   }
   if (authResult === "unauthorized") {
     auditRejection("auth_unauthorized", { ip, requestId }, "auth unauthorized");
-    res.writeHead(401, { "WWW-Authenticate": 'Basic realm="App"' });
+    const scheme = req.headers["authorization"]?.startsWith("Bearer ") ? 'Bearer realm="PAODO"' : 'Basic realm="App"';
+    res.writeHead(401, { "WWW-Authenticate": scheme });
     res.end("Unauthorized");
     return;
   }
 
-  if (req.headers["authorization"] && !authLoggedOnce) {
+  if (authResult === "ok" && req.headers["authorization"] && !authLoggedOnce) {
     authLoggedOnce = true;
     audit.info({ requestId, event: "auth_ok" }, "auth configured and working");
   }
 
-  // Mint the /ws session cookie — only on "ok", never on "exempt". The exempt routes are the two
-  // Bearer-authenticated endpoints that deploy/Caddyfile.workspace-api publishes on the DNS-direct
-  // public host, and checkAuth passes them without inspecting any credential. Minting there would
-  // hand a working UI session to anyone who can reach that hostname.
+  // Mint the /ws session cookie only for verified UI Basic credentials. Programmatic platform
+  // tokens and route-authenticated agent/MCP credentials must never become browser sessions.
   if (authResult === "ok" && sessionCookieNeedsRefresh(req.headers["cookie"])) {
     res.setHeader("Set-Cookie", mintSessionCookie({ isProduction: process.env.NODE_ENV === "production" }));
   }

@@ -47,7 +47,7 @@ const credentialPatterns: Array<[RegExp, string]> = [
   [/([a-z][a-z0-9+.-]*:\/\/[^:/\s]+:)[^@\s/]+@/gi, "$1[Redacted]@"],
   [/([?&](?:api[_-]?key|access[_-]?token|refresh[_-]?token|token|secret|password)=)[^&#\s]+/gi, "$1[Redacted]"],
   [
-    /\b(?:(?:sk-(?:proj-|ant-)?|sk_|github_pat_|gh[pousr]_|xox[baprs]-|AIza)[A-Za-z0-9._-]{8,}|mcp_[A-Za-z0-9._-]{32,})\b/g,
+    /\b(?:(?:sk-(?:proj-|ant-)?|sk_|github_pat_|gh[pousr]_|xox[baprs]-|AIza)[A-Za-z0-9._-]{8,}|(?:mcp|cli)_[A-Za-z0-9._-]{32,})\b/g,
     "[Redacted]",
   ],
   [

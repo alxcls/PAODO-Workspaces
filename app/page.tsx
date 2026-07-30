@@ -10,6 +10,7 @@ import ModelBlock from "@/components/home/ModelBlock";
 import EnvVarsBlock from "@/components/home/EnvVarsBlock";
 import McpBlock from "@/components/home/McpBlock";
 import InternetAccessBlock from "@/components/home/InternetAccessBlock";
+import CliAccessModal from "@/components/settings/CliAccessModal";
 import TopBar from "@/components/layout/TopBar";
 import { useWorkspaces } from "@/lib/client/hooks/useWorkspaces";
 import { useWorkspaceDescription } from "@/lib/client/hooks/useWorkspaceDescription";
@@ -45,6 +46,7 @@ export default function HomePage() {
   const [renaming, setRenaming] = useState(false);
   const [renameDraft, setRenameDraft] = useState("");
   const [renameError, setRenameError] = useState<string | null>(null);
+  const [showSettings, setShowSettings] = useState(false);
 
   const selected = workspaces.find((w) => w.id === selectedId);
 
@@ -155,9 +157,25 @@ export default function HomePage() {
                 Network
               </button>
             ) : null}
+            <button className="iconbtn" onClick={() => setShowSettings(true)} title="Settings" aria-label="Settings">
+              <svg width="17" height="17" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path
+                  d="M12 15.25A3.25 3.25 0 1 0 12 8.75a3.25 3.25 0 0 0 0 6.5Z"
+                  stroke="currentColor"
+                  strokeWidth="1.7"
+                />
+                <path
+                  d="M19.4 13.5a7.8 7.8 0 0 0 0-3l2-1.55-2-3.46-2.47 1a8.2 8.2 0 0 0-2.6-1.5L14 2.35h-4l-.34 2.64a8.2 8.2 0 0 0-2.6 1.5l-2.46-1-2 3.46 2 1.55a7.8 7.8 0 0 0 0 3l-2 1.55 2 3.46 2.47-1a8.2 8.2 0 0 0 2.6 1.5l.33 2.64h4l.34-2.64a8.2 8.2 0 0 0 2.6-1.5l2.46 1 2-3.46-2-1.55Z"
+                  stroke="currentColor"
+                  strokeWidth="1.7"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            </button>
           </div>
         }
       />
+      <CliAccessModal open={showSettings} onClose={() => setShowSettings(false)} />
 
       <div className="flex flex-1 min-h-0 bg-bg">
         {/* Sidebar */}

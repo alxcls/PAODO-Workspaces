@@ -64,3 +64,6 @@ graph.html
 
 # Claude project instructions (local only)
 CLAUDE.md
+
+# Experimental CLI client — developed locally until it moves to its own repository
+/cli/

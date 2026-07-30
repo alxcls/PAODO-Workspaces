@@ -14,7 +14,8 @@ import { SUPPORTED_PROVIDERS, getProviderMetadata } from "@/lib/agent/buildModel
 import { DEFAULT_LLM, type ReasoningEffort } from "@/lib/agent/interfaces";
 import { MAX_MAX_RUN_MINUTES, MIN_MAX_RUN_MINUTES } from "@/lib/workspace/workspaceLimits";
 import { createAuditLogger, createLogger } from "@/lib/infra/logger";
-import { getWorkspace as getWorkspaceDetails } from "@/lib/operations/workspaces";
+import { publicBaseUrl } from "@/lib/api/credentialRoutes";
+import { getWorkspace as getWorkspaceDetails, getWorkspaceAccess } from "@/lib/operations/workspaces";
 
 const log = createLogger("api");
 const audit = createAuditLogger("api");
@@ -47,10 +48,18 @@ async function runDeleteCleanup(
   }
 }
 
-export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
+export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const workspace = getWorkspaceDetails(id);
-  return workspace ? NextResponse.json(workspace) : notFound();
+  if (!workspace) return notFound();
+
+  // Match the UI's URLs: prefer the configured DNS-direct public host, otherwise use the origin the
+  // caller connected to. Credential state is included, but hashes and plaintext never leave the store.
+  const connectionOrigin = publicBaseUrl() ?? new URL(req.url).origin;
+  return NextResponse.json(
+    { ...workspace, ...getWorkspaceAccess(id, connectionOrigin) },
+    { headers: { "Cache-Control": "no-store" } },
+  );
 }
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { getWorkspace, listWorkspaces } from "./workspaces";
+import { getWorkspace, getWorkspaceAccess, listWorkspaces } from "./workspaces";
 import type { Workspace } from "@/lib/workspace/workspaceStore";
 
 const workspace: Workspace = {
@@ -66,5 +66,17 @@ describe("workspace operations", () => {
 
   it("returns null for an unknown workspace", () => {
     expect(getWorkspace("missing", store)).toBeNull();
+  });
+
+  it("returns the API and MCP state shown in the UI without credentials", () => {
+    const readCredentialState = (kind: "workspace-api" | "workspace-mcp") =>
+      kind === "workspace-api" ? { enabled: true, hasSecret: true } : { enabled: false, hasSecret: true };
+
+    expect(getWorkspaceAccess("ws-1", "https://agents.example.com/", readCredentialState)).toEqual({
+      workspaceApiAccess: true,
+      apiEndpoint: "https://agents.example.com/api/workspaces/ws-1/agent",
+      workspaceMcpAccess: false,
+      mcpConnectionUrl: null,
+    });
   });
 });

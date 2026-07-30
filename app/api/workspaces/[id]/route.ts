@@ -2,7 +2,7 @@
 // GET returns its metadata; DELETE removes it from the registry and deletes its directory from disk.
 import { type NextRequest, NextResponse } from "next/server";
 import { getStore, getContainers, getVersioning } from "@/lib/infra/services";
-import { requireWorkspace, notFound, workspaceNameErrorResponse } from "@/lib/api/guards";
+import { notFound, workspaceNameErrorResponse } from "@/lib/api/guards";
 import { disconnectWorkspace } from "@/lib/workspace/driveStore";
 import { removeWorkspaceFromGraph } from "@/lib/workspace/workspaceGraph";
 import { removeWorkspace as removeWorkspaceCredentials } from "@/lib/infra/security/credentialStore";
@@ -14,6 +14,7 @@ import { SUPPORTED_PROVIDERS, getProviderMetadata } from "@/lib/agent/buildModel
 import { DEFAULT_LLM, type ReasoningEffort } from "@/lib/agent/interfaces";
 import { MAX_MAX_RUN_MINUTES, MIN_MAX_RUN_MINUTES } from "@/lib/workspace/workspaceLimits";
 import { createAuditLogger, createLogger } from "@/lib/infra/logger";
+import { getWorkspace as getWorkspaceDetails } from "@/lib/operations/workspaces";
 
 const log = createLogger("api");
 const audit = createAuditLogger("api");
@@ -48,21 +49,8 @@ async function runDeleteCleanup(
 
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const ws = requireWorkspace(id);
-  if (ws instanceof NextResponse) return ws;
-  return NextResponse.json({
-    id: ws.id,
-    name: ws.name,
-    // `dir` is deliberately omitted: it is now an internal id-keyed filesystem path (WORKSPACES_ROOT/
-    // <id>) the UI never consumes, and leaking a server path serves no purpose.
-    createdAt: ws.createdAt,
-    maxIterations: ws.maxIterations,
-    maxRunMinutes: ws.maxRunMinutes,
-    description: ws.description ?? "",
-    llmProvider: ws.llmProvider,
-    llmModel: ws.llmModel,
-    reasoningEffort: ws.reasoningEffort,
-  });
+  const workspace = getWorkspaceDetails(id);
+  return workspace ? NextResponse.json(workspace) : notFound();
 }
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {

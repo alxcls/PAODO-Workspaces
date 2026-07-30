@@ -37,7 +37,8 @@ export default function WorkspacePage({ params }: { params: Promise<{ id: string
 
 function WorkspacePageInner({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
-  const { name: workspaceName } = useWorkspaceMeta(id);
+  // Empty until the metadata resolves, matching the previous behaviour of defaulting to no name.
+  const workspaceName = useWorkspaceMeta(id)?.name ?? "";
   const { conversations, activeId, setActiveId, create, refresh, initial } = useConversations(id);
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [viewerOpen, setViewerOpen] = useState(false);

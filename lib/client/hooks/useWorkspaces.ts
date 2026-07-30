@@ -13,7 +13,6 @@ import { readErrorMessage, type MutationResult } from "@/lib/client/apiError";
 export interface WorkspaceItem {
   id: string;
   name: string;
-  createdAt: string;
 }
 
 const JSON_HEADERS = { "Content-Type": "application/json" };

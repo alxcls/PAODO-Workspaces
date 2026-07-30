@@ -48,7 +48,10 @@ For VPS deployment, see the [deploy guide](deploy/README.md).
 
 ## How it works
 
-Each workspace runs in its own Docker sandbox and is accessible via the chat UI, external API, or MCP server. Agents in connected workspaces and MCP clients can invoke its skills using defined input/output contracts.
+Each workspace runs in its own Docker sandbox and is accessible via the chat UI, CLI, external API,
+or MCP server. These are thin triggers over shared PAODO operations rather than separate
+implementations of the same action. Agents in connected workspaces and MCP clients can invoke skills
+using defined input/output contracts. See [Triggers and operations](doc/trigger-operation-architecture.md).
 
 ![Architectural representation of the main functionality](doc/images/loop.png)
 
@@ -124,6 +127,7 @@ server.ts                Custom entry: Next.js + WebSocket on one port
 Dockerfile(.workspace)   Platform image / per-workspace sandbox image
 app/api/                 REST + SSE endpoints, agent network API
 lib/agent/               ReAct loop, system prompt, one file per tool
+lib/operations/          Trigger-neutral application operations shared by UI, CLI, API and MCP
 lib/infra/               Persistence + runtime (store, containers, WS hub)
 components/              UI panels (chat, file tree, console, graph editor)
 data/                    Runtime state (gitignored)

@@ -6,10 +6,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { WorkspaceNameError } from "@/lib/workspace/workspaceName";
 
-const store = { createWorkspace: vi.fn() };
+const store = { createWorkspace: vi.fn(), listWorkspaces: vi.fn() };
 vi.mock("@/lib/infra/services", () => ({ getStore: () => store }));
 
-import { POST } from "./route";
+import { GET, POST } from "./route";
 
 function post(body: unknown): Promise<Response> {
   return POST(
@@ -23,6 +23,32 @@ function post(body: unknown): Promise<Response> {
 
 beforeEach(() => {
   store.createWorkspace.mockReset();
+  store.listWorkspaces.mockReset().mockReturnValue([]);
+});
+
+describe("GET /api/workspaces — shared UI and CLI collection", () => {
+  it("returns the trigger-neutral workspace summary", async () => {
+    store.listWorkspaces.mockReturnValue([
+      {
+        id: "w1",
+        name: "alpha",
+        dir: "/private/w1",
+        createdAt: new Date("2026-01-01"),
+        description: "shared",
+        maxIterations: 30,
+        maxRunMinutes: 20,
+        internetAccess: false,
+      },
+    ]);
+    const response = await GET();
+    expect(await response.json()).toEqual([
+      {
+        id: "w1",
+        name: "alpha",
+        description: "shared",
+      },
+    ]);
+  });
 });
 
 describe("POST /api/workspaces — creation & name-policy errors", () => {
@@ -31,7 +57,7 @@ describe("POST /api/workspaces — creation & name-policy errors", () => {
     const res = await post({ name: "  alpha  " });
     expect(res.status).toBe(201);
     expect(store.createWorkspace).toHaveBeenCalledWith("alpha");
-    expect(await res.json()).toMatchObject({ id: "w1", name: "alpha" });
+    expect(await res.json()).toEqual({ id: "w1", name: "alpha", description: "" });
   });
 
   it("400s on a missing or blank name without calling the store", async () => {

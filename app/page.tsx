@@ -15,6 +15,7 @@ import { useWorkspaces } from "@/lib/client/hooks/useWorkspaces";
 import { useWorkspaceDescription } from "@/lib/client/hooks/useWorkspaceDescription";
 import { useWorkspaceFileCount } from "@/lib/client/hooks/useWorkspaceFileCount";
 import { useWorkspaceInternetAccess } from "@/lib/client/hooks/useWorkspaceInternetAccess";
+import { useWorkspaceMeta } from "@/lib/client/hooks/useWorkspaceMeta";
 import { useAppConfig } from "@/lib/client/hooks/useAppConfig";
 
 function formatDate(iso: string) {
@@ -30,6 +31,7 @@ export default function HomePage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
   const { workspaces, isCreating, create, rename, remove } = useWorkspaces();
+  const selectedDetails = useWorkspaceMeta(selectedId);
   const { description, save: saveDescription } = useWorkspaceDescription(selectedId);
   const fileCount = useWorkspaceFileCount(selectedId);
   const { enabled: internetAccess, toggle: toggleInternetAccess } = useWorkspaceInternetAccess(selectedId);
@@ -291,7 +293,7 @@ export default function HomePage() {
               )}
 
               <div className="text-text-2 text-sm">
-                Created {formatDate(selected.createdAt)}
+                Created {selectedDetails ? formatDate(selectedDetails.createdAt) : "—"}
                 {fileCount !== null ? ` · ${fileCount} file${fileCount === 1 ? "" : "s"}` : ""}
               </div>
 

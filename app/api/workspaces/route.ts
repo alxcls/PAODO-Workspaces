@@ -4,12 +4,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { getStore } from "@/lib/infra/services";
 import { createLogger } from "@/lib/infra/logger";
 import { workspaceNameErrorResponse } from "@/lib/api/guards";
+import { listWorkspaces } from "@/lib/operations/workspaces";
 
 export async function GET() {
-  const list = getStore()
-    .listWorkspaces()
-    .map(({ id, name, createdAt, description }) => ({ id, name, createdAt, description: description ?? "" }));
-  return NextResponse.json(list);
+  return NextResponse.json(listWorkspaces());
 }
 
 export async function POST(req: NextRequest) {
@@ -21,7 +19,7 @@ export async function POST(req: NextRequest) {
   try {
     const workspace = await getStore().createWorkspace(body.name.trim());
     return NextResponse.json(
-      { id: workspace.id, name: workspace.name, createdAt: workspace.createdAt },
+      { id: workspace.id, name: workspace.name, description: workspace.description ?? "" },
       { status: 201 },
     );
   } catch (err) {

@@ -6,10 +6,9 @@
 
 import { describe, it, expect, vi, afterAll, afterEach } from "vitest";
 import fs from "fs";
-import path from "path";
 
 // Redirect the on-disk store to a throwaway temp dir BEFORE the module (via paths.ts) reads
-// WORKSPACES_ROOT at import time — mirrors apiKeyStore.test.ts.
+// WORKSPACES_ROOT at import time — mirrors credentialStore.test.ts.
 const { ROOT } = vi.hoisted(() => {
   const os = require("os");
   const fs = require("fs");

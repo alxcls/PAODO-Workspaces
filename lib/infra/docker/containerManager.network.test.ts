@@ -27,9 +27,10 @@ function makeDocker(opts: { inspectCode?: number; internal?: boolean } = {}) {
 }
 
 function ensureNetwork(mgr: ContainerManager, workspaceId: string, internetAccess: boolean): Promise<void> {
-  return (
-    mgr as unknown as { ensureNetwork(id: string, internetAccess: boolean): Promise<void> }
-  ).ensureNetwork(workspaceId, internetAccess);
+  return (mgr as unknown as { ensureNetwork(id: string, internetAccess: boolean): Promise<void> }).ensureNetwork(
+    workspaceId,
+    internetAccess,
+  );
 }
 
 describe("ContainerManager.ensureNetwork — creation", () => {

@@ -155,7 +155,8 @@ export default function FileTreePanel({
 
   // Only pop up once the upload has actually finished (status back to null) and something failed
   // to upload — a plain, silent success shows nothing.
-  const showResults = !resultsDismissed && upload.status === null && upload.summary !== null && upload.summary.failed.length > 0;
+  const showResults =
+    !resultsDismissed && upload.status === null && upload.summary !== null && upload.summary.failed.length > 0;
 
   const handleExternalDragOver = (event: DragEvent) => {
     if (!Array.from(event.dataTransfer.types).includes("Files")) return;
@@ -320,8 +321,8 @@ export default function FileTreePanel({
             <div className="font-semibold text-[19px] mb-3 text-text">Upload results</div>
             <p className="text-sm text-text-2 m-0 mb-2 leading-[1.5]">
               Uploaded {upload.summary.uploaded} of {upload.summary.uploaded + upload.summary.failed.length} file
-              {upload.summary.uploaded + upload.summary.failed.length === 1 ? "" : "s"} —{" "}
-              {upload.summary.failed.length} failed.
+              {upload.summary.uploaded + upload.summary.failed.length === 1 ? "" : "s"} — {upload.summary.failed.length}{" "}
+              failed.
             </p>
             {/* Any genuine error (disk full, path rejected, network failure, ...) that stopped the
                 batch early gets its own plain-text line — separate from the count above and from

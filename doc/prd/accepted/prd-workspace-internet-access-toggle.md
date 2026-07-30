@@ -31,7 +31,7 @@ every workspace got a route out by default.
 
 ## Non-goals
 
-- Domain-level allow/deny lists for an internet-*on* workspace — that's the existing per-secret
+- Domain-level allow/deny lists for an internet-_on_ workspace — that's the existing per-secret
   domain scoping (see [prd-workspace-third-party-api-keys.md](prd-workspace-third-party-api-keys.md)), unchanged by this feature.
 - Filtering or sanitizing content the agent fetches while on — out of scope; off is the answer for
   workspaces that can't tolerate that risk at all.
@@ -86,6 +86,6 @@ network on next use — there is no window where the old setting lingers.
 
 ### Nice to have
 
-- Surface *why* a shell command failed (blocked by internet-access-off vs. a real network error) in
+- Surface _why_ a shell command failed (blocked by internet-access-off vs. a real network error) in
   the command output itself, not just the system prompt.
 - A per-workspace activity indicator showing the last time internet access was toggled.

@@ -11,9 +11,7 @@ export default function InternetAccessBlock({ enabled, onToggle }: { enabled: bo
       <div className="flex items-center justify-between">
         <div className="min-w-0">
           <span className="text-ms font-semibold text-text">Internet access</span>
-          <span className={`text-xs ml-2 ${enabled ? "text-select" : "text-text-3"}`}>
-            {enabled ? "On" : "Off"}
-          </span>
+          <span className={`text-xs ml-2 ${enabled ? "text-select" : "text-text-3"}`}>{enabled ? "On" : "Off"}</span>
         </div>
         <button
           className={`relative w-9 h-5 rounded-[10px] border-0 cursor-pointer transition-colors duration-200 p-0 flex-shrink-0 ${enabled ? "bg-primary" : "bg-border"}`}
@@ -28,9 +26,8 @@ export default function InternetAccessBlock({ enabled, onToggle }: { enabled: bo
 
       {!enabled && (
         <p className="m-0 text-xs text-text-3">
-          This workspace&apos;s container has no network route to the internet. apt/pip/npm installs,
-          http_get, and configured secret-domain access are all blocked. Safe to leave the agent running
-          unattended.
+          This workspace&apos;s container has no network route to the internet. apt/pip/npm installs, http_get, and
+          configured secret-domain access are all blocked. Safe to leave the agent running unattended.
         </p>
       )}
     </div>

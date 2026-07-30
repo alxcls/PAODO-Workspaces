@@ -218,21 +218,41 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 // live while this drawer stays open, and a stale cached prompt would silently misreport them.
 function SystemPromptSection({ workspaceId }: { workspaceId: string }) {
   const [open, setOpen] = useState(false);
-  const [prompt, setPrompt] = useState<string | null>(null);
+  // The fetched prompt is paired with the expansion it belongs to, and "Loading…" is derived from
+  // that pairing rather than reset by the effect. Resetting in the effect body cascaded an extra
+  // render on every expand; deriving also discards a response that lands after another expand or a
+  // workspace switch, which the old version would have shown under the wrong heading.
+  const [expansion, setExpansion] = useState(0);
+  const [loaded, setLoaded] = useState<{ key: string; prompt: string } | null>(null);
+  const key = `${workspaceId}#${expansion}`;
+  const prompt = loaded?.key === key ? loaded.prompt : null;
 
   useEffect(() => {
     if (!open) return;
-    setPrompt(null);
-    fetch(`/api/workspaces/${workspaceId}/system-prompt`)
-      .then((r) => r.json())
-      .then((d) => setPrompt(d.prompt ?? ""))
-      .catch(() => setPrompt(""));
-  }, [open, workspaceId]);
+    let active = true;
+    void (async () => {
+      let text = "";
+      try {
+        const response = await fetch(`/api/workspaces/${workspaceId}/system-prompt`);
+        text = ((await response.json()) as { prompt?: string }).prompt ?? "";
+      } catch {
+        /* leave it empty — the section renders an em dash rather than breaking */
+      }
+      if (active) setLoaded({ key, prompt: text });
+    })();
+    return () => {
+      active = false;
+    };
+  }, [open, key, workspaceId]);
 
   return (
     <div className="flex flex-col gap-1.5">
       <button
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => {
+          // Bump before opening so the prompt re-fetches on every expand, not just the first.
+          if (!open) setExpansion((n) => n + 1);
+          setOpen((v) => !v);
+        }}
         className="flex items-center gap-1.5 text-2xs font-semibold text-text-3 tracking-[.06em] uppercase hover:text-text-1 transition-colors self-start"
       >
         <span className={`inline-block transition-transform text-sm leading-none ${open ? "rotate-90" : ""}`}>›</span>

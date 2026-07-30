@@ -207,7 +207,9 @@ export function useFileUpload(apiBase: string, onUploaded: () => void) {
         ([name, group]) => `${name} excluded (${group.length} file${group.length === 1 ? "" : "s"})`,
       );
       if (overLimitCount > 0) {
-        notes.push(`${overLimitCount} file${overLimitCount === 1 ? "" : "s"} over the ${formatBytes(MAX_UPLOAD_BYTES)} limit`);
+        notes.push(
+          `${overLimitCount} file${overLimitCount === 1 ? "" : "s"} over the ${formatBytes(MAX_UPLOAD_BYTES)} limit`,
+        );
       }
       return notes;
     };
@@ -250,7 +252,11 @@ export function useFileUpload(apiBase: string, onUploaded: () => void) {
   };
 
   // Single files: the name is the whole path, so they land at the root of the target directory.
-  const uploadFiles = (files: File[]) => uploadEntries(files.map((file) => ({ file, path: file.name })), false);
+  const uploadFiles = (files: File[]) =>
+    uploadEntries(
+      files.map((file) => ({ file, path: file.name })),
+      false,
+    );
 
   // <input webkitdirectory> yields flat File[] with webkitRelativePath carrying the structure.
   const uploadFolder = (files: File[]) =>

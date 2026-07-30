@@ -28,20 +28,40 @@ const baseConfig: AgentConfig = {
 
 describe("buildTools — internetAccess gating", () => {
   it("binds http_get and apt_install when internet access is on", () => {
-    const { toolMap } = buildTools("ws1", "/tmp/ws1", { ...baseConfig, internetAccess: true }, { containers, store, versioning });
+    const { toolMap } = buildTools(
+      "ws1",
+      "/tmp/ws1",
+      { ...baseConfig, internetAccess: true },
+      { containers, store, versioning },
+    );
     expect(toolMap.http_get).toBeDefined();
     expect(toolMap.apt_install).toBeDefined();
   });
 
   it("drops http_get and apt_install entirely when internet access is off", () => {
-    const { toolMap } = buildTools("ws1", "/tmp/ws1", { ...baseConfig, internetAccess: false }, { containers, store, versioning });
+    const { toolMap } = buildTools(
+      "ws1",
+      "/tmp/ws1",
+      { ...baseConfig, internetAccess: false },
+      { containers, store, versioning },
+    );
     expect(toolMap.http_get).toBeUndefined();
     expect(toolMap.apt_install).toBeUndefined();
   });
 
   it("leaves every other tool unaffected by the toggle", () => {
-    const on = buildTools("ws1", "/tmp/ws1", { ...baseConfig, internetAccess: true }, { containers, store, versioning });
-    const off = buildTools("ws1", "/tmp/ws1", { ...baseConfig, internetAccess: false }, { containers, store, versioning });
+    const on = buildTools(
+      "ws1",
+      "/tmp/ws1",
+      { ...baseConfig, internetAccess: true },
+      { containers, store, versioning },
+    );
+    const off = buildTools(
+      "ws1",
+      "/tmp/ws1",
+      { ...baseConfig, internetAccess: false },
+      { containers, store, versioning },
+    );
     const otherToolsOn = Object.keys(on.toolMap).filter((n) => n !== "http_get" && n !== "apt_install");
     const otherToolsOff = Object.keys(off.toolMap).filter((n) => n !== "http_get" && n !== "apt_install");
     expect(otherToolsOff.sort()).toEqual(otherToolsOn.sort());

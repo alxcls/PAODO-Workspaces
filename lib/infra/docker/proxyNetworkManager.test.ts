@@ -115,7 +115,9 @@ describe("ProxyNetworkManager.reattachAll", () => {
   });
 
   it("does nothing when docker ps fails", async () => {
-    const { docker, calls } = makeDocker((args) => (args[0] === "ps" ? { stdout: "", stderr: "boom", code: 1 } : undefined));
+    const { docker, calls } = makeDocker((args) =>
+      args[0] === "ps" ? { stdout: "", stderr: "boom", code: 1 } : undefined,
+    );
     await new ProxyNetworkManager(docker).reattachAll();
     expect(calls.some((c) => c[1] === "connect")).toBe(false);
   });

@@ -12,7 +12,8 @@ import type { DockerResult, IDockerClient } from "./dockerClient";
 const listSecretMeta = vi.fn();
 const selectGithubTokenSecret = vi.fn();
 const existsSync = vi.fn();
-const readFileSync = vi.fn(() => "CA-PEM-CONTENT");
+// Typed with the real readFileSync's parameters so the fs mock below can forward both of them.
+const readFileSync = vi.fn((_path: string, _encoding?: string) => "CA-PEM-CONTENT");
 
 vi.mock("../security/workspaceSecretStore", () => ({
   listSecretMeta: (ws: string) => listSecretMeta(ws),

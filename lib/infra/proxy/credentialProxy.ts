@@ -287,7 +287,10 @@ export class CredentialProxy {
     // automatically — so this only refuses connections that were never going to identify themselves
     // honestly in the first place.
     if (!auth || !verifyProxySecret(auth.wsId, auth.secret)) {
-      audit.warn({ wsId: auth?.wsId, event: "proxy_auth_required" }, "refusing connection — no verified workspace identity");
+      audit.warn(
+        { wsId: auth?.wsId, event: "proxy_auth_required" },
+        "refusing connection — no verified workspace identity",
+      );
       socket.write("HTTP/1.1 407 Proxy Authentication Required\r\n\r\n");
       socket.destroy();
       return;

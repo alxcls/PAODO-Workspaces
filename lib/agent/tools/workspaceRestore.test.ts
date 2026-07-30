@@ -9,7 +9,11 @@ const tool = () => new WorkspaceRestoreTool();
 
 describe("WorkspaceRestoreTool", () => {
   it("requires a sha", async () => {
-    await expect(tool().invoke({})).rejects.toThrow("Received tool input did not match expected schema");
+    // The cast is the point of the test: sha is required, so an LLM omitting it must be rejected by
+    // the schema rather than reaching _call. TypeScript would otherwise refuse to express the case.
+    await expect(tool().invoke({} as unknown as { sha: string })).rejects.toThrow(
+      "Received tool input did not match expected schema",
+    );
   });
 
   it("acks reverting to a specific snapshot when a sha is given", async () => {

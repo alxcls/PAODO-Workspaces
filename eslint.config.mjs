@@ -27,6 +27,13 @@ const eslintConfig = defineConfig([
       "@typescript-eslint/no-require-imports": "off",
     },
   },
+  {
+    files: ["**/*.cjs"],
+    rules: {
+      // .cjs is CommonJS by extension, so require() is the only way to import in these scripts.
+      "@typescript-eslint/no-require-imports": "off",
+    },
+  },
   // Override default ignores of eslint-config-next.
   globalIgnores([
     // Default ignores of eslint-config-next:

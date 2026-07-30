@@ -81,7 +81,10 @@ You run as a NON-ROOT user, confined to the workspace. apt-get/sudo are NOT avai
     // is a headroom gate ("is there still room at all"), not a size check.
     const space = await checkFreeSpace(this.workspaceDir, 0, RESERVED_FREE_BYTES);
     if (!space.ok) {
-      this.log.warn({ event: "exec_insufficient_storage", freeBytes: space.freeBytes }, "command refused — low disk space");
+      this.log.warn(
+        { event: "exec_insufficient_storage", freeBytes: space.freeBytes },
+        "command refused — low disk space",
+      );
       return "Error: workspace is out of free disk space. Free up space (e.g. delete unneeded files) before running more commands.";
     }
 

@@ -50,6 +50,7 @@ When creating or editing \`.skills/*.json\`:
 - Define input and output JSON Schemas that match the skill's actual behavior.
 - Describe fields clearly and include valid examples.
 - List a field in \`required\` only when it is necessary for the call or response.
+- \`.skills/\` IS this workspace's public contract surface — connected workspaces can call every skill in it, and so can any external MCP client once MCP access is enabled. Do not leave experimental or scratch contracts there, and treat deleting, renaming, or reshaping the schemas of an existing skill as a breaking change for callers you cannot see.
 
 # Executing Actions with Care
 Carefully consider the reversibility of actions:

@@ -1,5 +1,5 @@
 // Workspace MCP protocol endpoint (Streamable HTTP). External AI clients POST JSON-RPC here to
-// discover and call the workspace's selected skills as MCP tools. Authenticated by the workspace's
+// discover and call the skills the workspace declares as MCP tools. Authenticated by the workspace's
 // own bearer secret (credentialStore's "workspace-mcp" kind), NOT the site-wide Basic Auth — the path is exempted in
 // httpAuth.ts. Runs stateless with buffered JSON responses, so each POST is a self-contained
 // exchange and there is no server->client SSE channel (GET/DELETE therefore return 405).

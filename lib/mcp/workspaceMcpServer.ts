@@ -1,13 +1,17 @@
-// Builds the MCP surface for a single workspace: it exposes exactly the workspace's *selected*
-// (published) skills as MCP tools and runs them through the same validated skill path A2A uses
+// Builds the MCP surface for a single workspace: it exposes every skill the workspace declares in
+// .skills/ as an MCP tool and runs them through the same validated skill path A2A uses
 // (executeSkill), bypassing only the Agent-Network graph check since an external MCP client is not
 // a connected workspace. Kept transport-agnostic so the list/call logic is unit-testable; the HTTP
 // wiring lives in the route handler.
+//
+// There is no per-skill publication step: the endpoint being enabled plus a valid bearer secret IS
+// the authorization decision, exactly as an Agent-Network edge is for A2A. `.skills/` is therefore
+// the single source of truth, and it is read live on every request — a skill the workspace agent
+// writes is callable immediately, one it deletes stops being listed and stops being callable.
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { ListToolsRequestSchema, CallToolRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import type { Tool, CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { loadSkills } from "../workspace/skillStore";
-import { getSelectedSkills } from "../infra/security/mcpSkillStore";
 import { executeSkill } from "../agent/skills/executeSkill";
 import { getStore, getContainers } from "../infra/services";
 import { createLogger } from "../infra/logger";
@@ -15,25 +19,23 @@ import type { SkillDefinition } from "../workspace/skillTypes";
 
 const log = createLogger("workspaceMcp");
 
-// Seams so the list/call logic can be unit-tested without touching disk, the config store, or a
-// real agent run. Production wires the concrete implementations.
+// Seams so the list/call logic can be unit-tested without touching disk or a real agent run.
+// Production wires the concrete implementations.
 export interface WorkspaceMcpDeps {
   loadSkillsFn?: (dir: string) => Promise<SkillDefinition[]>;
-  getSelectedSkillIds?: (workspaceId: string) => string[];
   getWorkspaceDir?: (workspaceId: string) => string | undefined;
   executeSkillFn?: typeof executeSkill;
 }
 
-function selectedSkills(workspaceId: string, deps: WorkspaceMcpDeps): Promise<SkillDefinition[]> {
+function exposedSkills(workspaceId: string, deps: WorkspaceMcpDeps): Promise<SkillDefinition[]> {
   const dir = (deps.getWorkspaceDir ?? ((id) => getStore().getWorkspace(id)?.dir))(workspaceId);
   if (!dir) return Promise.resolve([]);
-  const selected = new Set((deps.getSelectedSkillIds ?? getSelectedSkills)(workspaceId));
-  return (deps.loadSkillsFn ?? loadSkills)(dir).then((skills) => skills.filter((s) => selected.has(s.id)));
+  return (deps.loadSkillsFn ?? loadSkills)(dir);
 }
 
-/** The workspace's selected skills as MCP tool descriptors (id → name, plus schemas). */
+/** The workspace's declared skills as MCP tool descriptors (id → name, plus schemas). */
 export async function listWorkspaceMcpTools(workspaceId: string, deps: WorkspaceMcpDeps = {}): Promise<Tool[]> {
-  const skills = await selectedSkills(workspaceId, deps);
+  const skills = await exposedSkills(workspaceId, deps);
   return skills.map((s) => ({
     name: s.id,
     description: s.description || undefined,
@@ -42,23 +44,23 @@ export async function listWorkspaceMcpTools(workspaceId: string, deps: Workspace
   }));
 }
 
-/** Runs a selected skill and maps the SkillCallResult onto an MCP tool result. */
+/** Runs a declared skill and maps the SkillCallResult onto an MCP tool result. */
 export async function callWorkspaceMcpTool(
   workspaceId: string,
   name: string,
   args: Record<string, unknown>,
   deps: WorkspaceMcpDeps = {},
 ): Promise<CallToolResult> {
-  // A tool that exists in the workspace but was not selected must be invisible AND uncallable, so we
-  // gate on the selection set rather than letting executeSkill see every skill on disk.
-  const skills = await selectedSkills(workspaceId, deps);
+  // Resolved from the same live read tools/list uses, so a skill the agent has deleted since the
+  // client cached its list is uncallable rather than merely unlisted.
+  const skills = await exposedSkills(workspaceId, deps);
   const skill = skills.find((s) => s.id === name);
   if (!skill) {
     if (!skills.length) {
       return toolError(`Unknown tool "${name}". This workspace currently exposes no MCP tools.`);
     }
-    const published = skills.map((s) => `"${s.id}"`).join(", ");
-    return toolError(`Unknown tool "${name}". Published tools: ${published}.`);
+    const available = skills.map((s) => `"${s.id}"`).join(", ");
+    return toolError(`Unknown tool "${name}". Available tools: ${available}.`);
   }
 
   let result;
@@ -117,7 +119,7 @@ function toolError(text: string): CallToolResult {
 
 /**
  * Builds a fresh low-level MCP Server bound to one workspace, with tools/list and tools/call wired
- * to the selection-gated skill path. A new instance is created per request in the stateless HTTP
+ * to the workspace's declared skills. A new instance is created per request in the stateless HTTP
  * handler, so nothing here holds cross-request state.
  */
 export function buildWorkspaceMcpServer(workspaceId: string, deps: WorkspaceMcpDeps = {}): Server {

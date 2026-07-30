@@ -26,7 +26,7 @@ interface CredentialPanelProps {
   onMint: () => void;
   onRevoke: () => void;
   onDismissSecret: () => void;
-  /** Channel-specific content rendered while enabled, above the controls (MCP's skill selection). */
+  /** Channel-specific content rendered while enabled, above the controls (MCP's tools and URL). */
   children?: ReactNode;
 }
 

@@ -47,7 +47,7 @@ export interface ExecuteSkillOptions {
   /** Test seams — production uses the real graph, skill store, runner, and conversation store. */
   canCallFn?: typeof canCall;
   loadSkillsFn?: typeof loadSkills;
-  /** A skill already resolved by a trusted discovery/publishing boundary (for example MCP). */
+  /** A skill already resolved by a trusted discovery boundary (for example MCP). */
   resolvedSkill?: SkillDefinition;
   runAgentFn?: typeof runAgent;
   appendUsageFn?: typeof appendUsage;
@@ -183,8 +183,8 @@ export async function executeSkill(
     return { state: "failed", code: "EXECUTION_ERROR", message: `workspace "${calleeId}" not found.` };
   }
 
-  // 2. Skill lookup. MCP already loaded and publication-gated its selected skill, so it may pass
-  // that definition and avoid a second directory read. Other callers continue to resolve live.
+  // 2. Skill lookup. MCP already resolved the skill against its own live read of .skills/, so it may
+  // pass that definition and avoid a second directory read. Other callers continue to resolve live.
   const skills = opts.resolvedSkill ? [opts.resolvedSkill] : await (opts.loadSkillsFn ?? loadSkills)(callee.dir);
   const skill = skills.find((s) => s.id === skillId);
   if (!skill) {

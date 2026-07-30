@@ -1,6 +1,7 @@
-// The Workspace-MCP surface must expose ONLY the selected (published) skills and run them through
-// executeSkill, mapping the result onto MCP tool results. These pin the selection gate (unselected
-// skills are invisible and uncallable) and the completed/failed → MCP-result mapping.
+// The Workspace-MCP surface exposes every skill the workspace declares in .skills/ and runs them
+// through executeSkill, mapping the result onto MCP tool results. These pin that the exposed set is
+// exactly what is on disk (read live, so a deleted skill is uncallable and not merely unlisted) and
+// the completed/failed → MCP-result mapping.
 
 import { describe, it, expect, vi } from "vitest";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
@@ -25,19 +26,18 @@ const PLACE_ORDER: SkillDefinition = {
   output: { type: "object", properties: { ok: { type: "boolean" } } },
 };
 
-function deps(selected: string[], over: Partial<WorkspaceMcpDeps> = {}): WorkspaceMcpDeps {
+function deps(over: Partial<WorkspaceMcpDeps> = {}): WorkspaceMcpDeps {
   return {
     loadSkillsFn: async () => [CHECK_STOCK, PLACE_ORDER],
-    getSelectedSkillIds: () => selected,
     getWorkspaceDir: () => "/fake/ws",
     ...over,
   };
 }
 
 describe("listWorkspaceMcpTools", () => {
-  it("lists only selected skills, mapping id to the MCP tool name and preserving both schemas", async () => {
-    const tools = await listWorkspaceMcpTools("ws1", deps(["check_stock"]));
-    expect(tools).toHaveLength(1);
+  it("lists every declared skill, mapping id to the MCP tool name and preserving both schemas", async () => {
+    const tools = await listWorkspaceMcpTools("ws1", deps());
+    expect(tools.map((t) => t.name)).toEqual(["check_stock", "place_order"]);
     expect(tools[0]).toMatchObject({
       name: "check_stock",
       description: "Returns inventory level",
@@ -47,35 +47,37 @@ describe("listWorkspaceMcpTools", () => {
   });
 
   it("omits an empty description rather than sending an empty string", async () => {
-    const tools = await listWorkspaceMcpTools("ws1", deps(["place_order"]));
-    expect(tools[0].description).toBeUndefined();
+    const tools = await listWorkspaceMcpTools("ws1", deps());
+    expect(tools[1].description).toBeUndefined();
   });
 
   it("returns nothing when the workspace dir cannot be resolved", async () => {
-    const tools = await listWorkspaceMcpTools("ws1", deps(["check_stock"], { getWorkspaceDir: () => undefined }));
+    const tools = await listWorkspaceMcpTools("ws1", deps({ getWorkspaceDir: () => undefined }));
     expect(tools).toEqual([]);
   });
 });
 
 describe("callWorkspaceMcpTool", () => {
-  it("rejects a skill that exists but is not selected — without invoking executeSkill", async () => {
+  // A client that listed tools earlier can call one the workspace agent has since deleted. The call
+  // must fail on the live read rather than reaching executeSkill with a vanished contract.
+  it("rejects a tool the workspace no longer declares — without invoking executeSkill", async () => {
     const executeSkillFn = vi.fn();
     const res = await callWorkspaceMcpTool(
       "ws1",
       "place_order",
       { sku: "x" },
-      deps(["check_stock"], { executeSkillFn: executeSkillFn as never }),
+      deps({ loadSkillsFn: async () => [CHECK_STOCK], executeSkillFn: executeSkillFn as never }),
     );
     expect(res.isError).toBe(true);
     expect(res.content[0]).toMatchObject({
       type: "text",
-      text: 'Unknown tool "place_order". Published tools: "check_stock".',
+      text: 'Unknown tool "place_order". Available tools: "check_stock".',
     });
     expect(executeSkillFn).not.toHaveBeenCalled();
   });
 
   it("explains when the workspace exposes no MCP tools", async () => {
-    const res = await callWorkspaceMcpTool("ws1", "weather", {}, deps([]));
+    const res = await callWorkspaceMcpTool("ws1", "weather", {}, deps({ loadSkillsFn: async () => [] }));
     expect(res.isError).toBe(true);
     expect(res.content[0]).toMatchObject({
       type: "text",
@@ -92,7 +94,7 @@ describe("callWorkspaceMcpTool", () => {
       "ws1",
       "check_stock",
       { sku: "x" },
-      deps(["check_stock"], { executeSkillFn: executeSkillFn as never }),
+      deps({ executeSkillFn: executeSkillFn as never }),
     );
     expect(res.isError).toBeFalsy();
     expect(res.structuredContent).toEqual({ in_stock: true });
@@ -119,7 +121,7 @@ describe("callWorkspaceMcpTool", () => {
       "ws1",
       "check_stock",
       { sku: "x" },
-      deps(["check_stock"], { executeSkillFn: executeSkillFn as never }),
+      deps({ executeSkillFn: executeSkillFn as never }),
     );
     expect(res.isError).toBe(true);
     expect(res.content[0]).toMatchObject({ type: "text", text: "[NEEDS_INPUT] which warehouse?" });
@@ -136,7 +138,7 @@ describe("callWorkspaceMcpTool", () => {
       "ws1",
       "check_stock",
       { sku: "x" },
-      deps(["check_stock"], { executeSkillFn: executeSkillFn as never }),
+      deps({ executeSkillFn: executeSkillFn as never }),
     );
 
     expect(res).toEqual({
@@ -153,7 +155,7 @@ describe("callWorkspaceMcpTool", () => {
       "ws1",
       "check_stock",
       { sku: "x" },
-      deps(["check_stock"], { executeSkillFn: executeSkillFn as never }),
+      deps({ executeSkillFn: executeSkillFn as never }),
     );
     expect(res).toEqual({
       isError: true,
@@ -164,7 +166,7 @@ describe("callWorkspaceMcpTool", () => {
   it("serializes an execution exception as a JSON-RPC tool result", async () => {
     const server = buildWorkspaceMcpServer(
       "ws1",
-      deps(["check_stock"], {
+      deps({
         executeSkillFn: (async () => {
           throw new Error("directory lookup failed");
         }) as never,

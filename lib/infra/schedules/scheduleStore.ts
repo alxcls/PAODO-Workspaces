@@ -95,7 +95,7 @@ export function setNextRunAt(workspaceId: string, nextRunAt: string | null): voi
 export function clearSchedule(workspaceId: string): void {
   const entry = store[workspaceId];
   // No-op when absent: avoids a pointless disk write and log line for the common case of deleting
-  // a workspace that never had a schedule. Matches mcpConfigStore/workspaceSecretStore.
+  // a workspace that never had a schedule. Matches credentialStore/workspaceSecretStore.
   if (!entry) return;
   // Read the id before deleting — save()'s context requires it.
   const scheduleId = entry.id;

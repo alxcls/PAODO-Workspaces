@@ -18,7 +18,7 @@ _Demo video of PAODO in action_ :
 
 - **HTTP API** — call any workspace's agent externally with a per-workspace API key
 
-- **Workspace MCP** — expose selected workspace skills as MCP tools through a per-workspace, independently revocable access key
+- **Workspace MCP** — expose a workspace's skills as MCP tools through a per-workspace, independently revocable access key
 
 - **Scheduled triggers** — run a workspace agent on a recurring schedule
 
@@ -95,8 +95,8 @@ request body.
 
 ## Workspace MCP access
 
-Enable MCP access from the workspace panel to mint a bearer secret and choose which skills to
-publish, then point any MCP client at the workspace:
+Enable MCP access from the workspace panel to mint a bearer secret, then point any MCP client at the
+workspace:
 
 ```json
 {
@@ -110,10 +110,16 @@ publish, then point any MCP client at the workspace:
 }
 ```
 
-The client sees exactly the skills you selected and nothing else — no agent tools, no filesystem, no
+The client sees the workspace's declared skills and nothing else — no agent tools, no filesystem, no
 graph. Each skill's `.skills/*.json` contract becomes the tool's input and output schema, and calls
 run through the same validated path the agent network uses. The secret is stored hashed, shown once,
 and revoked independently of the API key.
+
+There is no per-skill publication step: whatever the workspace declares in `.skills/` is what the
+endpoint serves, read fresh on every request, so a skill the agent adds is callable at once and one
+it deletes is neither listed nor callable. Enabling the MCP and handing out its secret is the
+authorization decision — give it only to clients you would trust with every skill the workspace
+declares. The workspace panel lists the currently exposed tools so you can see the surface change.
 
 Skill calls are one-shot, unlike the chat API above: each runs in a fresh, isolated conversation, so
 there is no `conversationId` to continue — a caller that needs different arguments calls again

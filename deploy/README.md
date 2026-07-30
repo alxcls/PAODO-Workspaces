@@ -224,8 +224,8 @@ curl --request POST https://api.example.com/api/workspaces/<workspace-id>/agent 
   --data '{"message":"Process this request"}'
 ```
 
-For MCP, generate an MCP secret in the workspace's **Workspace MCP access** panel,
-publish the desired skills, and connect the client to
+For MCP, generate an MCP secret in the workspace's **Workspace MCP access** panel — every skill the
+workspace declares in `.skills/` is exposed — and connect the client to
 `https://api.example.com/api/workspaces/<workspace-id>/mcp`.
 
 The gateway returns `404` for the UI, WebSocket endpoint, configuration routes,

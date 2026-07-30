@@ -70,8 +70,10 @@ route cannot handle a hash.
 and every call site already knows both, so a record would add nothing.
 
 **One `enabled` flag, owned by the credential**, meaning "this access channel is on". A disabled
-channel rejects every secret. `mcpConfigStore` is therefore reduced to `mcpSkillStore.ts`, holding
-only the published skill selection.
+channel rejects every secret. `mcpConfigStore` is therefore absorbed whole: the split briefly left a
+`mcpSkillStore.ts` behind it for the published skill selection, and dropping per-skill publication
+(see [Workspace MCP gateway over declared skills](../accepted/adr-workspace-mcp-skill-gateway.md))
+removed that too, so `enabled` plus the secret is all the MCP endpoint stores.
 
 **`lastUsedAt` is throttled to one write per 60s per credential**, since every save rewrites the whole
 file. Its persistence is best-effort: a disk failure logs a warning rather than failing a valid

@@ -47,8 +47,9 @@ SQLite but is omitted from the dashboard’s lightweight list query and loaded o
 session. The dashboard’s 5000-turn list limit bounds one response and is not a retention policy.
 
 The stored content remains unredacted. Confidentiality relies on the single-user deployment’s
-network isolation. The private UI and usage routes stay behind Tailscale; the optional public
-gateway exposes only the separately authenticated workspace-agent endpoints.
+network and authentication boundaries. The UI and usage routes stay behind the selected
+authenticated HTTPS ingress and PAODO Basic Auth; the public Caddy gateway exposes only separately
+authenticated programmatic API and MCP routes.
 
 Create backups through
 `npm run backup:database -- /path/on/separate-storage/paodo.db`, then copy the snapshot to separately
@@ -66,8 +67,8 @@ Consequences
   be edited.
 - The database grows with conversation and execution history. Retention remains an explicit
   operator policy.
-- Anyone with host or tailnet access can read sensitive plaintext. This is acceptable only under the
-  current single-user threat model. A multi-tenant or publicly exposed UI would require
+- Anyone with host access can read sensitive plaintext. This is acceptable only under the current
+  single-user threat model. A multi-tenant UI would require
   authentication, per-workspace authorization, and reconsideration of redaction or encryption at
   rest.
 - The database does not replace workspace files or every existing runtime store; it is the shared

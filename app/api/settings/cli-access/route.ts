@@ -10,7 +10,7 @@
 export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
-import { credentialHandlers } from "@/lib/api/credentialRoutes";
+import { credentialHandlers, publicBaseUrl } from "@/lib/api/credentialRoutes";
 import { state } from "@/lib/infra/security/credentialStore";
 
 const handlers = credentialHandlers<Record<string, never>>("platform", async () => null);
@@ -20,5 +20,8 @@ export const DELETE = handlers.DELETE;
 export const PATCH = handlers.PATCH;
 
 export function GET() {
-  return NextResponse.json(state("platform"), { headers: { "Cache-Control": "no-store" } });
+  return NextResponse.json(
+    { ...state("platform"), publicBaseUrl: publicBaseUrl() },
+    { headers: { "Cache-Control": "no-store" } },
+  );
 }

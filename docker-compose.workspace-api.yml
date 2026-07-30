@@ -1,11 +1,11 @@
-# Optional public HTTPS gateway for external workspace-agent callers.
+# Optional public HTTPS gateway for external programmatic API and MCP callers.
 #
 # Usage:
 #   docker compose -f docker-compose.yml -f docker-compose.workspace-api.yml up -d
 #
 # The app service remains bound to 127.0.0.1 by docker-compose.yml. This is the
 # only public listener, and deploy/Caddyfile.workspace-api permits only the
-# bearer-protected workspace API and MCP POST routes.
+# explicitly allowlisted bearer-protected programmatic routes.
 services:
   workspace-api:
     image: caddy:2.10-alpine
@@ -16,8 +16,8 @@ services:
         max-size: "10m"
         max-file: "5"
     ports:
-      # Bind only the public address. Tailscale Serve can keep using 443 on the
-      # VPS's Tailscale address for the private UI.
+      # Bind only the public address. UI ingress remains separate through
+      # loopback, a private network, or an outbound tunnel.
       - "${WORKSPACE_API_BIND_IP:?Set WORKSPACE_API_BIND_IP to the VPS public IPv4}:80:80"
       - "${WORKSPACE_API_BIND_IP:?Set WORKSPACE_API_BIND_IP to the VPS public IPv4}:443:443"
     environment:

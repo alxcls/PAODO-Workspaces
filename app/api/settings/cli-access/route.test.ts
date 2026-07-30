@@ -18,10 +18,19 @@ const { ROOT } = vi.hoisted(() => {
 import { DELETE, GET, PATCH, POST } from "./route";
 import { remove, validate } from "@/lib/infra/security/credentialStore";
 
-afterAll(() => fs.rmSync(ROOT, { recursive: true, force: true }));
+const originalPublicDomain = process.env.WORKSPACE_API_DOMAIN;
+
+afterAll(() => {
+  fs.rmSync(ROOT, { recursive: true, force: true });
+  if (originalPublicDomain === undefined) delete process.env.WORKSPACE_API_DOMAIN;
+  else process.env.WORKSPACE_API_DOMAIN = originalPublicDomain;
+});
 
 // The platform credential is instance-wide, so every test shares one record. Clear it between tests.
-beforeEach(() => remove("platform"));
+beforeEach(() => {
+  remove("platform");
+  process.env.WORKSPACE_API_DOMAIN = "api.example.com";
+});
 
 // The handlers take Next's route context; this endpoint has no params because it has no subject.
 const context = { params: Promise.resolve({}) };
@@ -40,6 +49,7 @@ describe("/api/settings/cli-access", () => {
       hasSecret: false,
       createdAt: null,
       lastUsedAt: null,
+      publicBaseUrl: "https://api.example.com",
     });
   });
 
@@ -47,7 +57,7 @@ describe("/api/settings/cli-access", () => {
     await POST(new Request("http://x", { method: "POST" }), context);
     const body = (await GET().json()) as Record<string, unknown>;
     // Assert on the key set: a future field carrying hash material fails here rather than shipping.
-    expect(Object.keys(body).sort()).toEqual(["createdAt", "enabled", "hasSecret", "lastUsedAt"]);
+    expect(Object.keys(body).sort()).toEqual(["createdAt", "enabled", "hasSecret", "lastUsedAt", "publicBaseUrl"]);
   });
 
   it("mints a working token on POST and returns the plaintext once", async () => {

@@ -16,7 +16,11 @@ interface CliAccessModalProps {
 }
 
 export default function CliAccessModal({ open, onClose }: CliAccessModalProps) {
-  const credential = useCredential("/api/settings/cli-access", { noun: "key", feature: "CLI access" }, { load: open });
+  const credential = useCredential<{ publicBaseUrl: string | null }>(
+    "/api/settings/cli-access",
+    { noun: "key", feature: "CLI access" },
+    { load: open },
+  );
   const [copied, setCopied] = useState(false);
 
   const close = useCallback(() => {
@@ -35,7 +39,9 @@ export default function CliAccessModal({ open, onClose }: CliAccessModalProps) {
 
   if (!open) return null;
 
-  const endpoint = typeof window === "undefined" ? "" : window.location.origin.replace(/\/+$/, "");
+  const endpoint =
+    credential.extra?.publicBaseUrl ??
+    (typeof window === "undefined" ? "" : window.location.origin.replace(/\/+$/, ""));
 
   const copyEndpoint = async () => {
     await navigator.clipboard.writeText(endpoint);

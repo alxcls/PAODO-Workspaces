@@ -1,5 +1,6 @@
-# The public surface is deliberately limited to workspace API/MCP routes. The
-# PAODO UI and all other API routes remain reachable only through Tailscale.
+# The public surface is deliberately limited to bearer-authenticated
+# programmatic API/MCP routes. The PAODO UI and all other API routes remain
+# reachable only through the private UI path.
 {$WORKSPACE_API_DOMAIN} {
 	log {
 		output stdout
@@ -15,6 +16,11 @@
 		@workspaceMcp {
 			method POST
 			path_regexp workspaceMcp ^/api/workspaces/[^/]+/mcp$
+		}
+
+		@platformRead {
+			method GET
+			path_regexp platformRead ^/api/(status|workspaces(?:/[^/]+)?)$
 		}
 
 		handle @workspaceAgent {
@@ -44,6 +50,15 @@
 				# {remote_host} is the real caller. X-Real-IP and X-Forwarded-For
 				# are stripped and not re-set — nothing reads them any more, and
 				# leaving them would invite trusting a header no hop sanitizes.
+				header_up -X-Real-IP
+				header_up -X-Forwarded-For
+				header_up -CF-Connecting-IP
+				header_up CF-Connecting-IP {remote_host}
+			}
+		}
+
+		handle @platformRead {
+			reverse_proxy app:{$APP_PORT} {
 				header_up -X-Real-IP
 				header_up -X-Forwarded-For
 				header_up -CF-Connecting-IP

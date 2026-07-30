@@ -2,11 +2,14 @@
 
 ## Threat model
 
-This is a single-user, self-hosted app accessed exclusively over a private Tailscale network. The public internet cannot reach the app. Remaining threats:
+This is a single-user, self-hosted app whose deployment should keep
+administration, authenticated browser ingress, and the optional programmatic
+gateway separate. Remaining threats:
 
 - **Agent prompt injection** — a malicious page or file the agent fetches could instruct it to exfiltrate data or reach internal network services
 - **Container escape / Docker daemon compromise** — if any code path on the host is exploited, an attacker who pivots from the app container to the Docker socket gets root on the VPS
 - **Supply chain** — a compromised dependency introduced via a PR or dependency update
+- **Edge or credential misconfiguration** — an incorrect ingress policy, Caddy route, or leaked Bearer credential could expose more capability than intended
 
 ---
 
@@ -14,8 +17,10 @@ This is a single-user, self-hosted app accessed exclusively over a private Tails
 
 **Access**
 
-- App reachable only by authenticated Tailscale devices; `tailscale serve` proxies to `127.0.0.1:<PORT>` — nothing else reaches that port
-- SSH via Tailscale SSH (`tailscale up --ssh`); port 22 closed — no public SSH surface, no fail2ban needed
+- The app listener is bound to `127.0.0.1:<PORT>` on the host; the selected UI ingress publishes it without opening that port to the internet
+- The UI ingress may add an outer identity layer; PAODO Basic Auth remains the origin-level application credential
+- SSH should use a private or tightly restricted administration path
+- The DNS-direct Caddy gateway exposes only exact method/path combinations for authenticated programmatic API and Workspace MCP access; every other route returns `404`
 - Each workspace container gets its own bridge network — no inter-container traffic
 - Workspace container ports are not published to the host, so a local process cannot become a browser-facing app through the workspace
 
@@ -48,10 +53,10 @@ This is a single-user, self-hosted app accessed exclusively over a private Tails
 
 **Auth**
 
-- HTTP Basic Auth covers all routes including `/api/*` and WebSocket upgrades — enforced before requests reach Next.js
+- HTTP Basic Auth covers browser UI routes and WebSocket upgrades after any outer ingress policy
 - Timing-safe comparison (`crypto.timingSafeEqual`) for username and password
 - Brute-force lockout: 5 failures / 60 s → 429 + `Retry-After`; counter resets on success
-- Per-workspace Bearer tokens (SHA-256 hashed, constant-time comparison) for API access
+- Per-workspace Bearer tokens protect Agent API and MCP routes
 
 **Rate limiting**
 
@@ -65,5 +70,5 @@ This is a single-user, self-hosted app accessed exclusively over a private Tails
 
 **Operational**
 
-- Explicit audit events (auth failures, rate-limit trips, and credential lifecycle changes) are logged with an `audit: true` tag, alongside operational logs on container stdout, where Docker's `json-file` driver bounds and rotates them. Nothing is persisted to the host, so logs do not survive a container wipe — see `deploy/README.md` if that becomes a requirement.
+- Explicit audit events (auth failures, rate-limit trips, and credential lifecycle changes) are logged with an `audit: true` tag, alongside operational logs on container stdout. Docker's `json-file` driver stores, bounds, and rotates them in managed files on the host; they do not survive container replacement.
 - Server refuses to start if `USERNAME` or `PASSWORD` are unset — every mode, no opt-out. Previously gated on `NODE_ENV`, which meant flipping a container to debug logging served every route unauthenticated.

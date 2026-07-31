@@ -142,8 +142,7 @@ silently breaks per-workspace secret injection. Recreating a gateway-enabled
 stack also reloads changes to its mounted Caddy configuration.
 
 Schema migrations run automatically at startup and cannot be reversed: once they
-apply, the previous release refuses to start against the migrated database. Back
-up before an update that adds one.
+apply, the previous release refuses to start against the migrated database.
 
 ## Logs
 

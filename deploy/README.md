@@ -93,33 +93,27 @@ docker compose \
   up -d
 ```
 
-Everything outside the allowlist returns `404`. Three separate credentials reach
-what it does expose. Each one is created in the UI over the private path and
+Everything outside the allowlist returns `404`. Two credentials reach what it
+does expose, each created in a workspace's own panel over the private path and
 shown exactly once:
 
-- **CLI access** — the Settings icon on the home page. One instance-wide token,
-  accepted only on `GET /api/status`, `/api/workspaces`, and
-  `/api/workspaces/<id>`. `lib/infra/security/platformAccessPolicy.ts` is that
-  allowlist: a route missing from it rejects the token even when the gateway
-  forwards the request.
-- **Workspace API access** — the card on a workspace's home page. A per-workspace
-  key for `POST /api/workspaces/<id>/agent`.
-- **Workspace MCP access** — the card beside it. A per-workspace secret for
+- **Workspace API access** — a per-workspace key for
+  `POST /api/workspaces/<id>/agent`.
+- **Workspace MCP access** — a per-workspace secret for
   `POST /api/workspaces/<id>/mcp`.
 
-Send them as `Authorization: Bearer <secret>`. Then confirm the gateway serves
-the allowlist and nothing else:
+Send them as `Authorization: Bearer <secret>`. Then confirm the gateway answers
+over HTTPS and serves nothing outside the allowlist:
 
 ```bash
-curl -fsS -H "Authorization: Bearer <cli-token>" https://api.example.com/api/status
 curl -s -o /dev/null -w '%{http_code}\n' https://api.example.com/   # expect 404
 ```
 
-The first call also proves the certificate was issued. Test with a real token
-rather than a placeholder: a rejected bearer counts toward the same per-IP
-brute-force lockout as a failed UI login — five within a minute blocks the
-caller — and the gateway rewrites `CF-Connecting-IP` to the true remote address,
-so the block lands on you, not on the gateway.
+A response at all proves the certificate was issued. Test the bearer routes with
+a real credential rather than a placeholder: a rejected bearer counts toward the
+same per-IP brute-force lockout as a failed UI login — five within a minute
+blocks the caller — and the gateway rewrites `CF-Connecting-IP` to the true
+remote address, so the block lands on you, not on the gateway.
 
 ## Update
 

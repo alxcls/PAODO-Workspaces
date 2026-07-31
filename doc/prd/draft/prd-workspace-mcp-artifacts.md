@@ -1,7 +1,7 @@
 # PRD — Workspace MCP Artifacts
 
 **Status:** Draft
-**Related:** [Workspace MCP](prd-workspace-mcp.md), [Shared Drives](../accepted/prd-shared-drives.md)
+**Related:** [Workspace MCP](../accepted/prd-workspace-mcp.md), [Shared Drives](../accepted/prd-shared-drives.md)
 
 ## Problem
 

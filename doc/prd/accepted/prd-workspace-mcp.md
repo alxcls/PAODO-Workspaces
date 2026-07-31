@@ -1,7 +1,7 @@
 # PRD — Workspace MCP
 
-**Status:** Draft
-**Related:** [Structured A2A Capabilities](../accepted/prd-structured-A2A-capabilities.md)
+**Status:** Shipped
+**Related:** [Structured A2A Capabilities](prd-structured-A2A-capabilities.md)
 
 ## Problem
 

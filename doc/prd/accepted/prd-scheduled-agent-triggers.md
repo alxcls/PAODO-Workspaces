@@ -1,6 +1,6 @@
 # PRD — Scheduled Agent Triggers
 
-**Status:** Draft  
+**Status:** Shipped  
 **Author:** alxcls  
 **Related:** [VISION.md](../../VISION.md)
 

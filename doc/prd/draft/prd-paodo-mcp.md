@@ -1,7 +1,7 @@
 # PRD — PAODO MCP
 
 **Status:** Draft
-**Related:** [Workspace MCP](prd-workspace-mcp.md)
+**Related:** [Workspace MCP](../accepted/prd-workspace-mcp.md)
 
 ## Problem
 

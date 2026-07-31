@@ -93,8 +93,33 @@ docker compose \
   up -d
 ```
 
-Everything outside the allowlist returns `404`. Each interface uses its own
-credential: a workspace API key or workspace MCP secret.
+Everything outside the allowlist returns `404`. Three separate credentials reach
+what it does expose. Each one is created in the UI over the private path and
+shown exactly once:
+
+- **CLI access** — the Settings icon on the home page. One instance-wide token,
+  accepted only on `GET /api/status`, `/api/workspaces`, and
+  `/api/workspaces/<id>`. `lib/infra/security/platformAccessPolicy.ts` is that
+  allowlist: a route missing from it rejects the token even when the gateway
+  forwards the request.
+- **Workspace API access** — the card on a workspace's home page. A per-workspace
+  key for `POST /api/workspaces/<id>/agent`.
+- **Workspace MCP access** — the card beside it. A per-workspace secret for
+  `POST /api/workspaces/<id>/mcp`.
+
+Send them as `Authorization: Bearer <secret>`. Then confirm the gateway serves
+the allowlist and nothing else:
+
+```bash
+curl -fsS -H "Authorization: Bearer <cli-token>" https://api.example.com/api/status
+curl -s -o /dev/null -w '%{http_code}\n' https://api.example.com/   # expect 404
+```
+
+The first call also proves the certificate was issued. Test with a real token
+rather than a placeholder: a rejected bearer counts toward the same per-IP
+brute-force lockout as a failed UI login — five within a minute blocks the
+caller — and the gateway rewrites `CF-Connecting-IP` to the true remote address,
+so the block lands on you, not on the gateway.
 
 ## Update
 
@@ -116,7 +141,11 @@ run the same image, so a scoped rebuild leaves the sidecar on stale code and
 silently breaks per-workspace secret injection. Recreating a gateway-enabled
 stack also reloads changes to its mounted Caddy configuration.
 
-## Logs and backup
+Schema migrations run automatically at startup and cannot be reversed: once they
+apply, the previous release refuses to start against the migrated database. Back
+up before an update that adds one.
+
+## Logs
 
 Containers emit line-delimited JSON to stdout. Docker stores and rotates those
 logs in its managed files on the host.
@@ -130,17 +159,3 @@ docker compose logs -f --no-log-prefix app | jq -R 'fromjson? // .'
 `--no-log-prefix` is required whenever you pipe into `jq`. Without it Compose
 prefixes each line with `app-1  | `, which is not JSON, and `fromjson?` discards
 every line — the filter returns nothing instead of failing.
-
-Back up through the app rather than copying `/app/data/.paodo.db`: the database
-runs in WAL mode, so a raw file copy can omit committed pages. Snapshot it, move
-the copy off the host, then delete the same-volume snapshot.
-
-```bash
-docker compose exec -T app npm run backup:database -- /app/data/.paodo-backup.db
-docker compose cp app:/app/data/.paodo-backup.db /path/to/off-host/paodo.db
-docker compose exec -T app rm /app/data/.paodo-backup.db
-```
-
-Store backups outside the VPS, and take one before deploying a version that
-introduces a schema migration — startup rolls back if a migration cannot
-complete.

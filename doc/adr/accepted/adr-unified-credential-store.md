@@ -2,7 +2,7 @@
 
 Title: One store and one lifecycle for every minted bearer secret
 
-Status: Proposed
+Status: Accepted
 
 ## Context
 
@@ -72,7 +72,7 @@ and every call site already knows both, so a record would add nothing.
 **One `enabled` flag, owned by the credential**, meaning "this access channel is on". A disabled
 channel rejects every secret. `mcpConfigStore` is therefore absorbed whole: the split briefly left a
 `mcpSkillStore.ts` behind it for the published skill selection, and dropping per-skill publication
-(see [Workspace MCP gateway over declared skills](../accepted/adr-workspace-mcp-skill-gateway.md))
+(see [Workspace MCP gateway over declared skills](adr-workspace-mcp-skill-gateway.md))
 removed that too, so `enabled` plus the secret is all the MCP endpoint stores.
 
 **`lastUsedAt` is throttled to one write per 60s per credential**, since every save rewrites the whole
@@ -153,7 +153,7 @@ not a minted secret.
 
 ## Notes
 
-- Related: `doc/prd/draft/prd-cli-access.md`, `doc/trigger-operation-architecture.md`
+- Related: `doc/prd/accepted/prd-cli-access.md`, `doc/trigger-operation-architecture.md`
 - Deliberately out of scope: **actor attribution** ("which credential started this run?").
   `usage_turns.origin` (`lib/data/migrations/001-initial-schema.ts`) already constrains to
   `('chat','api','mcp','scheduled','agent','manual')`, so that work is adding `'cli'` and threading

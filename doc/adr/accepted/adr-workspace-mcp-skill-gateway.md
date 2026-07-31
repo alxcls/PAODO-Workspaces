@@ -37,4 +37,4 @@ Alternatives considered
 Notes
 
 - Related ADRs: [Agent-to-agent server-mediated calls](adr-agent-to-agent-server-mediated-calls.md) — defines the agent-network edge check and shared `executeSkill` path this endpoint reuses.
-- Related PRDs: [Workspace MCP](../../prd/draft/prd-workspace-mcp.md)
+- Related PRDs: [Workspace MCP](../../prd/accepted/prd-workspace-mcp.md)

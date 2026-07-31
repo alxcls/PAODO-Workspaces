@@ -1,8 +1,8 @@
 # PRD — Database Storage
 
-**Status:** Draft
+**Status:** Shipped
 **Author:** @alxcls
-**Related:** [VISION.md](../VISION.md), [prd-workspace-isolation.md](prd-workspace-isolation.md), [prd-api-access.md](prd-api-access.md)
+**Related:** [VISION.md](../../VISION.md), [prd-workspace-isolation.md](prd-workspace-isolation.md), [prd-api-access.md](prd-api-access.md)
 
 ---
 

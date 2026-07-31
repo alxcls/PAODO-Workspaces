@@ -2,7 +2,7 @@
 
 **Status:** Draft  
 **Author:** alxcls  
-**Related:** [VISION.md](../../VISION.md), [agent-loop.md](../../agent-loop.md), [prd-agent-loop-control.md](../accepted/prd-agent-loop-control.md), [prd-scheduled-agent-triggers.md](prd-scheduled-agent-triggers.md)
+**Related:** [VISION.md](../../VISION.md), [prd-agent-loop-control.md](../accepted/prd-agent-loop-control.md), [prd-scheduled-agent-triggers.md](../accepted/prd-scheduled-agent-triggers.md)
 
 ---
 

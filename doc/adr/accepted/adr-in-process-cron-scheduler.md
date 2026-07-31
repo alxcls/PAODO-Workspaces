@@ -1,6 +1,6 @@
 # ADR — In-process cron scheduler with node-cron
 
-**Status:** Draft
+**Status:** Accepted
 
 ## Context
 
@@ -33,4 +33,4 @@ Scheduled runs use a headless runner that drains `runAgent()` to completion with
 
 ## Notes
 
-Related PRD: `doc/prd/draft/prd-scheduled-agent-triggers.md`
+Related PRD: `doc/prd/accepted/prd-scheduled-agent-triggers.md`

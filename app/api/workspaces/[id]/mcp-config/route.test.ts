@@ -54,6 +54,11 @@ beforeEach(() => {
   h.mint.mockClear();
   h.revoke.mockClear();
   h.loadSkills.mockClear();
+  // Mirrors the store: revoking clears the hash. DELETE's precondition and its receipt read the same
+  // state, so a mock that never mutated would report a secret still present after it was destroyed.
+  h.revoke.mockImplementation(() => {
+    h.state = { ...h.state, hasKey: false };
+  });
 });
 
 describe("workspace MCP configuration route", () => {
@@ -135,8 +140,6 @@ describe("workspace MCP configuration route", () => {
       plain: "mcp_new",
     });
     expect(h.mint).toHaveBeenCalledWith("workspace-mcp", "ws-1");
-    // The mocked store does not mutate, so the post-revoke state is stated rather than produced.
-    h.state = { enabled: true, hasKey: false, createdAt: "2026-01-01T00:00:00.000Z", lastUsedAt: null };
     const revoked = await DELETE(request("DELETE"), ctx());
     expect(revoked.status).toBe(200);
     // This channel names its own axes, not the API key's — the receipt has to be readable next to the

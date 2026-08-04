@@ -146,7 +146,9 @@ Costs and risks:
 
 - Enabling a channel and creating its key are always two steps, on every channel and every trigger.
   Neither operation moves the other's state: `mint` leaves the enabled flag as it found it, `setEnabled`
-  never creates or destroys a key, and `revoke` is unconditional. The cost is a second step in the
+  never creates or destroys a key, and `revoke` ignores the enabled flag entirely — though it does
+  require a key to destroy, refusing with `CREDENTIAL_NOT_CONFIGURED` when the slot is already
+  empty, so a successful revocation always means a live key stopped working. The cost is a second step in the
   UI; the gain is that a key can be issued before a channel opens and destroyed after it closes, and
   that no caller is handed a read-once plaintext by a request it made for another reason.
 - Because a shared module is now on every programmatic auth path, a regression here fails all three

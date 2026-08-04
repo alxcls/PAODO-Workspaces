@@ -51,6 +51,11 @@ beforeEach(() => {
   h.setEnabled.mockClear();
   h.mint.mockClear();
   h.revoke.mockClear();
+  // Mirrors the store: revoking clears the hash. DELETE's precondition and its receipt read the same
+  // state, so a mock that never mutated would report a key still present and make a repeat look legal.
+  h.revoke.mockImplementation(() => {
+    h.state = { ...h.state, hasKey: false };
+  });
 });
 
 describe("workspace API key route", () => {
@@ -145,16 +150,36 @@ describe("workspace API key route", () => {
     expect(h.setEnabled).not.toHaveBeenCalled();
   });
 
-  // Revocation is how a leaked key is destroyed, so it answers the same way however often it is asked
-  // and whatever state it finds — a caller retrying after a dropped response must not see a failure
-  // that suggests the key is still live.
-  it("revokes idempotently, including when there is no key", async () => {
-    for (const attempt of [1, 2]) {
-      const res = await DELETE(request("DELETE"), ctx());
-      expect(res.status, `attempt ${attempt}`).toBe(200);
-      expect(await res.json()).toEqual({ ok: true, workspaceApiAccess: false, workspaceApiHasKey: false });
-    }
-    expect(h.revoke).toHaveBeenCalledTimes(2);
+  // Revocation refuses on the same condition rotation does. A revoke that destroyed nothing used to
+  // answer 200, indistinguishable from one that destroyed a live key — an operator clearing a leak
+  // could not tell from the response whether this request is what ended it.
+  it("refuses revocation when there is no key to destroy", async () => {
+    h.state = { enabled: true, hasKey: false, createdAt: null, lastUsedAt: null };
+
+    const res = await DELETE(request("DELETE"), ctx());
+
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({
+      ok: false,
+      code: "CREDENTIAL_NOT_CONFIGURED",
+      details: { credentialKind: "workspace-api", operation: "revoke" },
+    });
+    expect(h.revoke).not.toHaveBeenCalled();
+  });
+
+  // The cost of that refusal, pinned so it is a decision rather than a surprise: revocation is no
+  // longer idempotent, so a caller retrying after a dropped response has to read the channel back
+  // instead of trusting a repeated 200.
+  it("destroys the key once and refuses the repeat", async () => {
+    h.state = { enabled: true, hasKey: true, createdAt: "2026-01-01T00:00:00.000Z", lastUsedAt: null };
+
+    const first = await DELETE(request("DELETE"), ctx());
+    expect(first.status).toBe(200);
+    expect(await first.json()).toEqual({ ok: true, workspaceApiAccess: true, workspaceApiHasKey: false });
+
+    const second = await DELETE(request("DELETE"), ctx());
+    expect(second.status).toBe(409);
+    expect(h.revoke).toHaveBeenCalledTimes(1);
   });
 
   // Revoking the last key leaves the channel open and keyless. The receipt has to say so: reading only
@@ -164,7 +189,7 @@ describe("workspace API key route", () => {
   // It says so in the workspace projection's words, not the credential store's. `revoke` answering
   // `enabled` while `get` answers `workspaceApiAccess` made one channel look like two things.
   it("reports the open, keyless channel it leaves behind", async () => {
-    h.state = { enabled: true, hasKey: false, createdAt: "2026-01-01T00:00:00.000Z", lastUsedAt: null };
+    h.state = { enabled: true, hasKey: true, createdAt: "2026-01-01T00:00:00.000Z", lastUsedAt: null };
 
     const res = await DELETE(request("DELETE"), ctx());
 

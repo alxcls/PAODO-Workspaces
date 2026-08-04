@@ -30,8 +30,9 @@ export interface CredentialHandlers<P> {
   /** Generates or rotates as requested in the body. The plaintext is returned here and never again. */
   POST(request: Request, context: { params: Promise<P> }): Promise<Response>;
   /**
-   * Revokes the key unconditionally, leaving the channel's enabled flag alone. Answers with both axes
-   * as they stand afterwards, so the caller sees a channel left open without a key.
+   * Revokes the key, leaving the channel's enabled flag alone. Refused when there is no key to
+   * destroy. Answers with both axes as they stand afterwards, so the caller sees a channel left open
+   * without a key.
    */
   DELETE(request: Request, context: { params: Promise<P> }): Promise<Response>;
   /** Opens or closes the channel: `{ enabled: boolean }`. */
@@ -66,6 +67,9 @@ const NO_STORE = { "Cache-Control": "no-store" } as const;
 
 type CredentialOperation = "generate" | "rotate";
 
+/** Every operation whose legality turns on whether the credential already exists. */
+type GuardedOperation = CredentialOperation | "revoke";
+
 async function readCredentialOperation(request: Request): Promise<CredentialOperation | Response> {
   const body = await readJsonObject(request);
   if (body instanceof Response) return body;
@@ -79,8 +83,10 @@ async function readCredentialOperation(request: Request): Promise<CredentialOper
 }
 
 /**
- * The whole rule set for minting, in two lines: each operation is refused only by the presence or
- * absence of the credential it acts on.
+ * The whole rule set, in three lines: each operation is refused only by the presence or absence of
+ * the credential it acts on. `generate` needs the slot empty; `rotate` and `revoke` both need
+ * something there to act on, and say so in their own words — the advice that follows a refusal
+ * differs even though the condition does not.
  *
  * The channel's enabled flag is deliberately absent. Access and credentials are independent axes —
  * a key presented against a disabled channel is already rejected by validate() in
@@ -90,7 +96,7 @@ async function readCredentialOperation(request: Request): Promise<CredentialOper
 function credentialStateError(
   kind: CredentialKind,
   subject: CredentialSubject,
-  operation: CredentialOperation,
+  operation: GuardedOperation,
   request: Request,
 ): Response | null {
   const { hasKey } = state(kind, subject);
@@ -101,11 +107,14 @@ function credentialStateError(
       details,
     });
   }
-  if (operation === "rotate" && !hasKey) {
-    return errorResponse("CREDENTIAL_NOT_CONFIGURED", "No credential is configured; generate one instead.", {
-      request,
-      details,
-    });
+  if ((operation === "rotate" || operation === "revoke") && !hasKey) {
+    return errorResponse(
+      "CREDENTIAL_NOT_CONFIGURED",
+      operation === "rotate"
+        ? "No credential is configured; generate one instead."
+        : "No credential is configured; there is nothing to revoke.",
+      { request, details },
+    );
   }
   return null;
 }
@@ -174,8 +183,15 @@ export function credentialHandlers<P>(
       try {
         const subject = await subjectFor(request, context);
         if (subject instanceof Response) return subject;
-        // Unconditional and idempotent: revoking is how a leaked credential is destroyed, so it must
-        // never depend on the channel being open, and revoking twice is a success both times.
+        // Refused when the slot is already empty, the same condition rotate refuses on: a success that
+        // destroyed nothing reads exactly like one that destroyed a live key, so a caller clearing a
+        // leak cannot tell whether this request is what ended it. The cost is that a retry after a
+        // dropped response now answers 409 rather than confirming the key is gone — read the channel
+        // back to tell that apart from a key that was never there.
+        const invalidState = credentialStateError(kind, subject, "revoke", request);
+        if (invalidState) return invalidState;
+        // Independent of the enabled flag either way: revoking is how a leaked credential is destroyed,
+        // so it must never depend on the channel being open.
         revoke(kind, subject);
         // Reports both axes afterwards rather than a bare ok, because revoking moves only one of them.
         // Destroying the last key leaves the channel open and keyless — reachable, and rejecting

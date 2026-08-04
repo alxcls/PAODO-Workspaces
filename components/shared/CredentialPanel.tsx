@@ -1,49 +1,62 @@
 // Card chrome for a workspace access channel: title, status, on/off switch, then the generate /
-// rotate / revoke controls and the reveal-once secret. Shared by the API-access and MCP home blocks,
-// which differed only in their nouns and in the extra content MCP puts in the middle.
+// rotate / revoke controls and the reveal-once key. Shared by the API-access and MCP home blocks,
+// which differ only in the extra content MCP puts in the middle.
+//
+// Every channel calls its credential a "key", so this file says so in plain strings. It used to take
+// a `noun` prop, which let one channel say "secret" while another said "key" for the same thing —
+// and on the home page "secret" also means a third-party env-var secret, a different primitive
+// entirely. One word per concept is the point; a prop is how it drifted.
+//
+// The card shows two independent axes, and the controls for each are gated only by their own:
+//   - the switch opens or closes the channel;
+//   - `hasKey` decides whether you see Generate, or Rotate and Revoke.
+// So a key can be issued before the channel opens, and a leaked one destroyed after it closes —
+// neither action has to move the switch to reach the other axis.
 //
 // The CLI access modal deliberately does NOT use this — it is a modal, not a card — but it drives the
-// same useCredential hook and reuses CredentialSecret, which is where the real duplication was.
+// same useCredential hook and reuses CredentialReveal, which is where the real duplication was.
 "use client";
 
 import type { ReactNode } from "react";
-import CredentialSecret from "./CredentialSecret";
+import CredentialReveal from "./CredentialReveal";
 
 interface CredentialPanelProps {
   title: string;
-  /** What the secret is called in this channel's UI, e.g. "key" or "secret". */
-  noun: string;
   /** One line explaining what opening the channel does. Shown only while enabled. */
   description: string;
   /** Label for the toggle's accessible name, e.g. "API access". */
   toggleLabel: string;
   enabled: boolean;
-  hasSecret: boolean;
-  secret: string | null;
+  hasKey: boolean;
+  /** The reveal-once plaintext, present only between minting it and dismissing it. */
+  plaintext: string | null;
   busy: boolean;
   error: string | null;
   onToggle: () => void;
-  onMint: () => void;
+  /** Issues the channel's first credential. Offered only while it has none. */
+  onGenerate: () => void;
+  /** Replaces the existing credential. Offered only while it has one. */
+  onRotate: () => void;
   onRevoke: () => void;
-  onDismissSecret: () => void;
+  onDismissPlaintext: () => void;
   /** Channel-specific content rendered while enabled, above the controls (MCP's tools and URL). */
   children?: ReactNode;
 }
 
 export default function CredentialPanel({
   title,
-  noun,
   description,
   toggleLabel,
   enabled,
-  hasSecret,
-  secret,
+  hasKey,
+  plaintext,
   busy,
   error,
   onToggle,
-  onMint,
+  onGenerate,
+  onRotate,
   onRevoke,
-  onDismissSecret,
+  onDismissPlaintext,
   children,
 }: CredentialPanelProps) {
   return (
@@ -51,8 +64,8 @@ export default function CredentialPanel({
       <div className="flex items-center justify-between">
         <div className="min-w-0">
           <span className="text-ms font-semibold text-text">{title}</span>
-          <span className={`text-xs ml-2 ${enabled && hasSecret ? "text-select" : "text-text-3"}`}>
-            {enabled ? (hasSecret ? `${capitalize(noun)} active` : `${capitalize(noun)} required`) : "Disabled"}
+          <span className={`text-xs ml-2 ${enabled && hasKey ? "text-select" : "text-text-3"}`}>
+            {statusLabel(enabled, hasKey)}
           </span>
         </div>
         <button
@@ -73,36 +86,42 @@ export default function CredentialPanel({
         </p>
       )}
 
+      {/* Describes what an open channel does, and MCP's tools and URL. Both are true only of a live
+          channel, so unlike the credential controls they stay behind the switch. */}
       {enabled && (
         <>
           <p className="m-0 text-xs text-text-3">{description}</p>
-
           {children}
-
-          {!hasSecret && !secret && (
-            <button className="btn btn-sm self-start" onClick={onMint} disabled={busy}>
-              {busy ? "Generating…" : `Generate ${noun}`}
-            </button>
-          )}
-
-          {hasSecret && !secret && (
-            <div className="flex items-center gap-2.5">
-              <button className="linkbtn" onClick={onMint} disabled={busy}>
-                Rotate
-              </button>
-              <button className="linkbtn text-danger" onClick={onRevoke} disabled={busy}>
-                Revoke
-              </button>
-            </div>
-          )}
-
-          {secret && <CredentialSecret secret={secret} noun={noun} onDismiss={onDismissSecret} />}
         </>
       )}
+
+      {!hasKey && !plaintext && (
+        <button className="btn btn-sm self-start" onClick={onGenerate} disabled={busy}>
+          {busy ? "Generating…" : "Generate key"}
+        </button>
+      )}
+
+      {hasKey && !plaintext && (
+        <div className="flex items-center gap-2.5">
+          <button className="linkbtn" onClick={onRotate} disabled={busy}>
+            Rotate
+          </button>
+          <button className="linkbtn text-danger" onClick={onRevoke} disabled={busy}>
+            Revoke
+          </button>
+        </div>
+      )}
+
+      {plaintext && <CredentialReveal plaintext={plaintext} onDismiss={onDismissPlaintext} />}
     </div>
   );
 }
 
-function capitalize(value: string): string {
-  return value.charAt(0).toUpperCase() + value.slice(1);
+/**
+ * Names both axes at once. A closed channel that still holds a key says so rather than reading as a
+ * bare "Disabled", which would suggest the key was gone and leave no reason to look for Revoke.
+ */
+function statusLabel(enabled: boolean, hasKey: boolean): string {
+  if (!enabled) return hasKey ? "Disabled · key exists" : "Disabled";
+  return hasKey ? "Key active" : "Key required";
 }

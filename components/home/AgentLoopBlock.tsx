@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
+import { confirmedValues } from "@/lib/client/workspaceReceipt";
 
 const LABEL_WIDTH = 120;
 const CONTROL_WIDTH = 80;
@@ -57,8 +58,9 @@ export default function AgentLoopBlock({ wsId }: { wsId: string }) {
           signal: controller.signal,
         });
         if (!response.ok || controller.signal.aborted) return;
-        setIterations(nextIterations);
-        setMinutes(nextMinutes);
+        const { maxIterations, maxRunMinutes } = await confirmedValues(response);
+        setIterations(maxIterations ?? nextIterations);
+        setMinutes(maxRunMinutes ?? nextMinutes);
       } catch (error) {
         if (!(error instanceof DOMException && error.name === "AbortError")) console.error(error);
       }

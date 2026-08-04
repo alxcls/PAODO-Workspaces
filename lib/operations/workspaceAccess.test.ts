@@ -7,47 +7,60 @@ import {
   type ChannelCredentials,
 } from "./workspaceAccess";
 
-/**
- * Baseline credentials. `hasSecret` reports a key already present and `mint` throws, so minting is
- * never incidental: a test that expects a key to be created has to say so, and one that does not fails
- * loudly if a key gets minted behind its back.
- */
 const credentialStub = (overrides: Partial<ChannelCredentials> = {}): ChannelCredentials => ({
-  hasSecret: () => true,
   setEnabled: () => {},
-  mint: () => {
-    throw new Error("must not mint a credential in this test");
-  },
   ...overrides,
 });
 
 describe("workspace access details", () => {
-  it("reports each channel's state and URL without exposing a credential", () => {
+  it("reports both axes per channel, and no credential", () => {
     const readState = (channel: AccessChannel) =>
-      channel === "workspace-api" ? { enabled: true, hasSecret: true } : { enabled: false, hasSecret: true };
+      channel === "workspace-api" ? { enabled: true, hasKey: true } : { enabled: false, hasKey: true };
 
     expect(getWorkspaceAccess("ws-1", "https://agents.example.com/", readState)).toEqual({
       workspaceApiAccess: true,
+      workspaceApiHasKey: true,
       apiEndpoint: "https://agents.example.com/api/workspaces/ws-1/agent",
       workspaceMcpAccess: false,
-      mcpConnectionUrl: null,
+      workspaceMcpHasKey: true,
+      mcpConnectionUrl: "https://agents.example.com/api/workspaces/ws-1/mcp",
     });
   });
 
-  // An enabled channel normally always has a key, because enabling mints one. Reaching this state means
-  // the key was revoked afterwards, and showing a URL for it would advertise an endpoint that 401s.
-  it("withholds the URL of an enabled channel whose key was revoked", () => {
-    const readState = () => ({ enabled: true, hasSecret: false });
+  // The four combinations of the two axes are all ordinary states, and each needs a different action
+  // to become usable: open the channel, issue a key, both, or nothing. A single nullable URL collapsed
+  // three of them into one `null`, which told a programmatic caller that something was wrong but never
+  // which thing — and the CLI, unlike the UI, has no panel to read the answer off.
+  it.each([
+    { enabled: false, hasKey: false },
+    { enabled: false, hasKey: true },
+    { enabled: true, hasKey: false },
+    { enabled: true, hasKey: true },
+  ])("distinguishes enabled=$enabled from hasKey=$hasKey", ({ enabled, hasKey }) => {
+    const access = getWorkspaceAccess("ws-1", "https://agents.example.com", () => ({ enabled, hasKey }));
+
+    expect(access).toMatchObject({
+      workspaceApiAccess: enabled,
+      workspaceApiHasKey: hasKey,
+      workspaceMcpAccess: enabled,
+      workspaceMcpHasKey: hasKey,
+    });
+  });
+
+  // The address is where the workspace lives, not a statement that a call would succeed right now.
+  // Withholding it until both axes line up hid the value an operator has to paste into the client
+  // they are configuring — precisely while they are configuring it.
+  it("reports both addresses even for a closed, keyless channel", () => {
+    const readState = () => ({ enabled: false, hasKey: false });
 
     expect(getWorkspaceAccess("ws-1", "https://agents.example.com", readState)).toMatchObject({
-      workspaceApiAccess: true,
-      apiEndpoint: null,
-      mcpConnectionUrl: null,
+      apiEndpoint: "https://agents.example.com/api/workspaces/ws-1/agent",
+      mcpConnectionUrl: "https://agents.example.com/api/workspaces/ws-1/mcp",
     });
   });
 
   it("escapes the workspace id it puts in a URL", () => {
-    const readState = () => ({ enabled: true, hasSecret: true });
+    const readState = () => ({ enabled: true, hasKey: true });
 
     expect(getWorkspaceAccess("ws 1/2", "https://agents.example.com", readState).apiEndpoint).toBe(
       "https://agents.example.com/api/workspaces/ws%201%2F2/agent",
@@ -55,7 +68,7 @@ describe("workspace access details", () => {
   });
 
   it("tolerates a connection origin with trailing slashes", () => {
-    const readState = () => ({ enabled: true, hasSecret: true });
+    const readState = () => ({ enabled: true, hasKey: true });
 
     expect(getWorkspaceAccess("ws-1", "https://agents.example.com///", readState).apiEndpoint).toBe(
       "https://agents.example.com/api/workspaces/ws-1/agent",
@@ -64,62 +77,16 @@ describe("workspace access details", () => {
 });
 
 describe("opening and closing a channel", () => {
-  it("mints a channel's first key so enabling it is enough to make it usable", () => {
-    const plain = setChannelEnabled(
-      "workspace-api",
-      "ws-1",
-      true,
-      credentialStub({ hasSecret: () => false, mint: () => "pak_first" }),
-    );
+  // The toggle owns one axis and the credential verbs own the other. Enabling therefore returns
+  // nothing at all: a caller that flips this flag can neither obtain a key it did not ask for nor lose
+  // one it is holding, in either direction.
+  it("moves only the enabled flag, returning no credential", () => {
+    const touched: string[] = [];
+    const credentials = credentialStub({ setEnabled: () => touched.push("setEnabled") });
 
-    expect(plain).toBe("pak_first");
-  });
-
-  // Re-enabling must not invalidate a key that consumers already hold, so the baseline stub's throwing
-  // `mint` is the assertion: reaching it at all fails the test.
-  it("keeps an existing key when a configured channel is enabled again", () => {
-    expect(setChannelEnabled("workspace-api", "ws-1", true, credentialStub())).toBeUndefined();
-  });
-
-  it("mints again after a revoke, so a dark channel heals on the next enable", () => {
-    const plain = setChannelEnabled(
-      "workspace-mcp",
-      "ws-1",
-      true,
-      credentialStub({ hasSecret: () => false, mint: () => "mcp_replacement" }),
-    );
-
-    expect(plain).toBe("mcp_replacement");
-  });
-
-  it("mints nothing when a channel is switched off", () => {
-    expect(
-      setChannelEnabled("workspace-api", "ws-1", false, credentialStub({ hasSecret: () => false })),
-    ).toBeUndefined();
-  });
-
-  // Reading after enabling would see the flag we just wrote rather than whether a key predates it, and
-  // would mint on every enable — silently invalidating keys consumers already hold.
-  it("reads the existing key before flipping the flag", () => {
-    const order: string[] = [];
-    setChannelEnabled(
-      "workspace-api",
-      "ws-1",
-      true,
-      credentialStub({
-        hasSecret: () => {
-          order.push("hasSecret");
-          return false;
-        },
-        setEnabled: () => order.push("setEnabled"),
-        mint: () => {
-          order.push("mint");
-          return "pak_new";
-        },
-      }),
-    );
-
-    expect(order).toEqual(["hasSecret", "setEnabled", "mint"]);
+    expect(setChannelEnabled("workspace-api", "ws-1", true, credentials)).toBeUndefined();
+    expect(setChannelEnabled("workspace-mcp", "ws-1", false, credentials)).toBeUndefined();
+    expect(touched).toEqual(["setEnabled", "setEnabled"]);
   });
 
   it("passes the channel and desired state straight through to the credential store", () => {

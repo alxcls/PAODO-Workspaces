@@ -4,6 +4,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { confirmedValues } from "@/lib/client/workspaceReceipt";
 
 export function useWorkspaceDescription(workspaceId: string | null) {
   const [loaded, setLoaded] = useState<{ id: string; text: string } | null>(null);
@@ -40,7 +41,12 @@ export function useWorkspaceDescription(workspaceId: string | null) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ description: next }),
       });
-      if (!res.ok) setLoaded({ id: workspaceId, text: previous });
+      if (!res.ok) {
+        setLoaded({ id: workspaceId, text: previous });
+        return;
+      }
+      const { description: confirmed } = await confirmedValues(res);
+      setLoaded({ id: workspaceId, text: confirmed ?? next.trim() });
     },
     [workspaceId, description],
   );

@@ -7,6 +7,7 @@ import { DEFAULT_LLM as DEFAULT, type ReasoningEffort } from "@/lib/agent/interf
 // The model/effort defaulting rules, shared with the server-side update path so the picker and a
 // partial PATCH resolve a gap the same way.
 import { defaultEffortFor, defaultModelFor } from "@/lib/workspace/modelSelection";
+import { confirmedValues } from "@/lib/client/workspaceReceipt";
 
 // Compact fixed widths so the row of controls stays roughly half the block width. Applied inline
 // because the `.input` base class is `w-full`, which otherwise stretches each field to fill the row.
@@ -125,7 +126,14 @@ export default function ModelBlock({ wsId }: { wsId: string }) {
         }),
       });
       if (res.ok) {
-        setSaved({ provider, model: selectedModel.trim(), effort: selectedEffort });
+        const { model: confirmed } = await confirmedValues(res);
+        const savedProvider = confirmed?.provider ?? provider;
+        const savedModel = confirmed?.model ?? selectedModel.trim();
+        const savedEffort = confirmed?.reasoningEffort ?? selectedEffort;
+        setProvider(savedProvider);
+        setModel(savedModel);
+        setEffort(savedEffort);
+        setSaved({ provider: savedProvider, model: savedModel, effort: savedEffort });
         setEditing(false);
       }
     } finally {

@@ -21,6 +21,8 @@ const STATUS_BY_CODE: Record<AppErrorCode, number> = {
   WORKSPACE_NAME_CONFLICT: 409,
   WORKSPACE_UPDATE_INVALID: 400,
   WORKSPACE_UPDATE_FAILED: 500,
+  CREDENTIAL_ALREADY_CONFIGURED: 409,
+  CREDENTIAL_NOT_CONFIGURED: 409,
   INTERNAL_ERROR: 500,
   SERVICE_UNAVAILABLE: 503,
 };
@@ -53,6 +55,12 @@ export function appErrorResponse(error: unknown, request?: Request): NextRespons
   if (!(error instanceof AppError)) return null;
   return errorResponse(error.code, error.message, { request, details: error.details });
 }
+
+// A route's unexpected-failure branch is deliberately NOT factored out to sit alongside this. It
+// would have to make the log call, and errorLogContract.test.ts requires `event` and `outcome` to be
+// string literals at the site that emits them — so an operator can grep an event name straight to
+// the code that raises it. Every catch block therefore spells out its own two branches: the expected
+// AppError through appErrorResponse, then one literal log record and an opaque 500.
 
 /** Read the object-shaped JSON body expected by mutation routes, with the public failure contract. */
 export async function readJsonObject(request: Request): Promise<Record<string, unknown> | NextResponse<ApiErrorBody>> {

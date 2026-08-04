@@ -1,14 +1,13 @@
 // REST endpoint for managing a workspace's agent API key.
-// GET returns the current state; POST mints/rotates the key (plaintext returned once); DELETE revokes
-// it; PATCH toggles the channel. Everything but GET comes from the shared credential handlers.
+// GET returns current state; POST explicitly generates/rotates the key (plaintext returned once);
+// DELETE revokes it; PATCH toggles the channel. Everything but GET comes from shared handlers.
 export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
 import { credentialHandlers, publicBaseUrl } from "@/lib/api/credentialRoutes";
 import { state } from "@/lib/infra/security/credentialStore";
-import { updateWorkspace } from "@/lib/operations/workspaceUpdate";
 import { requireWorkspace } from "@/lib/api/guards";
-import { errorResponse } from "@/lib/api/errorResponse";
+import { channelSetEnabled } from "@/lib/api/workspaceUpdateReceipt";
 
 type Params = { id: string };
 
@@ -20,18 +19,7 @@ const handlers = credentialHandlers<Params>(
     const ws = requireWorkspace(id, request);
     return ws instanceof NextResponse ? ws : id;
   },
-  {
-    setEnabled: async (_kind, subject, enabled) => {
-      const result = await updateWorkspace(subject as string, { workspaceApiAccess: enabled });
-      if (!result) return errorResponse("NOT_FOUND", "not found");
-      // Enabling a channel that had no key mints its first one. Hand it back here or it is lost: the
-      // store keeps only a hash, so this response is the single chance to read it.
-      const plain = result.credentials?.workspaceApiKey;
-      if (plain) {
-        return NextResponse.json({ ok: true, plain }, { headers: { "Cache-Control": "no-store" } });
-      }
-    },
-  },
+  { setEnabled: channelSetEnabled("workspaceApiAccess") },
 );
 
 export const POST = handlers.POST;

@@ -5,6 +5,7 @@ import { createLogger } from "@/lib/infra/logger";
 import { notFound } from "@/lib/api/guards";
 import { appErrorResponse, errorResponse, readJsonObject } from "@/lib/api/errorResponse";
 import { publicBaseUrl } from "@/lib/api/credentialRoutes";
+import { receiptResponse } from "@/lib/api/workspaceUpdateReceipt";
 import { getWorkspaceOverview } from "@/lib/operations/workspaceDetails";
 import { updateWorkspace } from "@/lib/operations/workspaceUpdate";
 import { deleteWorkspace } from "@/lib/operations/workspaceDelete";
@@ -130,17 +131,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     if (!result) return notFound(req);
     // A mutation returns only its receipt. GET is the sole workspace representation, so adding a
     // projection there (skills, secrets, access state) can never make PATCH partial or expensive.
-    // no-store unconditionally: this receipt may carry a plaintext key minted by this write.
-    return NextResponse.json(
-      {
-        ok: result.ok,
-        workspaceId: result.workspaceId,
-        applied: result.applied,
-        warnings: result.warnings,
-        ...(result.credentials ? { credentials: result.credentials } : {}),
-      },
-      { headers: { "Cache-Control": "no-store" } },
-    );
+    return receiptResponse(result);
   } catch (err) {
     const expected = appErrorResponse(err, req);
     if (expected) return expected;

@@ -1,9 +1,10 @@
 import { type NextRequest, NextResponse } from "next/server";
+import { notFound } from "@/lib/api/guards";
 import { deleteWorkspaceSecret } from "@/lib/operations/workspaceSecrets";
 
-export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string; name: string }> }) {
+export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string; name: string }> }) {
   const { id, name } = await params;
   const deleted = deleteWorkspaceSecret(id, name);
-  if (deleted === null) return NextResponse.json({ error: "not found" }, { status: 404 });
-  return NextResponse.json({ ok: deleted });
+  if (deleted === null) return notFound(req);
+  return NextResponse.json({ ok: deleted }, { headers: { "Cache-Control": "no-store" } });
 }

@@ -1,41 +1,46 @@
-// The workspace's own inbound channels: the agent API key and the MCP bearer secret. One file for both
-// because they are the same capability twice over, and because the read and the write encode one shared
-// invariant — an enabled channel always has a key behind it. getWorkspaceAccess relies on that when it
-// shows a URL; setChannelEnabled is what makes it true.
+// The workspace's own inbound channels: the agent API key and the MCP bearer key. One file for both
+// because they are the same capability twice over.
+//
+// A channel has two independent axes: whether it is open (here) and whether it has a credential (the
+// credential routes' generate/rotate/revoke). Nothing in this file touches the second one — opening a
+// channel that has no key leaves it open and keyless, which the UI shows as "Key required".
 //
 // Egress does not gate these. A workspace with internetAccess off still answers on both channels, so
 // nothing here carries the `blockedBy` marker that third-party secrets do (see workspaceSecrets).
-import { mint, setEnabled, state, type CredentialState } from "@/lib/infra/security/credentialStore";
+import { setEnabled, state, type CredentialState } from "@/lib/infra/security/credentialStore";
 import { WorkspaceUpdateError } from "./workspaceErrors";
 
 export type AccessChannel = "workspace-api" | "workspace-mcp";
 
+/**
+ * Each channel reports its two axes separately, then its address. A caller that wants to know why a
+ * channel is unusable — closed, or open with no key — can read it here; that is not something one
+ * nullable URL can express, and the CLI has no panel to infer it from.
+ */
 export interface WorkspaceAccessDetails {
   workspaceApiAccess: boolean;
-  apiEndpoint: string | null;
+  workspaceApiHasKey: boolean;
+  apiEndpoint: string;
   workspaceMcpAccess: boolean;
-  mcpConnectionUrl: string | null;
+  workspaceMcpHasKey: boolean;
+  mcpConnectionUrl: string;
 }
 
 type CredentialStateReader = (
   channel: AccessChannel,
   workspaceId: string,
-) => Pick<CredentialState, "enabled" | "hasSecret">;
+) => Pick<CredentialState, "enabled" | "hasKey">;
 
-/** The credential operations a channel toggle needs, in the order the toggle must perform them. */
+/** The one credential operation a channel toggle needs. It never reads or writes the key itself. */
 export interface ChannelCredentials {
-  /** Whether a key already exists, read before enabling so minting stays a first-time-only action. */
-  hasSecret(channel: AccessChannel, id: string): boolean;
   setEnabled(channel: AccessChannel, id: string, enabled: boolean): void;
-  /** Mints the channel's key and returns the plaintext once; the store keeps only a hash. */
-  mint(channel: AccessChannel, id: string): string;
 }
 
+// Deliberately a factory that forwards, not `{ setEnabled }` captured at module load: the direct
+// binding resolves the import at init, which a partial test mock of credentialStore cannot replace.
 function defaultChannelCredentials(): ChannelCredentials {
   return {
-    hasSecret: (channel, id) => state(channel, id).hasSecret,
     setEnabled: (channel, id, enabled) => setEnabled(channel, id, enabled),
-    mint: (channel, id) => mint(channel, id),
   };
 }
 
@@ -45,10 +50,14 @@ export function validateChannelEnabled(field: string, value: unknown): boolean {
 }
 
 /**
- * Returns the external-access fields shown by the workspace UI without exposing either credential.
- * A URL is visible only while its channel is enabled and has a credential, matching CredentialPanel —
- * and, because setChannelEnabled guarantees a key whenever it enables one, an enabled channel with no
- * URL means its key was revoked out from under it rather than never issued.
+ * Returns the external-access fields for a workspace without exposing either credential.
+ *
+ * Reports both axes per channel and the address unconditionally. The address is a property of where
+ * the workspace lives, not of whether a call would currently succeed, so folding the two axes into a
+ * nullable URL only destroyed information: one `null` meant closed, or open-and-keyless, and the
+ * caller could not tell which, nor which of the two things to go and fix. The booleans say that
+ * plainly, and a URL that is present but not yet usable is exactly what an operator needs while
+ * setting an integration up — it is the value they have to paste somewhere before it works.
  */
 export function getWorkspaceAccess(
   id: string,
@@ -58,33 +67,32 @@ export function getWorkspaceAccess(
   const api = readCredentialState("workspace-api", id);
   const mcp = readCredentialState("workspace-mcp", id);
   const origin = connectionOrigin.replace(/\/+$/, "");
+  const workspace = encodeURIComponent(id);
 
   return {
     workspaceApiAccess: api.enabled,
-    apiEndpoint: api.enabled && api.hasSecret ? `${origin}/api/workspaces/${encodeURIComponent(id)}/agent` : null,
+    workspaceApiHasKey: api.hasKey,
+    apiEndpoint: `${origin}/api/workspaces/${workspace}/agent`,
     workspaceMcpAccess: mcp.enabled,
-    mcpConnectionUrl: mcp.enabled && mcp.hasSecret ? `${origin}/api/workspaces/${encodeURIComponent(id)}/mcp` : null,
+    workspaceMcpHasKey: mcp.hasKey,
+    mcpConnectionUrl: `${origin}/api/workspaces/${workspace}/mcp`,
   };
 }
 
 /**
- * Opens or closes a channel. Turning one on is enough to make it usable: its key is minted when none
- * exists and never replaced when one does, so toggling off and on again keeps whatever consumers
- * already hold, while a channel whose key was revoked heals on the next enable rather than staying
- * permanently dark.
+ * Opens or closes a channel, and does nothing else.
  *
- * Returns the plaintext of a key minted by this call, readable exactly once — the store keeps only a
- * hash afterwards. Returns undefined when the channel already had a key, or was switched off.
+ * It deliberately does not mint. A first key comes from an explicit generate, so the plaintext — which
+ * is readable exactly once — is only ever produced by a caller that asked for it and is reading the
+ * response. Toggling therefore stays non-destructive in both directions: consumers keep whatever key
+ * they hold across an off/on cycle, and a caller that flips this flag can never lose a key it never
+ * requested.
  */
 export function setChannelEnabled(
   channel: AccessChannel,
   id: string,
   enabled: boolean,
   credentials: ChannelCredentials = defaultChannelCredentials(),
-): string | undefined {
-  // Read before enabling, so the two channels cannot drift on the order that makes minting
-  // first-time-only.
-  const hadSecret = credentials.hasSecret(channel, id);
+): void {
   credentials.setEnabled(channel, id, enabled);
-  return enabled && !hadSecret ? credentials.mint(channel, id) : undefined;
 }

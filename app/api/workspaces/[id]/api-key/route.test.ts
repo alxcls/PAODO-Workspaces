@@ -2,14 +2,14 @@
 // asserted: "workspace-api" is what keeps this endpoint from touching the workspace's MCP secret or
 // the instance-wide CLI token.
 //
-// The behaviour worth pinning here is that opening the channel is sufficient — it mints the first key
-// and hands it back, because the store keeps only a hash and this response is the one chance to read
-// it — while reopening a channel that already has a key leaves that key working.
+// The behaviour worth pinning here is that the channel's two axes stay independent: PATCH moves only
+// the on/off flag and never produces a key, while POST and DELETE act only on the key and never
+// consult the flag — so a key can be issued before the channel opens and destroyed after it closes.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const h = vi.hoisted(() => ({
   workspace: { id: "ws-1", name: "Alpha", dir: "/fake/alpha", internetAccess: false },
-  state: { enabled: false, hasSecret: false, createdAt: null as string | null, lastUsedAt: null as string | null },
+  state: { enabled: false, hasKey: false, createdAt: null as string | null, lastUsedAt: null as string | null },
   setEnabled: vi.fn(),
   mint: vi.fn(() => "pak_new"),
   revoke: vi.fn(),
@@ -46,7 +46,7 @@ const request = (method: string, body?: string) =>
   }) as never;
 
 beforeEach(() => {
-  h.state = { enabled: false, hasSecret: false, createdAt: null, lastUsedAt: null };
+  h.state = { enabled: false, hasKey: false, createdAt: null, lastUsedAt: null };
   h.found = true;
   h.setEnabled.mockClear();
   h.mint.mockClear();
@@ -55,9 +55,9 @@ beforeEach(() => {
 
 describe("workspace API key route", () => {
   it("reports channel state without leaking the secret hash", async () => {
-    h.state = { enabled: true, hasSecret: true, createdAt: "2026-01-01T00:00:00.000Z", lastUsedAt: null };
+    h.state = { enabled: true, hasKey: true, createdAt: "2026-01-01T00:00:00.000Z", lastUsedAt: null };
     const body = await (await GET(request("GET"), ctx())).json();
-    expect(body).toMatchObject({ enabled: true, hasSecret: true });
+    expect(body).toMatchObject({ enabled: true, hasKey: true });
     expect(body).not.toHaveProperty("hash");
     expect(body).not.toHaveProperty("plain");
   });
@@ -71,41 +71,127 @@ describe("workspace API key route", () => {
     expect(await invalid.json()).toMatchObject({ ok: false, code: "INVALID_REQUEST" });
   });
 
-  it("mints and returns the first key when the channel is opened", async () => {
+  // Opening the channel used to mint its first key and hand back the plaintext. It no longer does:
+  // a caller that flips this flag — the UI, the CLI, a script — can no longer be handed a
+  // read-once secret it was not expecting and will never see again.
+  it("opens the channel without minting a key", async () => {
     const res = await PATCH(request("PATCH", JSON.stringify({ enabled: true })), ctx());
-    expect(await res.json()).toEqual({ ok: true, plain: "pak_new" });
+    expect(await res.json()).toEqual({
+      ok: true,
+      workspaceId: "ws-1",
+      applied: ["workspaceApiAccess"],
+      values: { workspaceApiAccess: true },
+    });
     expect(h.setEnabled).toHaveBeenCalledWith("workspace-api", "ws-1", true);
-    expect(h.mint).toHaveBeenCalledWith("workspace-api", "ws-1");
+    expect(h.mint).not.toHaveBeenCalled();
     expect(res.headers.get("cache-control")).toBe("no-store");
   });
 
   // Rotating on every toggle would invalidate a key that agents already hold.
   it("leaves an existing key alone when the channel is reopened", async () => {
-    h.state = { enabled: false, hasSecret: true, createdAt: "2026-01-01T00:00:00.000Z", lastUsedAt: null };
+    h.state = { enabled: false, hasKey: true, createdAt: "2026-01-01T00:00:00.000Z", lastUsedAt: null };
     const res = await PATCH(request("PATCH", JSON.stringify({ enabled: true })), ctx());
-    expect(await res.json()).toEqual({ ok: true });
+    expect(await res.json()).toEqual({
+      ok: true,
+      workspaceId: "ws-1",
+      applied: ["workspaceApiAccess"],
+      values: { workspaceApiAccess: true },
+    });
     expect(h.mint).not.toHaveBeenCalled();
   });
 
   it("mints nothing when the channel is closed", async () => {
     const res = await PATCH(request("PATCH", JSON.stringify({ enabled: false })), ctx());
-    expect(await res.json()).toEqual({ ok: true });
+    expect(await res.json()).toEqual({
+      ok: true,
+      workspaceId: "ws-1",
+      applied: ["workspaceApiAccess"],
+      values: { workspaceApiAccess: false },
+    });
     expect(h.setEnabled).toHaveBeenCalledWith("workspace-api", "ws-1", false);
     expect(h.mint).not.toHaveBeenCalled();
   });
 
-  it("rotates and revokes the key explicitly", async () => {
-    expect(await (await POST(request("POST"), ctx())).json()).toEqual({ plain: "pak_new" });
+  it("generates the first key and rotates it afterwards", async () => {
+    expect(await (await POST(request("POST", JSON.stringify({ operation: "generate" })), ctx())).json()).toEqual({
+      plain: "pak_new",
+    });
+
+    h.state = { enabled: true, hasKey: true, createdAt: "2026-01-01T00:00:00.000Z", lastUsedAt: null };
+    expect(await (await POST(request("POST", JSON.stringify({ operation: "rotate" })), ctx())).json()).toEqual({
+      plain: "pak_new",
+    });
     expect(h.mint).toHaveBeenCalledWith("workspace-api", "ws-1");
-    expect((await DELETE(request("DELETE"), ctx())).status).toBe(200);
+    expect(h.mint).toHaveBeenCalledTimes(2);
+  });
+
+  // The two orders that a channel-enabled precondition used to make impossible. Both matter: issuing
+  // first means the channel is never live while the key is in transit to whoever needs it, and
+  // revoking a leaked key must never require reopening the channel it leaked from.
+  it("issues and destroys a key while the channel is closed", async () => {
+    h.state = { enabled: false, hasKey: false, createdAt: null, lastUsedAt: null };
+    const generated = await POST(request("POST", JSON.stringify({ operation: "generate" })), ctx());
+    expect(generated.status).toBe(200);
+    expect(await generated.json()).toEqual({ plain: "pak_new" });
+
+    h.state = { enabled: false, hasKey: true, createdAt: "2026-01-01T00:00:00.000Z", lastUsedAt: null };
+    const rotated = await POST(request("POST", JSON.stringify({ operation: "rotate" })), ctx());
+    expect(rotated.status).toBe(200);
+
+    const revoked = await DELETE(request("DELETE"), ctx());
+    expect(revoked.status).toBe(200);
     expect(h.revoke).toHaveBeenCalledWith("workspace-api", "ws-1");
+    // Neither verb touched the other axis.
+    expect(h.setEnabled).not.toHaveBeenCalled();
+  });
+
+  // Revocation is how a leaked key is destroyed, so it answers the same way however often it is asked
+  // and whatever state it finds — a caller retrying after a dropped response must not see a failure
+  // that suggests the key is still live.
+  it("revokes idempotently, including when there is no key", async () => {
+    for (const attempt of [1, 2]) {
+      const res = await DELETE(request("DELETE"), ctx());
+      expect(res.status, `attempt ${attempt}`).toBe(200);
+      expect(await res.json()).toEqual({ ok: true });
+    }
+    expect(h.revoke).toHaveBeenCalledTimes(2);
+  });
+
+  it("refuses rotation when there is no key to replace", async () => {
+    h.state = { enabled: true, hasKey: false, createdAt: null, lastUsedAt: null };
+
+    const res = await POST(request("POST", JSON.stringify({ operation: "rotate" })), ctx());
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({ ok: false, code: "CREDENTIAL_NOT_CONFIGURED" });
+    expect(h.mint).not.toHaveBeenCalled();
+  });
+
+  it("requires an explicit generation or rotation operation", async () => {
+    h.state = { enabled: true, hasKey: false, createdAt: null, lastUsedAt: null };
+
+    const missing = await POST(request("POST"), ctx());
+    expect(missing.status).toBe(400);
+    expect(await missing.json()).toMatchObject({ ok: false, code: "INVALID_REQUEST" });
+    expect(h.mint).not.toHaveBeenCalled();
+  });
+
+  // Without this, a click or a script meant to create a first key would silently replace one that
+  // agents are still authenticating with.
+  it("refuses generation when a key already exists", async () => {
+    h.state = { enabled: true, hasKey: true, createdAt: "2026-01-01T00:00:00.000Z", lastUsedAt: null };
+
+    const res = await POST(request("POST", JSON.stringify({ operation: "generate" })), ctx());
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({ ok: false, code: "CREDENTIAL_ALREADY_CONFIGURED" });
+    expect(h.mint).not.toHaveBeenCalled();
   });
 
   it("returns the public error contract when credential persistence fails", async () => {
+    h.state = { enabled: true, hasKey: false, createdAt: null, lastUsedAt: null };
     h.mint.mockImplementationOnce(() => {
       throw new Error("disk failure");
     });
-    const response = await POST(request("POST"), ctx());
+    const response = await POST(request("POST", JSON.stringify({ operation: "generate" })), ctx());
     expect(response.status).toBe(500);
     expect(await response.json()).toEqual({
       ok: false,
@@ -120,7 +206,7 @@ describe("workspace API key route", () => {
     h.found = false;
     for (const call of [
       PATCH(request("PATCH", JSON.stringify({ enabled: true })), ctx("missing")),
-      POST(request("POST"), ctx("missing")),
+      POST(request("POST", JSON.stringify({ operation: "rotate" })), ctx("missing")),
       DELETE(request("DELETE"), ctx("missing")),
     ]) {
       expect((await call).status).toBe(404);

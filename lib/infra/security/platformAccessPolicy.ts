@@ -3,9 +3,9 @@
 // capability. The one instance-wide CLI key can call every listed route; it has no per-key scopes.
 //
 // Two consequences worth stating plainly, because neither is obvious from a permission name:
-//   - workspaces:update can create a credential. Switching on a workspace's API or MCP access mints
-//     that channel's first key and returns it in the PATCH response, so this permission also grants
-//     "obtain a workspace key for a channel that had none".
+//   - workspaces:update cannot obtain a credential. Switching a workspace's API or MCP access on or
+//     off moves only that channel's open/closed flag; issuing a key is workspaces:credentials:issue
+//     on the channel's own route, and is the only way a plaintext secret is ever produced.
 //   - workspaces:delete is irreversible and takes the workspace directory with it.
 // /api/settings/cli-access is deliberately absent: it mints and rotates the very token used to
 // authenticate here, so a leaked key must not be able to renew itself.
@@ -18,7 +18,7 @@ export type PlatformPermission =
   | "workspaces:create"
   | "workspaces:update"
   | "workspaces:delete"
-  | "workspaces:credentials:rotate"
+  | "workspaces:credentials:issue"
   | "workspaces:credentials:revoke";
 
 const RULES: ReadonlyArray<{
@@ -38,13 +38,15 @@ const RULES: ReadonlyArray<{
   { method: "GET", pathname: /^\/api\/workspaces\/[^/]+$/, permission: "workspaces:read" },
   { method: "PATCH", pathname: /^\/api\/workspaces\/[^/]+$/, permission: "workspaces:update" },
   { method: "DELETE", pathname: /^\/api\/workspaces\/[^/]+$/, permission: "workspaces:delete" },
-  // A workspace key's whole life, so an agent can replace a compromised key or close a channel's
-  // access without the UI. POST rotates (invalidating the previous key); DELETE revokes without
-  // touching the channel's on/off switch.
+  // A workspace key's whole life, so an agent can issue, replace or destroy one without the UI. POST
+  // carries the operation in its body — generate for a channel with no key, rotate to replace one —
+  // and both produce a plaintext, which is why they share a permission rather than splitting on a
+  // body field this method/path map cannot see. DELETE revokes unconditionally: destroying a leaked
+  // key must not depend on the channel being open, and it leaves the on/off switch alone.
   {
     method: "POST",
     pathname: /^\/api\/workspaces\/[^/]+\/api-key$/,
-    permission: "workspaces:credentials:rotate",
+    permission: "workspaces:credentials:issue",
   },
   {
     method: "DELETE",
@@ -54,7 +56,7 @@ const RULES: ReadonlyArray<{
   {
     method: "POST",
     pathname: /^\/api\/workspaces\/[^/]+\/mcp-config$/,
-    permission: "workspaces:credentials:rotate",
+    permission: "workspaces:credentials:issue",
   },
   {
     method: "DELETE",

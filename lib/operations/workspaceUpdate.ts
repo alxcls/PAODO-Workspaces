@@ -13,6 +13,7 @@ import {
   validateMetadata,
   type MetadataWriter,
   type WorkspaceLookup,
+  type WorkspaceMetadata,
   type WorkspaceMetadataInput,
 } from "./workspaces";
 import { setChannelEnabled, validateChannelEnabled, type ChannelCredentials } from "./workspaceAccess";
@@ -43,20 +44,21 @@ export interface UpdateWorkspaceResult {
   workspaceId: string;
   /** Capability fields successfully applied, in deterministic application order. */
   applied: Array<keyof UpdateWorkspaceInput>;
+  /**
+   * Canonical values established by the write. These come from the shared validators, never from a
+   * transport echo, so every adapter reports trimmed, resolved and otherwise normalized values alike.
+   * A stored third-party secret is represented only by its safe metadata; its value is never echoed.
+   */
+  values: WorkspaceUpdateValues;
   warnings: string[];
-  /**
-   * Capability-specific write output used by the dedicated env-var adapter. This is metadata about
-   * the stored secret, never its write-only value and never a workspace representation.
-   */
-  secret?: ThirdPartySecret;
-  /**
-   * Plaintext credentials created by this update, each readable exactly once — the store keeps only a
-   * hash afterwards. Present only for a channel that was switched on with no key behind it, so a
-   * caller that re-enables an already-configured channel gets nothing here and its existing key keeps
-   * working. Adapters must not cache a response carrying this.
-   */
-  credentials?: { workspaceApiKey?: string; workspaceMcpSecret?: string };
 }
+
+export type WorkspaceUpdateValues = WorkspaceMetadata & {
+  internetAccess?: boolean;
+  workspaceApiAccess?: boolean;
+  workspaceMcpAccess?: boolean;
+  secret?: ThirdPartySecret;
+};
 
 /** The store surface an update needs: the record's own setters, plus egress, plus the lookup. */
 export type UpdateWorkspaceStore = WorkspaceLookup & MetadataWriter & EgressWriter;
@@ -77,9 +79,9 @@ export interface UpdateWorkspaceDeps {
  * implementation detail: a request carrying one bad field changes nothing at all, so a caller never has
  * to reason about which half of its request survived.
  *
- * Switching on `workspaceApiAccess` or `workspaceMcpAccess` guarantees a usable channel, minting the
- * channel's first key when it has none and reporting it in `credentials` — see that field for why it
- * never rotates an existing one.
+ * No field here produces a credential. `workspaceApiAccess` and `workspaceMcpAccess` open and close
+ * their channels and nothing more; issuing a key is its own explicit operation on the channel's route,
+ * so this result never carries a plaintext secret.
  */
 export async function updateWorkspace(
   id: string,
@@ -131,32 +133,34 @@ export async function updateWorkspace(
     warnings.push(...egress.warnings);
   }
 
-  const credentials: { workspaceApiKey?: string; workspaceMcpSecret?: string } = {};
+  // These three write through capabilities that raise rather than return a flag, so reaching the next
+  // line is itself the success signal — hence `true` rather than a result to check.
   if (apiAccess !== undefined) {
-    // Assign only when a key was actually minted: an explicit `undefined` would still be an own
-    // property, making the caller-facing `credentials` object appear present but empty.
-    const plain = setChannelEnabled("workspace-api", id, apiAccess, deps.credentials);
-    if (plain) credentials.workspaceApiKey = plain;
-    appliedFields.push("workspaceApiAccess");
+    setChannelEnabled("workspace-api", id, apiAccess, deps.credentials);
+    applied("workspaceApiAccess", true);
   }
   if (mcpAccess !== undefined) {
-    const plain = setChannelEnabled("workspace-mcp", id, mcpAccess, deps.credentials);
-    if (plain) credentials.workspaceMcpSecret = plain;
-    appliedFields.push("workspaceMcpAccess");
+    setChannelEnabled("workspace-mcp", id, mcpAccess, deps.credentials);
+    applied("workspaceMcpAccess", true);
   }
 
   let secret: ThirdPartySecret | undefined;
   if (secretInput !== undefined) {
     secret = storeWorkspaceSecret(id, secretInput, store, deps.secrets);
-    appliedFields.push("secret");
+    applied("secret", true);
   }
 
   return {
     ok: true,
     workspaceId: id,
     applied: appliedFields,
+    values: {
+      ...metadata,
+      ...(internetAccess !== undefined ? { internetAccess } : {}),
+      ...(apiAccess !== undefined ? { workspaceApiAccess: apiAccess } : {}),
+      ...(mcpAccess !== undefined ? { workspaceMcpAccess: mcpAccess } : {}),
+      ...(secret ? { secret } : {}),
+    },
     warnings,
-    ...(secret ? { secret } : {}),
-    ...(Object.keys(credentials).length > 0 ? { credentials } : {}),
   };
 }

@@ -20,6 +20,7 @@ const h = vi.hoisted(() => ({
   },
   renames: [] as string[],
   descriptions: [] as string[],
+  setWorkspaceLlm: vi.fn(() => true),
 }));
 
 vi.mock("@/lib/infra/services", () => ({
@@ -34,10 +35,11 @@ vi.mock("@/lib/infra/services", () => ({
       h.descriptions.push(description);
       return true;
     },
+    setWorkspaceLlm: h.setWorkspaceLlm,
   }),
 }));
 vi.mock("@/lib/infra/security/credentialStore", () => ({
-  state: () => ({ enabled: false, hasSecret: false, createdAt: null, lastUsedAt: null }),
+  state: () => ({ enabled: false, hasKey: false, createdAt: null, lastUsedAt: null }),
   setEnabled: vi.fn(),
   mint: vi.fn(() => "pak_new"),
   removeWorkspace: vi.fn(),
@@ -59,6 +61,7 @@ const patch = (body: unknown, id = "ws-1") =>
 beforeEach(() => {
   h.renames = [];
   h.descriptions = [];
+  h.setWorkspaceLlm.mockClear();
 });
 
 describe("workspace update body contract", () => {
@@ -98,23 +101,37 @@ describe("workspace update body contract", () => {
       ok: true,
       workspaceId: "ws-1",
       applied: ["name", "description"],
-      warnings: [],
+      values: { name: "Renamed", description: "updated" },
     });
     expect(h.renames).toEqual(["Renamed"]);
     expect(h.descriptions).toEqual(["updated"]);
   });
 
-  it("includes a credential minted by the write and prevents receipt caching", async () => {
+  // The generic workspace PATCH is the widest-reaching mutation a programmatic caller has, so it is
+  // the one that most needs to be incapable of producing a read-once secret as a side effect. A key
+  // comes only from an explicit call to the channel's own route.
+  it("reports an opened channel without minting a credential", async () => {
     const res = await patch({ workspaceApiAccess: true });
 
     expect(await res.json()).toEqual({
       ok: true,
       workspaceId: "ws-1",
       applied: ["workspaceApiAccess"],
-      warnings: [],
-      credentials: { workspaceApiKey: "pak_new" },
+      values: { workspaceApiAccess: true },
     });
     expect(res.headers.get("cache-control")).toBe("no-store");
+  });
+
+  it("includes warnings only when the update produced one", async () => {
+    const res = await patch({ llmProvider: "deepseek", reasoningEffort: "high" });
+
+    expect(await res.json()).toEqual({
+      ok: true,
+      workspaceId: "ws-1",
+      applied: ["model"],
+      values: { model: { provider: "deepseek", model: "deepseek-v4-pro", reasoningEffort: "low" } },
+      warnings: ["deepseek has no reasoning effort dial; the supplied reasoningEffort was ignored"],
+    });
   });
 
   it("reports an unknown workspace as not found", async () => {

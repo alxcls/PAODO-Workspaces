@@ -18,9 +18,9 @@ describe("platform access policy", () => {
     expect(platformPermissionFor("POST", "/api/models")).toBeNull();
   });
 
-  it("maps rotate and revoke on both credential channels", () => {
+  it("maps issue and revoke on both credential channels", () => {
     for (const channel of ["api-key", "mcp-config"]) {
-      expect(platformPermissionFor("POST", `/api/workspaces/ws-1/${channel}`)).toBe("workspaces:credentials:rotate");
+      expect(platformPermissionFor("POST", `/api/workspaces/ws-1/${channel}`)).toBe("workspaces:credentials:issue");
       expect(platformPermissionFor("DELETE", `/api/workspaces/ws-1/${channel}`)).toBe("workspaces:credentials:revoke");
     }
   });

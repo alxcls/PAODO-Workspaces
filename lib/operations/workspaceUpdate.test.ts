@@ -35,11 +35,7 @@ const storeStub = (overrides: Partial<UpdateWorkspaceStore> = {}): UpdateWorkspa
 });
 
 const credentialStub = (overrides: Partial<ChannelCredentials> = {}): ChannelCredentials => ({
-  hasSecret: () => true,
   setEnabled: () => {},
-  mint: () => {
-    throw new Error("must not mint a credential in this test");
-  },
   ...overrides,
 });
 
@@ -85,6 +81,7 @@ describe("the update contract", () => {
       ok: true,
       workspaceId: "ws-1",
       applied: ["name", "description"],
+      values: { name: "Renamed", description: "Updated description" },
       warnings: [],
     });
     expect(mutable).toMatchObject({ name: "Renamed", description: "Updated description" });
@@ -103,6 +100,7 @@ describe("the update contract", () => {
       ok: true,
       workspaceId: "ws-1",
       applied: ["description"],
+      values: { description: "updated" },
       warnings: [],
     });
     expect(reads).toBe(1);
@@ -211,11 +209,12 @@ describe("the update contract", () => {
     });
   });
 
-  it("collects the keys both channels minted into one credentials block", async () => {
-    const credentials = credentialStub({
-      hasSecret: () => false,
-      mint: (channel) => (channel === "workspace-api" ? "pak_first" : "mcp_first"),
-    });
+  // The security property this whole result shape rests on: an update moves access flags and nothing
+  // else, so no caller of this operation — HTTP route, CLI, MCP adapter — can obtain a plaintext key
+  // as a side effect of a request it made for another reason, or lose one by not reading a field.
+  it("opens both channels without producing a credential", async () => {
+    const opened: Array<[string, boolean]> = [];
+    const credentials = credentialStub({ setEnabled: (channel, _id, enabled) => opened.push([channel, enabled]) });
 
     const result = await updateWorkspace(
       "ws-1",
@@ -223,17 +222,14 @@ describe("the update contract", () => {
       deps({ credentials }),
     );
 
-    expect(result?.credentials).toEqual({ workspaceApiKey: "pak_first", workspaceMcpSecret: "mcp_first" });
+    expect(opened).toEqual([
+      ["workspace-api", true],
+      ["workspace-mcp", true],
+    ]);
     expect(result?.applied).toEqual(["workspaceApiAccess", "workspaceMcpAccess"]);
-  });
-
-  // An `undefined` assigned to either key would still be an own property, making `credentials` look
-  // present but empty to a caller checking for it.
-  it("omits credentials entirely when no key was minted", async () => {
-    const result = await updateWorkspace("ws-1", { workspaceApiAccess: true }, deps());
-
-    expect(result?.applied).toEqual(["workspaceApiAccess"]);
-    expect(result).not.toHaveProperty("credentials");
+    expect(result?.values).toEqual({ workspaceApiAccess: true, workspaceMcpAccess: true });
+    // Asserted on the key set, not on one name: any future field carrying plaintext fails here.
+    expect(Object.keys(result ?? {}).sort()).toEqual(["applied", "ok", "values", "warnings", "workspaceId"]);
   });
 
   it("returns stored-secret metadata as capability output without echoing the workspace", async () => {
@@ -244,19 +240,20 @@ describe("the update contract", () => {
     );
 
     expect(result?.applied).toEqual(["secret"]);
-    expect(result?.secret).toEqual({
+    expect(result?.values.secret).toEqual({
       name: "API_TOKEN",
       createdAt: "2026-08-03T00:00:00.000Z",
       domains: ["api.example.com"],
       // The fixture workspace has no egress, so the key it just stored cannot be spent yet.
       blockedBy: "internetAccess",
     });
-    expect(result?.secret).not.toHaveProperty("value");
+    expect(result?.values.secret).not.toHaveProperty("value");
     expect(result).not.toHaveProperty("workspace");
   });
 
   it("omits the secret key entirely when the request carried none", async () => {
-    expect(await updateWorkspace("ws-1", { description: "only this" }, deps())).not.toHaveProperty("secret");
+    const result = await updateWorkspace("ws-1", { description: "only this" }, deps());
+    expect(result?.values).not.toHaveProperty("secret");
   });
 
   // The order is part of the contract: `applied` is what a caller reads to tell a no-op from a
@@ -296,5 +293,11 @@ describe("the update contract", () => {
 
     expect(order).toEqual(["description", "egress", "channel", "secret"]);
     expect(result?.applied).toEqual(["description", "internetAccess", "workspaceApiAccess", "secret"]);
+    expect(result?.values).toMatchObject({
+      description: "updated",
+      internetAccess: true,
+      workspaceApiAccess: true,
+      secret: { name: "API_TOKEN", domains: ["api.example.com"] },
+    });
   });
 });

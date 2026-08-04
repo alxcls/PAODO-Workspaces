@@ -35,11 +35,17 @@ Query operations own resource representations. For workspaces, `GET /api/workspa
 authoritative overview assembled from workspace metadata, access state, exposed skills and secret
 metadata.
 
-Mutation operations return receipts: the target id, the capability fields successfully applied,
-warnings, and any one-time output minted by the write. They do not return partial resource snapshots.
-An adapter that needs normalized or server-resolved state after writing performs the ordinary query;
-this keeps every trigger reading the same representation and prevents new query projections from
-silently adding work or sensitive metadata to mutations.
+Mutation operations return receipts: the target id, the capability fields successfully applied, the
+canonical values established for those fields, and warnings when present. The values are assembled by
+the operation after shared validation; an adapter must not echo its request as if it were the result.
+They are mutation outcomes, not partial resource snapshots: an adapter that needs fields outside the
+write still performs the ordinary query. This keeps every trigger reading the same complete
+representation and prevents mutations from silently adding work or sensitive metadata.
+
+A receipt never carries a read-once secret. An operation that would produce one belongs on its own
+explicit route, so the plaintext only ever reaches a caller that asked for it by name — a caller
+updating unrelated settings cannot be handed a credential it will never see again by discarding a
+field it had no reason to read.
 
 ## Programmatic access
 

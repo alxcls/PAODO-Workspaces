@@ -1,6 +1,6 @@
 // Home page block for managing a workspace's MCP endpoint.
-// Enable/disable the MCP, mint a bearer secret (shown once) and revoke it, and copy the connection
-// URL to paste into an external MCP client.
+// Enable/disable the MCP, mint a bearer key (shown once) and revoke it, and copy the connection URL
+// to paste into an external MCP client.
 //
 // The credential lifecycle and chrome are shared with the API-access block (useCredential /
 // CredentialPanel). What is genuinely MCP-specific — the exposed tool list and the connection URL —
@@ -21,9 +21,14 @@ interface McpExtra {
   publicBaseUrl: string | null;
 }
 
+// Module scope, not an inline literal: the options object is a dependency of the hook's callbacks, so
+// a fresh one each render would rebuild them every time.
+const LABELS = { feature: "MCP settings" };
+const OPTIONS = { accessField: "workspaceMcpAccess" } as const;
+
 export default function McpBlock({ wsId }: { wsId: string }) {
   const endpoint = `/api/workspaces/${wsId}/mcp-config`;
-  const credential = useCredential<McpExtra>(endpoint, { noun: "secret", feature: "MCP settings" });
+  const credential = useCredential<McpExtra>(endpoint, LABELS, OPTIONS);
 
   const skills = credential.extra?.exposedSkills ?? [];
   const origin = credential.extra?.publicBaseUrl ?? (typeof window !== "undefined" ? window.location.origin : "");
@@ -32,18 +37,18 @@ export default function McpBlock({ wsId }: { wsId: string }) {
   return (
     <CredentialPanel
       title="Workspace MCP access"
-      noun="secret"
       toggleLabel="Workspace MCP"
-      description="Exposes every skill this workspace declares as an MCP tool to external AI clients holding the bearer secret."
+      description="Exposes every skill this workspace declares as an MCP tool to external AI clients holding the bearer key."
       enabled={credential.enabled}
-      hasSecret={credential.hasSecret}
-      secret={credential.secret}
+      hasKey={credential.hasKey}
+      plaintext={credential.plaintext}
       busy={credential.busy}
       error={credential.error}
       onToggle={credential.toggle}
-      onMint={credential.mint}
+      onGenerate={credential.generate}
+      onRotate={credential.rotate}
       onRevoke={credential.revoke}
-      onDismissSecret={credential.dismissSecret}
+      onDismissPlaintext={credential.dismissPlaintext}
     >
       <div className="flex flex-col gap-2">
         <span className="text-xs font-medium text-text">Exposed tools ({skills.length})</span>
@@ -59,7 +64,7 @@ export default function McpBlock({ wsId }: { wsId: string }) {
         )}
       </div>
 
-      {(credential.hasSecret || credential.secret) && (
+      {(credential.hasKey || credential.plaintext) && (
         <div className="flex flex-col gap-1">
           <span className="text-xs font-medium text-text">Connection URL</span>
           <code className="font-mono text-[12px] font-medium leading-[1.5] text-text bg-white px-2 py-1 rounded border border-border min-w-0 break-all">

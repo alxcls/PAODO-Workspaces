@@ -2,7 +2,7 @@
 // GET returns its metadata; DELETE removes it from the registry and deletes its directory from disk.
 import { type NextRequest, NextResponse } from "next/server";
 import { createLogger } from "@/lib/infra/logger";
-import { notFound } from "@/lib/api/guards";
+import { notFound, workspaceIdParam } from "@/lib/api/guards";
 import { appErrorResponse, errorResponse, readJsonObject } from "@/lib/api/errorResponse";
 import { publicBaseUrl } from "@/lib/api/credentialRoutes";
 import { receiptResponse } from "@/lib/api/workspaceUpdateReceipt";
@@ -13,7 +13,9 @@ import { deleteWorkspace } from "@/lib/operations/workspaceDelete";
 const log = createLogger("api").child({ route: "workspace" });
 
 export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
-  const { id } = await params;
+  const param = workspaceIdParam((await params).id, req);
+  if (param instanceof NextResponse) return param;
+  const id = param;
   try {
     const connectionOrigin = publicBaseUrl() ?? new URL(req.url).origin;
     const workspace = await getWorkspaceOverview(id, connectionOrigin);
@@ -52,7 +54,9 @@ const UPDATABLE_FIELDS = [
 ] as const;
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const { id } = await params;
+  const param = workspaceIdParam((await params).id, req);
+  if (param instanceof NextResponse) return param;
+  const id = param;
   const parsed = await readJsonObject(req);
   if (parsed instanceof Response) return parsed;
   const body = parsed as {
@@ -150,9 +154,13 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 }
 
 export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const { id } = await params;
+  const param = workspaceIdParam((await params).id, req);
+  if (param instanceof NextResponse) return param;
+  const id = param;
   try {
-    return NextResponse.json(await deleteWorkspace(id));
+    const result = await deleteWorkspace(id);
+    if (!result) return notFound(req);
+    return NextResponse.json(result);
   } catch {
     // The deletion operation logs the exact failed cleanup stage once; do not duplicate the private
     // exception here. This boundary only converts it to the safe public contract.

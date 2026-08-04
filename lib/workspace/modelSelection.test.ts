@@ -50,27 +50,26 @@ describe("defaultEffortFor", () => {
 
 describe("resolveModelSelection", () => {
   it("returns the current selection unchanged for an empty request", () => {
-    expect(resolveModelSelection({}, CURRENT, lookup).selection).toEqual(CURRENT);
+    expect(resolveModelSelection({}, CURRENT, lookup)).toEqual(CURRENT);
   });
 
   // A provider switch resets both: the model belongs to the provider being left behind, and reusing the
   // effort level would risk a value the new provider rejects at call time.
   it("resets the model and the effort on a provider switch", () => {
-    expect(resolveModelSelection({ provider: "moonshot" }, CURRENT, lookup).selection).toEqual({
+    expect(resolveModelSelection({ provider: "moonshot" }, CURRENT, lookup)).toEqual({
       provider: "moonshot",
       model: "kimi-k3",
       reasoningEffort: "low",
     });
     // Reset even when the new provider would have accepted the old level — one rule, no per-pair check.
     expect(
-      resolveModelSelection({ provider: "moonshot" }, { ...CURRENT, reasoningEffort: "high" }, lookup).selection
-        .reasoningEffort,
+      resolveModelSelection({ provider: "moonshot" }, { ...CURRENT, reasoningEffort: "high" }, lookup).reasoningEffort,
     ).toBe("low");
   });
 
   // Staying on the provider must not re-pick the model, or naming an effort would move the model too.
   it("keeps the current model when the provider is unchanged", () => {
-    expect(resolveModelSelection({ reasoningEffort: "xhigh" }, CURRENT, lookup).selection).toEqual({
+    expect(resolveModelSelection({ reasoningEffort: "xhigh" }, CURRENT, lookup)).toEqual({
       provider: "openai",
       model: "gpt-5.4",
       reasoningEffort: "xhigh",
@@ -78,31 +77,28 @@ describe("resolveModelSelection", () => {
   });
 
   it("resets effort when the model changes unless an effort is explicit", () => {
-    expect(resolveModelSelection({ model: "gpt-5.5" }, CURRENT, lookup).selection.reasoningEffort).toBe("low");
-    expect(
-      resolveModelSelection({ model: "gpt-5.5", reasoningEffort: "high" }, CURRENT, lookup).selection.reasoningEffort,
-    ).toBe("high");
+    expect(resolveModelSelection({ model: "gpt-5.5" }, CURRENT, lookup).reasoningEffort).toBe("low");
+    expect(resolveModelSelection({ model: "gpt-5.5", reasoningEffort: "high" }, CURRENT, lookup).reasoningEffort).toBe(
+      "high",
+    );
   });
 
   it("honors an explicit model on a provider switch instead of the catalog default", () => {
-    expect(resolveModelSelection({ provider: "openai", model: "gpt-5.4" }, CURRENT, lookup).selection.model).toBe(
-      "gpt-5.4",
-    );
+    expect(resolveModelSelection({ provider: "openai", model: "gpt-5.4" }, CURRENT, lookup).model).toBe("gpt-5.4");
   });
 
   // Blank is treated as absent here; refusing it is the caller's job, since only it can raise the error.
   it("treats a blank field as omitted", () => {
-    expect(resolveModelSelection({ provider: "  ", model: "" }, CURRENT, lookup).selection).toEqual(CURRENT);
+    expect(resolveModelSelection({ provider: "  ", model: "" }, CURRENT, lookup)).toEqual(CURRENT);
   });
 
-  it("resolves a no-dial provider to the placeholder effort and reports a supplied one", () => {
-    const dropped = resolveModelSelection({ provider: "deepseek", reasoningEffort: "high" }, CURRENT, lookup);
-    expect(dropped.selection).toEqual({ provider: "deepseek", model: "deepseek-v4-pro", reasoningEffort: "low" });
-    expect(dropped.warnings).toEqual([
-      "deepseek has no reasoning effort dial; the supplied reasoningEffort was ignored",
-    ]);
-
-    // Nothing to report when the caller never named one — silence here is correct, not a dropped value.
-    expect(resolveModelSelection({ provider: "deepseek" }, CURRENT, lookup).warnings).toEqual([]);
+  // The placeholder is all this function reports for a no-dial provider. An effort the caller actually
+  // supplied is refused by validateMetadata, which owns the error — see workspaces.test.ts.
+  it("resolves a no-dial provider to the placeholder effort", () => {
+    expect(resolveModelSelection({ provider: "deepseek" }, CURRENT, lookup)).toEqual({
+      provider: "deepseek",
+      model: "deepseek-v4-pro",
+      reasoningEffort: "low",
+    });
   });
 });

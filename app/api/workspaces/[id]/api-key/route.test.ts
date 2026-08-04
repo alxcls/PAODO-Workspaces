@@ -19,7 +19,7 @@ const h = vi.hoisted(() => ({
 vi.mock("@/lib/api/guards", async () => {
   const { NextResponse } = await import("next/server");
   return {
-    requireWorkspace: () => (h.found ? h.workspace : NextResponse.json({ error: "not found" }, { status: 404 })),
+    requireWorkspaceId: () => (h.found ? h.workspace : NextResponse.json({ error: "not found" }, { status: 404 })),
   };
 });
 vi.mock("@/lib/infra/security/credentialStore", () => ({

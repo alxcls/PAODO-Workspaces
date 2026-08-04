@@ -2,6 +2,7 @@
 "use client";
 
 import { useState } from "react";
+import { MAX_WORKSPACE_DESCRIPTION_LENGTH } from "@/lib/workspace/workspaceLimits";
 
 export default function DescriptionBlock({ value, onChange }: { value: string; onChange: (d: string) => void }) {
   const [editing, setEditing] = useState(false);
@@ -33,6 +34,7 @@ export default function DescriptionBlock({ value, onChange }: { value: string; o
             autoFocus
             className="w-full flex-1 min-h-0 resize-none border-0 bg-transparent p-0 outline-none text-text leading-[1.55]"
             value={draft}
+            maxLength={MAX_WORKSPACE_DESCRIPTION_LENGTH}
             onChange={(e) => setDraft(e.target.value)}
             placeholder="What is this workspace for?"
             onKeyDown={(e) => {

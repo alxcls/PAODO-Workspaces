@@ -30,12 +30,6 @@ export interface RequestedModelSelection {
   reasoningEffort?: string;
 }
 
-export interface ResolvedModelSelection {
-  selection: ModelSelection;
-  /** Caller-facing notes about a supplied value that could not be honored. Never a silent drop. */
-  warnings: string[];
-}
-
 function trimmed(value: string | undefined): string | undefined {
   const result = value?.trim();
   return result ? result : undefined;
@@ -72,19 +66,19 @@ export function defaultEffortFor(vocabulary: ModelVocabulary): ReasoningEffort {
  * Resolution is per field, so any subset works. An omitted provider keeps the current one. An omitted
  * model and an omitted effort both keep their current value while the provider is unchanged, except a
  * model change resets effort to that provider's default. An explicit effort always wins. A provider
- * with no effort dial always resolves to the stored placeholder, and says so in `warnings` when the
- * caller supplied a level that got dropped.
+ * with no effort dial always resolves to the stored placeholder.
  *
  * Validation is NOT done here: this decides what was meant, not whether it is allowed. The caller
  * checks the provider against its registry and the effort against `vocabulary` — it owns the error
- * messages, and only it knows whether an unacceptable value should be refused or coerced.
+ * messages, and only it knows whether an unacceptable value should be refused or coerced. An effort
+ * supplied to a no-dial provider is one of those refusals, and validateMetadata raises on it; this
+ * function only reports the placeholder it resolved to.
  */
 export function resolveModelSelection(
   requested: RequestedModelSelection,
   current: ModelSelection,
   vocabularyFor: (provider: string) => ModelVocabulary,
-): ResolvedModelSelection {
-  const warnings: string[] = [];
+): ModelSelection {
   const provider = trimmed(requested.provider) ?? current.provider;
   const vocabulary = vocabularyFor(provider);
   const providerChanged = provider !== current.provider;
@@ -97,15 +91,12 @@ export function resolveModelSelection(
   if (vocabulary.reasoningEfforts.length === 0) {
     // The stored value is a placeholder the agent never sends. Overwriting it with the default keeps
     // every no-dial provider reading the same rather than preserving whatever the last one used.
-    if (trimmed(requested.reasoningEffort)) {
-      warnings.push(`${provider} has no reasoning effort dial; the supplied reasoningEffort was ignored`);
-    }
-    return { selection: { provider, model, reasoningEffort: DEFAULT_LLM.reasoningEffort }, warnings };
+    return { provider, model, reasoningEffort: DEFAULT_LLM.reasoningEffort };
   }
 
   const reasoningEffort =
     (trimmed(requested.reasoningEffort) as ReasoningEffort | undefined) ??
     (providerChanged || modelChanged ? defaultEffortFor(vocabulary) : current.reasoningEffort);
 
-  return { selection: { provider, model, reasoningEffort }, warnings };
+  return { provider, model, reasoningEffort };
 }

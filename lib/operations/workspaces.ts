@@ -19,6 +19,7 @@ import {
 } from "@/lib/workspace/modelSelection";
 import { validateWorkspaceName } from "@/lib/workspace/workspaceName";
 import {
+  MAX_WORKSPACE_DESCRIPTION_LENGTH,
   MAX_MAX_ITERATIONS,
   MAX_MAX_RUN_MINUTES,
   MIN_MAX_ITERATIONS,
@@ -47,6 +48,13 @@ export interface WorkspaceDetails extends WorkspaceSummary {
   reasoningEffort?: ModelSelection["reasoningEffort"];
 }
 
+/** The public workspace fields corresponding to one complete internal model selection. */
+export type PublicModelSelection = {
+  llmProvider: string;
+  llmModel: string;
+  reasoningEffort?: ModelSelection["reasoningEffort"];
+};
+
 /** The metadata fields of the update contract, as a caller supplies them — unvalidated. */
 export interface WorkspaceMetadataInput {
   name?: string;
@@ -70,12 +78,6 @@ export interface WorkspaceMetadata {
   model?: ModelSelection;
 }
 
-export interface ValidatedMetadata {
-  metadata: WorkspaceMetadata;
-  /** Supplied values that could not be honored, for the caller to pass on. Never a silent drop. */
-  warnings: string[];
-}
-
 /**
  * The vocabulary the shared resolver needs, read from the two code-owned catalogs: model names from
  * lib/workspace/models.ts, effort levels from the provider registry. GET /api/models serves this same
@@ -91,6 +93,21 @@ export function currentModelSelection(workspace: Workspace): ModelSelection {
     provider: workspace.llmProvider ?? DEFAULT_LLM.provider,
     model: workspace.llmModel ?? DEFAULT_LLM.model,
     reasoningEffort: workspace.reasoningEffort ?? DEFAULT_LLM.reasoningEffort,
+  };
+}
+
+/**
+ * Projects the internal, always-complete model tuple onto the same fields GET /api/workspaces/:id
+ * exposes. Providers without an effort control still carry an internal placeholder so the runner has
+ * a complete config, but that placeholder is not part of the public resource and must not appear in
+ * mutation receipts either.
+ */
+export function publicModelSelection(selection: ModelSelection): PublicModelSelection {
+  const supportsReasoningEffort = getProviderMetadata(selection.provider).reasoningEfforts.length > 0;
+  return {
+    llmProvider: selection.provider,
+    llmModel: selection.model,
+    ...(supportsReasoningEffort ? { reasoningEffort: selection.reasoningEffort } : {}),
   };
 }
 
@@ -133,17 +150,13 @@ export async function createWorkspace(
 export function getWorkspace(id: string, store: WorkspaceLookup = getStore()): WorkspaceDetails | null {
   const workspace = store.getWorkspace(id);
   if (!workspace) return null;
-  const llmProvider = workspace.llmProvider ?? DEFAULT_LLM.provider;
-  const supportsReasoningEffort = getProviderMetadata(llmProvider).reasoningEfforts.length > 0;
   return {
     ...summary(workspace),
     createdAt: workspace.createdAt,
     maxIterations: workspace.maxIterations,
     maxRunMinutes: workspace.maxRunMinutes,
     internetAccess: workspace.internetAccess,
-    llmProvider,
-    llmModel: workspace.llmModel ?? DEFAULT_LLM.model,
-    ...(supportsReasoningEffort ? { reasoningEffort: workspace.reasoningEffort ?? DEFAULT_LLM.reasoningEffort } : {}),
+    ...publicModelSelection(currentModelSelection(workspace)),
   };
 }
 
@@ -163,25 +176,34 @@ export function getWorkspace(id: string, store: WorkspaceLookup = getStore()): W
 export function validateMetadata(
   input: WorkspaceMetadataInput,
   current: ModelSelection = DEFAULT_LLM,
-): ValidatedMetadata {
+): WorkspaceMetadata {
   const metadata: WorkspaceMetadata = {};
-  const warnings: string[] = [];
 
   if (input.name !== undefined) metadata.name = validateWorkspaceName(input.name);
-  if (input.description !== undefined) metadata.description = input.description.trim();
+  if (input.description !== undefined) {
+    const description = input.description.trim();
+    if (description.length > MAX_WORKSPACE_DESCRIPTION_LENGTH) {
+      throw new WorkspaceUpdateError(`description cannot exceed ${MAX_WORKSPACE_DESCRIPTION_LENGTH} characters`);
+    }
+    metadata.description = description;
+  }
 
   if (input.maxIterations !== undefined) {
-    const value = Math.floor(Number(input.maxIterations));
-    if (!Number.isFinite(value) || value < MIN_MAX_ITERATIONS || value > MAX_MAX_ITERATIONS) {
-      throw new WorkspaceUpdateError(`maxIterations must be between ${MIN_MAX_ITERATIONS} and ${MAX_MAX_ITERATIONS}`);
+    const value = input.maxIterations;
+    if (!Number.isInteger(value) || value < MIN_MAX_ITERATIONS || value > MAX_MAX_ITERATIONS) {
+      throw new WorkspaceUpdateError(
+        `maxIterations must be an integer between ${MIN_MAX_ITERATIONS} and ${MAX_MAX_ITERATIONS}`,
+      );
     }
     metadata.maxIterations = value;
   }
 
   if (input.maxRunMinutes !== undefined) {
-    const value = Math.floor(Number(input.maxRunMinutes));
-    if (!Number.isFinite(value) || value < MIN_MAX_RUN_MINUTES || value > MAX_MAX_RUN_MINUTES) {
-      throw new WorkspaceUpdateError(`maxRunMinutes must be between ${MIN_MAX_RUN_MINUTES} and ${MAX_MAX_RUN_MINUTES}`);
+    const value = input.maxRunMinutes;
+    if (!Number.isInteger(value) || value < MIN_MAX_RUN_MINUTES || value > MAX_MAX_RUN_MINUTES) {
+      throw new WorkspaceUpdateError(
+        `maxRunMinutes must be an integer between ${MIN_MAX_RUN_MINUTES} and ${MAX_MAX_RUN_MINUTES}`,
+      );
     }
     metadata.maxRunMinutes = value;
   }
@@ -198,7 +220,7 @@ export function validateMetadata(
 
     // Fill the gaps, then check what came out. Resolution is shared with the picker so a partial choice
     // means the same thing here as it does in the UI; see lib/workspace/modelSelection.ts.
-    const { selection, warnings: modelWarnings } = resolveModelSelection(input.model, current, providerVocabulary);
+    const selection = resolveModelSelection(input.model, current, providerVocabulary);
 
     // Both rejections name the accepted values. The valid effort levels differ per provider, so a
     // caller cannot know them ahead of the provider choice — carrying them in the error is the only
@@ -224,15 +246,20 @@ export function validateMetadata(
     // omitted one cannot land here — resolution only ever picks a level the provider accepts.
     const efforts = providerVocabulary(selection.provider).reasoningEfforts;
     const named = input.model.reasoningEffort?.trim();
-    if (named && efforts.length > 0 && !efforts.includes(named as ReasoningEffort)) {
+    if (named && efforts.length === 0) {
+      throw new WorkspaceUpdateError(`reasoningEffort is not supported for ${selection.provider}`, {
+        field: "reasoningEffort",
+        provider: selection.provider,
+      });
+    }
+    if (named && !efforts.includes(named as ReasoningEffort)) {
       throw new WorkspaceUpdateError(`reasoningEffort for ${selection.provider} must be one of: ${efforts.join(", ")}`);
     }
 
     metadata.model = selection;
-    warnings.push(...modelWarnings);
   }
 
-  return { metadata, warnings };
+  return metadata;
 }
 
 /**

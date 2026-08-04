@@ -67,14 +67,10 @@ Consequences
   persisting the new (internet-off-by-default) record, so the defense-in-depth layer can't disagree
   with the primary (network) layer from the moment a workspace exists — before this, a sparse
   policy file (absent key = enabled) read as "on" for any workspace never yet explicitly toggled.
-- The toggle route's three writes (store, policy file, container stop) are not fully atomic, but
-  failures are handled asymmetrically by design: a policy-file write failure rolls the store field
-  back to its previous value (the two must never disagree — one is the primary boundary's source of
-  truth, the other its defense-in-depth check), while a container-stop failure does _not_ roll back
-  an already-consistent store/policy — reverting a user's explicit toggle because Docker hiccuped
-  would be worse than a delayed cutover, and it self-heals: the secrets hash `ensure()` checks on
-  every wake folds in `internetAccess`, so the next wake forces a correct recreate regardless of
-  whether the explicit `stop()` succeeded.
+- The toggle route reports success only after the store and policy are updated and the previous
+  container is stopped. A policy-file failure restores the store field. A container-stop failure
+  restores both the policy and store to their previous values and returns an error, so a successful
+  `internetAccess=false` receipt always means the old internet-capable container is gone.
 - `ContainerManager.ensure()` and `.stop()` are mutually exclusive per workspace (a shared,
   kind-tagged lock keyed by workspace id): a `stop()` from the toggle route can't interleave with a
   concurrent agent tool call's `ensure()` reattaching the sidecar (or vice versa) mid-transition.

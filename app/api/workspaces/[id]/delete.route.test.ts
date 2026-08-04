@@ -2,14 +2,13 @@
 //   1. The registry entry is removed LAST. Anything that fails before it leaves the workspace
 //      listed, so the user can delete again — rather than orphaning a directory, git history, or a
 //      running container behind a registry entry that no longer exists (nothing else sweeps them).
-//   2. Deleting is idempotent. A missing registry entry means "finish an interrupted delete", not
-//      "nothing to do", so every id-keyed stage still runs.
+//   2. A missing registry entry is NOT a successful deletion. It returns not found and no cleanup
+//      runs, so the app and every thin client agree that deleting an already-deleted workspace fails.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const h = vi.hoisted(() => ({
   calls: [] as string[],
   workspace: null as { id: string; name: string; dir: string } | null,
-  existsSync: vi.fn(() => true),
   deleteWorkspace: vi.fn(async (_id: string) => true),
   disconnectWorkspace: vi.fn(),
   removeWorkspaceFromGraph: vi.fn(),
@@ -67,20 +66,16 @@ vi.mock("@/lib/infra/security/credentialStore", () => ({
   },
 }));
 vi.mock("fs/promises", () => ({ rm: h.rm }));
-vi.mock("fs", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("fs")>()),
-  existsSync: h.existsSync,
-}));
 
 import { DELETE } from "./route";
 
-const ctx = (id = "ws-1") => ({ params: Promise.resolve({ id }) });
-const request = () => new Request("http://x/api/workspaces/ws-1", { method: "DELETE" }) as never;
+const WORKSPACE_ID = "9841ce91-f521-4ddf-a966-fa5b612167bf";
+const ctx = (id = WORKSPACE_ID) => ({ params: Promise.resolve({ id }) });
+const request = () => new Request(`http://x/api/workspaces/${WORKSPACE_ID}`, { method: "DELETE" }) as never;
 
 beforeEach(() => {
   h.calls.length = 0;
-  h.workspace = { id: "ws-1", name: "Alpha", dir: "/data/ws-1" };
-  h.existsSync.mockReset().mockReturnValue(true);
+  h.workspace = { id: WORKSPACE_ID, name: "Alpha", dir: `/data/${WORKSPACE_ID}` };
   h.deleteWorkspace.mockReset().mockResolvedValue(true);
   for (const fn of [
     h.disconnectWorkspace,
@@ -129,43 +124,13 @@ describe("DELETE /api/workspaces/[id]", () => {
     expect(h.deleteWorkspace).not.toHaveBeenCalled();
   });
 
-  it("still cleans up when the registry entry is already gone (resumes an interrupted delete)", async () => {
+  it("returns not found without cleanup when the workspace is already absent", async () => {
     h.workspace = null;
 
     const res = await DELETE(request(), ctx());
 
-    expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ deleted: false, resumed: true });
-    // Every id-keyed stage runs again; none of them may be skipped just because the entry is gone.
-    expect(h.calls).toEqual(expect.arrayContaining(["drives", "graph", "credentials", "container", "version_history"]));
-    expect(h.deleteWorkspace).toHaveBeenCalledWith("ws-1");
-  });
-
-  it("derives the directory from the id when resuming, since the registry no longer records it", async () => {
-    h.workspace = null;
-
-    await DELETE(request(), ctx());
-
-    expect(h.deleteWorkspaceDir).toHaveBeenCalledWith(expect.stringContaining("ws-1"));
-  });
-
-  it("skips the container-backed directory delete when resuming with no residue on disk", async () => {
-    h.workspace = null;
-    h.existsSync.mockReturnValue(false);
-
-    await DELETE(request(), ctx());
-
-    expect(h.deleteWorkspaceDir).not.toHaveBeenCalled();
-    // The cheap id-keyed stages still run — only the expensive one is conditional.
-    expect(h.calls).toContain("registry");
-  });
-
-  it("always attempts the directory delete on the normal path, even if it cannot be stat'd", async () => {
-    h.existsSync.mockReturnValue(false);
-
-    await DELETE(request(), ctx());
-
-    // A data volume the app cannot stat must never silently skip the delete.
-    expect(h.deleteWorkspaceDir).toHaveBeenCalledWith("/data/ws-1");
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({ ok: false, code: "NOT_FOUND", error: "not found" });
+    expect(h.calls).toEqual([]);
   });
 });

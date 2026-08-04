@@ -19,7 +19,7 @@ const h = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/api/guards", () => ({
-  requireWorkspace: () => h.workspace,
+  requireWorkspaceId: () => h.workspace,
 }));
 vi.mock("@/lib/infra/security/credentialStore", () => ({
   state: () => h.state,

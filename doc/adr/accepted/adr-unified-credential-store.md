@@ -79,9 +79,8 @@ removed that too, so `enabled` plus the key is all the MCP endpoint stores.
 file. Its persistence is best-effort: a disk failure logs a warning rather than failing a valid
 authentication.
 
-**Authorization stays in `platformAccessPolicy.ts`, not on the credential.** The
-`PlatformTokenValidator` signature in `httpAuth.ts` therefore drops its `permission` parameter, which
-advertised per-permission scoping that no validator implemented.
+**Authorization is the route allowlist in `platformAccessPolicy.ts`, not a property of the
+credential.** The one platform key either matches or it does not; there are no per-key scopes.
 
 **Authentication failure and authorization denial are now distinguished in `checkAuth`.** A bad key
 feeds the brute-force tracker; a valid key on a route with no mapped permission does not. The
@@ -113,9 +112,9 @@ different things, is worse. Before this, `CredentialPanel` took a `noun` prop, s
 third-party secrets. The prop is gone: the panel says "key" in plain strings.
 
 The other layers keep their own verbs deliberately, and this is not drift: the store mints and
-revokes, the wire's POST body carries `operation: "generate" | "rotate"`, authorization grants
-`workspaces:credentials:issue` / `:revoke`, and the audit stream records `credential_minted` /
-`credential_revoked` / `credential_enabled_changed`. Each names what its own layer does.
+revokes, the wire's POST body carries `operation: "generate" | "rotate"`, and the audit stream records
+`credential_minted` / `credential_revoked` / `credential_enabled_changed`. Each names what its own
+layer does.
 
 The route and UI layers were deduplicated to match:
 

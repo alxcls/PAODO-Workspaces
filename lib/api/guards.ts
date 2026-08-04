@@ -29,6 +29,29 @@ export function notFound(request?: Request): NextResponse {
   return errorResponse("NOT_FOUND", "not found", { request });
 }
 
+const CANONICAL_WORKSPACE_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+/**
+ * Validate the public workspace-id wire format. Workspace ids are generated as lowercase UUIDs and
+ * stored as opaque, case-sensitive keys; accepting another spelling here only turns a malformed
+ * request into a misleading not-found response. Kept at the API boundary so UI, CLI and direct HTTP
+ * callers receive the same answer.
+ */
+export function workspaceIdParam(id: string, request?: Request): string | NextResponse {
+  if (CANONICAL_WORKSPACE_ID.test(id)) return id;
+  return errorResponse("INVALID_REQUEST", "workspace id must be a lowercase UUID", {
+    request,
+    details: { field: "workspaceId" },
+  });
+}
+
+/** Validate and resolve a public workspace id, or return the shared 400/404 response. */
+export function requireWorkspaceId(id: string, request?: Request): Workspace | NextResponse {
+  const canonical = workspaceIdParam(id, request);
+  if (canonical instanceof NextResponse) return canonical;
+  return getStore().getWorkspace(canonical) ?? notFound(request);
+}
+
 /** Resolve a workspace by id, or a standard 404 Response to short-circuit the handler. */
 export function requireWorkspace(id: string, request?: Request): Workspace | NextResponse {
   return getStore().getWorkspace(id) ?? notFound(request);

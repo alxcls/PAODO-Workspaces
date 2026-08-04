@@ -35,9 +35,12 @@ Query operations own resource representations. For workspaces, `GET /api/workspa
 authoritative overview assembled from workspace metadata, access state, exposed skills and secret
 metadata.
 
-Mutation operations return receipts: the target id, the capability fields successfully applied, the
-canonical values established for those fields, and warnings when present. The values are assembled by
+Mutation operations return receipts: the target id, the capability fields successfully applied, and
+the canonical values established for those fields. The values are assembled by
 the operation after shared validation; an adapter must not echo its request as if it were the result.
+Receipt field names use the public vocabulary shared by mutation requests and query representations.
+An internal atomic grouping such as `model` is projected back to `llmProvider`, `llmModel` and, when
+supported, `reasoningEffort`. Every name in `applied` has the same-named canonical value in `values`.
 They are mutation outcomes, not partial resource snapshots: an adapter that needs fields outside the
 write still performs the ordinary query. This keeps every trigger reading the same complete
 representation and prevents mutations from silently adding work or sensitive metadata.

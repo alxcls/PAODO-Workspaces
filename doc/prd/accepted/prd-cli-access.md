@@ -58,7 +58,6 @@ interface.
 - The single key can access every action explicitly exposed to the CLI.
 - CLI access can be disabled, rotated, and revoked through the web interface.
 - The CLI key cannot create, rotate, revoke, enable, or disable itself.
-- Destructive actions require an explicit confirmation.
 - Every action returns a clear success or failure result.
 - Activity started through the CLI appears in the same history and monitoring
   views as activity started through the web interface.

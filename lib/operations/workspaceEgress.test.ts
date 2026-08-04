@@ -34,7 +34,7 @@ describe("setting workspace egress", () => {
     );
 
     expect(steps).toEqual(["registry:true", "policy:true", "stop"]);
-    expect(result).toEqual({ applied: true, warnings: [] });
+    expect(result).toEqual({ applied: true });
   });
 
   // The registry and the proxy policy are one security boundary: a workspace recorded as offline while
@@ -84,23 +84,32 @@ describe("setting workspace egress", () => {
     ).rejects.toThrow("failed to persist internet-access policy");
   });
 
-  // The setting is persisted and the proxy is already enforcing it; only the network-layer teardown is
-  // pending. That is a warning, not a failure — reporting it as one would invite a pointless retry.
-  it("warns rather than fails when the container cannot be stopped", async () => {
-    const result = await setInternetAccess(
-      "ws-1",
-      false,
-      true,
-      writer(),
-      services({
-        stopContainer: async () => {
-          throw new Error("docker daemon unavailable");
-        },
-      }),
-    );
+  it("rolls back and fails when the container cannot be stopped", async () => {
+    const written: boolean[] = [];
+    const policies: boolean[] = [];
 
-    expect(result.applied).toBe(true);
-    expect(result.warnings).toEqual(["setting saved but the running container could not be stopped immediately"]);
+    await expect(
+      setInternetAccess(
+        "ws-1",
+        false,
+        true,
+        writer({
+          setWorkspaceInternetAccess: (_id, enabled) => {
+            written.push(enabled);
+            return true;
+          },
+        }),
+        services({
+          setPolicy: (_id, enabled) => policies.push(enabled),
+          stopContainer: async () => {
+            throw new Error("docker daemon unavailable");
+          },
+        }),
+      ),
+    ).rejects.toThrow("failed to apply internet-access setting");
+
+    expect(written).toEqual([false, true]);
+    expect(policies).toEqual([false, true]);
   });
 
   // A refusal from a store that only refuses unknown ids means the workspace disappeared. Reporting it
@@ -119,7 +128,7 @@ describe("setting workspace egress", () => {
       }),
     );
 
-    expect(result).toEqual({ applied: false, warnings: [] });
+    expect(result).toEqual({ applied: false });
   });
 });
 

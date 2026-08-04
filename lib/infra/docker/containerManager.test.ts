@@ -148,6 +148,29 @@ describe("ContainerManager background tasks", () => {
   });
 });
 
+describe("ContainerManager stop result", () => {
+  function managerWithStop(result: DockerResult): ContainerManager {
+    const docker: IDockerClient = {
+      cmd: async (...args) => (args[0] === "stop" ? result : OK),
+      build: async () => {},
+      exec: async () => OK,
+    };
+    return new ContainerManager(docker);
+  }
+
+  it("rejects when Docker cannot stop a possibly running container", async () => {
+    const manager = managerWithStop({ stdout: "", stderr: "Cannot connect to the Docker daemon", code: 1 });
+
+    await expect(manager.stop("ws1")).rejects.toThrow("docker stop failed");
+  });
+
+  it("treats an absent container as already stopped", async () => {
+    const manager = managerWithStop({ stdout: "", stderr: "No such container: ws_ws1", code: 1 });
+
+    await expect(manager.stop("ws1")).resolves.toBeUndefined();
+  });
+});
+
 // Rehydration: after an app restart the in-memory map is empty but the workspace container and its
 // servers keep running. Rebuilding from the container's pidfiles makes a survivor server visible
 // again — surfaced in the agent's context and stoppable — instead of colliding invisibly.

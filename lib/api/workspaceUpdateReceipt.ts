@@ -19,8 +19,6 @@ export interface WorkspaceUpdateReceipt {
   workspaceId: string;
   applied: string[];
   values: WorkspaceUpdateValues;
-  /** Omitted when empty, so the common case carries no noise. */
-  warnings?: string[];
 }
 
 export function workspaceUpdateReceipt(result: UpdateWorkspaceResult): WorkspaceUpdateReceipt {
@@ -29,7 +27,6 @@ export function workspaceUpdateReceipt(result: UpdateWorkspaceResult): Workspace
     workspaceId: result.workspaceId,
     applied: result.applied,
     values: result.values,
-    ...(result.warnings.length > 0 ? { warnings: result.warnings } : {}),
   };
 }
 

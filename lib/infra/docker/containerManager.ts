@@ -105,7 +105,11 @@ export class ContainerManager implements IContainerManager {
   private resetIdleTimer(workspaceId: string): void {
     const existing = this.idleTimers.get(workspaceId);
     if (existing) clearTimeout(existing);
-    const t = setTimeout(() => this.stop(workspaceId), IDLE_TIMEOUT_MS);
+    const t = setTimeout(() => {
+      void this.stop(workspaceId).catch((err) => {
+        log.warn({ err, workspaceId }, "idle container stop failed");
+      });
+    }, IDLE_TIMEOUT_MS);
     t.unref();
     this.idleTimers.set(workspaceId, t);
   }
@@ -522,11 +526,19 @@ export class ContainerManager implements IContainerManager {
       // Background processes die with the container (tini reaps the tree) — just drop the bookkeeping.
       this.background.clear(workspaceId);
       const r = await this.docker.cmd("stop", containerName(workspaceId));
-      if (r.code !== 0) log.warn({ workspaceId, stderr: r.stderr }, "docker stop failed");
+      // A workspace that never ran has no container and is already in the desired stopped state.
+      // Every other non-zero result means Docker could not confirm the teardown; surface that to
+      // the internet-access operation after still attempting the idempotent network cleanup below.
+      const stopError =
+        r.code !== 0 && !/no such container/i.test(r.stderr)
+          ? new Error(`docker stop failed: ${r.stderr || `exit ${r.code}`}`)
+          : null;
+      if (stopError) log.warn({ workspaceId, stderr: r.stderr }, "docker stop failed");
       await this.docker.cmd("network", "disconnect", networkName(workspaceId), containerName(workspaceId));
       await this.proxy.detach(workspaceId);
       const net = await this.docker.cmd("network", "rm", networkName(workspaceId));
       if (net.code !== 0) log.debug({ workspaceId, stderr: net.stderr }, "network rm on stop (may not exist)");
+      if (stopError) throw stopError;
     })();
     this.startLocks.set(workspaceId, { kind: "stop", promise: p });
     try {

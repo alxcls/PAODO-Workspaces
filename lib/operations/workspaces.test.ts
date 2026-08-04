@@ -132,38 +132,51 @@ describe("workspace metadata validation", () => {
       validateMetadata({
         name: "  Renamed  ",
         description: "  Updated description  ",
-        maxIterations: 42.8,
-        maxRunMinutes: 25.9,
+        maxIterations: 42,
+        maxRunMinutes: 25,
         model: { provider: "openai", model: " gpt-5 ", reasoningEffort: "high" },
       }),
     ).toEqual({
-      metadata: {
-        name: "Renamed",
-        description: "Updated description",
-        maxIterations: 42,
-        maxRunMinutes: 25,
-        model: { provider: "openai", model: "gpt-5", reasoningEffort: "high" },
-      },
-      warnings: [],
+      name: "Renamed",
+      description: "Updated description",
+      maxIterations: 42,
+      maxRunMinutes: 25,
+      model: { provider: "openai", model: "gpt-5", reasoningEffort: "high" },
     });
   });
 
   it("returns nothing for an empty input rather than inventing defaults", () => {
-    expect(validateMetadata({})).toEqual({ metadata: {}, warnings: [] });
+    expect(validateMetadata({})).toEqual({});
   });
 
   // An explicitly empty description clears it; an omitted one is left alone. Only the absent key
   // means "unchanged", so the distinction has to survive validation.
   it("keeps an explicitly blank description as a value to write", () => {
-    expect(validateMetadata({ description: "   " }).metadata).toEqual({ description: "" });
-    expect(validateMetadata({}).metadata).not.toHaveProperty("description");
+    expect(validateMetadata({ description: "   " })).toEqual({ description: "" });
+    expect(validateMetadata({})).not.toHaveProperty("description");
   });
 
-  it("rejects out-of-range limits instead of clamping them", () => {
-    for (const value of [0, -5, 501]) {
-      expect(() => validateMetadata({ maxIterations: value })).toThrow("maxIterations must be between 1 and 500");
+  it("rejects a description longer than 4,000 characters", () => {
+    expect(() => validateMetadata({ description: "x".repeat(4_001) })).toThrow(
+      "description cannot exceed 4000 characters",
+    );
+  });
+
+  it("rejects non-integer and out-of-range limits instead of normalizing them", () => {
+    for (const value of [1.1, 42.8, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(() => validateMetadata({ maxIterations: value })).toThrow(
+        "maxIterations must be an integer between 1 and 500",
+      );
     }
-    expect(() => validateMetadata({ maxRunMinutes: 0 })).toThrow("maxRunMinutes must be between");
+    expect(() => validateMetadata({ maxRunMinutes: 25.9 })).toThrow(
+      "maxRunMinutes must be an integer between 1 and 1440",
+    );
+    for (const value of [0, -5, 501]) {
+      expect(() => validateMetadata({ maxIterations: value })).toThrow(
+        "maxIterations must be an integer between 1 and 500",
+      );
+    }
+    expect(() => validateMetadata({ maxRunMinutes: 0 })).toThrow("maxRunMinutes must be an integer between");
   });
 
   // The rejection is the only place a caller learns the accepted values, so the message content is
@@ -210,19 +223,19 @@ describe("workspace metadata validation", () => {
   it("resolves a partial model choice against the current selection", () => {
     // Provider only: the new provider's first catalog model, and its default effort rather than the
     // level the previous provider was on.
-    expect(validateMetadata({ model: { provider: "anthropic" } }, CURRENT).metadata.model).toEqual({
+    expect(validateMetadata({ model: { provider: "anthropic" } }, CURRENT).model).toEqual({
       provider: "anthropic",
       model: "claude-opus-4-8",
       reasoningEffort: "low",
     });
     // Model only: stays on the current provider and resets effort to that provider's default.
-    expect(validateMetadata({ model: { model: "gpt-5.1" } }, CURRENT).metadata.model).toEqual({
+    expect(validateMetadata({ model: { model: "gpt-5.1" } }, CURRENT).model).toEqual({
       provider: "openai",
       model: "gpt-5.1",
       reasoningEffort: "low",
     });
     // Effort only: neither provider nor model is re-picked.
-    expect(validateMetadata({ model: { reasoningEffort: "low" } }, CURRENT).metadata.model).toEqual({
+    expect(validateMetadata({ model: { reasoningEffort: "low" } }, CURRENT).model).toEqual({
       provider: "openai",
       model: "gpt-5.4",
       reasoningEffort: "low",
@@ -233,27 +246,24 @@ describe("workspace metadata validation", () => {
   // over would store a selection it rejects at call time.
   it("resets the effort on a provider switch instead of reusing the previous level", () => {
     expect(
-      validateMetadata({ model: { provider: "moonshot" } }, { ...CURRENT, reasoningEffort: "medium" }).metadata.model,
+      validateMetadata({ model: { provider: "moonshot" } }, { ...CURRENT, reasoningEffort: "medium" }).model,
     ).toMatchObject({ provider: "moonshot", reasoningEffort: "low" });
   });
 
   // DeepSeek takes no effort, so a caller cannot supply a valid one. Substituting the default keeps a
   // provider switch from failing on a field that provider ignores.
   it("substitutes the default effort for a provider with no effort dial", () => {
-    expect(validateMetadata({ model: { provider: "deepseek", model: "deepseek-v4-pro" } }).metadata).toMatchObject({
+    expect(validateMetadata({ model: { provider: "deepseek", model: "deepseek-v4-pro" } })).toMatchObject({
       model: { provider: "deepseek", reasoningEffort: "low" },
     });
   });
 
-  // Dropping it silently is what made the CLI confusing: the response said ok and the effort was
-  // unchanged, with nothing explaining why.
-  it("warns when an effort is supplied to a provider that has no dial", () => {
-    const { metadata, warnings } = validateMetadata(
-      { model: { provider: "deepseek", reasoningEffort: "high" } },
-      CURRENT,
+  // An explicit setting the provider cannot persist is a rejected request, never a successful write
+  // with a warning. This keeps programmatic triggers aligned with the UI, where the dial is absent.
+  it("rejects an effort supplied to a provider that has no dial", () => {
+    expect(() => validateMetadata({ model: { provider: "deepseek", reasoningEffort: "high" } }, CURRENT)).toThrow(
+      "reasoningEffort is not supported for deepseek",
     );
-    expect(metadata.model).toMatchObject({ provider: "deepseek", reasoningEffort: "low" });
-    expect(warnings).toEqual(["deepseek has no reasoning effort dial; the supplied reasoningEffort was ignored"]);
   });
 });
 

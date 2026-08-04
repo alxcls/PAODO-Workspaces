@@ -13,13 +13,11 @@ import { getCredentialProxy } from "@/lib/infra/proxy";
 import { deleteInternetAccessPolicy } from "@/lib/infra/proxy/internetAccessPolicy";
 import { clearSchedule } from "@/lib/infra/schedules/scheduleStore";
 import { rm } from "fs/promises";
-import { existsSync } from "fs";
 import path from "path";
 import { WORKSPACES_ROOT } from "@/lib/infra/paths";
 
 export interface DeleteWorkspaceResult {
-  deleted: boolean;
-  resumed?: true;
+  deleted: true;
 }
 
 const deleteLog = createLogger("workspaceOperations");
@@ -53,26 +51,24 @@ async function runDeleteCleanup(
 }
 
 /**
- * Permanently removes a workspace and every id-keyed resource it owns. Cleanup is resumable: a
- * missing registry record is treated as a possibly interrupted prior deletion, so all safe stages
- * run again and the registry is finalized last.
+ * Permanently removes an existing workspace and every resource it owns. The registry is finalized
+ * last, so a cleanup failure leaves the workspace addressable and the caller can retry the same
+ * deletion. A missing registry record is not evidence of an interrupted deletion and is reported
+ * as not found without touching unrelated id-keyed stores.
  */
-export async function deleteWorkspace(id: string): Promise<DeleteWorkspaceResult> {
+export async function deleteWorkspace(id: string): Promise<DeleteWorkspaceResult | null> {
   const store = getStore();
   const workspace = store.getWorkspace(id);
-  const resuming = !workspace;
-  const dir = workspace?.dir ?? path.join(WORKSPACES_ROOT, id);
-  const deleteDirectory = !resuming || existsSync(dir);
+  if (!workspace) return null;
 
   deleteAudit.info(
     {
       event: "workspace_delete_started",
       outcome: "workspace_deletion_started",
       workspaceId: id,
-      workspaceName: workspace?.name,
-      resuming,
+      workspaceName: workspace.name,
     },
-    resuming ? "resuming an incomplete workspace deletion" : "workspace deletion started",
+    "workspace deletion started",
   );
 
   await runDeleteCleanup(id, "drive_connections", () => disconnectWorkspace(id));
@@ -87,9 +83,7 @@ export async function deleteWorkspace(id: string): Promise<DeleteWorkspaceResult
   ]);
   await Promise.all([
     runDeleteCleanup(id, "container", () => getContainers().remove(id)),
-    ...(deleteDirectory
-      ? [runDeleteCleanup(id, "workspace_directory", () => getContainers().deleteWorkspaceDir(dir))]
-      : []),
+    runDeleteCleanup(id, "workspace_directory", () => getContainers().deleteWorkspaceDir(workspace.dir)),
     runDeleteCleanup(id, "version_history", () => getVersioning().deleteRepo(id)),
     runDeleteCleanup(id, "agent_permissions", () =>
       rm(path.join(WORKSPACES_ROOT, ".agent-permissions", `${id}.json`), { force: true }),
@@ -102,10 +96,9 @@ export async function deleteWorkspace(id: string): Promise<DeleteWorkspaceResult
       event: "workspace_deleted",
       outcome: "workspace_and_owned_resources_deleted",
       workspaceId: id,
-      workspaceName: workspace?.name,
-      resumed: resuming,
+      workspaceName: workspace.name,
     },
-    resuming ? "incomplete workspace deletion completed" : "workspace deleted",
+    "workspace deleted",
   );
-  return { deleted: !resuming, ...(resuming ? { resumed: true as const } : {}) };
+  return { deleted: true };
 }

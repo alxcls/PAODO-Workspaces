@@ -82,9 +82,35 @@ describe("the update contract", () => {
       workspaceId: "ws-1",
       applied: ["name", "description"],
       values: { name: "Renamed", description: "Updated description" },
-      warnings: [],
     });
     expect(mutable).toMatchObject({ name: "Renamed", description: "Updated description" });
+  });
+
+  it("reports a model write with the public workspace field names", async () => {
+    const result = await updateWorkspace(
+      "ws-1",
+      { model: { provider: "openai", model: "gpt-5", reasoningEffort: "high" } },
+      deps(),
+    );
+
+    expect(result).toEqual({
+      ok: true,
+      workspaceId: "ws-1",
+      applied: ["llmProvider", "llmModel", "reasoningEffort"],
+      values: { llmProvider: "openai", llmModel: "gpt-5", reasoningEffort: "high" },
+    });
+    expect(result?.applied).toEqual(Object.keys(result?.values ?? {}));
+  });
+
+  it("omits a provider's internal effort placeholder from its public receipt", async () => {
+    const result = await updateWorkspace("ws-1", { model: { provider: "deepseek", model: "deepseek-v4-pro" } }, deps());
+
+    expect(result).toMatchObject({
+      applied: ["llmProvider", "llmModel"],
+      values: { llmProvider: "deepseek", llmModel: "deepseek-v4-pro" },
+    });
+    expect(result?.values).not.toHaveProperty("reasoningEffort");
+    expect(result?.values).not.toHaveProperty("model");
   });
 
   it("does not read the workspace back after a successful metadata write", async () => {
@@ -101,7 +127,6 @@ describe("the update contract", () => {
       workspaceId: "ws-1",
       applied: ["description"],
       values: { description: "updated" },
-      warnings: [],
     });
     expect(reads).toBe(1);
   });
@@ -196,17 +221,16 @@ describe("the update contract", () => {
     ).rejects.toThrow("applied: description; not applied: internetAccess");
   });
 
-  it("carries a capability's non-fatal warning through to the caller", async () => {
+  it("fails rather than reporting success when container teardown fails", async () => {
     const egress = egressStub({
       stopContainer: async () => {
         throw new Error("docker daemon unavailable");
       },
     });
 
-    await expect(updateWorkspace("ws-1", { internetAccess: true }, deps({ egress }))).resolves.toMatchObject({
-      applied: ["internetAccess"],
-      warnings: ["setting saved but the running container could not be stopped immediately"],
-    });
+    await expect(updateWorkspace("ws-1", { internetAccess: true }, deps({ egress }))).rejects.toThrow(
+      "failed to apply internet-access setting",
+    );
   });
 
   // The security property this whole result shape rests on: an update moves access flags and nothing
@@ -229,7 +253,7 @@ describe("the update contract", () => {
     expect(result?.applied).toEqual(["workspaceApiAccess", "workspaceMcpAccess"]);
     expect(result?.values).toEqual({ workspaceApiAccess: true, workspaceMcpAccess: true });
     // Asserted on the key set, not on one name: any future field carrying plaintext fails here.
-    expect(Object.keys(result ?? {}).sort()).toEqual(["applied", "ok", "values", "warnings", "workspaceId"]);
+    expect(Object.keys(result ?? {}).sort()).toEqual(["applied", "ok", "values", "workspaceId"]);
   });
 
   it("returns stored-secret metadata as capability output without echoing the workspace", async () => {
@@ -299,5 +323,6 @@ describe("the update contract", () => {
       workspaceApiAccess: true,
       secret: { name: "API_TOKEN", domains: ["api.example.com"] },
     });
+    expect(result?.applied).toEqual(Object.keys(result?.values ?? {}));
   });
 });

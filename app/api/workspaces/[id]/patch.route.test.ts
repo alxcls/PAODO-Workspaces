@@ -9,7 +9,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const h = vi.hoisted(() => ({
   workspace: {
-    id: "ws-1",
+    id: "9841ce91-f521-4ddf-a966-fa5b612167bf",
     name: "Alpha",
     dir: "/fake/alpha",
     createdAt: new Date("2026-01-02T03:04:05Z"),
@@ -47,10 +47,10 @@ vi.mock("@/lib/infra/security/credentialStore", () => ({
 
 import { PATCH } from "./route";
 
-const ctx = (id = "ws-1") => ({ params: Promise.resolve({ id }) });
-const patch = (body: unknown, id = "ws-1") =>
+const ctx = (id = h.workspace.id) => ({ params: Promise.resolve({ id }) });
+const patch = (body: unknown, id = h.workspace.id) =>
   PATCH(
-    new Request("http://x/api/workspaces/ws-1", {
+    new Request(`http://x/api/workspaces/${id}`, {
       method: "PATCH",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body),
@@ -99,12 +99,31 @@ describe("workspace update body contract", () => {
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({
       ok: true,
-      workspaceId: "ws-1",
+      workspaceId: h.workspace.id,
       applied: ["name", "description"],
       values: { name: "Renamed", description: "updated" },
     });
     expect(h.renames).toEqual(["Renamed"]);
     expect(h.descriptions).toEqual(["updated"]);
+  });
+
+  it("rejects oversized descriptions and fractional limits without applying another field", async () => {
+    const oversized = await patch({ name: "Must not land", description: "x".repeat(4_001) });
+    expect(oversized.status).toBe(400);
+    expect(await oversized.json()).toMatchObject({
+      ok: false,
+      code: "WORKSPACE_UPDATE_INVALID",
+      error: "description cannot exceed 4000 characters",
+    });
+
+    const fractional = await patch({ name: "Must not land", maxIterations: 2.5 });
+    expect(fractional.status).toBe(400);
+    expect(await fractional.json()).toMatchObject({
+      ok: false,
+      code: "WORKSPACE_UPDATE_INVALID",
+      error: "maxIterations must be an integer between 1 and 500",
+    });
+    expect(h.renames).toEqual([]);
   });
 
   // The generic workspace PATCH is the widest-reaching mutation a programmatic caller has, so it is
@@ -115,26 +134,50 @@ describe("workspace update body contract", () => {
 
     expect(await res.json()).toEqual({
       ok: true,
-      workspaceId: "ws-1",
+      workspaceId: h.workspace.id,
       applied: ["workspaceApiAccess"],
       values: { workspaceApiAccess: true },
     });
     expect(res.headers.get("cache-control")).toBe("no-store");
   });
 
-  it("includes warnings only when the update produced one", async () => {
+  it("rejects a reasoning effort the selected provider cannot persist", async () => {
     const res = await patch({ llmProvider: "deepseek", reasoningEffort: "high" });
 
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({
+      ok: false,
+      code: "WORKSPACE_UPDATE_INVALID",
+      error: "reasoningEffort is not supported for deepseek",
+      details: { field: "reasoningEffort", provider: "deepseek" },
+    });
+    expect(h.setWorkspaceLlm).not.toHaveBeenCalled();
+  });
+
+  it("returns model fields in the same public vocabulary PATCH and GET use", async () => {
+    const res = await patch({ llmProvider: "openai", llmModel: "gpt-5", reasoningEffort: "high" });
+
+    expect(res.status).toBe(200);
     expect(await res.json()).toEqual({
       ok: true,
-      workspaceId: "ws-1",
-      applied: ["model"],
-      values: { model: { provider: "deepseek", model: "deepseek-v4-pro", reasoningEffort: "low" } },
-      warnings: ["deepseek has no reasoning effort dial; the supplied reasoningEffort was ignored"],
+      workspaceId: h.workspace.id,
+      applied: ["llmProvider", "llmModel", "reasoningEffort"],
+      values: { llmProvider: "openai", llmModel: "gpt-5", reasoningEffort: "high" },
     });
   });
 
   it("reports an unknown workspace as not found", async () => {
-    expect((await patch({ name: "Renamed" }, "missing")).status).toBe(404);
+    expect((await patch({ name: "Renamed" }, "11111111-1111-1111-1111-111111111111")).status).toBe(404);
+  });
+
+  it("rejects a non-canonical workspace id before invoking the update operation", async () => {
+    const res = await patch({ name: "Renamed" }, h.workspace.id.toUpperCase());
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({
+      ok: false,
+      code: "INVALID_REQUEST",
+      details: { field: "workspaceId" },
+    });
+    expect(h.renames).toEqual([]);
   });
 });

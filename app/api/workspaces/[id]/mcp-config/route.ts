@@ -14,7 +14,7 @@ import { NextResponse } from "next/server";
 import { credentialHandlers, publicBaseUrl } from "@/lib/api/credentialRoutes";
 import { state } from "@/lib/infra/security/credentialStore";
 import { listWorkspaceSkills } from "@/lib/operations/workspaceSkills";
-import { requireWorkspace } from "@/lib/api/guards";
+import { requireWorkspaceId } from "@/lib/api/guards";
 import { channelSetEnabled } from "@/lib/api/workspaceUpdateReceipt";
 
 type Params = { id: string };
@@ -22,8 +22,8 @@ type Params = { id: string };
 const handlers = credentialHandlers<Params>(
   "workspace-mcp",
   async ({ id }, request) => {
-    const ws = requireWorkspace(id, request);
-    return ws instanceof NextResponse ? ws : id;
+    const ws = requireWorkspaceId(id, request);
+    return ws instanceof NextResponse ? ws : ws.id;
   },
   { setEnabled: channelSetEnabled("workspaceMcpAccess") },
 );
@@ -34,13 +34,13 @@ export const PATCH = handlers.PATCH;
 
 export async function GET(req: NextRequest, { params }: { params: Promise<Params> }) {
   const { id } = await params;
-  const ws = requireWorkspace(id, req);
+  const ws = requireWorkspaceId(id, req);
   if (ws instanceof NextResponse) return ws;
 
-  const exposedSkills = await listWorkspaceSkills(id);
+  const exposedSkills = await listWorkspaceSkills(ws.id);
   return NextResponse.json(
     {
-      ...state("workspace-mcp", id),
+      ...state("workspace-mcp", ws.id),
       exposedSkills,
       publicBaseUrl: publicBaseUrl(),
     },

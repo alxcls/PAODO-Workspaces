@@ -126,10 +126,10 @@ export default function ModelBlock({ wsId }: { wsId: string }) {
         }),
       });
       if (res.ok) {
-        const { model: confirmed } = await confirmedValues(res);
-        const savedProvider = confirmed?.provider ?? provider;
-        const savedModel = confirmed?.model ?? selectedModel.trim();
-        const savedEffort = confirmed?.reasoningEffort ?? selectedEffort;
+        const confirmed = await confirmedValues(res);
+        const savedProvider = confirmed.llmProvider ?? provider;
+        const savedModel = confirmed.llmModel ?? selectedModel.trim();
+        const savedEffort = confirmed.reasoningEffort ?? selectedEffort;
         setProvider(savedProvider);
         setModel(savedModel);
         setEffort(savedEffort);

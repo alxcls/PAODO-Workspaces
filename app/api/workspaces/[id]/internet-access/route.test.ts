@@ -101,21 +101,20 @@ describe("PATCH /api/workspaces/[id]/internet-access", () => {
     expect(h.stop).not.toHaveBeenCalled();
   });
 
-  it("keeps the toggle (no rollback) when only the container stop fails", async () => {
+  it("rolls back and fails when the container cannot be stopped", async () => {
     h.stop.mockImplementation(async () => {
       throw new Error("docker daemon unreachable");
     });
     const res = await PATCH(request({ enabled: true }), ctx());
-    const body = await res.json();
-    expect(res.status).toBe(200);
-    expect(body).toMatchObject({
-      ok: true,
-      values: { internetAccess: true },
-      warnings: [expect.any(String)],
+    expect(res.status).toBe(500);
+    expect(await res.json()).toMatchObject({
+      ok: false,
+      code: "WORKSPACE_UPDATE_FAILED",
+      error: "failed to apply internet-access setting",
     });
-    // Only the initial set — no rollback call for either store or policy.
-    expect(h.setWorkspaceInternetAccess).toHaveBeenCalledTimes(1);
-    expect(h.setWorkspaceInternetAccess).toHaveBeenCalledWith("ws-1", true);
-    expect(h.setInternetAccessPolicy).toHaveBeenCalledWith("ws-1", true);
+    expect(h.setWorkspaceInternetAccess).toHaveBeenNthCalledWith(1, "ws-1", true);
+    expect(h.setWorkspaceInternetAccess).toHaveBeenNthCalledWith(2, "ws-1", false);
+    expect(h.setInternetAccessPolicy).toHaveBeenNthCalledWith(1, "ws-1", true);
+    expect(h.setInternetAccessPolicy).toHaveBeenNthCalledWith(2, "ws-1", false);
   });
 });

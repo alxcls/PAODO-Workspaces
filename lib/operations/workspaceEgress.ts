@@ -19,8 +19,6 @@ export interface EgressServices {
 export interface EgressResult {
   /** False when the registry refused the write, which past a known-good id means the workspace vanished. */
   applied: boolean;
-  /** Non-fatal problems: the setting is persisted and enforced, but something downstream lagged. */
-  warnings: string[];
 }
 
 const log = createLogger("workspaceOperations");
@@ -42,9 +40,9 @@ export function validateInternetAccess(value: unknown): boolean {
  *
  * `previous` is the value to restore if the proxy rejects the change: the registry and the proxy policy
  * are one security boundary and must never be left disagreeing, so a failure there rolls the registry
- * back and raises rather than reporting success on a half-applied boundary. A container that cannot be
- * stopped is reported as a warning instead — the setting is persisted and enforced by the proxy, only
- * the network-layer teardown is pending.
+ * back and raises rather than reporting success on a half-applied boundary. Container teardown is
+ * part of that same success contract: if it cannot be confirmed, restore the previous policy and
+ * store value and report failure.
  */
 export async function setInternetAccess(
   id: string,
@@ -53,7 +51,7 @@ export async function setInternetAccess(
   store: EgressWriter,
   services: EgressServices = defaultEgressServices(),
 ): Promise<EgressResult> {
-  if (!store.setWorkspaceInternetAccess(id, enabled)) return { applied: false, warnings: [] };
+  if (!store.setWorkspaceInternetAccess(id, enabled)) return { applied: false };
 
   try {
     services.setPolicy(id, enabled);
@@ -66,17 +64,41 @@ export async function setInternetAccess(
     throw new WorkspaceUpdateFailure("failed to persist internet-access policy");
   }
 
-  const warnings: string[] = [];
   try {
     await services.stopContainer(id);
   } catch (err) {
-    const warning = "setting saved but the running container could not be stopped immediately";
-    warnings.push(warning);
-    log.error(
-      { event: "internet_access_toggle_stop_failed", outcome: "setting_saved_container_pending", err, workspaceId: id },
-      warning,
-    );
+    let rollbackError: unknown;
+    try {
+      // Restore the proxy first. If that write fails, keep the store at the new value rather than
+      // knowingly making the two persisted authorities disagree.
+      services.setPolicy(id, previous);
+      if (!store.setWorkspaceInternetAccess(id, previous)) {
+        throw new Error("workspace disappeared while rolling back internet access");
+      }
+    } catch (rollback) {
+      rollbackError = rollback;
+    }
+    // One literal outcome per branch: `outcome` is how the surfaced-log UI groups these records, so
+    // the possible values have to be greppable in the source rather than computed here.
+    if (rollbackError) {
+      log.error(
+        {
+          event: "internet_access_toggle_stop_failed",
+          outcome: "rollback_failed",
+          err,
+          rollbackError,
+          workspaceId: id,
+        },
+        "failed to stop the workspace container while changing internet access",
+      );
+    } else {
+      log.error(
+        { event: "internet_access_toggle_stop_failed", outcome: "rolled_back", err, workspaceId: id },
+        "failed to stop the workspace container while changing internet access",
+      );
+    }
+    throw new WorkspaceUpdateFailure("failed to apply internet-access setting");
   }
 
-  return { applied: true, warnings };
+  return { applied: true };
 }

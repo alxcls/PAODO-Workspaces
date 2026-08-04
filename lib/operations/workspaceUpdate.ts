@@ -7,13 +7,14 @@
 // what lives here is the part no single capability can provide: validating a whole request before the
 // first write, applying the fields in a fixed order, and accounting for what landed.
 import { getStore } from "@/lib/infra/services";
+import type { ReasoningEffort } from "@/lib/agent/interfaces";
 import {
   currentModelSelection,
   metadataWrites,
+  publicModelSelection,
   validateMetadata,
   type MetadataWriter,
   type WorkspaceLookup,
-  type WorkspaceMetadata,
   type WorkspaceMetadataInput,
 } from "./workspaces";
 import { setChannelEnabled, validateChannelEnabled, type ChannelCredentials } from "./workspaceAccess";
@@ -43,17 +44,23 @@ export interface UpdateWorkspaceResult {
   ok: true;
   workspaceId: string;
   /** Capability fields successfully applied, in deterministic application order. */
-  applied: Array<keyof UpdateWorkspaceInput>;
+  applied: Array<keyof WorkspaceUpdateValues>;
   /**
    * Canonical values established by the write. These come from the shared validators, never from a
    * transport echo, so every adapter reports trimmed, resolved and otherwise normalized values alike.
    * A stored third-party secret is represented only by its safe metadata; its value is never echoed.
    */
   values: WorkspaceUpdateValues;
-  warnings: string[];
 }
 
-export type WorkspaceUpdateValues = WorkspaceMetadata & {
+export type WorkspaceUpdateValues = {
+  name?: string;
+  description?: string;
+  maxIterations?: number;
+  maxRunMinutes?: number;
+  llmProvider?: string;
+  llmModel?: string;
+  reasoningEffort?: ReasoningEffort;
   internetAccess?: boolean;
   workspaceApiAccess?: boolean;
   workspaceMcpAccess?: boolean;
@@ -93,7 +100,7 @@ export async function updateWorkspace(
   if (!existing) return null;
 
   // Phase one: validate everything, touch nothing.
-  const { metadata, warnings: metadataWarnings } = validateMetadata(input, currentModelSelection(existing));
+  const metadata = validateMetadata(input, currentModelSelection(existing));
   const internetAccess = input.internetAccess === undefined ? undefined : validateInternetAccess(input.internetAccess);
   const apiAccess =
     input.workspaceApiAccess === undefined
@@ -110,44 +117,48 @@ export async function updateWorkspace(
   // null would reach the caller as "no such workspace", which reads as "nothing happened" even though
   // earlier fields already landed. Name what was applied instead, so a caller can tell a no-op from a
   // half-done update.
-  const appliedFields: Array<keyof UpdateWorkspaceInput> = [];
-  // Seeded with what validation could not honor — a resolved-away reasoningEffort reaches the caller
-  // alongside the fields that did land, rather than being dropped on a 200.
-  const warnings: string[] = [...metadataWarnings];
-  const applied = (field: keyof UpdateWorkspaceInput, ok: boolean): void => {
+  const appliedFields: Array<keyof WorkspaceUpdateValues> = [];
+  // Takes the field names a write establishes rather than one name: `model` is a single store write
+  // that settles three public fields, and a refusal has to name all of them or it reports a partial
+  // change as a complete one.
+  const applied = (fields: Array<keyof WorkspaceUpdateValues>, ok: boolean): void => {
     if (!ok) {
       throw new WorkspaceUpdateFailure(
-        `workspace was deleted while updating; applied: ${appliedFields.join(", ") || "nothing"}; not applied: ${field}`,
+        `workspace was deleted while updating; applied: ${appliedFields.join(", ") || "nothing"}; not applied: ${fields.join(", ")}`,
       );
     }
-    appliedFields.push(field);
+    appliedFields.push(...fields);
   };
 
+  // Resolved once and reused for the receipt below, so the projection cannot drift between what the
+  // update claims it applied and the values it reports.
+  const modelValues = metadata.model === undefined ? undefined : publicModelSelection(metadata.model);
+  const modelFields = Object.keys(modelValues ?? {}) as Array<keyof WorkspaceUpdateValues>;
+
   for (const { field, write } of metadataWrites(id, metadata, store)) {
-    applied(field, await write());
+    applied(field === "model" ? modelFields : [field], await write());
   }
 
   if (internetAccess !== undefined) {
     const egress = await setInternetAccess(id, internetAccess, existing.internetAccess, store, deps.egress);
-    applied("internetAccess", egress.applied);
-    warnings.push(...egress.warnings);
+    applied(["internetAccess"], egress.applied);
   }
 
   // These three write through capabilities that raise rather than return a flag, so reaching the next
   // line is itself the success signal — hence `true` rather than a result to check.
   if (apiAccess !== undefined) {
     setChannelEnabled("workspace-api", id, apiAccess, deps.credentials);
-    applied("workspaceApiAccess", true);
+    applied(["workspaceApiAccess"], true);
   }
   if (mcpAccess !== undefined) {
     setChannelEnabled("workspace-mcp", id, mcpAccess, deps.credentials);
-    applied("workspaceMcpAccess", true);
+    applied(["workspaceMcpAccess"], true);
   }
 
   let secret: ThirdPartySecret | undefined;
   if (secretInput !== undefined) {
     secret = storeWorkspaceSecret(id, secretInput, store, deps.secrets);
-    applied("secret", true);
+    applied(["secret"], true);
   }
 
   return {
@@ -155,12 +166,15 @@ export async function updateWorkspace(
     workspaceId: id,
     applied: appliedFields,
     values: {
-      ...metadata,
+      ...(metadata.name !== undefined ? { name: metadata.name } : {}),
+      ...(metadata.description !== undefined ? { description: metadata.description } : {}),
+      ...(metadata.maxIterations !== undefined ? { maxIterations: metadata.maxIterations } : {}),
+      ...(metadata.maxRunMinutes !== undefined ? { maxRunMinutes: metadata.maxRunMinutes } : {}),
+      ...(modelValues ?? {}),
       ...(internetAccess !== undefined ? { internetAccess } : {}),
       ...(apiAccess !== undefined ? { workspaceApiAccess: apiAccess } : {}),
       ...(mcpAccess !== undefined ? { workspaceMcpAccess: mcpAccess } : {}),
       ...(secret ? { secret } : {}),
     },
-    warnings,
   };
 }

@@ -37,13 +37,13 @@ export default function AgentLoopBlock({ wsId }: { wsId: string }) {
   useEffect(() => {
     if (loadedForWsId.current !== wsId || iterationsDraft.trim() === "" || minutesDraft.trim() === "") return;
 
-    const nextIterations = Math.floor(Number(iterationsDraft));
-    const nextMinutes = Math.floor(Number(minutesDraft));
+    const nextIterations = Number(iterationsDraft);
+    const nextMinutes = Number(minutesDraft);
     const valid =
-      Number.isFinite(nextIterations) &&
+      Number.isInteger(nextIterations) &&
       nextIterations >= 1 &&
       nextIterations <= 500 &&
-      Number.isFinite(nextMinutes) &&
+      Number.isInteger(nextMinutes) &&
       nextMinutes >= 1 &&
       nextMinutes <= 1440;
     if (!valid || (nextIterations === iterations && nextMinutes === minutes)) return;
@@ -85,6 +85,7 @@ export default function AgentLoopBlock({ wsId }: { wsId: string }) {
             type="number"
             min={1}
             max={500}
+            step={1}
             className="input input-sm flex-none text-center text-text"
             style={{ width: CONTROL_WIDTH }}
             value={iterationsDraft}
@@ -100,6 +101,7 @@ export default function AgentLoopBlock({ wsId }: { wsId: string }) {
             type="number"
             min={1}
             max={1440}
+            step={1}
             className="input input-sm flex-none text-center text-text"
             style={{ width: CONTROL_WIDTH }}
             value={minutesDraft}

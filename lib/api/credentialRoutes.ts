@@ -14,6 +14,7 @@ import {
   type CredentialKind,
   type CredentialSubject,
 } from "@/lib/infra/security/credentialStore";
+import type { WorkspaceAccessDetails } from "@/lib/operations/workspaceAccess";
 import { appErrorResponse, errorResponse, readJsonObject } from "@/lib/api/errorResponse";
 import { createLogger } from "@/lib/infra/logger";
 
@@ -49,6 +50,16 @@ interface CredentialHandlerOptions {
     enabled: boolean,
     request: Request,
   ) => void | Response | Promise<void | Response>;
+  /**
+   * Wire names for the two axes in the revocation receipt. A workspace channel passes the same pair the
+   * workspace projection uses, so `revoke` and `get` describe one channel in one vocabulary instead of
+   * renaming it between calls. Typed against WorkspaceAccessDetails so a rename there fails the build
+   * here rather than quietly splitting the two apart again.
+   *
+   * Defaults to the credential routes' own `enabled` / `hasKey` for the instance-wide token, which has
+   * no workspace field to borrow a name from.
+   */
+  axisFields?: { access: keyof WorkspaceAccessDetails; hasKey: keyof WorkspaceAccessDetails };
 }
 
 const NO_STORE = { "Cache-Control": "no-store" } as const;
@@ -121,6 +132,8 @@ export function credentialHandlers<P>(
     return resolveSubject(await context.params, request);
   }
 
+  const axisFields = options.axisFields ?? ({ access: "enabled", hasKey: "hasKey" } as const);
+
   function failed(request: Request, operation: string, err: unknown): Response {
     const expected = appErrorResponse(err, request);
     if (expected) return expected;
@@ -170,7 +183,10 @@ export function credentialHandlers<P>(
         // The timestamps stay out: they describe the key that was just destroyed, so a revocation
         // receipt is the one place they can only mislead.
         const after = state(kind, subject);
-        return NextResponse.json({ ok: true, enabled: after.enabled, hasKey: after.hasKey }, { headers: NO_STORE });
+        return NextResponse.json(
+          { ok: true, [axisFields.access]: after.enabled, [axisFields.hasKey]: after.hasKey },
+          { headers: NO_STORE },
+        );
       } catch (err) {
         return failed(request, "revoke", err);
       }

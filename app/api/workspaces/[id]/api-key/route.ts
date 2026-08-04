@@ -19,7 +19,12 @@ const handlers = credentialHandlers<Params>(
     const ws = requireWorkspaceId(id, request);
     return ws instanceof NextResponse ? ws : ws.id;
   },
-  { setEnabled: channelSetEnabled("workspaceApiAccess") },
+  {
+    setEnabled: channelSetEnabled("workspaceApiAccess"),
+    // The workspace projection's own names, so revoking and reading the workspace back never call the
+    // same two facts by different words.
+    axisFields: { access: "workspaceApiAccess", hasKey: "workspaceApiHasKey" },
+  },
 );
 
 export const POST = handlers.POST;

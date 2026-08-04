@@ -25,7 +25,11 @@ const handlers = credentialHandlers<Params>(
     const ws = requireWorkspaceId(id, request);
     return ws instanceof NextResponse ? ws : ws.id;
   },
-  { setEnabled: channelSetEnabled("workspaceMcpAccess") },
+  {
+    setEnabled: channelSetEnabled("workspaceMcpAccess"),
+    // Same vocabulary as the workspace projection, for the same reason as the API-key route.
+    axisFields: { access: "workspaceMcpAccess", hasKey: "workspaceMcpHasKey" },
+  },
 );
 
 export const POST = handlers.POST;

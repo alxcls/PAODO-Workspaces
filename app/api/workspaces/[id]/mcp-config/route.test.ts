@@ -135,7 +135,13 @@ describe("workspace MCP configuration route", () => {
       plain: "mcp_new",
     });
     expect(h.mint).toHaveBeenCalledWith("workspace-mcp", "ws-1");
-    expect((await DELETE(request("DELETE"), ctx())).status).toBe(200);
+    // The mocked store does not mutate, so the post-revoke state is stated rather than produced.
+    h.state = { enabled: true, hasKey: false, createdAt: "2026-01-01T00:00:00.000Z", lastUsedAt: null };
+    const revoked = await DELETE(request("DELETE"), ctx());
+    expect(revoked.status).toBe(200);
+    // This channel names its own axes, not the API key's — the receipt has to be readable next to the
+    // workspace projection, where both channels appear side by side.
+    expect(await revoked.json()).toEqual({ ok: true, workspaceMcpAccess: true, workspaceMcpHasKey: false });
     expect(h.revoke).toHaveBeenCalledWith("workspace-mcp", "ws-1");
   });
 

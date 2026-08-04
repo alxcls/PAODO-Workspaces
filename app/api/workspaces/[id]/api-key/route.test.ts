@@ -152,9 +152,22 @@ describe("workspace API key route", () => {
     for (const attempt of [1, 2]) {
       const res = await DELETE(request("DELETE"), ctx());
       expect(res.status, `attempt ${attempt}`).toBe(200);
-      expect(await res.json()).toEqual({ ok: true });
+      expect(await res.json()).toEqual({ ok: true, enabled: false, hasKey: false });
     }
     expect(h.revoke).toHaveBeenCalledTimes(2);
+  });
+
+  // Revoking the last key leaves the channel open and keyless. The receipt has to say so: reading only
+  // `ok: true`, an operator who has just retired a channel walks away believing they closed it, and the
+  // workspace goes on reporting workspaceApiAccess: true with nothing behind it.
+  it("reports the open, keyless channel it leaves behind", async () => {
+    h.state = { enabled: true, hasKey: false, createdAt: "2026-01-01T00:00:00.000Z", lastUsedAt: null };
+
+    const res = await DELETE(request("DELETE"), ctx());
+
+    expect(await res.json()).toEqual({ ok: true, enabled: true, hasKey: false });
+    // Closing the channel is the caller's next decision, not a side effect of revoking.
+    expect(h.setEnabled).not.toHaveBeenCalled();
   });
 
   it("refuses rotation when there is no key to replace", async () => {

@@ -28,7 +28,10 @@ export type SubjectResolver<P> = (params: P, request: Request) => Promise<Creden
 export interface CredentialHandlers<P> {
   /** Generates or rotates as requested in the body. The plaintext is returned here and never again. */
   POST(request: Request, context: { params: Promise<P> }): Promise<Response>;
-  /** Revokes the key unconditionally, leaving the channel's enabled flag alone. */
+  /**
+   * Revokes the key unconditionally, leaving the channel's enabled flag alone. Answers with both axes
+   * as they stand afterwards, so the caller sees a channel left open without a key.
+   */
   DELETE(request: Request, context: { params: Promise<P> }): Promise<Response>;
   /** Opens or closes the channel: `{ enabled: boolean }`. */
   PATCH(request: Request, context: { params: Promise<P> }): Promise<Response>;
@@ -161,7 +164,13 @@ export function credentialHandlers<P>(
         // Unconditional and idempotent: revoking is how a leaked credential is destroyed, so it must
         // never depend on the channel being open, and revoking twice is a success both times.
         revoke(kind, subject);
-        return NextResponse.json({ ok: true }, { headers: NO_STORE });
+        // Reports both axes afterwards rather than a bare ok, because revoking moves only one of them.
+        // Destroying the last key leaves the channel open and keyless — reachable, and rejecting
+        // everything — and a caller that got `{ ok: true }` had to ask a second time to find that out.
+        // The timestamps stay out: they describe the key that was just destroyed, so a revocation
+        // receipt is the one place they can only mislead.
+        const after = state(kind, subject);
+        return NextResponse.json({ ok: true, enabled: after.enabled, hasKey: after.hasKey }, { headers: NO_STORE });
       } catch (err) {
         return failed(request, "revoke", err);
       }

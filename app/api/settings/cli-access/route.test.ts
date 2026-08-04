@@ -132,7 +132,12 @@ describe("/api/settings/cli-access", () => {
     };
     expect(validate("platform", null, plain)).toBe(true);
 
-    expect(await (await DELETE(new Request("http://x", { method: "DELETE" }), context)).json()).toEqual({ ok: true });
+    // The receipt reports both axes: the token is gone, the channel it was issued for is still open.
+    expect(await (await DELETE(new Request("http://x", { method: "DELETE" }), context)).json()).toEqual({
+      ok: true,
+      enabled: true,
+      hasKey: false,
+    });
     expect(validate("platform", null, plain)).toBe(false);
     expect(await GET().json()).toMatchObject({ hasKey: false });
   });

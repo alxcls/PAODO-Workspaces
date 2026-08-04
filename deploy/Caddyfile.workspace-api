@@ -1,6 +1,83 @@
 # The public surface is deliberately limited to bearer-authenticated
 # programmatic API/MCP routes. The PAODO UI and all other API routes remain
 # reachable only through the private UI path.
+#
+# The matchers below must mirror RULES in lib/infra/security/platformAccessPolicy.ts
+# exactly, route for route. The app default-denies on its own, so a gateway that is
+# WIDER than the policy is merely redundant — but one that is NARROWER silently 404s
+# routes the app authorizes, which is what happened to six of the nine CLI commands.
+# When a rule is added there, add it here in the same commit.
+
+# Replace caller-supplied forwarding headers. The application uses CF-Connecting-IP
+# for rate limiting and audit logs, and trusts only that one name: on the UI path
+# Cloudflare sets it and overwrites any client value, and here Caddy does the same.
+# This domain is DNS-direct to the origin (no Cloudflare in front), so {remote_host}
+# is the real caller. X-Real-IP and X-Forwarded-For are stripped and not re-set —
+# nothing reads them any more, and leaving them would invite trusting a header no hop
+# sanitizes.
+#
+# This lives in a snippet because it has to hold on EVERY proxied route. A block that
+# forgets it trusts a client-supplied CF-Connecting-IP, which lets a caller choose
+# their own brute-force bucket and forge the address in the audit trail.
+(forwardedHeaders) {
+	header_up -X-Real-IP
+	header_up -X-Forwarded-For
+	header_up -CF-Connecting-IP
+	header_up CF-Connecting-IP {remote_host}
+}
+
+# Timeouts and body caps are set per upstream rather than on the server's listener:
+# listener timeouts apply to the whole :443 address and would be shared with every
+# other site block on it.
+
+# The eleven CLI routes. All are small JSON request/response pairs that the app answers
+# in well under a second, so a tight ceiling on both is free here and keeps an
+# unbounded body from reaching Next's JSON parser.
+(cliUpstream) {
+	request_body {
+		max_size 64KB
+	}
+	reverse_proxy app:{$APP_PORT} {
+		import forwardedHeaders
+		transport http {
+			response_header_timeout 30s
+			read_timeout 30s
+		}
+	}
+}
+
+# MCP is stateless with a buffered JSON response and no server-to-client channel, so a
+# single tool call can run to EXEC_MAX_TIMEOUT_MS (30 minutes) emitting zero bytes
+# before any header arrives. Both timeouts must clear that with margin or the proxy
+# kills a call the app would have completed. This is also why this hostname must stay
+# DNS-direct: any proxy with a bounded origin-response timeout breaks MCP.
+(mcpUpstream) {
+	request_body {
+		max_size 4MB
+	}
+	reverse_proxy app:{$APP_PORT} {
+		import forwardedHeaders
+		transport http {
+			response_header_timeout 35m
+			read_timeout 35m
+		}
+	}
+}
+
+# The agent route streams SSE for up to maxRunMinutes (1440 max), so it gets no read
+# deadline at all — Caddy's default of no timeout is the correct value and is left
+# unset deliberately. flush_interval -1 disables response buffering so each event
+# reaches the client when it is written rather than when a buffer fills.
+(agentUpstream) {
+	request_body {
+		max_size 4MB
+	}
+	reverse_proxy app:{$APP_PORT} {
+		import forwardedHeaders
+		flush_interval -1
+	}
+}
+
 {$WORKSPACE_API_DOMAIN} {
 	log {
 		output stdout
@@ -18,54 +95,78 @@
 			path_regexp workspaceMcp ^/api/workspaces/[^/]+/mcp$
 		}
 
-		@platformRead {
+		# One matcher per method, because Caddy ANDs method and path within a matcher
+		# and a directive takes only one matcher. Read each against the policy list.
+		#
+		#   GET    /api/status
+		#   GET    /api/models
+		#   GET    /api/workspaces
+		#   GET    /api/workspaces/{id}
+		@cliRead {
 			method GET
-			path_regexp platformRead ^/api/(status|workspaces(?:/[^/]+)?)$
+			path_regexp cliRead ^/api/(status|models|workspaces(?:/[^/]+)?)$
+		}
+
+		# POST /api/workspaces creates; POST on a workspace is NOT allowed, so the
+		# optional tail requires a credential channel and never bare /{id}.
+		#
+		#   POST   /api/workspaces
+		#   POST   /api/workspaces/{id}/api-key
+		#   POST   /api/workspaces/{id}/mcp-config
+		@cliCreate {
+			method POST
+			path_regexp cliCreate ^/api/workspaces(?:/[^/]+/(?:api-key|mcp-config))?$
+		}
+
+		#   PATCH  /api/workspaces/{id}
+		@cliUpdate {
+			method PATCH
+			path_regexp cliUpdate ^/api/workspaces/[^/]+$
+		}
+
+		# The mirror image of POST: DELETE on a workspace is allowed, DELETE on the
+		# collection is not, so {id} is required and the channel tail is optional.
+		#
+		#   DELETE /api/workspaces/{id}
+		#   DELETE /api/workspaces/{id}/api-key
+		#   DELETE /api/workspaces/{id}/mcp-config
+		@cliDelete {
+			method DELETE
+			path_regexp cliDelete ^/api/workspaces/[^/]+(?:/(?:api-key|mcp-config))?$
 		}
 
 		handle @workspaceAgent {
-			reverse_proxy app:{$APP_PORT} {
-				# Replace caller-supplied forwarding headers. The application uses
-				# CF-Connecting-IP for rate limiting and audit logs, and trusts
-				# only that one name: on the UI path Cloudflare sets it and
-				# overwrites any client value, and here Caddy does the same. This
-				# domain is DNS-direct to the origin (no Cloudflare in front), so
-				# {remote_host} is the real caller. X-Real-IP and X-Forwarded-For
-				# are stripped and not re-set — nothing reads them any more, and
-				# leaving them would invite trusting a header no hop sanitizes.
-				header_up -X-Real-IP
-				header_up -X-Forwarded-For
-				header_up -CF-Connecting-IP
-				header_up CF-Connecting-IP {remote_host}
-			}
+			import agentUpstream
 		}
 
 		handle @workspaceMcp {
-			reverse_proxy app:{$APP_PORT} {
-				# Replace caller-supplied forwarding headers. The application uses
-				# CF-Connecting-IP for rate limiting and audit logs, and trusts
-				# only that one name: on the UI path Cloudflare sets it and
-				# overwrites any client value, and here Caddy does the same. This
-				# domain is DNS-direct to the origin (no Cloudflare in front), so
-				# {remote_host} is the real caller. X-Real-IP and X-Forwarded-For
-				# are stripped and not re-set — nothing reads them any more, and
-				# leaving them would invite trusting a header no hop sanitizes.
-				header_up -X-Real-IP
-				header_up -X-Forwarded-For
-				header_up -CF-Connecting-IP
-				header_up CF-Connecting-IP {remote_host}
-			}
+			import mcpUpstream
 		}
 
-		handle @platformRead {
-			reverse_proxy app:{$APP_PORT} {
-				header_up -X-Real-IP
-				header_up -X-Forwarded-For
-				header_up -CF-Connecting-IP
-				header_up CF-Connecting-IP {remote_host}
-			}
+		handle @cliRead {
+			import cliUpstream
 		}
 
-		respond "Not Found" 404
+		handle @cliCreate {
+			import cliUpstream
+		}
+
+		handle @cliUpdate {
+			import cliUpstream
+		}
+
+		handle @cliDelete {
+			import cliUpstream
+		}
+
+		# Anything else was refused by the gateway, not missed by the app. A distinct
+		# code is what separates "this host does not expose that route" from the app's
+		# own NOT_FOUND, which the CLI otherwise reports identically. cli/src/http.mjs
+		# already prefers body.code and body.error, so this surfaces verbatim.
+		handle {
+			header Content-Type "application/json; charset=utf-8"
+			header Cache-Control "no-store"
+			respond `{"ok":false,"code":"GATEWAY_ROUTE_NOT_ALLOWED","error":"This route is not exposed on the public API host."}` 404
+		}
 	}
 }

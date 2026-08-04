@@ -130,7 +130,10 @@ httpServer.on("request", (req, res) => {
     if (logged) return;
     logged = true;
     // The audit record for a rejection carries everything this line would, plus the client address
-    // and the reason, and it is already throttled. Emitting both just doubles the flood.
+    // and the reason, and it is already throttled. Emitting both just doubles the flood. This holds
+    // only because every auditRejection call passes method and pathname — suppressing this line
+    // while omitting them left denials with no route at all, so a source-level test in
+    // lib/infra/auditRejectionContract.test.ts now enforces it.
     if (audited) return;
     const durationNs = process.hrtime.bigint() - start;
     const durationMs = Number(durationNs) / 1_000_000;
@@ -201,7 +204,7 @@ httpServer.on("request", (req, res) => {
 
   const authResult = authenticate(ip, req);
   if (authResult === "blocked") {
-    auditRejection("auth_blocked", { ip, requestId }, "auth blocked");
+    auditRejection("auth_blocked", { ip, method, pathname, requestId }, "auth blocked");
     reject(429, "RATE_LIMITED", "Too Many Requests", { "Retry-After": "60" });
     return;
   }
@@ -211,7 +214,7 @@ httpServer.on("request", (req, res) => {
     return;
   }
   if (authResult === "unauthorized") {
-    auditRejection("auth_unauthorized", { ip, requestId }, "auth unauthorized");
+    auditRejection("auth_unauthorized", { ip, method, pathname, requestId }, "auth unauthorized");
     const scheme = req.headers["authorization"]?.startsWith("Bearer ") ? 'Bearer realm="PAODO"' : 'Basic realm="App"';
     reject(401, "UNAUTHORIZED", "Unauthorized", { "WWW-Authenticate": scheme });
     return;

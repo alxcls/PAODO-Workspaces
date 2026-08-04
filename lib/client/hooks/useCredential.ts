@@ -2,6 +2,10 @@
 // the plaintext once), revoke. Every credential endpoint answers the same four verbs — see
 // lib/api/credentialRoutes.ts — so the API-key block, the MCP block and the CLI access modal all
 // drive their UI from this one hook instead of each reimplementing the same fetch/error/state dance.
+//
+// Opening a workspace channel is self-sufficient: the server mints the first key as part of the
+// toggle, so `toggle` reveals a secret exactly like `mint` would when one comes back. `mint` remains
+// for deliberate rotation and for the CLI-access channel, which never mints on toggle.
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
@@ -75,7 +79,15 @@ export function useCredential<TExtra extends object = Record<string, never>>(
         body: JSON.stringify({ enabled: next }),
       });
       if (!response.ok) throw new Error(`Could not update ${feature}.`);
+      // Opening a workspace channel that has no secret mints its first one and returns it here, so a
+      // single click produces a usable channel instead of leaving a Generate step. Absent for the
+      // instance-wide CLI token, whose endpoint never mints on toggle — hence the optional read.
+      const { plain } = (await response.json().catch(() => ({}))) as { plain?: unknown };
       setEnabled(next);
+      if (typeof plain === "string" && plain) {
+        setSecret(plain);
+        setHasSecret(true);
+      }
     } catch (err) {
       fail(err, `Could not update ${feature}.`);
     } finally {

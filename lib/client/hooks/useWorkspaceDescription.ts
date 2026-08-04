@@ -25,7 +25,7 @@ export function useWorkspaceDescription(workspaceId: string | null) {
   }, [workspaceId]);
 
   // Tagged with the workspace it was loaded for, so text from the previous selection is a derived
-  // miss rather than a reset write in the effect body (same shape as useWorkspaceFileCount).
+  // miss rather than a reset write in the effect body (same shape as useWorkspaceMeta).
   const description = loaded && loaded.id === workspaceId ? loaded.text : "";
 
   // Optimistic: the new value renders immediately and is rolled back to the prior one if the PATCH

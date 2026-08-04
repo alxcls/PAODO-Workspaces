@@ -29,6 +29,14 @@ export interface CredentialHandlers<P> {
   PATCH(request: Request, context: { params: Promise<P> }): Promise<Response>;
 }
 
+interface CredentialHandlerOptions {
+  setEnabled?: (
+    kind: CredentialKind,
+    subject: CredentialSubject,
+    enabled: boolean,
+  ) => void | Response | Promise<void | Response>;
+}
+
 const NO_STORE = { "Cache-Control": "no-store" } as const;
 
 async function readEnabled(request: Request): Promise<boolean | Response> {
@@ -46,7 +54,11 @@ async function readEnabled(request: Request): Promise<boolean | Response> {
   return enabled;
 }
 
-export function credentialHandlers<P>(kind: CredentialKind, resolveSubject: SubjectResolver<P>): CredentialHandlers<P> {
+export function credentialHandlers<P>(
+  kind: CredentialKind,
+  resolveSubject: SubjectResolver<P>,
+  options: CredentialHandlerOptions = {},
+): CredentialHandlers<P> {
   async function subjectFor(context: { params: Promise<P> }): Promise<CredentialSubject | Response> {
     return resolveSubject(await context.params);
   }
@@ -72,7 +84,10 @@ export function credentialHandlers<P>(kind: CredentialKind, resolveSubject: Subj
       if (subject instanceof Response) return subject;
       const enabled = await readEnabled(request);
       if (enabled instanceof Response) return enabled;
-      setEnabled(kind, subject, enabled);
+      const response = options.setEnabled
+        ? await options.setEnabled(kind, subject, enabled)
+        : setEnabled(kind, subject, enabled);
+      if (response instanceof Response) return response;
       return NextResponse.json({ ok: true }, { headers: NO_STORE });
     },
   };

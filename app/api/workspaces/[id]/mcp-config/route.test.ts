@@ -1,9 +1,9 @@
 // Route-level coverage for MCP configuration validation and persistence boundaries.
 //
-// Only credentialStore is mocked, because the credential is the only thing this endpoint writes: the
-// exposed tool set is read straight from .skills/ and has no store behind it. Asserting the
-// credential kind is part of the point — "workspace-mcp" is what keeps this endpoint from managing
-// the workspace's agent key or the instance-wide CLI token.
+// credentialStore is the only thing mocked for writes, because the credential is the only thing this
+// endpoint writes; the store and skillStore are stubbed purely as read sources for the exposed set.
+// Asserting the credential kind is part of the point — "workspace-mcp" is what keeps this endpoint
+// from managing the workspace's agent key or the instance-wide CLI token.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const h = vi.hoisted(() => ({
@@ -28,6 +28,14 @@ vi.mock("@/lib/infra/security/credentialStore", () => ({
   revoke: h.revoke,
 }));
 vi.mock("@/lib/workspace/skillStore", () => ({ loadSkills: h.loadSkills }));
+// The exposed set comes from the shared listWorkspaceSkills operation, which resolves the workspace
+// through the store to find its directory — the same set the workspace-details route reports.
+vi.mock("@/lib/infra/services", () => ({
+  getStore: () => ({
+    getWorkspace: (id: string) => (id === h.workspace.id ? h.workspace : undefined),
+    listWorkspaces: () => [h.workspace],
+  }),
+}));
 
 import * as route from "./route";
 const { DELETE, GET, PATCH, POST } = route;
@@ -77,6 +85,29 @@ describe("workspace MCP configuration route", () => {
     const res = await PATCH(request("PATCH", JSON.stringify({ enabled: true })), ctx());
     expect(res.status).toBe(200);
     expect(h.setEnabled).toHaveBeenCalledWith("workspace-mcp", "ws-1", true);
+  });
+
+  // Opening the channel is the whole setup: without the secret coming back here it would be minted
+  // and immediately unreadable, since the store keeps only a hash.
+  it("mints and returns the first secret when the channel is opened", async () => {
+    const res = await PATCH(request("PATCH", JSON.stringify({ enabled: true })), ctx());
+    expect(await res.json()).toEqual({ ok: true, plain: "mcp_new" });
+    expect(h.mint).toHaveBeenCalledWith("workspace-mcp", "ws-1");
+    expect(res.headers.get("cache-control")).toBe("no-store");
+  });
+
+  it("leaves an existing secret alone when the channel is reopened", async () => {
+    h.state = { enabled: false, hasSecret: true, createdAt: "2026-01-01T00:00:00.000Z", lastUsedAt: null };
+    const res = await PATCH(request("PATCH", JSON.stringify({ enabled: true })), ctx());
+    expect(await res.json()).toEqual({ ok: true });
+    expect(h.mint).not.toHaveBeenCalled();
+  });
+
+  it("mints nothing when the channel is closed", async () => {
+    const res = await PATCH(request("PATCH", JSON.stringify({ enabled: false })), ctx());
+    expect(await res.json()).toEqual({ ok: true });
+    expect(h.setEnabled).toHaveBeenCalledWith("workspace-mcp", "ws-1", false);
+    expect(h.mint).not.toHaveBeenCalled();
   });
 
   it("mints and revokes a secret without returning it from GET", async () => {

@@ -134,7 +134,7 @@ describe("checkAuth", () => {
     );
   });
 
-  it("accepts a valid platform token only on explicitly shared read routes", () => {
+  it("accepts a valid platform token only on explicitly shared workspace routes", () => {
     const validate = vi.fn((token: string) => token === "cli_good");
     for (const pathname of ["/api/status", "/api/workspaces", "/api/workspaces/ws-1"]) {
       expect(
@@ -148,7 +148,23 @@ describe("checkAuth", () => {
     for (const [method, pathname] of [
       ["POST", "/api/workspaces"],
       ["PATCH", "/api/workspaces/ws-1"],
+      ["DELETE", "/api/workspaces/ws-1"],
+      // A workspace key's whole life, so an agent can replace a compromised key on its own.
+      ["POST", "/api/workspaces/ws-1/api-key"],
+      ["DELETE", "/api/workspaces/ws-1/api-key"],
+      ["POST", "/api/workspaces/ws-1/mcp-config"],
+      ["DELETE", "/api/workspaces/ws-1/mcp-config"],
+    ]) {
+      expect(
+        checkAuth("ip", req({ method, pathname, authorization: "Bearer cli_good" }), CREDS, tracker, validate),
+      ).toBe("platform");
+    }
+
+    for (const [method, pathname] of [
       ["GET", "/api/workspaces/ws-1/files"],
+      // Rotate and revoke are shared; reading and toggling a channel stay UI-only.
+      ["GET", "/api/workspaces/ws-1/api-key"],
+      ["PATCH", "/api/workspaces/ws-1/api-key"],
       // The route that mints and rotates the platform token itself: a CLI token reaching this would
       // let a leaked credential renew itself, so it must never map to a permission.
       ["GET", "/api/settings/cli-access"],

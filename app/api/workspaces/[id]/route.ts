@@ -1,66 +1,37 @@
 // REST endpoint for a single workspace.
 // GET returns its metadata; DELETE removes it from the registry and deletes its directory from disk.
 import { type NextRequest, NextResponse } from "next/server";
-import { getStore, getContainers, getVersioning } from "@/lib/infra/services";
 import { notFound, workspaceNameErrorResponse } from "@/lib/api/guards";
-import { disconnectWorkspace } from "@/lib/workspace/driveStore";
-import { removeWorkspaceFromGraph } from "@/lib/workspace/workspaceGraph";
-import { removeWorkspace as removeWorkspaceCredentials } from "@/lib/infra/security/credentialStore";
-import { rm } from "fs/promises";
-import { existsSync } from "fs";
-import path from "path";
-import { WORKSPACES_ROOT } from "@/lib/infra/paths";
-import { SUPPORTED_PROVIDERS, getProviderMetadata } from "@/lib/agent/buildModel";
-import { DEFAULT_LLM, type ReasoningEffort } from "@/lib/agent/interfaces";
-import { MAX_MAX_RUN_MINUTES, MIN_MAX_RUN_MINUTES } from "@/lib/workspace/workspaceLimits";
-import { createAuditLogger, createLogger } from "@/lib/infra/logger";
 import { publicBaseUrl } from "@/lib/api/credentialRoutes";
-import { getWorkspace as getWorkspaceDetails, getWorkspaceAccess } from "@/lib/operations/workspaces";
-
-const log = createLogger("api");
-const audit = createAuditLogger("api");
-
-async function runDeleteCleanup(
-  workspaceId: string,
-  stage: string,
-  cleanup: () => unknown | Promise<unknown>,
-): Promise<void> {
-  try {
-    await cleanup();
-    // Per-stage success trace: on a partial failure this is what tells you how far the delete got
-    // before the error, which stages already completed, and therefore what a retry still has to do.
-    log.debug(
-      { event: "workspace_delete_stage_completed", outcome: "diagnostic_recorded", workspaceId, stage },
-      "workspace deletion stage completed",
-    );
-  } catch (err) {
-    log.error(
-      {
-        event: "workspace_delete_cleanup_failed",
-        outcome: "workspace_cleanup_incomplete",
-        err,
-        workspaceId,
-        stage,
-      },
-      "workspace deletion cleanup failed",
-    );
-    throw err;
-  }
-}
+import { getWorkspaceOverview } from "@/lib/operations/workspaceDetails";
+import { updateWorkspace } from "@/lib/operations/workspaceUpdate";
+import { deleteWorkspace } from "@/lib/operations/workspaceDelete";
+import { WorkspaceUpdateError, WorkspaceUpdateFailure } from "@/lib/operations/workspaceErrors";
 
 export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const workspace = getWorkspaceDetails(id);
-  if (!workspace) return notFound();
-
-  // Match the UI's URLs: prefer the configured DNS-direct public host, otherwise use the origin the
-  // caller connected to. Credential state is included, but hashes and plaintext never leave the store.
   const connectionOrigin = publicBaseUrl() ?? new URL(req.url).origin;
-  return NextResponse.json(
-    { ...workspace, ...getWorkspaceAccess(id, connectionOrigin) },
-    { headers: { "Cache-Control": "no-store" } },
-  );
+  const workspace = await getWorkspaceOverview(id, connectionOrigin);
+  if (!workspace) return notFound();
+  return NextResponse.json(workspace, { headers: { "Cache-Control": "no-store" } });
 }
+
+// The wire names PATCH accepts, in one place so the emptiness check, the unknown-field rejection and
+// the error messages cannot drift apart. These are the request's field names, which differ from the
+// operation's input shape: the three llm* fields arrive separately and become one `model`.
+const UPDATABLE_FIELDS = [
+  "name",
+  "description",
+  "maxIterations",
+  "maxRunMinutes",
+  "internetAccess",
+  "workspaceApiAccess",
+  "workspaceMcpAccess",
+  "secret",
+  "llmProvider",
+  "llmModel",
+  "reasoningEffort",
+] as const;
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -72,145 +43,93 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     llmModel?: string;
     reasoningEffort?: string;
     description?: string;
+    internetAccess?: boolean;
+    workspaceApiAccess?: boolean;
+    workspaceMcpAccess?: boolean;
+    secret?: { name?: string; value?: string; domains?: string[] };
   };
 
-  // Per-workspace LLM selection. All three fields are set together (the UI always sends the full
-  // selection): provider is whitelisted against the supported set, model is a non-empty string (kept
-  // free-form so a model not yet in the pricing catalog can still be used), and effort is checked
-  // against THIS provider's accepted levels — they differ (OpenAI none…xhigh, Anthropic low…max). A
-  // provider with no effort dial (DeepSeek) ignores the field, so we store a valid placeholder rather
-  // than reject.
-  if (body.llmProvider !== undefined || body.llmModel !== undefined || body.reasoningEffort !== undefined) {
-    const provider = body.llmProvider;
-    const model = body.llmModel?.trim();
-    if (!provider || !SUPPORTED_PROVIDERS.includes(provider)) {
-      return NextResponse.json({ error: "invalid llmProvider" }, { status: 400 });
-    }
-    if (!model) {
-      return NextResponse.json({ error: "llmModel required" }, { status: 400 });
-    }
-    const efforts = getProviderMetadata(provider).reasoningEfforts;
-    let reasoningEffort = body.reasoningEffort;
-    if (efforts.length === 0) {
-      reasoningEffort = DEFAULT_LLM.reasoningEffort;
-    } else if (!reasoningEffort || !efforts.includes(reasoningEffort as ReasoningEffort)) {
-      return NextResponse.json({ error: "invalid reasoningEffort" }, { status: 400 });
-    }
-    const ok = getStore().setWorkspaceLlm(id, { provider, model, reasoningEffort: reasoningEffort as ReasoningEffort });
-    if (!ok) return notFound();
-    return NextResponse.json({ id, llmProvider: provider, llmModel: model, reasoningEffort });
+  if (body.description !== undefined && typeof body.description !== "string") {
+    return NextResponse.json({ error: "description must be a string" }, { status: 400 });
   }
 
-  if (body.maxIterations !== undefined || body.maxRunMinutes !== undefined) {
-    let maxIterations: number | undefined;
-    let maxRunMinutes: number | undefined;
-    if (body.maxIterations !== undefined) {
-      maxIterations = Math.max(1, Math.floor(Number(body.maxIterations)));
-      if (!isFinite(maxIterations)) {
-        return NextResponse.json({ error: "invalid maxIterations" }, { status: 400 });
-      }
-    }
-    if (body.maxRunMinutes !== undefined) {
-      maxRunMinutes = Math.floor(Number(body.maxRunMinutes));
-      if (!isFinite(maxRunMinutes) || maxRunMinutes < MIN_MAX_RUN_MINUTES || maxRunMinutes > MAX_MAX_RUN_MINUTES) {
-        return NextResponse.json(
-          { error: `maxRunMinutes must be between ${MIN_MAX_RUN_MINUTES} and ${MAX_MAX_RUN_MINUTES}` },
-          { status: 400 },
-        );
-      }
-    }
-    const store = getStore();
-    if (!store.getWorkspace(id)) return notFound();
-    if (maxIterations !== undefined) store.setWorkspaceMaxIterations(id, maxIterations);
-    if (maxRunMinutes !== undefined) store.setWorkspaceMaxRunMinutes(id, maxRunMinutes);
-    return NextResponse.json({
-      id,
-      ...(maxIterations !== undefined ? { maxIterations } : {}),
-      ...(maxRunMinutes !== undefined ? { maxRunMinutes } : {}),
-    });
+  // Reject anything not on the list rather than ignoring it. A misspelled field alongside a valid one
+  // would otherwise apply the valid half and return 200 with the typo absent from `updated` — a
+  // partial change reported as a complete one, which no caller can detect. Both rejections name the
+  // accepted fields, because a programmatic caller has no form to discover them from.
+  const unknown = Object.keys(body).filter((key) => !(UPDATABLE_FIELDS as readonly string[]).includes(key));
+  if (unknown.length > 0) {
+    return NextResponse.json(
+      { error: `unknown field(s): ${unknown.join(", ")} — accepted: ${UPDATABLE_FIELDS.join(", ")}` },
+      { status: 400 },
+    );
+  }
+  const hasModel = body.llmProvider !== undefined || body.llmModel !== undefined || body.reasoningEffort !== undefined;
+  const supplied = UPDATABLE_FIELDS.filter((field) => body[field] !== undefined);
+  if (supplied.length === 0) {
+    return NextResponse.json(
+      { error: `no fields supplied — send at least one of: ${UPDATABLE_FIELDS.join(", ")}` },
+      { status: 400 },
+    );
   }
 
-  if (body.description !== undefined) {
-    if (typeof body.description !== "string") {
-      return NextResponse.json({ error: "description must be a string" }, { status: 400 });
-    }
-    const ok = getStore().setWorkspaceDescription(id, body.description);
-    if (!ok) return notFound();
-    return NextResponse.json({ id, description: body.description.trim() });
-  }
-
-  if (!body.name?.trim()) return NextResponse.json({ error: "name required" }, { status: 400 });
   try {
-    const ok = await getStore().renameWorkspace(id, body.name);
-    if (!ok) return notFound();
+    const result = await updateWorkspace(id, {
+      ...(body.name !== undefined ? { name: body.name } : {}),
+      ...(body.description !== undefined ? { description: body.description } : {}),
+      ...(body.maxIterations !== undefined ? { maxIterations: body.maxIterations } : {}),
+      ...(body.maxRunMinutes !== undefined ? { maxRunMinutes: body.maxRunMinutes } : {}),
+      ...(body.internetAccess !== undefined ? { internetAccess: body.internetAccess } : {}),
+      ...(body.workspaceApiAccess !== undefined ? { workspaceApiAccess: body.workspaceApiAccess } : {}),
+      ...(body.workspaceMcpAccess !== undefined ? { workspaceMcpAccess: body.workspaceMcpAccess } : {}),
+      ...(body.secret !== undefined
+        ? {
+            secret: {
+              name: body.secret.name ?? "",
+              value: body.secret.value ?? "",
+              domains: body.secret.domains ?? [],
+            },
+          }
+        : {}),
+      // Omitted fields are forwarded as omitted, not as "": the operation resolves each missing one
+      // from the workspace's current choice, so any subset of the three is a complete request.
+      ...(hasModel
+        ? {
+            model: {
+              ...(body.llmProvider !== undefined ? { provider: body.llmProvider } : {}),
+              ...(body.llmModel !== undefined ? { model: body.llmModel } : {}),
+              ...(body.reasoningEffort !== undefined ? { reasoningEffort: body.reasoningEffort } : {}),
+            },
+          }
+        : {}),
+    });
+    if (!result) return notFound();
+    // warnings carries the "saved but the container could not be stopped" case, which used to reach
+    // only the internet-access route and was dropped here. no-store unconditionally: this response
+    // carries a plaintext key whenever enabling a channel minted its first one.
+    return NextResponse.json(
+      {
+        ...result.workspace,
+        updated: result.updated,
+        ...(result.warnings.length > 0 ? { warnings: result.warnings } : {}),
+        ...(result.credentials ? { credentials: result.credentials } : {}),
+      },
+      { headers: { "Cache-Control": "no-store" } },
+    );
   } catch (err) {
     const nameError = workspaceNameErrorResponse(err);
     if (nameError) return nameError;
+    if (err instanceof WorkspaceUpdateError) {
+      return NextResponse.json({ error: err.message }, { status: 400 });
+    }
+    if (err instanceof WorkspaceUpdateFailure) {
+      return NextResponse.json({ error: err.message }, { status: 500 });
+    }
     throw err;
   }
-  // A rename is metadata-only now: the container's bind mount is keyed by the immutable workspace id,
-  // so it survives a rename untouched — no need to recreate the container (which would interrupt a
-  // running agent for a mere relabel).
-  // Return the canonical stored name (trimmed + NFC-normalized), not the raw request value.
-  return NextResponse.json({ id, name: getStore().getWorkspace(id)?.name ?? body.name.trim() });
 }
 
 export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const ws = getStore().getWorkspace(id);
-  // A missing registry entry is not treated as "nothing to do". It also describes a delete that
-  // failed partway through an earlier attempt, and returning early there would strand the surviving
-  // resources permanently — nothing else in the system ever sweeps them. Every stage below is keyed
-  // by the workspace id and no-ops when its resource is already gone, so repeating them is safe.
-  const resuming = !ws;
-  // The registry is the only place the directory path is recorded, so derive it when resuming.
-  // It is built from the immutable id, exactly as the store builds it on create.
-  const dir = ws?.dir ?? path.join(WORKSPACES_ROOT, id);
-  // Deleting the directory spawns a throwaway root container in production. On the resume path,
-  // where the id may simply be unknown, only pay that cost when there is residue to remove. The
-  // normal path is left unconditional so a data volume the app cannot stat is never a silent skip.
-  const deleteDirectory = !resuming || existsSync(dir);
-
-  audit.info(
-    {
-      event: "workspace_delete_started",
-      outcome: "workspace_deletion_started",
-      workspaceId: id,
-      workspaceName: ws?.name,
-      resuming,
-    },
-    resuming ? "resuming an incomplete workspace deletion" : "workspace deletion started",
-  );
-
-  await runDeleteCleanup(id, "drive_connections", () => disconnectWorkspace(id));
-  await runDeleteCleanup(id, "agent_graph", () => removeWorkspaceFromGraph(id));
-  // Both of the workspace's minted secrets (agent API key and MCP secret) go in one step.
-  await runDeleteCleanup(id, "credentials", () => removeWorkspaceCredentials(id));
-  await Promise.all([
-    runDeleteCleanup(id, "container", () => getContainers().remove(id)),
-    ...(deleteDirectory
-      ? [runDeleteCleanup(id, "workspace_directory", () => getContainers().deleteWorkspaceDir(dir))]
-      : []),
-    // Version history must not outlive the workspace.
-    runDeleteCleanup(id, "version_history", () => getVersioning().deleteRepo(id)),
-    // Agent-permissions file written by the permission model — best-effort, may not exist.
-    runDeleteCleanup(id, "agent_permissions", () =>
-      rm(path.join(WORKSPACES_ROOT, ".agent-permissions", `${id}.json`), { force: true }),
-    ),
-  ]);
-  // The registry entry goes last, with the id-keyed stores it owns. Anything that fails above leaves
-  // the workspace listed and deletable again, instead of orphaning resources behind an entry that no
-  // longer exists — the retry then re-runs these same stages and finishes the job.
-  await runDeleteCleanup(id, "workspace_registry_and_owned_resources", () => getStore().deleteWorkspace(id));
-  audit.info(
-    {
-      event: "workspace_deleted",
-      outcome: "workspace_and_owned_resources_deleted",
-      workspaceId: id,
-      workspaceName: ws?.name,
-      resumed: resuming,
-    },
-    resuming ? "incomplete workspace deletion completed" : "workspace deleted",
-  );
-  return NextResponse.json({ deleted: !resuming, ...(resuming ? { resumed: true } : {}) });
+  return NextResponse.json(await deleteWorkspace(id));
 }

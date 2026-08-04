@@ -1,15 +1,10 @@
 "use client";
 
 import { useState, useEffect } from "react";
-
-interface SecretMeta {
-  name: string;
-  createdAt: string;
-  domains: string[];
-}
+import type { ThirdPartySecret } from "@/lib/operations/workspaceSecrets";
 
 export default function EnvVarsBlock({ wsId }: { wsId: string }) {
-  const [secrets, setSecrets] = useState<SecretMeta[]>([]);
+  const [secrets, setSecrets] = useState<ThirdPartySecret[]>([]);
   const [name, setName] = useState("");
   const [value, setValue] = useState("");
   const [domains, setDomains] = useState<string[]>([""]);
@@ -21,7 +16,7 @@ export default function EnvVarsBlock({ wsId }: { wsId: string }) {
   useEffect(() => {
     fetch(`/api/workspaces/${wsId}/env-vars`)
       .then((r) => r.json())
-      .then((d: SecretMeta[]) => setSecrets(d))
+      .then((d: ThirdPartySecret[]) => setSecrets(d))
       .catch(() => {});
   }, [wsId]);
 
@@ -60,7 +55,7 @@ export default function EnvVarsBlock({ wsId }: { wsId: string }) {
       }
       resetForm();
       setShowForm(false);
-      const updated = (await fetch(`/api/workspaces/${wsId}/env-vars`).then((r) => r.json())) as SecretMeta[];
+      const updated = (await fetch(`/api/workspaces/${wsId}/env-vars`).then((r) => r.json())) as ThirdPartySecret[];
       setSecrets(updated);
     } finally {
       setAdding(false);

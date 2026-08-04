@@ -21,6 +21,10 @@ vi.mock("@/lib/infra/proxy/internetAccessPolicy", () => ({
   setInternetAccessPolicy: h.setInternetAccessPolicy,
 }));
 vi.mock("@/lib/infra/services", () => ({
+  getStore: () => ({
+    getWorkspace: () => h.workspace,
+    setWorkspaceInternetAccess: h.setWorkspaceInternetAccess,
+  }),
   getContainers: () => ({ stop: h.stop }),
 }));
 
@@ -36,7 +40,10 @@ const request = (body?: unknown) =>
 
 beforeEach(() => {
   h.workspace = { id: "ws-1", name: "Alpha", internetAccess: false };
-  h.setWorkspaceInternetAccess.mockClear();
+  h.setWorkspaceInternetAccess.mockReset().mockImplementation((_id: string, enabled: boolean) => {
+    h.workspace.internetAccess = enabled;
+    return true;
+  });
   h.setInternetAccessPolicy.mockReset();
   h.stop.mockReset().mockImplementation(async () => {});
 });

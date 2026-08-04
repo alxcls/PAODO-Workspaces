@@ -11,13 +11,9 @@ import { scaffoldWorkspaceDir } from "./workspaceScaffold";
 import { validateWorkspaceName, normalizeForUniqueness, WorkspaceNameError } from "./workspaceName";
 import { defaultWorkspaceVersioning } from "../infra/git";
 import { WORKSPACES_ROOT } from "../infra/paths";
-import { deleteWorkspaceConversations } from "./conversationStore";
 import type { IWorkspaceStore } from "../infra/interfaces";
 import type { ReasoningEffort } from "../agent/interfaces";
-import { deleteAllForWorkspace } from "../infra/security/workspaceSecretStore";
-import { getCredentialProxy } from "../infra/proxy";
-import { setInternetAccessPolicy, deleteInternetAccessPolicy } from "../infra/proxy/internetAccessPolicy";
-import { clearSchedule } from "../infra/schedules/scheduleStore";
+import { setInternetAccessPolicy } from "../infra/proxy/internetAccessPolicy";
 import { DEFAULT_MAX_RUN_MINUTES, normalizeMaxRunMinutes } from "./workspaceLimits";
 import { assertWorkspaceRegistryRecords } from "../infra/startupChecks";
 export { WORKSPACES_ROOT };
@@ -84,14 +80,6 @@ export interface WorkspaceStoreOptions {
    */
   initRepo?: (workspaceId: string, workspaceDir: string) => Promise<void>;
   /**
-   * Tear down every per-workspace resource owned by other subsystems (conversations, secrets, MCP
-   * config, credential-proxy rules…) on deletion. Defaults to a no-op (tests). The production
-   * singleton wires the concrete cleanups. Injected — rather than importing those stores here — so
-   * this leaf registry stays free of their concrete implementations (DIP) and adding a new
-   * per-workspace resource means editing the singleton wiring, not this class (OCP).
-   */
-  onDelete?: (workspaceId: string) => void | Promise<void>;
-  /**
    * Bootstrap a new workspace's on-disk directory. Defaults to the real {@link scaffoldWorkspaceDir}
    * (production and dev). Injected so unit tests can exercise createWorkspace's uniqueness/serialization
    * logic without touching the filesystem.
@@ -103,7 +91,6 @@ export class WorkspaceStore implements IWorkspaceStore {
   private workspaces: Map<string, Workspace>;
   private persistFn: PersistFn;
   private initRepoFn: (workspaceId: string, workspaceDir: string) => Promise<void>;
-  private onDeleteFn: (workspaceId: string) => void | Promise<void>;
   private scaffoldFn: (dir: string) => Promise<void>;
   // Serializes name-mutating operations (create + rename) so a uniqueness check and the write that
   // relies on it can't be interleaved by a concurrent request — the check-then-act would otherwise
@@ -115,7 +102,6 @@ export class WorkspaceStore implements IWorkspaceStore {
     this.workspaces = opts.map ?? new Map();
     this.persistFn = opts.persist ?? (() => {});
     this.initRepoFn = opts.initRepo ?? (async () => {});
-    this.onDeleteFn = opts.onDelete ?? (() => {});
     this.scaffoldFn = opts.scaffold ?? scaffoldWorkspaceDir;
     // A hot-reloaded server can reuse workspace objects created by an older module version. Fill
     // the new field in-place so those live objects do not accidentally create a zero-delay timer.
@@ -293,10 +279,6 @@ export class WorkspaceStore implements IWorkspaceStore {
 
   async deleteWorkspace(id: string): Promise<boolean> {
     const ws = this.workspaces.get(id);
-    // Owned-resource cleanup runs even when the registry entry is already gone, so a delete that
-    // failed partway through an earlier attempt can be completed by simply deleting again. Every
-    // cleanup is keyed by the workspace id and no-ops when its resource is absent.
-    await this.onDeleteFn(id);
     if (!ws) return false;
     this.workspaces.delete(id);
     try {
@@ -398,16 +380,6 @@ export const defaultWorkspaceStore = new WorkspaceStore({
   persist: (records) => atomicSaveJson(REGISTRY_FILE, records),
   load: defaultLoad,
   initRepo: (id, dir) => defaultWorkspaceVersioning.initRepo(id, dir),
-  // Cascade deletion to every subsystem that keys resources by workspace id. Wired here — the
-  // services-layer boundary that's already allowed to know all of them — rather than inside the
-  // store, which stays free of these concrete implementations. Add new per-workspace cleanups here.
-  onDelete: (id) => {
-    deleteWorkspaceConversations(id);
-    deleteAllForWorkspace(id);
-    getCredentialProxy().clearRules(id);
-    deleteInternetAccessPolicy(id);
-    clearSchedule(id);
-  },
 });
 
 // Back-compat free-function exports — thin delegations to the default singleton so call sites

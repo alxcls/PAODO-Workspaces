@@ -4,6 +4,8 @@
 export const DEFAULT_MAX_RUN_MINUTES = 5;
 export const MIN_MAX_RUN_MINUTES = 1;
 export const MAX_MAX_RUN_MINUTES = 1_440;
+export const MIN_MAX_ITERATIONS = 1;
+export const MAX_MAX_ITERATIONS = 500;
 
 export function normalizeMaxRunMinutes(value: unknown): number {
   const minutes = Math.floor(Number(value));

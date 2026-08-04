@@ -1,0 +1,279 @@
+// Coverage for the update contract itself — the guarantees no single capability can provide.
+//
+// Each field's own rules are tested where they live (workspaces, workspaceSecrets, workspaceAccess,
+// workspaceEgress). What is asserted here is composition: that nothing is written until the whole
+// request validates, that the fields land in a fixed order, and that what landed is reported
+// accurately even when the workspace disappears halfway through.
+import { describe, expect, it } from "vitest";
+import { updateWorkspace, type UpdateWorkspaceDeps, type UpdateWorkspaceStore } from "./workspaceUpdate";
+import type { ChannelCredentials } from "./workspaceAccess";
+import type { EgressServices } from "./workspaceEgress";
+import type { SecretStore } from "./workspaceSecrets";
+import type { Workspace } from "@/lib/workspace/workspaceStore";
+
+const workspace: Workspace = {
+  id: "ws-1",
+  name: "Alpha",
+  dir: "/private/alpha",
+  createdAt: new Date("2026-01-02T03:04:05Z"),
+  description: "First workspace",
+  maxIterations: 30,
+  maxRunMinutes: 20,
+  internetAccess: false,
+};
+
+/** An all-succeed store; each test overrides only the setters whose behavior it is asserting. */
+const storeStub = (overrides: Partial<UpdateWorkspaceStore> = {}): UpdateWorkspaceStore => ({
+  getWorkspace: () => workspace,
+  renameWorkspace: async () => true,
+  setWorkspaceDescription: () => true,
+  setWorkspaceMaxIterations: () => true,
+  setWorkspaceMaxRunMinutes: () => true,
+  setWorkspaceLlm: () => true,
+  setWorkspaceInternetAccess: () => true,
+  ...overrides,
+});
+
+const credentialStub = (overrides: Partial<ChannelCredentials> = {}): ChannelCredentials => ({
+  hasSecret: () => true,
+  setEnabled: () => {},
+  mint: () => {
+    throw new Error("must not mint a credential in this test");
+  },
+  ...overrides,
+});
+
+const egressStub = (overrides: Partial<EgressServices> = {}): EgressServices => ({
+  setPolicy: () => {},
+  stopContainer: async () => {},
+  ...overrides,
+});
+
+const secretStub = (overrides: Partial<SecretStore> = {}): SecretStore => ({
+  save: (_id, name) => ({ name, createdAt: "2026-08-03T00:00:00.000Z", domains: ["api.example.com"] }),
+  read: () => [],
+  ...overrides,
+});
+
+/** Every seam stubbed, so a test that forgets one cannot reach the real infra by accident. */
+const deps = (overrides: UpdateWorkspaceDeps = {}): UpdateWorkspaceDeps => ({
+  store: storeStub(),
+  credentials: credentialStub(),
+  egress: egressStub(),
+  secrets: secretStub(),
+  ...overrides,
+});
+
+describe("the update contract", () => {
+  it("applies a partial update and names the fields that landed", async () => {
+    const mutable = { ...workspace };
+    const store = storeStub({
+      getWorkspace: () => mutable,
+      renameWorkspace: async (_id, name) => {
+        mutable.name = name;
+        return true;
+      },
+      setWorkspaceDescription: (_id, description) => {
+        mutable.description = description;
+        return true;
+      },
+    });
+
+    await expect(
+      updateWorkspace("ws-1", { name: "  Renamed  ", description: "  Updated description  " }, deps({ store })),
+    ).resolves.toMatchObject({
+      workspace: { id: "ws-1", name: "Renamed", description: "Updated description" },
+      updated: ["name", "description"],
+      warnings: [],
+    });
+  });
+
+  it("returns null for an unknown workspace without attempting a write", async () => {
+    const refuse = () => {
+      throw new Error("must not write to a missing workspace");
+    };
+    const store = storeStub({
+      getWorkspace: () => undefined,
+      renameWorkspace: refuse,
+      setWorkspaceDescription: refuse,
+      setWorkspaceMaxIterations: refuse,
+      setWorkspaceMaxRunMinutes: refuse,
+      setWorkspaceLlm: refuse,
+      setWorkspaceInternetAccess: refuse,
+    });
+
+    await expect(updateWorkspace("missing", { name: "Renamed" }, deps({ store }))).resolves.toBeNull();
+  });
+
+  // The reason validation is a separate phase rather than per-field: a request carrying one bad value
+  // must change nothing at all, so a caller never has to work out which half of it survived.
+  it("writes nothing when any supplied field is invalid", async () => {
+    let writes = 0;
+    const store = storeStub({
+      setWorkspaceDescription: () => {
+        writes += 1;
+        return true;
+      },
+      renameWorkspace: async () => {
+        writes += 1;
+        return true;
+      },
+    });
+
+    await expect(
+      updateWorkspace("ws-1", { description: "valid", model: { provider: "unknown", model: "x" } }, deps({ store })),
+    ).rejects.toThrow("llmProvider must be one of: ");
+    expect(writes).toBe(0);
+  });
+
+  // The cross-capability case: a bad secret has to stop a perfectly good rename, even though the two are
+  // validated and applied by different modules.
+  it("writes nothing when a field owned by another capability is invalid", async () => {
+    let renames = 0;
+    const store = storeStub({
+      renameWorkspace: async () => {
+        renames += 1;
+        return true;
+      },
+    });
+    const secrets = secretStub({
+      save: () => {
+        throw new Error("must not store an invalid secret");
+      },
+    });
+
+    await expect(
+      updateWorkspace(
+        "ws-1",
+        { name: "Renamed", secret: { name: "bad-name", value: "v", domains: ["api.example.com"] } },
+        deps({ store, secrets }),
+      ),
+    ).rejects.toThrow("name must be uppercase");
+    expect(renames).toBe(0);
+  });
+
+  // Reporting this as not-found would tell the caller nothing happened, when a rename already landed.
+  // Only an unknown id at the very start is a not-found; a refusal afterwards is a vanished workspace.
+  it("names what it applied when the workspace disappears mid-update", async () => {
+    const store = storeStub({ setWorkspaceMaxIterations: () => false });
+
+    await expect(
+      updateWorkspace("ws-1", { name: "Renamed", description: "kept", maxIterations: 10 }, deps({ store })),
+    ).rejects.toThrow("workspace was deleted while updating; applied: name, description; not applied: maxIterations");
+  });
+
+  it("says nothing was applied when the very first write refuses", async () => {
+    const store = storeStub({ renameWorkspace: async () => false });
+
+    await expect(updateWorkspace("ws-1", { name: "Renamed" }, deps({ store }))).rejects.toThrow(
+      "applied: nothing; not applied: name",
+    );
+  });
+
+  it("reports a vanished workspace the same way when egress is the field that refuses", async () => {
+    const store = storeStub({ setWorkspaceInternetAccess: () => false });
+
+    await expect(
+      updateWorkspace("ws-1", { description: "kept", internetAccess: true }, deps({ store })),
+    ).rejects.toThrow("applied: description; not applied: internetAccess");
+  });
+
+  it("carries a capability's non-fatal warning through to the caller", async () => {
+    const egress = egressStub({
+      stopContainer: async () => {
+        throw new Error("docker daemon unavailable");
+      },
+    });
+
+    await expect(updateWorkspace("ws-1", { internetAccess: true }, deps({ egress }))).resolves.toMatchObject({
+      updated: ["internetAccess"],
+      warnings: ["setting saved but the running container could not be stopped immediately"],
+    });
+  });
+
+  it("collects the keys both channels minted into one credentials block", async () => {
+    const credentials = credentialStub({
+      hasSecret: () => false,
+      mint: (channel) => (channel === "workspace-api" ? "pak_first" : "mcp_first"),
+    });
+
+    const result = await updateWorkspace(
+      "ws-1",
+      { workspaceApiAccess: true, workspaceMcpAccess: true },
+      deps({ credentials }),
+    );
+
+    expect(result?.credentials).toEqual({ workspaceApiKey: "pak_first", workspaceMcpSecret: "mcp_first" });
+    expect(result?.updated).toEqual(["workspaceApiAccess", "workspaceMcpAccess"]);
+  });
+
+  // An `undefined` assigned to either key would still be an own property, making `credentials` look
+  // present but empty to a caller checking for it.
+  it("omits credentials entirely when no key was minted", async () => {
+    const result = await updateWorkspace("ws-1", { workspaceApiAccess: true }, deps());
+
+    expect(result?.updated).toEqual(["workspaceApiAccess"]);
+    expect(result).not.toHaveProperty("credentials");
+  });
+
+  it("returns the stored secret alongside the workspace", async () => {
+    const result = await updateWorkspace(
+      "ws-1",
+      { secret: { name: "API_TOKEN", value: "top-secret", domains: ["API.EXAMPLE.COM"] } },
+      deps(),
+    );
+
+    expect(result?.updated).toEqual(["secret"]);
+    expect(result?.secret).toEqual({
+      name: "API_TOKEN",
+      createdAt: "2026-08-03T00:00:00.000Z",
+      domains: ["api.example.com"],
+      // The fixture workspace has no egress, so the key it just stored cannot be spent yet.
+      blockedBy: "internetAccess",
+    });
+    expect(result?.secret).not.toHaveProperty("value");
+  });
+
+  it("omits the secret key entirely when the request carried none", async () => {
+    expect(await updateWorkspace("ws-1", { description: "only this" }, deps())).not.toHaveProperty("secret");
+  });
+
+  // The order is part of the contract: `updated` is what a caller reads to tell a no-op from a
+  // half-done update, so it has to mean the same thing on every request.
+  it("applies capabilities in a fixed order regardless of the input's key order", async () => {
+    const order: string[] = [];
+    const store = storeStub({
+      setWorkspaceDescription: () => {
+        order.push("description");
+        return true;
+      },
+      setWorkspaceInternetAccess: () => {
+        order.push("egress");
+        return true;
+      },
+    });
+
+    const result = await updateWorkspace(
+      "ws-1",
+      {
+        secret: { name: "API_TOKEN", value: "v", domains: ["api.example.com"] },
+        workspaceApiAccess: true,
+        internetAccess: true,
+        description: "updated",
+      },
+      deps({
+        store,
+        credentials: credentialStub({ setEnabled: () => order.push("channel") }),
+        secrets: secretStub({
+          save: (_id, name) => {
+            order.push("secret");
+            return { name, createdAt: "2026-08-03T00:00:00.000Z", domains: ["api.example.com"] };
+          },
+        }),
+      }),
+    );
+
+    expect(order).toEqual(["description", "egress", "channel", "secret"]);
+    expect(result?.updated).toEqual(["description", "internetAccess", "workspaceApiAccess", "secret"]);
+  });
+});

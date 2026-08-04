@@ -13,11 +13,8 @@
 
 import CredentialPanel from "@/components/shared/CredentialPanel";
 import { useCredential } from "@/lib/client/hooks/useCredential";
-
-interface ExposedSkill {
-  id: string;
-  description: string;
-}
+// Type-only import: the shape is owned by lib/operations, which both this block and the CLI read.
+import type { ExposedSkill } from "@/lib/operations/workspaceSkills";
 
 interface McpExtra {
   exposedSkills: ExposedSkill[];

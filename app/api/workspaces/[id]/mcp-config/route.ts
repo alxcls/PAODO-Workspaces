@@ -12,7 +12,8 @@ import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 import { credentialHandlers, publicBaseUrl } from "@/lib/api/credentialRoutes";
 import { state } from "@/lib/infra/security/credentialStore";
-import { loadSkills } from "@/lib/workspace/skillStore";
+import { listWorkspaceSkills } from "@/lib/operations/workspaceSkills";
+import { updateWorkspace } from "@/lib/operations/workspaceUpdate";
 import { requireWorkspace } from "@/lib/api/guards";
 import type { Workspace } from "@/lib/workspace/workspaceStore";
 
@@ -22,10 +23,25 @@ function guard(id: string): Workspace | NextResponse {
   return requireWorkspace(id);
 }
 
-const handlers = credentialHandlers<Params>("workspace-mcp", async ({ id }) => {
-  const ws = guard(id);
-  return ws instanceof NextResponse ? ws : id;
-});
+const handlers = credentialHandlers<Params>(
+  "workspace-mcp",
+  async ({ id }) => {
+    const ws = guard(id);
+    return ws instanceof NextResponse ? ws : id;
+  },
+  {
+    setEnabled: async (_kind, subject, enabled) => {
+      const result = await updateWorkspace(subject as string, { workspaceMcpAccess: enabled });
+      if (!result) return NextResponse.json({ error: "not found" }, { status: 404 });
+      // Enabling a channel that had no secret mints its first one. Hand it back here or it is lost:
+      // the store keeps only a hash, so this response is the single chance to read it.
+      const plain = result.credentials?.workspaceMcpSecret;
+      if (plain) {
+        return NextResponse.json({ ok: true, plain }, { headers: { "Cache-Control": "no-store" } });
+      }
+    },
+  },
+);
 
 export const POST = handlers.POST;
 export const DELETE = handlers.DELETE;
@@ -36,10 +52,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<Param
   const ws = guard(id);
   if (ws instanceof NextResponse) return ws;
 
-  const exposedSkills = (await loadSkills(ws.dir)).map((s) => ({
-    id: s.id,
-    description: s.description,
-  }));
+  const exposedSkills = await listWorkspaceSkills(id);
   return NextResponse.json(
     {
       ...state("workspace-mcp", id),

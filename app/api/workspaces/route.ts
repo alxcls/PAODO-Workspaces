@@ -1,10 +1,9 @@
 // REST endpoint for the workspace collection.
 // GET returns all workspaces; POST creates a new one with an isolated directory and starter AGENTS.md.
 import { NextRequest, NextResponse } from "next/server";
-import { getStore } from "@/lib/infra/services";
 import { createLogger } from "@/lib/infra/logger";
 import { workspaceNameErrorResponse } from "@/lib/api/guards";
-import { listWorkspaces } from "@/lib/operations/workspaces";
+import { createWorkspace, listWorkspaces } from "@/lib/operations/workspaces";
 
 export async function GET() {
   return NextResponse.json(listWorkspaces());
@@ -17,11 +16,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "name is required" }, { status: 400 });
   }
   try {
-    const workspace = await getStore().createWorkspace(body.name.trim());
-    return NextResponse.json(
-      { id: workspace.id, name: workspace.name, description: workspace.description ?? "" },
-      { status: 201 },
-    );
+    return NextResponse.json(await createWorkspace({ name: body.name }), { status: 201 });
   } catch (err) {
     const nameError = workspaceNameErrorResponse(err);
     if (nameError) return nameError;

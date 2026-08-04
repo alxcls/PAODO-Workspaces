@@ -3,7 +3,10 @@
 import { useState, useEffect } from "react";
 // DEFAULT_LLM is a plain const in a type-only module (no runtime imports), so it's safe in a client
 // component and keeps the picker's fallback in lockstep with the server's actual default.
-import { DEFAULT_LLM as DEFAULT } from "@/lib/agent/interfaces";
+import { DEFAULT_LLM as DEFAULT, type ReasoningEffort } from "@/lib/agent/interfaces";
+// The model/effort defaulting rules, shared with the server-side update path so the picker and a
+// partial PATCH resolve a gap the same way.
+import { defaultEffortFor, defaultModelFor } from "@/lib/workspace/modelSelection";
 
 // Compact fixed widths so the row of controls stays roughly half the block width. Applied inline
 // because the `.input` base class is `w-full`, which otherwise stretches each field to fill the row.
@@ -73,23 +76,34 @@ export default function ModelBlock({ wsId }: { wsId: string }) {
       .then((d: { providers?: string[]; models?: string[]; reasoningEfforts?: string[] }) => {
         if (d.providers?.length) setProviders(d.providers);
         setModels(d.models ?? []);
-        const list = d.reasoningEfforts ?? [];
+        const list = (d.reasoningEfforts ?? []) as ReasoningEffort[];
         setEfforts(list);
-        setModel((cur) => cur || (d.models?.[0] ?? ""));
-        // Keep effort valid for the newly selected provider: providers accept different levels, so if
-        // the current value isn't offered here, fall back to "low" (or the quietest level offered).
-        setEffort((cur) => (list.length === 0 || list.includes(cur) ? cur : list.includes("low") ? "low" : list[0]));
+        // Both defaults come from the shared rules the update path resolves with, so what the picker
+        // fills in and what a partial PATCH would resolve to agree by construction rather than by two
+        // implementations happening to match. A no-dial provider leaves the effort state untouched: the
+        // control is hidden, so keeping the value means it is still there on switching back.
+        //
+        // A level this provider accepts is kept rather than reset, because this effect also runs on the
+        // initial load — resetting unconditionally would show "low" for a workspace saved at "max" and
+        // then save that downgrade. Anything the provider does not accept falls to its default.
+        const vocabulary = { models: d.models ?? [], reasoningEfforts: list };
+        setModel((cur) => (vocabulary.models.includes(cur) ? cur : defaultModelFor(vocabulary)));
+        setEffort((cur) =>
+          list.length === 0 || list.includes(cur as ReasoningEffort) ? cur : defaultEffortFor(vocabulary),
+        );
       })
       .catch(() => {});
   }, [provider]);
 
   const dirty = provider !== saved.provider || model !== saved.model || effort !== saved.effort;
 
-  // Keep the current model selectable even if it's no longer in the catalog (e.g. a retired model
-  // still stored on this workspace), so it stays selected until the user picks another.
-  const modelOptions = model && !models.includes(model) ? [model, ...models] : models;
+  // The provider's catalog and nothing else: PATCH refuses a model the provider does not serve, so
+  // offering a retired one still stored on the workspace would only produce a save that fails. The
+  // effect above swaps such a value for the provider's default, which is savable and visible before the
+  // user commits it.
+  const modelOptions = models;
 
-  // Same for the provider: /api/models lists only providers with an API key configured, so a workspace
+  // The provider is different: /api/models lists only providers with an API key configured, so a workspace
   // selected before its key was removed from .env would otherwise render a blank dropdown.
   const providerOptions = provider && !providers.includes(provider) ? [provider, ...providers] : providers;
 

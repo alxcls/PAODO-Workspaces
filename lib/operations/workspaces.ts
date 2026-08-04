@@ -1,6 +1,6 @@
 // The workspace record itself: its public projections, its creation, and the settings stored directly
-// on it — name, description, iteration and runtime limits, model choice. Read and write live together
-// so the shape a caller reads back is defined beside the rules that let a value be written.
+// on it — name, description, iteration and runtime limits, model choice. Read projections and write
+// rules live together here, while mutation receipts are assembled by workspaceUpdate.
 //
 // Capabilities that are more than a registry field get their own file: workspaceSecrets,
 // workspaceAccess, workspaceEgress, workspaceSkills, workspaceDelete. The unified update contract

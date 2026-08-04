@@ -2,7 +2,7 @@
 //
 // The invariant under test is that a field PATCH does not recognize is a rejection, never a silent
 // drop. Ignoring one is worse than any error message: `{name, internet_acces}` would rename the
-// workspace, discard the misspelled field, and answer 200 with the typo absent from `updated` — a
+// workspace, discard the misspelled field, and answer 200 with the typo absent from `applied` — a
 // partial change reported as a complete one, which no caller can detect. Both rejections name the
 // accepted fields, since a programmatic caller has no form to discover them from.
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -89,12 +89,30 @@ describe("workspace update body contract", () => {
     expect(error).not.toContain("name required");
   });
 
-  it("still applies a body made only of recognized fields", async () => {
+  it("returns only a stable mutation receipt for recognized fields", async () => {
     const res = await patch({ name: "Renamed", description: "updated" });
     expect(res.status).toBe(200);
-    expect(await res.json()).toMatchObject({ updated: ["name", "description"] });
+    expect(await res.json()).toEqual({
+      ok: true,
+      workspaceId: "ws-1",
+      applied: ["name", "description"],
+      warnings: [],
+    });
     expect(h.renames).toEqual(["Renamed"]);
     expect(h.descriptions).toEqual(["updated"]);
+  });
+
+  it("includes a credential minted by the write and prevents receipt caching", async () => {
+    const res = await patch({ workspaceApiAccess: true });
+
+    expect(await res.json()).toEqual({
+      ok: true,
+      workspaceId: "ws-1",
+      applied: ["workspaceApiAccess"],
+      warnings: [],
+      credentials: { workspaceApiKey: "pak_new" },
+    });
+    expect(res.headers.get("cache-control")).toBe("no-store");
   });
 
   it("reports an unknown workspace as not found", async () => {

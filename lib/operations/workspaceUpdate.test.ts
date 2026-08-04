@@ -81,11 +81,31 @@ describe("the update contract", () => {
 
     await expect(
       updateWorkspace("ws-1", { name: "  Renamed  ", description: "  Updated description  " }, deps({ store })),
-    ).resolves.toMatchObject({
-      workspace: { id: "ws-1", name: "Renamed", description: "Updated description" },
-      updated: ["name", "description"],
+    ).resolves.toEqual({
+      ok: true,
+      workspaceId: "ws-1",
+      applied: ["name", "description"],
       warnings: [],
     });
+    expect(mutable).toMatchObject({ name: "Renamed", description: "Updated description" });
+  });
+
+  it("does not read the workspace back after a successful metadata write", async () => {
+    let reads = 0;
+    const store = storeStub({
+      getWorkspace: () => {
+        reads += 1;
+        return workspace;
+      },
+    });
+
+    await expect(updateWorkspace("ws-1", { description: "updated" }, deps({ store }))).resolves.toEqual({
+      ok: true,
+      workspaceId: "ws-1",
+      applied: ["description"],
+      warnings: [],
+    });
+    expect(reads).toBe(1);
   });
 
   it("returns null for an unknown workspace without attempting a write", async () => {
@@ -186,7 +206,7 @@ describe("the update contract", () => {
     });
 
     await expect(updateWorkspace("ws-1", { internetAccess: true }, deps({ egress }))).resolves.toMatchObject({
-      updated: ["internetAccess"],
+      applied: ["internetAccess"],
       warnings: ["setting saved but the running container could not be stopped immediately"],
     });
   });
@@ -204,7 +224,7 @@ describe("the update contract", () => {
     );
 
     expect(result?.credentials).toEqual({ workspaceApiKey: "pak_first", workspaceMcpSecret: "mcp_first" });
-    expect(result?.updated).toEqual(["workspaceApiAccess", "workspaceMcpAccess"]);
+    expect(result?.applied).toEqual(["workspaceApiAccess", "workspaceMcpAccess"]);
   });
 
   // An `undefined` assigned to either key would still be an own property, making `credentials` look
@@ -212,18 +232,18 @@ describe("the update contract", () => {
   it("omits credentials entirely when no key was minted", async () => {
     const result = await updateWorkspace("ws-1", { workspaceApiAccess: true }, deps());
 
-    expect(result?.updated).toEqual(["workspaceApiAccess"]);
+    expect(result?.applied).toEqual(["workspaceApiAccess"]);
     expect(result).not.toHaveProperty("credentials");
   });
 
-  it("returns the stored secret alongside the workspace", async () => {
+  it("returns stored-secret metadata as capability output without echoing the workspace", async () => {
     const result = await updateWorkspace(
       "ws-1",
       { secret: { name: "API_TOKEN", value: "top-secret", domains: ["API.EXAMPLE.COM"] } },
       deps(),
     );
 
-    expect(result?.updated).toEqual(["secret"]);
+    expect(result?.applied).toEqual(["secret"]);
     expect(result?.secret).toEqual({
       name: "API_TOKEN",
       createdAt: "2026-08-03T00:00:00.000Z",
@@ -232,13 +252,14 @@ describe("the update contract", () => {
       blockedBy: "internetAccess",
     });
     expect(result?.secret).not.toHaveProperty("value");
+    expect(result).not.toHaveProperty("workspace");
   });
 
   it("omits the secret key entirely when the request carried none", async () => {
     expect(await updateWorkspace("ws-1", { description: "only this" }, deps())).not.toHaveProperty("secret");
   });
 
-  // The order is part of the contract: `updated` is what a caller reads to tell a no-op from a
+  // The order is part of the contract: `applied` is what a caller reads to tell a no-op from a
   // half-done update, so it has to mean the same thing on every request.
   it("applies capabilities in a fixed order regardless of the input's key order", async () => {
     const order: string[] = [];
@@ -274,6 +295,6 @@ describe("the update contract", () => {
     );
 
     expect(order).toEqual(["description", "egress", "channel", "secret"]);
-    expect(result?.updated).toEqual(["description", "internetAccess", "workspaceApiAccess", "secret"]);
+    expect(result?.applied).toEqual(["description", "internetAccess", "workspaceApiAccess", "secret"]);
   });
 });

@@ -9,11 +9,9 @@
 import { getStore } from "@/lib/infra/services";
 import {
   currentModelSelection,
-  getWorkspace,
   metadataWrites,
   validateMetadata,
   type MetadataWriter,
-  type WorkspaceDetails,
   type WorkspaceLookup,
   type WorkspaceMetadataInput,
 } from "./workspaces";
@@ -41,9 +39,15 @@ export type UpdateWorkspaceInput = WorkspaceMetadataInput & {
 };
 
 export interface UpdateWorkspaceResult {
-  workspace: WorkspaceDetails;
-  updated: Array<keyof UpdateWorkspaceInput>;
+  ok: true;
+  workspaceId: string;
+  /** Capability fields successfully applied, in deterministic application order. */
+  applied: Array<keyof UpdateWorkspaceInput>;
   warnings: string[];
+  /**
+   * Capability-specific write output used by the dedicated env-var adapter. This is metadata about
+   * the stored secret, never its write-only value and never a workspace representation.
+   */
   secret?: ThirdPartySecret;
   /**
    * Plaintext credentials created by this update, each readable exactly once — the store keeps only a
@@ -104,17 +108,17 @@ export async function updateWorkspace(
   // null would reach the caller as "no such workspace", which reads as "nothing happened" even though
   // earlier fields already landed. Name what was applied instead, so a caller can tell a no-op from a
   // half-done update.
-  const updated: Array<keyof UpdateWorkspaceInput> = [];
+  const appliedFields: Array<keyof UpdateWorkspaceInput> = [];
   // Seeded with what validation could not honor — a resolved-away reasoningEffort reaches the caller
   // alongside the fields that did land, rather than being dropped on a 200.
   const warnings: string[] = [...metadataWarnings];
   const applied = (field: keyof UpdateWorkspaceInput, ok: boolean): void => {
     if (!ok) {
       throw new WorkspaceUpdateFailure(
-        `workspace was deleted while updating; applied: ${updated.join(", ") || "nothing"}; not applied: ${field}`,
+        `workspace was deleted while updating; applied: ${appliedFields.join(", ") || "nothing"}; not applied: ${field}`,
       );
     }
-    updated.push(field);
+    appliedFields.push(field);
   };
 
   for (const { field, write } of metadataWrites(id, metadata, store)) {
@@ -133,25 +137,24 @@ export async function updateWorkspace(
     // property, making the caller-facing `credentials` object appear present but empty.
     const plain = setChannelEnabled("workspace-api", id, apiAccess, deps.credentials);
     if (plain) credentials.workspaceApiKey = plain;
-    updated.push("workspaceApiAccess");
+    appliedFields.push("workspaceApiAccess");
   }
   if (mcpAccess !== undefined) {
     const plain = setChannelEnabled("workspace-mcp", id, mcpAccess, deps.credentials);
     if (plain) credentials.workspaceMcpSecret = plain;
-    updated.push("workspaceMcpAccess");
+    appliedFields.push("workspaceMcpAccess");
   }
 
   let secret: ThirdPartySecret | undefined;
   if (secretInput !== undefined) {
     secret = storeWorkspaceSecret(id, secretInput, store, deps.secrets);
-    updated.push("secret");
+    appliedFields.push("secret");
   }
 
-  const workspace = getWorkspace(id, store);
-  if (!workspace) return null;
   return {
-    workspace,
-    updated,
+    ok: true,
+    workspaceId: id,
+    applied: appliedFields,
     warnings,
     ...(secret ? { secret } : {}),
     ...(Object.keys(credentials).length > 0 ? { credentials } : {}),

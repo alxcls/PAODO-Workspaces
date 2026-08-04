@@ -54,7 +54,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   }
 
   // Reject anything not on the list rather than ignoring it. A misspelled field alongside a valid one
-  // would otherwise apply the valid half and return 200 with the typo absent from `updated` — a
+  // would otherwise apply the valid half and return 200 with the typo absent from `applied` — a
   // partial change reported as a complete one, which no caller can detect. Both rejections name the
   // accepted fields, because a programmatic caller has no form to discover them from.
   const unknown = Object.keys(body).filter((key) => !(UPDATABLE_FIELDS as readonly string[]).includes(key));
@@ -104,14 +104,15 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
         : {}),
     });
     if (!result) return notFound();
-    // warnings carries the "saved but the container could not be stopped" case, which used to reach
-    // only the internet-access route and was dropped here. no-store unconditionally: this response
-    // carries a plaintext key whenever enabling a channel minted its first one.
+    // A mutation returns only its receipt. GET is the sole workspace representation, so adding a
+    // projection there (skills, secrets, access state) can never make PATCH partial or expensive.
+    // no-store unconditionally: this receipt may carry a plaintext key minted by this write.
     return NextResponse.json(
       {
-        ...result.workspace,
-        updated: result.updated,
-        ...(result.warnings.length > 0 ? { warnings: result.warnings } : {}),
+        ok: result.ok,
+        workspaceId: result.workspaceId,
+        applied: result.applied,
+        warnings: result.warnings,
         ...(result.credentials ? { credentials: result.credentials } : {}),
       },
       { headers: { "Cache-Control": "no-store" } },

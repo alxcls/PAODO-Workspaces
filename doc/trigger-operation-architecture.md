@@ -29,6 +29,18 @@ different:
 
 Those adapters should still delegate to the same underlying run, skill, file or workspace operation.
 
+## Read and mutation results
+
+Query operations own resource representations. For workspaces, `GET /api/workspaces/<id>` is the one
+authoritative overview assembled from workspace metadata, access state, exposed skills and secret
+metadata.
+
+Mutation operations return receipts: the target id, the capability fields successfully applied,
+warnings, and any one-time output minted by the write. They do not return partial resource snapshots.
+An adapter that needs normalized or server-resolved state after writing performs the ordinary query;
+this keeps every trigger reading the same representation and prevents new query projections from
+silently adding work or sensitive metadata to mutations.
+
 ## Programmatic access
 
 `lib/infra/security/platformAccessPolicy.ts` is the single review point for exposing an existing

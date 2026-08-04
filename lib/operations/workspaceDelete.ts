@@ -41,6 +41,7 @@ async function runDeleteCleanup(
       {
         event: "workspace_delete_cleanup_failed",
         outcome: "workspace_cleanup_incomplete",
+        code: "INTERNAL_ERROR",
         err,
         workspaceId,
         stage,

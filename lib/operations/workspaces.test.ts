@@ -96,19 +96,10 @@ describe("workspace record queries", () => {
       internetAccess: false,
       llmProvider: "deepseek",
       llmModel: "deepseek-v4-pro",
-      reasoningEffort: "low",
     });
     expect(result).not.toHaveProperty("dir");
-  });
-
-  // DeepSeek has no effort dial, so the stored "low" is an inert placeholder the agent never sends.
-  // The flag is what lets a CLI or other programmatic caller say so without knowing the provider.
-  it("marks reasoning effort unsupported for a provider with no effort dial", () => {
-    expect(getWorkspace("ws-1", store)).toMatchObject({
-      llmProvider: "deepseek",
-      reasoningEffort: "low",
-      reasoningEffortSupported: false,
-    });
+    expect(result).not.toHaveProperty("reasoningEffort");
+    expect(result).not.toHaveProperty("reasoningEffortSupported");
   });
 
   it("returns an explicitly selected model instead of the defaults", () => {
@@ -123,8 +114,8 @@ describe("workspace record queries", () => {
       llmProvider: "openai",
       llmModel: "gpt-5",
       reasoningEffort: "high",
-      reasoningEffortSupported: true,
     });
+    expect(result).not.toHaveProperty("reasoningEffortSupported");
   });
 
   it("returns null for an unknown workspace", () => {

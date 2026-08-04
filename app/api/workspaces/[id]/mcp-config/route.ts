@@ -15,6 +15,7 @@ import { state } from "@/lib/infra/security/credentialStore";
 import { listWorkspaceSkills } from "@/lib/operations/workspaceSkills";
 import { updateWorkspace } from "@/lib/operations/workspaceUpdate";
 import { requireWorkspace } from "@/lib/api/guards";
+import { errorResponse } from "@/lib/api/errorResponse";
 import type { Workspace } from "@/lib/workspace/workspaceStore";
 
 type Params = { id: string };
@@ -25,14 +26,14 @@ function guard(id: string): Workspace | NextResponse {
 
 const handlers = credentialHandlers<Params>(
   "workspace-mcp",
-  async ({ id }) => {
-    const ws = guard(id);
+  async ({ id }, request) => {
+    const ws = requireWorkspace(id, request);
     return ws instanceof NextResponse ? ws : id;
   },
   {
     setEnabled: async (_kind, subject, enabled) => {
       const result = await updateWorkspace(subject as string, { workspaceMcpAccess: enabled });
-      if (!result) return NextResponse.json({ error: "not found" }, { status: 404 });
+      if (!result) return errorResponse("NOT_FOUND", "not found");
       // Enabling a channel that had no secret mints its first one. Hand it back here or it is lost:
       // the store keeps only a hash, so this response is the single chance to read it.
       const plain = result.credentials?.workspaceMcpSecret;

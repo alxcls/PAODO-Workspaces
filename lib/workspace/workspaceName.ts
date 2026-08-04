@@ -9,18 +9,19 @@
 //     equivalent names (case, Unicode form) can't coexist while agent routing is still name-based.
 import path from "path";
 import { WORKSPACES_ROOT } from "../infra/paths";
+import { AppError } from "../errors/appError";
 
 export const MAX_WORKSPACE_NAME_LENGTH = 100;
 
 export type WorkspaceNameErrorCode = "WORKSPACE_NAME_INVALID" | "WORKSPACE_NAME_CONFLICT";
 
 /** Thrown for both malformed names (INVALID) and collisions (CONFLICT); routes map code → status. */
-export class WorkspaceNameError extends Error {
+export class WorkspaceNameError extends AppError {
   constructor(
     readonly code: WorkspaceNameErrorCode,
     message: string,
   ) {
-    super(message);
+    super(code, message);
     this.name = "WorkspaceNameError";
   }
 }

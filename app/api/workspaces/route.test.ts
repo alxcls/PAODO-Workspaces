@@ -70,14 +70,14 @@ describe("POST /api/workspaces — creation & name-policy errors", () => {
     store.createWorkspace.mockRejectedValue(new WorkspaceNameError("WORKSPACE_NAME_CONFLICT", "taken"));
     const res = await post({ name: "alpha" });
     expect(res.status).toBe(409);
-    expect(await res.json()).toMatchObject({ code: "WORKSPACE_NAME_CONFLICT", error: "taken" });
+    expect(await res.json()).toMatchObject({ ok: false, code: "WORKSPACE_NAME_CONFLICT", error: "taken" });
   });
 
   it("400s with WORKSPACE_NAME_INVALID on a malformed name", async () => {
     store.createWorkspace.mockRejectedValue(new WorkspaceNameError("WORKSPACE_NAME_INVALID", "bad"));
     const res = await post({ name: "team/invoices" });
     expect(res.status).toBe(400);
-    expect(await res.json()).toMatchObject({ code: "WORKSPACE_NAME_INVALID" });
+    expect(await res.json()).toMatchObject({ ok: false, code: "WORKSPACE_NAME_INVALID" });
   });
 
   it("500s on an unexpected (non-name) error", async () => {

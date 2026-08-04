@@ -65,7 +65,9 @@ describe("workspace update body contract", () => {
   it("rejects an unknown field and names the accepted ones", async () => {
     const res = await patch({ internet_access: true });
     expect(res.status).toBe(400);
-    const { error } = await res.json();
+    const { ok, code, error, details } = await res.json();
+    expect({ ok, code }).toEqual({ ok: false, code: "INVALID_REQUEST" });
+    expect(details).toMatchObject({ fields: ["internet_access"] });
     expect(error).toContain("unknown field(s): internet_access");
     expect(error).toContain("internetAccess");
   });

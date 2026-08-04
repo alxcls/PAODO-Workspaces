@@ -43,14 +43,8 @@ export interface WorkspaceDetails extends WorkspaceSummary {
   internetAccess: boolean;
   llmProvider: string;
   llmModel: string;
-  reasoningEffort: ReasoningEffort;
-  /**
-   * Whether `reasoningEffort` means anything for this provider. False for providers with no effort
-   * dial (DeepSeek gates reasoning by model name): the stored value is a placeholder the agent never
-   * sends, and the UI hides the control. Programmatic callers need this to tell "effort is low" from
-   * "effort does not apply" without hardcoding provider capabilities.
-   */
-  reasoningEffortSupported: boolean;
+  /** Omitted when the selected provider has no reasoning-effort control. */
+  reasoningEffort?: ModelSelection["reasoningEffort"];
 }
 
 /** The metadata fields of the update contract, as a caller supplies them — unvalidated. */
@@ -140,6 +134,7 @@ export function getWorkspace(id: string, store: WorkspaceLookup = getStore()): W
   const workspace = store.getWorkspace(id);
   if (!workspace) return null;
   const llmProvider = workspace.llmProvider ?? DEFAULT_LLM.provider;
+  const supportsReasoningEffort = getProviderMetadata(llmProvider).reasoningEfforts.length > 0;
   return {
     ...summary(workspace),
     createdAt: workspace.createdAt,
@@ -148,8 +143,7 @@ export function getWorkspace(id: string, store: WorkspaceLookup = getStore()): W
     internetAccess: workspace.internetAccess,
     llmProvider,
     llmModel: workspace.llmModel ?? DEFAULT_LLM.model,
-    reasoningEffort: workspace.reasoningEffort ?? DEFAULT_LLM.reasoningEffort,
-    reasoningEffortSupported: getProviderMetadata(llmProvider).reasoningEfforts.length > 0,
+    ...(supportsReasoningEffort ? { reasoningEffort: workspace.reasoningEffort ?? DEFAULT_LLM.reasoningEffort } : {}),
   };
 }
 

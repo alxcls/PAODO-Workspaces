@@ -63,8 +63,12 @@ describe("workspace API key route", () => {
   });
 
   it("validates PATCH bodies, including malformed JSON", async () => {
-    expect((await PATCH(request("PATCH", "not json"), ctx())).status).toBe(400);
-    expect((await PATCH(request("PATCH", JSON.stringify({ enabled: "yes" })), ctx())).status).toBe(400);
+    const malformed = await PATCH(request("PATCH", "not json"), ctx());
+    expect(malformed.status).toBe(400);
+    expect(await malformed.json()).toMatchObject({ ok: false, code: "INVALID_REQUEST" });
+    const invalid = await PATCH(request("PATCH", JSON.stringify({ enabled: "yes" })), ctx());
+    expect(invalid.status).toBe(400);
+    expect(await invalid.json()).toMatchObject({ ok: false, code: "INVALID_REQUEST" });
   });
 
   it("mints and returns the first key when the channel is opened", async () => {
@@ -95,6 +99,19 @@ describe("workspace API key route", () => {
     expect(h.mint).toHaveBeenCalledWith("workspace-api", "ws-1");
     expect((await DELETE(request("DELETE"), ctx())).status).toBe(200);
     expect(h.revoke).toHaveBeenCalledWith("workspace-api", "ws-1");
+  });
+
+  it("returns the public error contract when credential persistence fails", async () => {
+    h.mint.mockImplementationOnce(() => {
+      throw new Error("disk failure");
+    });
+    const response = await POST(request("POST"), ctx());
+    expect(response.status).toBe(500);
+    expect(await response.json()).toEqual({
+      ok: false,
+      code: "INTERNAL_ERROR",
+      error: "credential operation failed",
+    });
   });
 
   // Without the workspace guard a mistyped id would mint a key against a workspace that does not

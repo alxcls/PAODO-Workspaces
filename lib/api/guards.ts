@@ -22,32 +22,21 @@ import {
 import { getClientIp } from "@/lib/infra/realtime/clientIp";
 import { createAuditLogger } from "@/lib/infra/logger";
 import { throttleLog } from "@/lib/infra/logThrottle";
-import { WorkspaceNameError } from "@/lib/workspace/workspaceName";
+import { errorResponse } from "@/lib/api/errorResponse";
 
 /** The one and only "not found" body every route returns for a missing resource. */
-export function notFound(): NextResponse {
-  return NextResponse.json({ error: "not found" }, { status: 404 });
-}
-
-/**
- * Map a WorkspaceNameError to its HTTP response — 409 for a name conflict, 400 for a malformed name —
- * or null if `err` is something else the caller should handle itself. Keeps the create/rename routes'
- * error contract (status + machine-readable `code`) in one place.
- */
-export function workspaceNameErrorResponse(err: unknown): NextResponse | null {
-  if (!(err instanceof WorkspaceNameError)) return null;
-  const status = err.code === "WORKSPACE_NAME_CONFLICT" ? 409 : 400;
-  return NextResponse.json({ error: err.message, code: err.code }, { status });
+export function notFound(request?: Request): NextResponse {
+  return errorResponse("NOT_FOUND", "not found", { request });
 }
 
 /** Resolve a workspace by id, or a standard 404 Response to short-circuit the handler. */
-export function requireWorkspace(id: string): Workspace | NextResponse {
-  return getStore().getWorkspace(id) ?? notFound();
+export function requireWorkspace(id: string, request?: Request): Workspace | NextResponse {
+  return getStore().getWorkspace(id) ?? notFound(request);
 }
 
 /** Resolve a drive by id, or a standard 404 Response to short-circuit the handler. */
-export function requireDrive(id: string): Drive | NextResponse {
-  return getDrive(id) ?? notFound();
+export function requireDrive(id: string, request?: Request): Drive | NextResponse {
+  return getDrive(id) ?? notFound(request);
 }
 
 const audit = createAuditLogger("api");
@@ -60,8 +49,8 @@ function rejection(rl: RateLimitResult, logContext: Record<string, unknown>, sub
   if (suppressed !== null) {
     audit.warn({ ...logContext, subject, event: "rate_limited", suppressed }, "rate limit exceeded");
   }
-  return new Response("Too Many Requests", {
-    status: 429,
+  return errorResponse("RATE_LIMITED", "Too Many Requests", {
+    requestId: typeof logContext.requestId === "string" ? logContext.requestId : undefined,
     headers: {
       "Retry-After": String(rl.retryAfter),
       "RateLimit-Limit": String(rl.limit),

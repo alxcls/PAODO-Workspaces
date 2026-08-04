@@ -1,19 +1,36 @@
 // REST endpoint for a single workspace.
 // GET returns its metadata; DELETE removes it from the registry and deletes its directory from disk.
 import { type NextRequest, NextResponse } from "next/server";
-import { notFound, workspaceNameErrorResponse } from "@/lib/api/guards";
+import { createLogger } from "@/lib/infra/logger";
+import { notFound } from "@/lib/api/guards";
+import { appErrorResponse, errorResponse, readJsonObject } from "@/lib/api/errorResponse";
 import { publicBaseUrl } from "@/lib/api/credentialRoutes";
 import { getWorkspaceOverview } from "@/lib/operations/workspaceDetails";
 import { updateWorkspace } from "@/lib/operations/workspaceUpdate";
 import { deleteWorkspace } from "@/lib/operations/workspaceDelete";
-import { WorkspaceUpdateError, WorkspaceUpdateFailure } from "@/lib/operations/workspaceErrors";
+
+const log = createLogger("api").child({ route: "workspace" });
 
 export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const connectionOrigin = publicBaseUrl() ?? new URL(req.url).origin;
-  const workspace = await getWorkspaceOverview(id, connectionOrigin);
-  if (!workspace) return notFound();
-  return NextResponse.json(workspace, { headers: { "Cache-Control": "no-store" } });
+  try {
+    const connectionOrigin = publicBaseUrl() ?? new URL(req.url).origin;
+    const workspace = await getWorkspaceOverview(id, connectionOrigin);
+    if (!workspace) return notFound(req);
+    return NextResponse.json(workspace, { headers: { "Cache-Control": "no-store" } });
+  } catch (err) {
+    log.error(
+      {
+        event: "workspace_read_failed",
+        outcome: "workspace_not_returned",
+        code: "INTERNAL_ERROR",
+        err,
+        workspaceId: id,
+      },
+      "failed to read workspace",
+    );
+    return errorResponse("INTERNAL_ERROR", "failed to read workspace", { request: req });
+  }
 }
 
 // The wire names PATCH accepts, in one place so the emptiness check, the unknown-field rejection and
@@ -35,7 +52,9 @@ const UPDATABLE_FIELDS = [
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const body = (await req.json()) as {
+  const parsed = await readJsonObject(req);
+  if (parsed instanceof Response) return parsed;
+  const body = parsed as {
     name?: string;
     maxIterations?: number;
     maxRunMinutes?: number;
@@ -50,7 +69,10 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   };
 
   if (body.description !== undefined && typeof body.description !== "string") {
-    return NextResponse.json({ error: "description must be a string" }, { status: 400 });
+    return errorResponse("INVALID_REQUEST", "description must be a string", {
+      request: req,
+      details: { field: "description" },
+    });
   }
 
   // Reject anything not on the list rather than ignoring it. A misspelled field alongside a valid one
@@ -59,17 +81,19 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   // accepted fields, because a programmatic caller has no form to discover them from.
   const unknown = Object.keys(body).filter((key) => !(UPDATABLE_FIELDS as readonly string[]).includes(key));
   if (unknown.length > 0) {
-    return NextResponse.json(
-      { error: `unknown field(s): ${unknown.join(", ")} — accepted: ${UPDATABLE_FIELDS.join(", ")}` },
-      { status: 400 },
+    return errorResponse(
+      "INVALID_REQUEST",
+      `unknown field(s): ${unknown.join(", ")} — accepted: ${UPDATABLE_FIELDS.join(", ")}`,
+      { request: req, details: { fields: unknown, acceptedFields: [...UPDATABLE_FIELDS] } },
     );
   }
   const hasModel = body.llmProvider !== undefined || body.llmModel !== undefined || body.reasoningEffort !== undefined;
   const supplied = UPDATABLE_FIELDS.filter((field) => body[field] !== undefined);
   if (supplied.length === 0) {
-    return NextResponse.json(
-      { error: `no fields supplied — send at least one of: ${UPDATABLE_FIELDS.join(", ")}` },
-      { status: 400 },
+    return errorResponse(
+      "INVALID_REQUEST",
+      `no fields supplied — send at least one of: ${UPDATABLE_FIELDS.join(", ")}`,
+      { request: req, details: { acceptedFields: [...UPDATABLE_FIELDS] } },
     );
   }
 
@@ -103,7 +127,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
           }
         : {}),
     });
-    if (!result) return notFound();
+    if (!result) return notFound(req);
     // A mutation returns only its receipt. GET is the sole workspace representation, so adding a
     // projection there (skills, secrets, access state) can never make PATCH partial or expensive.
     // no-store unconditionally: this receipt may carry a plaintext key minted by this write.
@@ -118,19 +142,29 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       { headers: { "Cache-Control": "no-store" } },
     );
   } catch (err) {
-    const nameError = workspaceNameErrorResponse(err);
-    if (nameError) return nameError;
-    if (err instanceof WorkspaceUpdateError) {
-      return NextResponse.json({ error: err.message }, { status: 400 });
-    }
-    if (err instanceof WorkspaceUpdateFailure) {
-      return NextResponse.json({ error: err.message }, { status: 500 });
-    }
-    throw err;
+    const expected = appErrorResponse(err, req);
+    if (expected) return expected;
+    log.error(
+      {
+        event: "workspace_update_failed",
+        outcome: "workspace_not_updated",
+        code: "INTERNAL_ERROR",
+        err,
+        workspaceId: id,
+      },
+      "failed to update workspace",
+    );
+    return errorResponse("INTERNAL_ERROR", "failed to update workspace", { request: req });
   }
 }
 
-export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  return NextResponse.json(await deleteWorkspace(id));
+  try {
+    return NextResponse.json(await deleteWorkspace(id));
+  } catch {
+    // The deletion operation logs the exact failed cleanup stage once; do not duplicate the private
+    // exception here. This boundary only converts it to the safe public contract.
+    return errorResponse("INTERNAL_ERROR", "failed to delete workspace", { request: req });
+  }
 }

@@ -115,7 +115,13 @@ describe("DELETE /api/workspaces/[id]", () => {
   it("leaves the workspace in the registry when an earlier stage fails, so it can be retried", async () => {
     h.deleteWorkspaceDir.mockRejectedValue(new Error("docker daemon unavailable"));
 
-    await expect(DELETE(request(), ctx())).rejects.toThrow("docker daemon unavailable");
+    const response = await DELETE(request(), ctx());
+    expect(response.status).toBe(500);
+    expect(await response.json()).toEqual({
+      ok: false,
+      code: "INTERNAL_ERROR",
+      error: "failed to delete workspace",
+    });
 
     // The crux: the registry entry survives a failed delete, so the workspace is still listed and
     // the user can delete again. Previously it was removed first and the retry became a no-op.

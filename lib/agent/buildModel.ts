@@ -164,7 +164,8 @@ export function providerApiKeyEnv(provider: string): string | undefined {
   return PROVIDERS[provider]?.apiKeyEnv;
 }
 
-// Total by design: callers include GET /api/models, which passes an unvalidated query param.
+// Total for legacy stored selections and validation paths that inspect metadata before rejecting an
+// unknown provider. Unknown ids have no capabilities; they must never inherit another provider's.
 export function getProviderMetadata(provider: string): ProviderMetadata {
-  return PROVIDERS[provider] ?? PROVIDERS.openai;
+  return PROVIDERS[provider] ?? { supportsPromptCaching: false, reasoningEfforts: [] };
 }

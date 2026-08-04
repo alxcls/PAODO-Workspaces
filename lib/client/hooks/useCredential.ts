@@ -9,6 +9,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { readApiError, type ApiFailure } from "@/lib/client/apiError";
 
 /** The credential fields every endpoint returns, matching CredentialState in credentialStore.ts. */
 export interface CredentialSnapshot {
@@ -40,9 +41,14 @@ export function useCredential<TExtra extends object = Record<string, never>>(
   const [secret, setSecret] = useState<string | null>(null);
   const [extra, setExtra] = useState<TExtra | null>(null);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [failure, setFailure] = useState<ApiFailure | null>(null);
 
-  const fail = (err: unknown, fallback: string) => setError(err instanceof Error ? err.message : fallback);
+  const fail = (err: unknown, fallback: string) =>
+    setFailure({
+      ok: false,
+      code: "NETWORK_ERROR",
+      error: err instanceof Error ? err.message : fallback,
+    });
 
   useEffect(() => {
     if (!load) return;
@@ -52,10 +58,13 @@ export function useCredential<TExtra extends object = Record<string, never>>(
     void (async () => {
       try {
         const response = await fetch(endpoint);
-        if (!response.ok) throw new Error(`Could not load ${feature}.`);
+        if (!response.ok) {
+          setFailure(await readApiError(response, `Could not load ${feature}.`));
+          return;
+        }
         const body = (await response.json()) as CredentialSnapshot & TExtra;
         if (!active) return;
-        setError(null);
+        setFailure(null);
         setEnabled(body.enabled);
         setHasSecret(body.hasSecret);
         setExtra(body as unknown as TExtra);
@@ -71,14 +80,17 @@ export function useCredential<TExtra extends object = Record<string, never>>(
   const toggle = useCallback(async () => {
     const next = !enabled;
     setBusy(true);
-    setError(null);
+    setFailure(null);
     try {
       const response = await fetch(endpoint, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ enabled: next }),
       });
-      if (!response.ok) throw new Error(`Could not update ${feature}.`);
+      if (!response.ok) {
+        setFailure(await readApiError(response, `Could not update ${feature}.`));
+        return;
+      }
       // Opening a workspace channel that has no secret mints its first one and returns it here, so a
       // single click produces a usable channel instead of leaving a Generate step. Absent for the
       // instance-wide CLI token, whose endpoint never mints on toggle — hence the optional read.
@@ -98,10 +110,13 @@ export function useCredential<TExtra extends object = Record<string, never>>(
   /** Mints or rotates. The returned plaintext is the only time it exists outside the server. */
   const mint = useCallback(async () => {
     setBusy(true);
-    setError(null);
+    setFailure(null);
     try {
       const response = await fetch(endpoint, { method: "POST" });
-      if (!response.ok) throw new Error(`Could not generate a ${noun}.`);
+      if (!response.ok) {
+        setFailure(await readApiError(response, `Could not generate a ${noun}.`));
+        return;
+      }
       const { plain } = (await response.json()) as { plain?: unknown };
       if (typeof plain !== "string" || !plain) throw new Error(`The server returned an invalid ${noun}.`);
       setSecret(plain);
@@ -117,10 +132,13 @@ export function useCredential<TExtra extends object = Record<string, never>>(
 
   const revoke = useCallback(async () => {
     setBusy(true);
-    setError(null);
+    setFailure(null);
     try {
       const response = await fetch(endpoint, { method: "DELETE" });
-      if (!response.ok) throw new Error(`Could not revoke the ${noun}.`);
+      if (!response.ok) {
+        setFailure(await readApiError(response, `Could not revoke the ${noun}.`));
+        return;
+      }
       setHasSecret(false);
       setSecret(null);
     } catch (err) {
@@ -139,8 +157,8 @@ export function useCredential<TExtra extends object = Record<string, never>>(
     secret,
     extra,
     busy,
-    error,
-    setError,
+    error: failure?.error ?? null,
+    failure,
     toggle,
     mint,
     revoke,

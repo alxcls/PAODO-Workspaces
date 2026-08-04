@@ -9,6 +9,7 @@ import { createServer } from "http";
 import path from "path";
 import { createAuditLogger, createLogger, exitAfterLogs, runWithLogContext } from "./lib/infra/logger";
 import { throttleLog } from "./lib/infra/logThrottle";
+import { publicErrorBody, type AppErrorCode } from "./lib/errors/appError";
 
 const log = createLogger("server");
 const audit = createAuditLogger("server");
@@ -155,6 +156,23 @@ httpServer.on("request", (req, res) => {
   res.setHeader("X-Request-Id", requestId);
   req.headers["x-request-id"] = requestId;
 
+  // Security rejections happen before Next.js, so they cannot use the route-level response helper.
+  // API callers still receive the identical public envelope; browser-page challenges retain their
+  // terse text body and WWW-Authenticate behavior.
+  const reject = (status: number, code: AppErrorCode, message: string, headers: Record<string, string> = {}) => {
+    if (pathname.startsWith("/api/")) {
+      res.writeHead(status, {
+        "Content-Type": "application/json; charset=utf-8",
+        "Cache-Control": "no-store",
+        ...headers,
+      });
+      res.end(JSON.stringify(publicErrorBody(code, message, { requestId })));
+      return;
+    }
+    res.writeHead(status, headers);
+    res.end(message);
+  };
+
   // Rejection paths are reachable pre-auth, so an unauthenticated caller drives how often they log.
   // Throttle them and mark the request audited, so one rejected request costs at most one line.
   const auditRejection = (event: string, fields: Record<string, unknown>, msg: string) => {
@@ -172,12 +190,11 @@ httpServer.on("request", (req, res) => {
         { ip, method, pathname, policy: rl.policy, requestId },
         "API rate limit exceeded",
       );
-      res.writeHead(429, {
+      reject(429, "RATE_LIMITED", "Too Many Requests", {
         "Retry-After": String(rl.retryAfter),
         "RateLimit-Limit": String(rl.limit),
         "RateLimit-Remaining": String(rl.remaining),
       });
-      res.end("Too Many Requests");
       return;
     }
   }
@@ -185,21 +202,18 @@ httpServer.on("request", (req, res) => {
   const authResult = authenticate(ip, req);
   if (authResult === "blocked") {
     auditRejection("auth_blocked", { ip, requestId }, "auth blocked");
-    res.writeHead(429, { "Retry-After": "60" });
-    res.end("Too Many Requests");
+    reject(429, "RATE_LIMITED", "Too Many Requests", { "Retry-After": "60" });
     return;
   }
   if (authResult === "challenge") {
     audit.debug({ ip, requestId, event: "auth_challenge" }, "auth challenge");
-    res.writeHead(401, { "WWW-Authenticate": 'Basic realm="App"' });
-    res.end("Unauthorized");
+    reject(401, "UNAUTHORIZED", "Unauthorized", { "WWW-Authenticate": 'Basic realm="App"' });
     return;
   }
   if (authResult === "unauthorized") {
     auditRejection("auth_unauthorized", { ip, requestId }, "auth unauthorized");
     const scheme = req.headers["authorization"]?.startsWith("Bearer ") ? 'Bearer realm="PAODO"' : 'Basic realm="App"';
-    res.writeHead(401, { "WWW-Authenticate": scheme });
-    res.end("Unauthorized");
+    reject(401, "UNAUTHORIZED", "Unauthorized", { "WWW-Authenticate": scheme });
     return;
   }
 
@@ -216,8 +230,7 @@ httpServer.on("request", (req, res) => {
 
   if (isCsrf({ method, pathname, secFetchSite: req.headers["sec-fetch-site"] as string | undefined })) {
     auditRejection("csrf_blocked", { ip, method, pathname, requestId }, "csrf blocked");
-    res.writeHead(403);
-    res.end("Forbidden");
+    reject(403, "FORBIDDEN", "Forbidden");
     return;
   }
 

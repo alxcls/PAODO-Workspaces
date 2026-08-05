@@ -25,6 +25,8 @@ import { createLogger } from "@/lib/infra/logger";
 import { MAX_UPLOAD_BYTES, formatBytes } from "@/lib/uploads/limits";
 import { checkFreeSpace, RESERVED_FREE_BYTES } from "@/lib/infra/storage/diskSpace";
 import { resolveContained } from "@/lib/files/containment";
+import { requireEntryPath } from "@/lib/operations/files/paths";
+import { appErrorResponse } from "@/lib/api/errorResponse";
 
 export interface UploadBackend {
   dir: string;
@@ -87,9 +89,16 @@ export async function handleUpload(req: NextRequest, be: UploadBackend): Promise
     return NextResponse.json({ error: "Not enough free disk space to accept this upload." }, { status: 507 });
   };
 
+  // `?path=` is workspace-relative, and requireEntryPath is what makes that the only thing it can be:
+  // resolveContained alone would still accept an absolute path that happened to land inside the root,
+  // which is the dual path space the rest of the file API no longer has (lib/files/relpath.ts).
   const { searchParams } = new URL(req.url);
-  const filePath = searchParams.get("path");
-  if (!filePath) return NextResponse.json({ error: "path required" }, { status: 400 });
+  let filePath: string;
+  try {
+    filePath = requireEntryPath(searchParams.get("path"));
+  } catch (err) {
+    return appErrorResponse(err, req) ?? NextResponse.json({ error: "invalid path" }, { status: 400 });
+  }
 
   const dir = await fs.realpath(be.dir);
   const resolved = await resolveContained(dir, filePath);

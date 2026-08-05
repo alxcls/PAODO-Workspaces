@@ -20,8 +20,10 @@
 import fs from "fs/promises";
 import path from "path";
 import type JSZip from "jszip";
+import { resolveContained } from "./containment";
 import { readTransferEntries } from "./entries";
 import { openFileLimiter, type Semaphore } from "./fdLimit";
+import { relativeEntryPath } from "./relpath";
 
 async function addDirToZip(zip: JSZip, sem: Semaphore, dirPath: string, zipPath: string) {
   const entries = await readTransferEntries(dirPath, sem);
@@ -42,9 +44,16 @@ async function addDirToZip(zip: JSZip, sem: Semaphore, dirPath: string, zipPath:
   );
 }
 
-// Add each caller-selected path to the zip, recursing into directories. Paths are validated to stay
-// within `baseDir` (anything outside is ignored); unreadable paths are reported via `onSkip` and
-// left out rather than aborting the whole archive.
+// Add each caller-selected path to the zip, recursing into directories. `paths` are workspace-relative
+// (./relpath.ts), the same space the file tree serves and the content route accepts.
+//
+// A path that cannot be archived is reported through `onSkip` and left out rather than aborting the
+// whole archive — an unreadable file should not cost the user the other 900. That now includes a path
+// that fails containment: it used to be dropped silently, which is the same failure mode the
+// descriptor budget exists to prevent, a short archive presented as a complete one.
+//
+// Containment goes through resolveContained rather than a lexical prefix check, so a symlink inside
+// the tree pointing at /etc is refused instead of having its target read into the archive.
 //
 // When `rootFolder` is given, every entry is nested under a single top-level folder of that name, so
 // extracting the archive yields one tidy `<rootFolder>/` directory (GitHub-style) instead of spilling
@@ -60,16 +69,16 @@ export async function addSelectedToZip(
   const target = rootFolder ? (zip.folder(rootFolder) ?? zip) : zip;
   const sem = openFileLimiter();
   await Promise.all(
-    paths.map(async (filePath) => {
-      const resolved = path.resolve(filePath);
-      if (!resolved.startsWith(baseDir + path.sep)) return;
+    paths.map(async (relPath) => {
       try {
+        const entryPath = relativeEntryPath(relPath);
+        const resolved = await resolveContained(baseDir, entryPath);
+        if (resolved === null) throw new Error("Path resolves outside the workspace");
         const stat = await sem.run(() => fs.stat(resolved));
-        const relative = path.relative(baseDir, resolved);
-        if (stat.isDirectory()) await addDirToZip(target, sem, resolved, relative);
-        else target.file(relative, await sem.run(() => fs.readFile(resolved)));
+        if (stat.isDirectory()) await addDirToZip(target, sem, resolved, entryPath);
+        else target.file(entryPath, await sem.run(() => fs.readFile(resolved)));
       } catch (err) {
-        onSkip(filePath, err);
+        onSkip(relPath, err);
       }
     }),
   );

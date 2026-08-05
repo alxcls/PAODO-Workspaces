@@ -8,7 +8,7 @@ export const runtime = "nodejs";
 import { NextResponse } from "next/server";
 import { requireDrive } from "@/lib/api/guards";
 import { driveContentDir } from "@/lib/drives/store";
-import { getFileContent, putFileContent, deleteFileContent } from "@/lib/files/content";
+import { getFileContent, putFileContent, deleteFileContent } from "@/lib/api/fileContentRoutes";
 import { moveFileContent } from "@/lib/files/move";
 import type { FileBackend } from "@/lib/files/backend";
 

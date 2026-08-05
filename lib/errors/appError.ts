@@ -3,6 +3,8 @@
 export const ERROR_CODES = {
   INVALID_REQUEST: "INVALID_REQUEST",
   NOT_FOUND: "NOT_FOUND",
+  /** The request was valid but lost a race — the thing it named changed underneath it. */
+  CONFLICT: "CONFLICT",
   UNAUTHORIZED: "UNAUTHORIZED",
   FORBIDDEN: "FORBIDDEN",
   RATE_LIMITED: "RATE_LIMITED",

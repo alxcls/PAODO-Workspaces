@@ -1,17 +1,22 @@
 // Server-side file move policy shared by workspace and drive routes.
 // This module owns validation, containment-safe target resolution, no-clobber filesystem moves,
-// batch outcomes, and the single post-move snapshot. General content CRUD lives in content.ts.
+// batch outcomes, and the single post-move snapshot. General content CRUD lives in
+// lib/operations/files/content.ts, behind lib/api/fileContentRoutes.ts.
+//
+// Paths in and out are workspace-relative (lib/files/relpath.ts); `destinationDirectory: null` remains
+// the client's way of naming the root.
 
 import { NextResponse } from "next/server";
 import fs from "fs/promises";
 import path from "path";
 import { createLogger } from "@/lib/infra/logger";
-import { assertInsideWorkspace } from "./assertContained";
-import { lexicalFilePath, logFileRouteError, type FileBackend } from "./backend";
+import { requireDirPath, requireEntryPath, resolveHostPath } from "@/lib/operations/files/paths";
+import { logFileRouteError, type FileBackend } from "./backend";
 
 interface MoveBody {
+  /** Wire-space relative paths, already validated by the caller. */
   sourcePath: string;
-  destinationDirectory?: string | null;
+  destinationDirectory: string;
 }
 
 interface MoveFailure {
@@ -34,10 +39,10 @@ function isFailure<T extends object>(result: T | MoveFailure): result is MoveFai
 }
 
 interface MoveTarget {
-  /** Real paths used by filesystem operations. */
+  /** Real host paths used by filesystem operations. */
   source: string;
   destination: string;
-  /** Lexical path returned to the browser. */
+  /** Wire-space relative path returned to the client. */
   clientDestination: string;
   unchanged: boolean;
   destinationLabel: string;
@@ -47,20 +52,18 @@ interface MoveTarget {
 class DestinationConflictError extends Error {}
 
 async function resolveMoveTarget(be: FileBackend, body: MoveBody): Promise<MoveTarget | MoveFailure> {
-  const lexicalSource = lexicalFilePath(be, body.sourcePath);
-  const source = await assertInsideWorkspace(be.dir, lexicalSource);
-  const workspaceRoot = await fs.realpath(be.dir);
-  if (source === workspaceRoot) {
-    return { error: "Cannot move the workspace root", status: 400 };
-  }
+  // Containment first, so an out-of-tree path is refused as such before anything else looks at it.
+  // The root cannot appear here at all: requireEntryPath refuses "" for exactly this reason.
+  const source = await resolveHostPath(be.dir, body.sourcePath, "sourcePaths");
 
   // Resolving a symlink and then moving its target would move a different object than the tree row.
-  if ((await fs.lstat(lexicalSource)).isSymbolicLink()) {
+  // This has to lstat the *lexical* path: resolveHostPath returns the realpath, which is the target
+  // rather than the link, so by then the symlink is no longer visible.
+  if ((await fs.lstat(path.join(be.dir, body.sourcePath))).isSymbolicLink()) {
     return { error: "Symbolic links cannot be moved", status: 400 };
   }
 
-  const lexicalDirectory = body.destinationDirectory ? lexicalFilePath(be, body.destinationDirectory) : be.dir;
-  const destinationDirectory = await assertInsideWorkspace(be.dir, lexicalDirectory);
+  const destinationDirectory = await resolveHostPath(be.dir, body.destinationDirectory, "destinationDirectory");
   if (!(await fs.stat(destinationDirectory)).isDirectory()) {
     return { error: "Destination must be a directory", status: 400 };
   }
@@ -73,14 +76,14 @@ async function resolveMoveTarget(be: FileBackend, body: MoveBody): Promise<MoveT
     return { error: "Cannot move a folder into itself", status: 400 };
   }
 
-  const name = path.basename(source);
+  const name = path.basename(body.sourcePath);
   const destination = path.join(destinationDirectory, name);
   return {
     source,
     destination,
-    clientDestination: path.join(lexicalDirectory, name),
+    clientDestination: body.destinationDirectory === "" ? name : `${body.destinationDirectory}/${name}`,
     unchanged: destination === source,
-    destinationLabel: path.relative(workspaceRoot, destinationDirectory) || "workspace root",
+    destinationLabel: body.destinationDirectory || "workspace root",
     sourceStat,
   };
 }
@@ -131,7 +134,7 @@ async function moveWithoutOverwrite(target: MoveTarget): Promise<void> {
 async function moveOne(
   be: FileBackend,
   sourcePath: string,
-  destinationDirectory: string | null | undefined,
+  destinationDirectory: string,
   log: ReturnType<typeof createLogger>,
 ): Promise<MoveOutcome | MoveFailure> {
   try {
@@ -181,29 +184,30 @@ export async function moveFileContent(req: Request, be: FileBackend): Promise<Re
   }
 
   const candidate = parsedBody as Record<string, unknown>;
-  const sourcePaths = candidate.sourcePaths;
-  if (
-    !Array.isArray(sourcePaths) ||
-    sourcePaths.length === 0 ||
-    !sourcePaths.every((p) => typeof p === "string" && p.length > 0)
-  ) {
+  const rawSourcePaths = candidate.sourcePaths;
+  if (!Array.isArray(rawSourcePaths) || rawSourcePaths.length === 0) {
     return NextResponse.json({ error: "sourcePaths must be a non-empty array of paths" }, { status: 400 });
   }
-  if (
-    candidate.destinationDirectory !== undefined &&
-    candidate.destinationDirectory !== null &&
-    (typeof candidate.destinationDirectory !== "string" || candidate.destinationDirectory.length === 0)
-  ) {
-    return NextResponse.json({ error: "destinationDirectory must be a non-empty string or null" }, { status: 400 });
+
+  // Every path is validated up front rather than per item, so a batch containing one unsayable path is
+  // refused whole instead of moving the items before it and then stopping.
+  let sourcePaths: string[];
+  let destinationDirectory: string;
+  try {
+    sourcePaths = rawSourcePaths.map((p) => requireEntryPath(p, "sourcePaths"));
+    // null is the client's way of naming the root, and stays so; "" is its wire-space equivalent.
+    destinationDirectory = requireDirPath(candidate.destinationDirectory ?? null, "destinationDirectory");
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Invalid path";
+    return NextResponse.json({ error: message, results: [] }, { status: 400 });
   }
 
-  const destinationDirectory = candidate.destinationDirectory as string | null | undefined;
   const log = createLogger("api").child(be.logContext);
   const results: MoveOutcome[] = [];
   let failure: MoveFailure | null = null;
   let failedSourcePath: string | null = null;
 
-  for (const sourcePath of sourcePaths as string[]) {
+  for (const sourcePath of sourcePaths) {
     const result = await moveOne(be, sourcePath, destinationDirectory, log);
     if (isFailure(result)) {
       failure = result;

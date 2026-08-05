@@ -341,7 +341,7 @@ wss.on("connection", (ws, req) => {
     }
     try {
       if (msg.type === "ping") ws.send(JSON.stringify({ type: "pong" }));
-      if (msg.type === "self_write" && msg.path) markSelfWrite(msg.path);
+      if (msg.type === "self_write" && msg.path) markSelfWrite(workspace.dir, msg.path);
     } catch (err) {
       log.warn({ err, workspaceId, messageType: msg.type }, "websocket message handling failed");
     }

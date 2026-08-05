@@ -14,6 +14,7 @@ export type ApiErrorBody = PublicErrorBody;
 const STATUS_BY_CODE: Record<AppErrorCode, number> = {
   INVALID_REQUEST: 400,
   NOT_FOUND: 404,
+  CONFLICT: 409,
   UNAUTHORIZED: 401,
   FORBIDDEN: 403,
   RATE_LIMITED: 429,

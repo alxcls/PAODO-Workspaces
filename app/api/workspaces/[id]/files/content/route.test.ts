@@ -1,5 +1,10 @@
-// The workspace file-content API route must serve files inside a workspace but
-// reject path-traversal attempts to read host files outside it.
+// The workspace file-content API route must serve files inside a workspace but reject every attempt to
+// name a host file outside it.
+//
+// Requests speak workspace-relative paths (lib/files/relpath.ts) — "hello.txt", never
+// "/tmp/.../ws/hello.txt". The fixtures below still build absolute paths, because that is what fs
+// needs; `abs()` marks each crossing, and anything passed to a request is deliberately relative. A
+// test that names an absolute path in a request is asserting the refusal, not setting up a read.
 
 import { describe, it, expect, vi, afterAll } from "vitest";
 import fs from "fs";
@@ -15,7 +20,7 @@ import path from "path";
 //
 // This mirrors the real attack: an agent inside its container plants a symlink
 // in its own workspace, then a host-side HTTP request tries to read it.
-const { WS_DIR, ESCAPE } = vi.hoisted(() => {
+const { WS_DIR } = vi.hoisted(() => {
   const os = require("os");
   const fs = require("fs");
   const path = require("path");
@@ -25,9 +30,8 @@ const { WS_DIR, ESCAPE } = vi.hoisted(() => {
   fs.writeFileSync(path.join(wsDir, "hello.txt"), "hi there");
   const secret = path.join(root, "secret.txt");
   fs.writeFileSync(secret, "TOPSECRET");
-  const escape = path.join(wsDir, "escape");
-  fs.symlinkSync(secret, escape);
-  return { ROOT: root, WS_DIR: wsDir, ESCAPE: escape };
+  fs.symlinkSync(secret, path.join(wsDir, "escape"));
+  return { ROOT: root, WS_DIR: wsDir };
 });
 
 // A spy, so the batch tests can pin how many snapshots a multi-item move actually costs.
@@ -45,6 +49,10 @@ import { GET, PUT, PATCH } from "./route";
 import { buildTree } from "@/lib/files/tree";
 
 const ctx = { params: Promise.resolve({ id: "ws" }) };
+
+/** The host path for a workspace-relative one. Fixtures only — never an argument to a request. */
+const abs = (relPath: string) => path.join(WS_DIR, relPath);
+
 const getFile = (p: string) => GET(new Request(`http://x/api/files/content?path=${encodeURIComponent(p)}`), ctx);
 
 const patchMove = (body: unknown) =>
@@ -74,228 +82,215 @@ afterAll(() => fs.rmSync(path.dirname(WS_DIR), { recursive: true, force: true })
 
 describe("files/content GET — workspace containment", () => {
   it("serves a file that lives inside the workspace", async () => {
-    const res = await getFile(path.join(WS_DIR, "hello.txt"));
+    const res = await getFile("hello.txt");
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ type: "text", content: "hi there" });
   });
 
-  // THE test that matters: a symlink inside the workspace pointing outside it
-  // must NOT be followed. This is the cross-workspace / host-file boundary.
-  it("refuses to follow a symlink that escapes the workspace", async () => {
-    const res = await getFile(ESCAPE);
-    expect(res.status).toBe(400);
-    expect((await res.json()).error).toMatch(/outside workspace/i);
+  it("serves a file the tree named, without the client ever seeing the host directory", async () => {
+    const treePath = await treePathOf("hello.txt");
+    expect(treePath).toBe("hello.txt");
+    expect((await getFile(treePath)).status).toBe(200);
   });
 
-  // Use a real file we created OUTSIDE the workspace, so the rejection can only
-  // come from the containment check — not from the file happening to not exist.
-  it("refuses an absolute path pointing outside the workspace", async () => {
-    const outside = path.join(path.dirname(WS_DIR), "secret.txt");
-    const res = await getFile(outside);
+  // THE test that matters: a symlink inside the workspace pointing outside it must NOT be followed.
+  // This is the cross-workspace / host-file boundary, and it is the one case a lexical path check
+  // cannot see — "escape" is a perfectly ordinary relative path.
+  it("refuses to follow a symlink that escapes the workspace", async () => {
+    const res = await getFile("escape");
     expect(res.status).toBe(400);
-    expect((await res.json()).error).toMatch(/outside workspace/i);
+    expect((await res.json()).error).toMatch(/outside the workspace/i);
+  });
+
+  // Use a real file we created OUTSIDE the workspace, so a passing test can only mean the path was
+  // refused — not that the file happened not to exist.
+  it("refuses an absolute host path outright, whatever it points at", async () => {
+    const res = await getFile(path.join(path.dirname(WS_DIR), "secret.txt"));
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toMatch(/must be relative/i);
+    expect(body.code).toBe("INVALID_REQUEST");
+  });
+
+  it("refuses a .. traversal", async () => {
+    const res = await getFile("../secret.txt");
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toMatch(/escapes the workspace/i);
+  });
+
+  // An agent that has been editing /workspace/src/main.ts through its own tools will reach for the
+  // same string here. Naming the right form is what stops it retrying the same mistake.
+  it("names the correct form when given the container's own mount path", async () => {
+    const res = await getFile("/workspace/hello.txt");
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toMatch(/relative to the workspace root.*use "hello\.txt"/i);
+  });
+
+  it("reports a missing file as not found rather than as a bad request", async () => {
+    const res = await getFile("nope.txt");
+    expect(res.status).toBe(404);
+    expect((await res.json()).code).toBe("NOT_FOUND");
   });
 });
 
 describe("files/content PUT — save", () => {
   it("overwrites an existing file without leaving trailing content", async () => {
-    const filePath = path.join(WS_DIR, "edit-me.txt");
-    fs.writeFileSync(filePath, "a much longer original value");
+    fs.writeFileSync(abs("edit-me.txt"), "a much longer original value");
 
-    const res = await putFile(filePath, "short");
+    const res = await putFile("edit-me.txt", "short");
 
     expect(res.status).toBe(200);
-    expect(fs.readFileSync(filePath, "utf8")).toBe("short");
+    expect(fs.readFileSync(abs("edit-me.txt"), "utf8")).toBe("short");
   });
 });
 
 describe("files/content PATCH — move", () => {
   it("moves a file into a folder", async () => {
-    const source = path.join(WS_DIR, "move-me.txt");
-    const destinationDirectory = path.join(WS_DIR, "archive");
-    fs.writeFileSync(source, "move me");
-    fs.mkdirSync(destinationDirectory);
+    fs.writeFileSync(abs("move-me.txt"), "move me");
+    fs.mkdirSync(abs("archive"));
 
-    const res = await PATCH(
-      new Request("http://x/api/files/content", {
-        method: "PATCH",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ sourcePaths: [source], destinationDirectory }),
-      }),
-      ctx,
-    );
+    const res = await patchMove({ sourcePaths: ["move-me.txt"], destinationDirectory: "archive" });
 
     expect(res.status).toBe(200);
-    expect(fs.existsSync(source)).toBe(false);
-    expect(fs.readFileSync(path.join(destinationDirectory, "move-me.txt"), "utf8")).toBe("move me");
+    expect(fs.existsSync(abs("move-me.txt"))).toBe(false);
+    expect(fs.readFileSync(abs("archive/move-me.txt"), "utf8")).toBe("move me");
   });
 
   it("does not recreate the old path when a save arrives after a move", async () => {
-    const source = path.join(WS_DIR, "move-then-save.txt");
-    const destinationDirectory = path.join(WS_DIR, "moved-before-save");
-    const destination = path.join(destinationDirectory, path.basename(source));
-    fs.writeFileSync(source, "saved before move");
-    fs.mkdirSync(destinationDirectory);
+    fs.writeFileSync(abs("move-then-save.txt"), "saved before move");
+    fs.mkdirSync(abs("moved-before-save"));
 
-    expect((await patchMove({ sourcePaths: [source], destinationDirectory })).status).toBe(200);
-    const saveRes = await putFile(source, "late editor draft");
+    expect(
+      (await patchMove({ sourcePaths: ["move-then-save.txt"], destinationDirectory: "moved-before-save" })).status,
+    ).toBe(200);
+    const saveRes = await putFile("move-then-save.txt", "late editor draft");
 
     expect(saveRes.status).toBe(409);
-    expect(fs.existsSync(source)).toBe(false);
-    expect(fs.readFileSync(destination, "utf8")).toBe("saved before move");
+    expect((await saveRes.json()).code).toBe("CONFLICT");
+    expect(fs.existsSync(abs("move-then-save.txt"))).toBe(false);
+    expect(fs.readFileSync(abs("moved-before-save/move-then-save.txt"), "utf8")).toBe("saved before move");
   });
 
   it("moves a folder into another folder without merging", async () => {
-    const source = path.join(WS_DIR, "move-folder");
-    const destinationDirectory = path.join(WS_DIR, "folder-archive");
-    fs.mkdirSync(source);
-    fs.mkdirSync(destinationDirectory);
-    fs.writeFileSync(path.join(source, "nested.txt"), "nested");
+    fs.mkdirSync(abs("move-folder"));
+    fs.mkdirSync(abs("folder-archive"));
+    fs.writeFileSync(abs("move-folder/nested.txt"), "nested");
 
-    const res = await patchMove({ sourcePaths: [source], destinationDirectory });
+    const res = await patchMove({ sourcePaths: ["move-folder"], destinationDirectory: "folder-archive" });
 
     expect(res.status).toBe(200);
-    expect(fs.existsSync(source)).toBe(false);
-    expect(fs.readFileSync(path.join(destinationDirectory, "move-folder", "nested.txt"), "utf8")).toBe("nested");
+    expect(fs.existsSync(abs("move-folder"))).toBe(false);
+    expect(fs.readFileSync(abs("folder-archive/move-folder/nested.txt"), "utf8")).toBe("nested");
   });
 
   it("rejects moving a folder into one of its descendants", async () => {
-    const source = path.join(WS_DIR, "parent");
-    const descendant = path.join(source, "child");
-    fs.mkdirSync(descendant, { recursive: true });
+    fs.mkdirSync(abs("parent/child"), { recursive: true });
 
-    const res = await PATCH(
-      new Request("http://x/api/files/content", {
-        method: "PATCH",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ sourcePaths: [source], destinationDirectory: descendant }),
-      }),
-      ctx,
-    );
+    const res = await patchMove({ sourcePaths: ["parent"], destinationDirectory: "parent/child" });
 
     expect(res.status).toBe(400);
     expect((await res.json()).error).toMatch(/into itself/i);
-    expect(fs.existsSync(descendant)).toBe(true);
+    expect(fs.existsSync(abs("parent/child"))).toBe(true);
   });
 
   it("returns a conflict without overwriting an existing item", async () => {
-    const sourceDirectory = path.join(WS_DIR, "from");
-    const destinationDirectory = path.join(WS_DIR, "to");
-    fs.mkdirSync(sourceDirectory);
-    fs.mkdirSync(destinationDirectory);
-    const source = path.join(sourceDirectory, "same.txt");
-    const destination = path.join(destinationDirectory, "same.txt");
-    fs.writeFileSync(source, "source");
-    fs.writeFileSync(destination, "destination");
+    fs.mkdirSync(abs("from"));
+    fs.mkdirSync(abs("to"));
+    fs.writeFileSync(abs("from/same.txt"), "source");
+    fs.writeFileSync(abs("to/same.txt"), "destination");
 
-    const res = await PATCH(
-      new Request("http://x/api/files/content", {
-        method: "PATCH",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ sourcePaths: [source], destinationDirectory }),
-      }),
-      ctx,
-    );
+    const res = await patchMove({ sourcePaths: ["from/same.txt"], destinationDirectory: "to" });
 
     expect(res.status).toBe(409);
-    expect(fs.readFileSync(source, "utf8")).toBe("source");
-    expect(fs.readFileSync(destination, "utf8")).toBe("destination");
+    expect(fs.readFileSync(abs("from/same.txt"), "utf8")).toBe("source");
+    expect(fs.readFileSync(abs("to/same.txt"), "utf8")).toBe("destination");
   });
 
   // The mkdir reservation carries this case alone: rename(2) replaces an empty directory happily,
   // so without the reservation an empty same-named folder is silently clobbered and the 409 never
   // fires. A non-empty one is caught by rename's own ENOTEMPTY, which is why it can't pin this.
   it("returns a conflict rather than replacing an empty same-named folder", async () => {
-    const sourceDirectory = path.join(WS_DIR, "empty-from");
-    const destinationDirectory = path.join(WS_DIR, "empty-to");
-    const source = path.join(sourceDirectory, "dup");
-    const destination = path.join(destinationDirectory, "dup");
-    fs.mkdirSync(source, { recursive: true });
-    fs.mkdirSync(destination, { recursive: true });
-    fs.writeFileSync(path.join(source, "mine.txt"), "mine");
+    fs.mkdirSync(abs("empty-from/dup"), { recursive: true });
+    fs.mkdirSync(abs("empty-to/dup"), { recursive: true });
+    fs.writeFileSync(abs("empty-from/dup/mine.txt"), "mine");
 
-    const res = await patchMove({ sourcePaths: [source], destinationDirectory });
+    const res = await patchMove({ sourcePaths: ["empty-from/dup"], destinationDirectory: "empty-to" });
 
     expect(res.status).toBe(409);
-    expect(fs.readFileSync(path.join(source, "mine.txt"), "utf8")).toBe("mine");
-    expect(fs.readdirSync(destination)).toEqual([]);
+    expect(fs.readFileSync(abs("empty-from/dup/mine.txt"), "utf8")).toBe("mine");
+    expect(fs.readdirSync(abs("empty-to/dup"))).toEqual([]);
   });
 
   // Folders take the mkdir-reserve-then-rename path rather than the files' link-then-unlink one,
   // so a same-named folder at the destination has to be rejected outright: merging the two trees
   // would be a silent, unrecoverable mix of the user's files.
   it("returns a conflict without merging into a same-named folder", async () => {
-    const sourceDirectory = path.join(WS_DIR, "merge-from");
-    const destinationDirectory = path.join(WS_DIR, "merge-to");
-    const source = path.join(sourceDirectory, "dup");
-    const destination = path.join(destinationDirectory, "dup");
-    fs.mkdirSync(source, { recursive: true });
-    fs.mkdirSync(destination, { recursive: true });
-    fs.writeFileSync(path.join(source, "mine.txt"), "mine");
-    fs.writeFileSync(path.join(destination, "theirs.txt"), "theirs");
+    fs.mkdirSync(abs("merge-from/dup"), { recursive: true });
+    fs.mkdirSync(abs("merge-to/dup"), { recursive: true });
+    fs.writeFileSync(abs("merge-from/dup/mine.txt"), "mine");
+    fs.writeFileSync(abs("merge-to/dup/theirs.txt"), "theirs");
 
-    const res = await patchMove({ sourcePaths: [source], destinationDirectory });
+    const res = await patchMove({ sourcePaths: ["merge-from/dup"], destinationDirectory: "merge-to" });
 
     expect(res.status).toBe(409);
-    expect(fs.readFileSync(path.join(source, "mine.txt"), "utf8")).toBe("mine");
-    expect(fs.readFileSync(path.join(destination, "theirs.txt"), "utf8")).toBe("theirs");
-    expect(fs.existsSync(path.join(destination, "mine.txt"))).toBe(false);
+    expect(fs.readFileSync(abs("merge-from/dup/mine.txt"), "utf8")).toBe("mine");
+    expect(fs.readFileSync(abs("merge-to/dup/theirs.txt"), "utf8")).toBe("theirs");
+    expect(fs.existsSync(abs("merge-to/dup/mine.txt"))).toBe(false);
   });
 
   it("returns a conflict when a file collides with a same-named folder", async () => {
-    const destinationDirectory = path.join(WS_DIR, "clash-to");
-    fs.mkdirSync(path.join(destinationDirectory, "clash"), { recursive: true });
-    const source = path.join(WS_DIR, "clash");
-    fs.writeFileSync(source, "filedata");
+    fs.mkdirSync(abs("clash-to/clash"), { recursive: true });
+    fs.writeFileSync(abs("clash"), "filedata");
 
-    const res = await patchMove({ sourcePaths: [source], destinationDirectory });
+    const res = await patchMove({ sourcePaths: ["clash"], destinationDirectory: "clash-to" });
 
     expect(res.status).toBe(409);
-    expect(fs.readFileSync(source, "utf8")).toBe("filedata");
-    expect(fs.statSync(path.join(destinationDirectory, "clash")).isDirectory()).toBe(true);
+    expect(fs.readFileSync(abs("clash"), "utf8")).toBe("filedata");
+    expect(fs.statSync(abs("clash-to/clash")).isDirectory()).toBe(true);
   });
 
   it("rejects a destination outside the workspace", async () => {
-    const source = path.join(WS_DIR, "stay-put.txt");
-    fs.writeFileSync(source, "safe");
+    fs.writeFileSync(abs("stay-put.txt"), "safe");
 
-    const res = await PATCH(
-      new Request("http://x/api/files/content", {
-        method: "PATCH",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ sourcePaths: [source], destinationDirectory: path.dirname(WS_DIR) }),
-      }),
-      ctx,
-    );
+    const res = await patchMove({ sourcePaths: ["stay-put.txt"], destinationDirectory: ".." });
 
     expect(res.status).toBe(400);
-    expect((await res.json()).error).toMatch(/outside workspace/i);
-    expect(fs.readFileSync(source, "utf8")).toBe("safe");
+    expect((await res.json()).error).toMatch(/escapes the workspace/i);
+    expect(fs.readFileSync(abs("stay-put.txt"), "utf8")).toBe("safe");
   });
 
-  // The browser can only act on a path it can find in the tree it was served. Returning the
-  // realpath instead silently breaks selection and expansion state wherever the workspace dir
-  // contains a symlink — which it does on macOS, where os.tmpdir() sits under /var → /private/var.
-  it("returns the new path in the same space the file tree serves", async () => {
-    const destinationDirectory = path.join(WS_DIR, "inbox");
-    fs.mkdirSync(destinationDirectory);
-    fs.writeFileSync(path.join(WS_DIR, "tracked.txt"), "x");
+  it("rejects an absolute destination even when it names the workspace itself", async () => {
+    fs.writeFileSync(abs("absolute-dest.txt"), "safe");
 
-    const res = await patchMove({
-      sourcePaths: [await treePathOf("tracked.txt")],
-      destinationDirectory,
-    });
+    const res = await patchMove({ sourcePaths: ["absolute-dest.txt"], destinationDirectory: WS_DIR });
+
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toMatch(/must be relative/i);
+    expect(fs.readFileSync(abs("absolute-dest.txt"), "utf8")).toBe("safe");
+  });
+
+  // The browser can only act on a path it can find in the tree it was served, and an external client
+  // cannot know the host directory at all. Returning anything but the tree's own space silently breaks
+  // selection and expansion state — and used to leak the host layout on every move.
+  it("returns the new path in the same space the file tree serves", async () => {
+    fs.mkdirSync(abs("inbox"));
+    fs.writeFileSync(abs("tracked.txt"), "x");
+
+    const res = await patchMove({ sourcePaths: [await treePathOf("tracked.txt")], destinationDirectory: "inbox" });
 
     expect(res.status).toBe(200);
+    const moved = (await res.json()).results[0].path;
+    expect(moved).toBe("inbox/tracked.txt");
     const inbox = (await buildTree(WS_DIR)).find((n) => n.name === "inbox")!;
-    expect(inbox.children!.map((c) => c.path)).toContain((await res.json()).results[0].path);
+    expect(inbox.children!.map((c) => c.path)).toContain(moved);
   });
 
   it("reports a move into the folder the item is already in as unchanged", async () => {
-    fs.writeFileSync(path.join(WS_DIR, "already-here.txt"), "x");
+    fs.writeFileSync(abs("already-here.txt"), "x");
     const sourcePath = await treePathOf("already-here.txt");
 
-    const res = await patchMove({ sourcePaths: [sourcePath], destinationDirectory: WS_DIR });
+    // null is how the client names the workspace root as a destination.
+    const res = await patchMove({ sourcePaths: [sourcePath], destinationDirectory: null });
 
     expect(res.status).toBe(200);
     // The client keys its no-op check off `unchanged`, and echoes `path` back into its own state.
@@ -303,43 +298,40 @@ describe("files/content PATCH — move", () => {
       ok: true,
       results: [{ sourcePath, path: sourcePath, unchanged: true }],
     });
-    expect(fs.existsSync(sourcePath)).toBe(true);
+    expect(fs.existsSync(abs("already-here.txt"))).toBe(true);
   });
 
   // A symlink that escapes the workspace never reaches the symlink rule — containment resolves it
   // to the host file and rejects it there. The host file must be left untouched either way.
   it("refuses to move a symlink that escapes the workspace", async () => {
-    const destinationDirectory = path.join(WS_DIR, "sym-dest");
-    fs.mkdirSync(destinationDirectory);
+    fs.mkdirSync(abs("sym-dest"));
 
-    const res = await patchMove({ sourcePaths: [ESCAPE], destinationDirectory });
+    const res = await patchMove({ sourcePaths: ["escape"], destinationDirectory: "sym-dest" });
 
     expect(res.status).toBe(400);
-    expect((await res.json()).error).toMatch(/outside workspace/i);
-    expect(fs.lstatSync(ESCAPE).isSymbolicLink()).toBe(true);
+    expect((await res.json()).error).toMatch(/outside the workspace/i);
+    expect(fs.lstatSync(abs("escape")).isSymbolicLink()).toBe(true);
     expect(fs.readFileSync(path.join(path.dirname(WS_DIR), "secret.txt"), "utf8")).toBe("TOPSECRET");
   });
 
   // A symlink pointing *inside* the workspace passes containment, so it is the case the dedicated
   // symlink rule exists for: moving it by its resolved target would silently move hello.txt.
   it("refuses to move a symlink that stays inside the workspace", async () => {
-    const link = path.join(WS_DIR, "hello-link");
-    const destinationDirectory = path.join(WS_DIR, "link-dest");
-    fs.symlinkSync(path.join(WS_DIR, "hello.txt"), link);
-    fs.mkdirSync(destinationDirectory);
+    fs.symlinkSync(abs("hello.txt"), abs("hello-link"));
+    fs.mkdirSync(abs("link-dest"));
 
-    const res = await patchMove({ sourcePaths: [link], destinationDirectory });
+    const res = await patchMove({ sourcePaths: ["hello-link"], destinationDirectory: "link-dest" });
 
     expect(res.status).toBe(400);
     expect((await res.json()).error).toMatch(/symbolic link/i);
-    expect(fs.lstatSync(link).isSymbolicLink()).toBe(true);
+    expect(fs.lstatSync(abs("hello-link")).isSymbolicLink()).toBe(true);
     // The link's target stayed where it was rather than being moved in its place.
-    expect(fs.existsSync(path.join(WS_DIR, "hello.txt"))).toBe(true);
-    expect(fs.readdirSync(destinationDirectory)).toEqual([]);
+    expect(fs.existsSync(abs("hello.txt"))).toBe(true);
+    expect(fs.readdirSync(abs("link-dest"))).toEqual([]);
   });
 
   it("refuses to move the workspace root", async () => {
-    const res = await patchMove({ sourcePaths: [WS_DIR], destinationDirectory: WS_DIR });
+    const res = await patchMove({ sourcePaths: ["."], destinationDirectory: null });
 
     expect(res.status).toBe(400);
     expect((await res.json()).error).toMatch(/workspace root/i);
@@ -348,54 +340,68 @@ describe("files/content PATCH — move", () => {
   it("rejects a malformed body without throwing", async () => {
     expect((await patchMove("{not json")).status).toBe(400);
     expect((await patchMove(null)).status).toBe(400);
-    expect((await patchMove({ destinationDirectory: WS_DIR })).status).toBe(400);
+    expect((await patchMove({ destinationDirectory: null })).status).toBe(400);
   });
 
   it("rejects an invalid destination type instead of treating it as the workspace root", async () => {
-    const source = path.join(WS_DIR, "typed-destination.txt");
-    fs.writeFileSync(source, "stay");
+    fs.writeFileSync(abs("typed-destination.txt"), "stay");
 
-    const res = await patchMove({ sourcePaths: [source], destinationDirectory: false });
+    const res = await patchMove({ sourcePaths: ["typed-destination.txt"], destinationDirectory: false });
 
     expect(res.status).toBe(400);
-    expect(fs.readFileSync(source, "utf8")).toBe("stay");
+    expect(fs.readFileSync(abs("typed-destination.txt"), "utf8")).toBe("stay");
   });
 
   it("rejects a batch with no items", async () => {
-    expect((await patchMove({ sourcePaths: [], destinationDirectory: WS_DIR })).status).toBe(400);
+    expect((await patchMove({ sourcePaths: [], destinationDirectory: null })).status).toBe(400);
     expect((await patchMove({ sourcePaths: "not-an-array" })).status).toBe(400);
     expect((await patchMove({ sourcePaths: [""] })).status).toBe(400);
   });
 
-  it("moves every item of a batch in one request", async () => {
-    const destinationDirectory = path.join(WS_DIR, "batch-dest");
-    fs.mkdirSync(destinationDirectory);
-    const names = ["one.txt", "two.txt", "three.txt"];
-    for (const n of names) fs.writeFileSync(path.join(WS_DIR, `batch-${n}`), n);
-    const sourcePaths = names.map((n) => path.join(WS_DIR, `batch-${n}`));
+  // One unsayable path refuses the whole batch rather than moving the items ahead of it first: a
+  // client that mistyped one path gets to fix it and retry, instead of retrying a half-applied move.
+  it("refuses a whole batch containing one invalid path, moving nothing", async () => {
+    fs.mkdirSync(abs("all-or-nothing"));
+    fs.writeFileSync(abs("valid-first.txt"), "x");
 
-    const res = await patchMove({ sourcePaths, destinationDirectory });
+    const res = await patchMove({
+      sourcePaths: ["valid-first.txt", "../secret.txt"],
+      destinationDirectory: "all-or-nothing",
+    });
+
+    expect(res.status).toBe(400);
+    expect((await res.json()).results).toEqual([]);
+    expect(fs.existsSync(abs("valid-first.txt"))).toBe(true);
+    expect(fs.readdirSync(abs("all-or-nothing"))).toEqual([]);
+  });
+
+  it("moves every item of a batch in one request", async () => {
+    fs.mkdirSync(abs("batch-dest"));
+    const names = ["one.txt", "two.txt", "three.txt"];
+    for (const n of names) fs.writeFileSync(abs(`batch-${n}`), n);
+    const sourcePaths = names.map((n) => `batch-${n}`);
+
+    const res = await patchMove({ sourcePaths, destinationDirectory: "batch-dest" });
 
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.ok).toBe(true);
     expect(body.results.map((r: { sourcePath: string }) => r.sourcePath)).toEqual(sourcePaths);
     for (const n of names) {
-      expect(fs.readFileSync(path.join(destinationDirectory, `batch-${n}`), "utf8")).toBe(n);
-      expect(fs.existsSync(path.join(WS_DIR, `batch-${n}`))).toBe(false);
+      expect(fs.readFileSync(abs(`batch-dest/batch-${n}`), "utf8")).toBe(n);
+      expect(fs.existsSync(abs(`batch-${n}`))).toBe(false);
     }
   });
 
   // The reason the batch endpoint exists: a request-and-snapshot per item is what made large
   // selections crawl, so a batch must cost exactly one snapshot however many items it carries.
   it("takes a single snapshot for the whole batch", async () => {
-    const destinationDirectory = path.join(WS_DIR, "snap-dest");
-    fs.mkdirSync(destinationDirectory);
-    const sourcePaths = ["a", "b", "c", "d"].map((n) => path.join(WS_DIR, `snap-${n}.txt`));
-    for (const p of sourcePaths) fs.writeFileSync(p, "x");
+    fs.mkdirSync(abs("snap-dest"));
+    const sourcePaths = ["a", "b", "c", "d"].map((n) => `snap-${n}.txt`);
+    for (const p of sourcePaths) fs.writeFileSync(abs(p), "x");
 
     commitResult.mockClear();
-    const res = await patchMove({ sourcePaths, destinationDirectory });
+    const res = await patchMove({ sourcePaths, destinationDirectory: "snap-dest" });
 
     expect(res.status).toBe(200);
     expect(commitResult).toHaveBeenCalledTimes(1);
@@ -403,82 +409,70 @@ describe("files/content PATCH — move", () => {
   });
 
   it("does not snapshot a batch that changed nothing", async () => {
-    fs.writeFileSync(path.join(WS_DIR, "noop.txt"), "x");
+    fs.writeFileSync(abs("noop.txt"), "x");
 
     commitResult.mockClear();
-    const res = await patchMove({
-      sourcePaths: [await treePathOf("noop.txt")],
-      destinationDirectory: WS_DIR,
-    });
+    const res = await patchMove({ sourcePaths: [await treePathOf("noop.txt")], destinationDirectory: null });
 
     expect(res.status).toBe(200);
     expect(commitResult).not.toHaveBeenCalled();
   });
 
   it("stops at the first failure and reports the items that already moved", async () => {
-    const destinationDirectory = path.join(WS_DIR, "partial-dest");
-    fs.mkdirSync(destinationDirectory);
-    const first = path.join(WS_DIR, "partial-first.txt");
-    const blocked = path.join(WS_DIR, "partial-blocked.txt");
-    const never = path.join(WS_DIR, "partial-never.txt");
-    for (const p of [first, blocked, never]) fs.writeFileSync(p, "x");
+    fs.mkdirSync(abs("partial-dest"));
+    const sources = ["partial-first.txt", "partial-blocked.txt", "partial-never.txt"];
+    for (const p of sources) fs.writeFileSync(abs(p), "x");
     // Pre-occupy the middle item's destination so it, and only it, conflicts.
-    fs.writeFileSync(path.join(destinationDirectory, "partial-blocked.txt"), "occupied");
+    fs.writeFileSync(abs("partial-dest/partial-blocked.txt"), "occupied");
 
-    const res = await patchMove({ sourcePaths: [first, blocked, never], destinationDirectory });
+    const res = await patchMove({ sourcePaths: sources, destinationDirectory: "partial-dest" });
 
     // Some of the work is real, so the batch is a 200 that carries what landed and what stopped it.
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.ok).toBe(false);
     expect(body.error).toMatch(/already exists/i);
-    expect(body.failedSourcePath).toBe(blocked);
-    expect(body.results.map((r: { sourcePath: string }) => r.sourcePath)).toEqual([first]);
+    expect(body.failedSourcePath).toBe("partial-blocked.txt");
+    expect(body.results.map((r: { sourcePath: string }) => r.sourcePath)).toEqual(["partial-first.txt"]);
 
-    expect(fs.existsSync(path.join(destinationDirectory, "partial-first.txt"))).toBe(true);
-    expect(fs.readFileSync(blocked, "utf8")).toBe("x");
-    expect(fs.readFileSync(path.join(destinationDirectory, "partial-blocked.txt"), "utf8")).toBe("occupied");
+    expect(fs.existsSync(abs("partial-dest/partial-first.txt"))).toBe(true);
+    expect(fs.readFileSync(abs("partial-blocked.txt"), "utf8")).toBe("x");
+    expect(fs.readFileSync(abs("partial-dest/partial-blocked.txt"), "utf8")).toBe("occupied");
     // The item after the failure was never attempted and must be exactly where it was.
-    expect(fs.readFileSync(never, "utf8")).toBe("x");
+    expect(fs.readFileSync(abs("partial-never.txt"), "utf8")).toBe("x");
   });
 
   // An item already in the destination is a no-op, not a failure — it must not stop the batch.
   it("keeps going past an unchanged item", async () => {
-    const destinationDirectory = path.join(WS_DIR, "mixed-dest");
-    fs.mkdirSync(destinationDirectory);
-    fs.writeFileSync(path.join(destinationDirectory, "settled.txt"), "already");
-    const mover = path.join(WS_DIR, "mixed-mover.txt");
-    fs.writeFileSync(mover, "moves");
+    fs.mkdirSync(abs("mixed-dest"));
+    fs.writeFileSync(abs("mixed-dest/settled.txt"), "already");
+    fs.writeFileSync(abs("mixed-mover.txt"), "moves");
     const settled = (await buildTree(WS_DIR))
       .find((n) => n.name === "mixed-dest")!
       .children!.find((n) => n.name === "settled.txt")!.path;
 
-    const res = await patchMove({ sourcePaths: [settled, mover], destinationDirectory });
+    const res = await patchMove({ sourcePaths: [settled, "mixed-mover.txt"], destinationDirectory: "mixed-dest" });
 
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.ok).toBe(true);
     expect(body.results).toEqual([
       { sourcePath: settled, path: settled, unchanged: true },
-      { sourcePath: mover, path: path.join(destinationDirectory, "mixed-mover.txt"), unchanged: false },
+      { sourcePath: "mixed-mover.txt", path: "mixed-dest/mixed-mover.txt", unchanged: false },
     ]);
-    expect(fs.readFileSync(path.join(destinationDirectory, "mixed-mover.txt"), "utf8")).toBe("moves");
+    expect(fs.readFileSync(abs("mixed-dest/mixed-mover.txt"), "utf8")).toBe("moves");
   });
 
   it("does not replace an existing directory", async () => {
-    const sourceParent = path.join(WS_DIR, "dir-from");
-    const destinationParent = path.join(WS_DIR, "dir-to");
-    const source = path.join(sourceParent, "same-dir");
-    const destination = path.join(destinationParent, "same-dir");
-    fs.mkdirSync(source, { recursive: true });
-    fs.mkdirSync(destination, { recursive: true });
-    fs.writeFileSync(path.join(source, "source.txt"), "source");
-    fs.writeFileSync(path.join(destination, "destination.txt"), "destination");
+    fs.mkdirSync(abs("dir-from/same-dir"), { recursive: true });
+    fs.mkdirSync(abs("dir-to/same-dir"), { recursive: true });
+    fs.writeFileSync(abs("dir-from/same-dir/source.txt"), "source");
+    fs.writeFileSync(abs("dir-to/same-dir/destination.txt"), "destination");
 
-    const res = await patchMove({ sourcePaths: [source], destinationDirectory: destinationParent });
+    const res = await patchMove({ sourcePaths: ["dir-from/same-dir"], destinationDirectory: "dir-to" });
 
     expect(res.status).toBe(409);
-    expect(fs.readFileSync(path.join(source, "source.txt"), "utf8")).toBe("source");
-    expect(fs.readFileSync(path.join(destination, "destination.txt"), "utf8")).toBe("destination");
+    expect(fs.readFileSync(abs("dir-from/same-dir/source.txt"), "utf8")).toBe("source");
+    expect(fs.readFileSync(abs("dir-to/same-dir/destination.txt"), "utf8")).toBe("destination");
   });
 });

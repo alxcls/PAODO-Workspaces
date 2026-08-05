@@ -1,8 +1,16 @@
 // Manages per-workspace chokidar file watchers that broadcast filesystem changes to WebSocket clients.
 // Batches change and delete events with a 150ms debounce. Suppresses events for files the agent just wrote
 // to prevent the file viewer from reloading content the agent is still editing.
+//
+// Paths are absolute inside this module, because that is what chokidar reports and what markSelfWrite
+// is keyed on, and workspace-relative on the wire — the same space the file tree serves. The two must
+// agree: the viewer decides whether to reload by testing whether the broadcast list contains the path
+// it holds, so a broadcast in the other space would not fail loudly, it would just silently stop
+// reloading the open file.
 import chokidar from "chokidar";
 import fs from "fs";
+import path from "path";
+import { toRelativePath } from "@/lib/files/relpath";
 import { broadcastToWorkspace } from "../realtime/wsHub";
 import { createLogger } from "../logger";
 
@@ -79,8 +87,8 @@ class WorkspaceWatcher {
     if (this.flushTimeout !== null) return;
     this.flushTimeout = setTimeout(() => {
       this.flushTimeout = null;
-      const changed = [...this.pendingChanged];
-      const deleted = [...this.pendingDeleted];
+      const changed = [...this.pendingChanged].map((absPath) => toRelativePath(this.dir, absPath));
+      const deleted = [...this.pendingDeleted].map((absPath) => toRelativePath(this.dir, absPath));
       this.pendingChanged.clear();
       this.pendingDeleted.clear();
       if (changed.length > 0) {
@@ -111,9 +119,13 @@ export function stopWatcher(workspaceId: string): void {
   watchers.delete(workspaceId);
 }
 
-export function markSelfWrite(absPath: string): void {
+/**
+ * Suppress the echo event for a file the UI itself just saved. `relPath` is workspace-relative, as it
+ * arrives from the browser; it is keyed absolute here because that is the space chokidar reports in.
+ */
+export function markSelfWrite(workspaceDir: string, relPath: string): void {
   if (WATCHERS_DISABLED) return;
-  ignorePaths.set(absPath, Date.now() + 500);
+  ignorePaths.set(path.join(workspaceDir, relPath), Date.now() + 500);
 }
 
 export function stopAllWatchers(): void {

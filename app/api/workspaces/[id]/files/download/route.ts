@@ -1,10 +1,9 @@
-// Accepts a list of file paths and returns them as a single ZIP archive.
+// Accepts a list of workspace-relative file paths and returns them as a single ZIP archive.
 // Paths are validated to stay within the workspace directory before being added to the archive.
 export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
 import { requireWorkspace } from "@/lib/api/guards";
-import path from "path";
 import JSZip from "jszip";
 import { createLogger } from "@/lib/infra/logger";
 import { addSelectedToZip, zipToStreamResponse } from "@/lib/files/zip";
@@ -19,11 +18,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     return NextResponse.json({ error: "paths required" }, { status: 400 });
   }
 
-  const wsDir = path.resolve(ws.dir);
   const zip = new JSZip();
   await addSelectedToZip(
     zip,
-    wsDir,
+    ws.dir,
     body.paths,
     (filePath, err) =>
       createLogger("api").warn({ workspaceId: id, filePath, err }, "skipping unreadable path in download"),

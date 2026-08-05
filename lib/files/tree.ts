@@ -15,6 +15,11 @@ import { openFileLimiter, type Semaphore } from "./fdLimit";
 export interface TreeNode {
   name: string;
   type: "file" | "directory";
+  /**
+   * Workspace-relative, POSIX-separated — the one path space the file API speaks (./relpath.ts).
+   * It used to be the absolute host path, which made the server's directory layout part of the wire
+   * contract and left a non-browser client no way to name a file at all.
+   */
   path: string;
   children?: TreeNode[];
 }
@@ -27,12 +32,23 @@ export interface BuildTreeOptions {
   maxDepth?: number;
 }
 
-export async function buildTree(dirPath: string, options: BuildTreeOptions = {}): Promise<TreeNode[]> {
+export async function buildTree(rootDir: string, options: BuildTreeOptions = {}): Promise<TreeNode[]> {
   const maxDepth = options.maxDepth ?? FILE_PANEL_MAX_DEPTH;
-  return walk(dirPath, 0, maxDepth, openFileLimiter());
+  return walk(rootDir, "", 0, maxDepth, openFileLimiter());
 }
 
-async function walk(dirPath: string, depth: number, maxDepth: number, sem: Semaphore): Promise<TreeNode[]> {
+/**
+ * `relPath` is carried down the recursion rather than derived per node with path.relative: the walker
+ * already knows where it is, and building the wire path from the segments it descended through is both
+ * cheaper and impossible to get subtly wrong on a root that is itself a symlink.
+ */
+async function walk(
+  dirPath: string,
+  relPath: string,
+  depth: number,
+  maxDepth: number,
+  sem: Semaphore,
+): Promise<TreeNode[]> {
   if (depth >= maxDepth) return [];
   let entries;
   try {
@@ -46,16 +62,17 @@ async function walk(dirPath: string, depth: number, maxDepth: number, sem: Semap
 
   const nodes: TreeNode[] = [];
   for (const e of entries) {
-    const fullPath = path.join(dirPath, e.name);
+    const hostPath = path.join(dirPath, e.name);
+    const entryRelPath = relPath === "" ? e.name : `${relPath}/${e.name}`;
     if (e.isDirectory()) {
       nodes.push({
         name: e.name,
         type: "directory",
-        path: fullPath,
-        children: await walk(fullPath, depth + 1, maxDepth, sem),
+        path: entryRelPath,
+        children: await walk(hostPath, entryRelPath, depth + 1, maxDepth, sem),
       });
     } else {
-      nodes.push({ name: e.name, type: "file", path: fullPath });
+      nodes.push({ name: e.name, type: "file", path: entryRelPath });
     }
   }
 

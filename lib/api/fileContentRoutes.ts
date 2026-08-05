@@ -6,24 +6,29 @@
 // host directory never appears in a request or a response.
 import { NextResponse } from "next/server";
 import path from "path";
+import type pino from "pino";
 import { createLogger } from "@/lib/infra/logger";
 import { appErrorResponse, errorResponse, readJsonObject } from "@/lib/api/errorResponse";
-import { logFileRouteError, type FileBackend } from "@/lib/files/backend";
+import type { FileBackend } from "@/lib/files/backend";
 import { readFileEntry, removeEntry, writeTextFile } from "@/lib/operations/files/content";
 import { requireEntryPath } from "@/lib/operations/files/paths";
 
 /**
- * One unexpected-failure branch for all three verbs. The expected AppError path is handled by the
- * caller through appErrorResponse; anything reaching here is an errno we have not classified yet, so
- * it stays a generic 400 with the raw message — the same behaviour as before this module existed.
+ * The two branches every verb below spells out, per the convention in lib/api/errorResponse.ts: the
+ * expected AppError through appErrorResponse, then one literal log record and an opaque 500.
  *
- * That message can still carry a host path from a bare errno. Classifying errno into the public code
- * vocabulary (EACCES, ENOSPC, EISDIR, ...) is the next piece of work; it is deliberately not folded in
- * here, so this change is a move of the path space and nothing else.
+ * Reaching the second branch means an errno lib/operations/files/errors.ts has no entry for, so it is
+ * ours to fix rather than the client's — which is why the response says nothing specific. It used to
+ * be a 400 carrying `err.message`, and libuv writes the host path into that message.
  */
-function unexpected(request: Request, err: unknown): NextResponse {
-  const message = err instanceof Error ? err.message : "Unknown error";
-  return errorResponse("INVALID_REQUEST", message, { request });
+function failure(request: Request, err: unknown, log: pino.Logger, verb: string, relPath?: string): Response {
+  const known = appErrorResponse(err, request);
+  if (known) return known;
+  log.error(
+    { event: "file_operation_failed", outcome: "file_unchanged", err, verb, relPath },
+    "unclassified file operation failure",
+  );
+  return errorResponse("INTERNAL_ERROR", "The file operation failed", { request });
 }
 
 export async function getFileContent(request: Request, be: FileBackend): Promise<Response> {
@@ -49,8 +54,7 @@ export async function getFileContent(request: Request, be: FileBackend): Promise
     if (file.type === "text") return NextResponse.json({ type: "text", content: file.content });
     return NextResponse.json({ type: file.type });
   } catch (err) {
-    logFileRouteError(log, err, { relPath }, "GET file failed");
-    return appErrorResponse(err, request) ?? unexpected(request, err);
+    return failure(request, err, log, "GET", relPath);
   }
 }
 
@@ -68,8 +72,7 @@ export async function putFileContent(request: Request, be: FileBackend): Promise
     await writeTextFile(be.dir, relPath, body.content, be);
     return NextResponse.json({ ok: true });
   } catch (err) {
-    logFileRouteError(log, err, { relPath }, "PUT file failed");
-    return appErrorResponse(err, request) ?? unexpected(request, err);
+    return failure(request, err, log, "PUT", relPath);
   }
 }
 
@@ -82,7 +85,6 @@ export async function deleteFileContent(request: Request, be: FileBackend): Prom
     await removeEntry(be.dir, relPath, be);
     return NextResponse.json({ ok: true });
   } catch (err) {
-    logFileRouteError(log, err, { relPath }, "DELETE file failed");
-    return appErrorResponse(err, request) ?? unexpected(request, err);
+    return failure(request, err, log, "DELETE", relPath);
   }
 }

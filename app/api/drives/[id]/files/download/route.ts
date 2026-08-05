@@ -7,6 +7,7 @@ import JSZip from "jszip";
 import { driveContentDir } from "@/lib/drives/store";
 import { requireDrive } from "@/lib/api/guards";
 import { createLogger } from "@/lib/infra/logger";
+import { errorResponse, readJsonObject } from "@/lib/api/errorResponse";
 import { addSelectedToZip, zipToStreamResponse } from "@/lib/files/zip";
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -14,9 +15,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const drive = requireDrive(id);
   if (drive instanceof NextResponse) return drive;
 
-  const body = (await req.json()) as { paths?: string[] };
+  const body = await readJsonObject(req);
+  if (body instanceof NextResponse) return body;
   if (!Array.isArray(body.paths) || body.paths.length === 0) {
-    return NextResponse.json({ error: "paths required" }, { status: 400 });
+    return errorResponse("INVALID_REQUEST", "paths must be a non-empty array of drive-relative paths", {
+      request: req,
+      details: { field: "paths" },
+    });
   }
 
   const zip = new JSZip();

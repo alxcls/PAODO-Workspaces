@@ -13,6 +13,7 @@
 import fs from "fs/promises";
 import path from "path";
 import { AppError } from "@/lib/errors/appError";
+import { fileSystemAppError, fileSystemCall } from "./errors";
 import { resolveHostPath } from "./paths";
 
 /** Hooks a backend contributes. A drive supplies neither: it is passive host storage. */
@@ -62,17 +63,7 @@ async function classifyBuffer(bytes: Buffer): Promise<ClassifiedFile> {
  */
 export async function readFileEntry(rootDir: string, relPath: string): Promise<ClassifiedFile> {
   const hostPath = await resolveHostPath(rootDir, relPath);
-  let bytes: Buffer;
-  try {
-    bytes = await fs.readFile(hostPath);
-  } catch (err) {
-    const code = (err as NodeJS.ErrnoException).code;
-    if (code === "ENOENT") throw new AppError("NOT_FOUND", `${relPath} does not exist`, { field: "path" });
-    if (code === "EISDIR") {
-      throw new AppError("INVALID_REQUEST", `${relPath} is a directory, not a file`, { field: "path" });
-    }
-    throw err;
-  }
+  const bytes = await fileSystemCall(relPath, () => fs.readFile(hostPath));
   return classifyBuffer(bytes);
 }
 
@@ -101,11 +92,13 @@ export async function writeTextFile(
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code;
     if ((code === "EACCES" || code === "EPERM") && hooks.writeFallback) {
-      await hooks.writeFallback(relPath, content);
+      await fileSystemCall(relPath, () => hooks.writeFallback!(relPath, content));
     } else if (code === "ENOENT") {
+      // Deliberately not the classifier's NOT_FOUND: on a write, a path that is not there means the
+      // save lost a race to a move, which the client resolves by reloading rather than by retrying.
       throw new AppError("CONFLICT", "File was moved or deleted before it could be saved", { field: "path" });
     } else {
-      throw err;
+      throw fileSystemAppError(err, relPath) ?? err;
     }
   }
   await hooks.afterWrite?.(`saved ${path.basename(relPath)}`);
@@ -114,21 +107,16 @@ export async function writeTextFile(
 /** Remove one file, or one directory and everything under it. */
 export async function removeEntry(rootDir: string, relPath: string, hooks: FileWriteHooks = {}): Promise<void> {
   const hostPath = await resolveHostPath(rootDir, relPath);
-  await fs.access(path.dirname(hostPath), fs.constants.W_OK).catch(() => {
-    throw new AppError("INVALID_REQUEST", "Directory is not writable", { field: "path" });
-  });
+  // Checked up front so an unwritable parent is reported as such, rather than as whichever errno the
+  // unlink below happens to raise once part of a recursive removal has already succeeded.
+  const parent = path.posix.dirname(relPath);
+  await fileSystemCall(parent === "." ? "The workspace root" : parent, () =>
+    fs.access(path.dirname(hostPath), fs.constants.W_OK),
+  );
 
-  let stat;
-  try {
-    stat = await fs.stat(hostPath);
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-      throw new AppError("NOT_FOUND", `${relPath} does not exist`, { field: "path" });
-    }
-    throw err;
-  }
-
-  if (stat.isDirectory()) await fs.rm(hostPath, { recursive: true });
-  else await fs.unlink(hostPath);
+  const stat = await fileSystemCall(relPath, () => fs.stat(hostPath));
+  await fileSystemCall(relPath, () =>
+    stat.isDirectory() ? fs.rm(hostPath, { recursive: true }) : fs.unlink(hostPath),
+  );
   await hooks.afterWrite?.(`deleted ${path.basename(relPath)}`);
 }

@@ -18,6 +18,9 @@ const STATUS_BY_CODE: Record<AppErrorCode, number> = {
   UNAUTHORIZED: 401,
   FORBIDDEN: 403,
   RATE_LIMITED: 429,
+  FILE_NOT_WRITABLE: 403,
+  PAYLOAD_TOO_LARGE: 413,
+  INSUFFICIENT_STORAGE: 507,
   WORKSPACE_NAME_INVALID: 400,
   WORKSPACE_NAME_CONFLICT: 409,
   WORKSPACE_UPDATE_INVALID: 400,
@@ -34,22 +37,36 @@ interface ErrorResponseOptions {
   requestId?: string;
   details?: ErrorDetails;
   headers?: HeadersInit;
+  /**
+   * Extra body fields alongside the envelope, for an endpoint whose failure shape is not only the
+   * envelope. The batch move refuses with `results: []` because that is how its client tells a rejected
+   * batch from a malformed request; without this it would hand-roll the envelope and drift from it.
+   */
+  extra?: Record<string, unknown>;
 }
 
 function requestId(request?: Request): string | undefined {
   return request?.headers.get("x-request-id")?.trim() || undefined;
 }
 
+/** The transport status a code maps to, for the rare caller that must build its own response. */
+export function statusForCode(code: AppErrorCode): number {
+  return STATUS_BY_CODE[code];
+}
+
 export function errorResponse(
   code: AppErrorCode,
   error: string,
-  { request, requestId: explicitRequestId, details, headers }: ErrorResponseOptions = {},
+  { request, requestId: explicitRequestId, details, headers, extra }: ErrorResponseOptions = {},
 ): NextResponse<ApiErrorBody> {
   const id = explicitRequestId?.trim() || requestId(request);
-  return NextResponse.json(publicErrorBody(code, error, { details, requestId: id }), {
-    status: STATUS_BY_CODE[code],
-    headers: { "Cache-Control": "no-store", ...headers },
-  });
+  return NextResponse.json(
+    { ...publicErrorBody(code, error, { details, requestId: id }), ...extra },
+    {
+      status: STATUS_BY_CODE[code],
+      headers: { "Cache-Control": "no-store", ...headers },
+    },
+  );
 }
 
 /** Returns null for an unexpected exception so the route can log it once before returning a 500. */

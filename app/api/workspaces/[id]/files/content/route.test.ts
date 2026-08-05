@@ -45,7 +45,7 @@ vi.mock("@/lib/infra/services", () => ({
   getVersioning: () => ({ commitResult }),
 }));
 
-import { GET, PUT, PATCH } from "./route";
+import { GET, PUT, PATCH, DELETE } from "./route";
 import { buildTree } from "@/lib/files/tree";
 
 const ctx = { params: Promise.resolve({ id: "ws" }) };
@@ -141,6 +141,40 @@ describe("files/content PUT — save", () => {
 
     expect(res.status).toBe(200);
     expect(fs.readFileSync(abs("edit-me.txt"), "utf8")).toBe("short");
+  });
+});
+
+// The classifier's codes are only worth having if they survive the trip out: each one has to reach the
+// wire with the status STATUS_BY_CODE assigns it, and without the host path libuv puts in its message.
+describe("files/content — errno reaches the client as a code", () => {
+  const deleteFile = (p: string) =>
+    DELETE(new Request(`http://x/api/files/content?path=${encodeURIComponent(p)}`, { method: "DELETE" }), ctx);
+
+  it("answers a permission failure with FILE_NOT_WRITABLE at 403, naming no host path", async () => {
+    fs.mkdirSync(abs("locked"));
+    fs.writeFileSync(abs("locked/pinned.txt"), "x");
+    fs.chmodSync(abs("locked"), 0o555);
+
+    let body: { code?: string; error?: string };
+    let status: number;
+    try {
+      const res = await deleteFile("locked/pinned.txt");
+      status = res.status;
+      body = await res.json();
+    } finally {
+      fs.chmodSync(abs("locked"), 0o755);
+    }
+
+    // Not 403 FORBIDDEN — that would read as an authorisation failure and could sign the user out.
+    expect(status).toBe(403);
+    expect(body.code).toBe("FILE_NOT_WRITABLE");
+    expect(body.error).not.toContain(WS_DIR);
+  });
+
+  it("answers a missing delete target with NOT_FOUND at 404", async () => {
+    const res = await deleteFile("never-there.txt");
+    expect(res.status).toBe(404);
+    expect((await res.json()).code).toBe("NOT_FOUND");
   });
 });
 

@@ -26,7 +26,9 @@ import { MAX_UPLOAD_BYTES, formatBytes } from "@/lib/uploads/limits";
 import { checkFreeSpace, RESERVED_FREE_BYTES } from "@/lib/infra/storage/diskSpace";
 import { resolveContained } from "@/lib/files/containment";
 import { requireEntryPath } from "@/lib/operations/files/paths";
-import { appErrorResponse } from "@/lib/api/errorResponse";
+import { fileSystemAppError } from "@/lib/operations/files/errors";
+import { AppError } from "@/lib/errors/appError";
+import { errorResponse } from "@/lib/api/errorResponse";
 
 export interface UploadBackend {
   dir: string;
@@ -65,9 +67,10 @@ export async function handleUpload(req: NextRequest, be: UploadBackend): Promise
       // human-readable rendering belongs in the response the user actually reads.
       "upload rejected — payload exceeds the per-file upload limit",
     );
-    return NextResponse.json(
-      { error: `File is ${formatBytes(actualBytes)}, which is over the ${limitLabel} per-file upload limit.` },
-      { status: 413 },
+    return errorResponse(
+      "PAYLOAD_TOO_LARGE",
+      `File is ${formatBytes(actualBytes)}, which is over the ${limitLabel} per-file upload limit.`,
+      { request: req, details: { field: "path", limitBytes: MAX_UPLOAD_BYTES } },
     );
   };
 
@@ -86,7 +89,9 @@ export async function handleUpload(req: NextRequest, be: UploadBackend): Promise
       },
       "upload rejected — not enough free disk space",
     );
-    return NextResponse.json({ error: "Not enough free disk space to accept this upload." }, { status: 507 });
+    return errorResponse("INSUFFICIENT_STORAGE", "Not enough free disk space to accept this upload.", {
+      request: req,
+    });
   };
 
   // `?path=` is workspace-relative, and requireEntryPath is what makes that the only thing it can be:
@@ -97,12 +102,18 @@ export async function handleUpload(req: NextRequest, be: UploadBackend): Promise
   try {
     filePath = requireEntryPath(searchParams.get("path"));
   } catch (err) {
-    return appErrorResponse(err, req) ?? NextResponse.json({ error: "invalid path" }, { status: 400 });
+    if (!(err instanceof AppError)) throw err;
+    return errorResponse(err.code, err.message, { request: req, details: err.details });
   }
 
   const dir = await fs.realpath(be.dir);
   const resolved = await resolveContained(dir, filePath);
-  if (resolved === null) return NextResponse.json({ error: "invalid path" }, { status: 400 });
+  if (resolved === null) {
+    return errorResponse("INVALID_REQUEST", "Path resolves outside the workspace", {
+      request: req,
+      details: { field: "path" },
+    });
+  }
 
   // Refuse on the declared size before reading a byte. Browsers always set Content-Length for a
   // File body, so this is the path a real oversized upload takes — and it avoids spooling the
@@ -153,7 +164,13 @@ export async function handleUpload(req: NextRequest, be: UploadBackend): Promise
       },
       "failed to write uploaded file",
     );
-    return NextResponse.json({ error: "failed to write file" }, { status: 500 });
+    // Logged either way — a write that got this far failing is worth a line even when the cause is the
+    // client's — but a recognised errno still answers with its own code, so a full disk mid-stream is
+    // not indistinguishable from a bug.
+    const known = fileSystemAppError(err, filePath);
+    return known
+      ? errorResponse(known.code, known.message, { request: req, details: known.details })
+      : errorResponse("INTERNAL_ERROR", "The upload could not be written", { request: req });
   }
 
   await be.afterWrite?.(path.basename(resolved));

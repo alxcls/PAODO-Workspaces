@@ -8,6 +8,13 @@ export const ERROR_CODES = {
   UNAUTHORIZED: "UNAUTHORIZED",
   FORBIDDEN: "FORBIDDEN",
   RATE_LIMITED: "RATE_LIMITED",
+  /**
+   * The filesystem refused the write. Deliberately not FORBIDDEN: that means "you are not
+   * authorised", and a client conflating the two would sign the user out over a read-only directory.
+   */
+  FILE_NOT_WRITABLE: "FILE_NOT_WRITABLE",
+  PAYLOAD_TOO_LARGE: "PAYLOAD_TOO_LARGE",
+  INSUFFICIENT_STORAGE: "INSUFFICIENT_STORAGE",
   WORKSPACE_NAME_INVALID: "WORKSPACE_NAME_INVALID",
   WORKSPACE_NAME_CONFLICT: "WORKSPACE_NAME_CONFLICT",
   WORKSPACE_UPDATE_INVALID: "WORKSPACE_UPDATE_INVALID",

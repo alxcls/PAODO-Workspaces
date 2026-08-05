@@ -126,6 +126,43 @@ describe("workspace update body contract", () => {
     expect(h.renames).toEqual([]);
   });
 
+  /**
+   * A wrong-typed value is a caller error and must answer like one. Each of these used to reach the
+   * caller as 500 INTERNAL_ERROR "failed to update workspace": the validators trusted their declared
+   * string types, so `.trim()` on a number raised a TypeError, which is not an AppError and so fell
+   * through to the unexpected-failure branch. `description` was the sole exception, guarded by hand in
+   * this route — which is what made the gap easy to miss, since the one field anyone thought to check
+   * was the one that behaved.
+   *
+   * Status and code are both asserted: a 400 whose body says INTERNAL_ERROR would still tell a
+   * programmatic caller its request was fine and the server broke.
+   */
+  it("rejects a wrong-typed value as a caller error rather than a server failure", async () => {
+    const cases: Array<[string, unknown]> = [
+      ["name", { name: 123 }],
+      ["description", { description: 123 }],
+      ["llmProvider", { llmProvider: 5 }],
+      ["llmModel", { llmModel: 5 }],
+      ["reasoningEffort", { reasoningEffort: 5 }],
+      ["secret", { secret: null }],
+      ["secret member", { secret: { name: 5, value: "v", domains: ["api.example.com"] } }],
+      ["secret domain", { secret: { name: "TOKEN", value: "v", domains: [5] } }],
+    ];
+
+    for (const [field, body] of cases) {
+      const res = await patch(body);
+      const json = await res.json();
+      expect({ field, status: res.status }).toEqual({ field, status: 400 });
+      expect({ field, ok: json.ok, internal: json.code === "INTERNAL_ERROR" }).toEqual({
+        field,
+        ok: false,
+        internal: false,
+      });
+    }
+    // Nothing landed on the way to any of those rejections.
+    expect({ renames: h.renames, descriptions: h.descriptions }).toEqual({ renames: [], descriptions: [] });
+  });
+
   // The generic workspace PATCH is the widest-reaching mutation a programmatic caller has, so it is
   // the one that most needs to be incapable of producing a read-once secret as a side effect. A key
   // comes only from an explicit call to the channel's own route.

@@ -6,8 +6,10 @@ import {
   metadataWrites,
   validateMetadata,
   type MetadataWriter,
+  type WorkspaceMetadataInput,
 } from "./workspaces";
 import type { Workspace } from "@/lib/workspace/workspaceStore";
+import { AppError } from "@/lib/errors/appError";
 
 const workspace: Workspace = {
   id: "ws-1",
@@ -216,6 +218,33 @@ describe("workspace metadata validation", () => {
   it("refuses a present-but-blank model field instead of defaulting it", () => {
     expect(() => validateMetadata({ model: { provider: "openai", model: "  " } })).toThrow("llmModel required");
     expect(() => validateMetadata({ model: { provider: "   " } })).toThrow("llmProvider must be one of: ");
+  });
+
+  /**
+   * The declared input types bind in-process callers; a JSON body only claims to match them. Every
+   * string-shaped field is therefore checked at runtime too, because the alternative is not a lenient
+   * accept — it is `.trim()` raising a TypeError, which is not an AppError, so it escapes this layer
+   * as an opaque 500 instead of the named rejection every other bad value gets. Asserted as
+   * WorkspaceUpdateError rather than by message, since the code is what decides that status.
+   */
+  it("refuses a wrong-typed value on every string-shaped field", () => {
+    const cases: WorkspaceMetadataInput[] = [
+      { name: 123 as never },
+      { description: 123 as never },
+      { description: null as never },
+      { model: { provider: 5 as never } },
+      { model: { model: 5 as never } },
+      { model: { reasoningEffort: 5 as never } },
+    ];
+    for (const input of cases) {
+      expect(() => validateMetadata(input, CURRENT)).toThrow(AppError);
+    }
+  });
+
+  // The reasoningEffort guard is type-only, unlike provider and model: blank already meant "omitted"
+  // here and resolves to the provider's default, so tightening it would be a separate contract change.
+  it("still treats a blank effort as omitted rather than refusing it", () => {
+    expect(validateMetadata({ model: { reasoningEffort: "  " } }, CURRENT).model).toEqual(CURRENT);
   });
 
   // The point of resolution: naming one field is a complete request. Without this a programmatic caller

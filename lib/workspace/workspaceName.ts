@@ -34,6 +34,13 @@ const CONTROL_CHARS = /[\u0000-\u001F\u007F]/;
  * (trimmed, NFC-normalized). Throws WorkspaceNameError("WORKSPACE_NAME_INVALID") on any violation.
  */
 export function validateWorkspaceName(raw: string): string {
+  // The declared type binds in-process callers; a name arriving from a JSON body has only claimed to be
+  // a string. Refused here with the same typed error as every other name violation, because `.trim()`
+  // on a non-string leaves this layer as a TypeError instead — which no adapter recognizes as an
+  // expected failure, so it surfaces as an opaque 500 rather than the 400 this policy exists to give.
+  if (typeof raw !== "string") {
+    throw new WorkspaceNameError("WORKSPACE_NAME_INVALID", "Workspace name must be a string.");
+  }
   const name = raw.trim().normalize("NFC");
 
   if (!name) {

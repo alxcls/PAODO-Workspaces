@@ -6,6 +6,7 @@ import {
   validateSecret,
   type SecretStore,
 } from "./workspaceSecrets";
+import { WorkspaceUpdateError } from "./workspaceErrors";
 import type { Workspace } from "@/lib/workspace/workspaceStore";
 
 const offline = {
@@ -30,6 +31,38 @@ describe("third-party secret validation", () => {
   it("accepts a well-formed secret unchanged", () => {
     const input = { name: "API_TOKEN", value: "top-secret", domains: ["api.openai.com"] };
     expect(validateSecret(input)).toEqual(input);
+  });
+
+  /**
+   * `secret` is the only field of the update contract whose whole object crosses the wire, so its shape
+   * is a claim rather than something the compiler established. Every malformed spelling has to leave
+   * here as a typed rejection: reaching into a non-object for `.name` raised a TypeError instead, which
+   * is not an AppError, so it surfaced as an opaque 500 rather than a named 400.
+   */
+  it("refuses a secret that is not an object", () => {
+    for (const input of [null, "TOKEN=x", 42, true, ["TOKEN"]]) {
+      expect(() => validateSecret(input)).toThrow(WorkspaceUpdateError);
+      expect(() => validateSecret(input)).toThrow("secret must be an object");
+    }
+  });
+
+  // A missing member and a wrong-typed one are the same thing to a caller — a field not usably supplied
+  // — so both get the message naming the accepted form rather than one of them getting a 500.
+  it("refuses a wrong-typed member with the same message a missing one gets", () => {
+    expect(() => validateSecret({})).toThrow("name must be uppercase");
+    expect(() => validateSecret({ name: 5, value: "v", domains: ["api.example.com"] })).toThrow(
+      "name must be uppercase",
+    );
+    expect(() => validateSecret({ name: "TOKEN", value: 5, domains: ["api.example.com"] })).toThrow("value required");
+    expect(() => validateSecret({ name: "TOKEN", value: "v", domains: "api.example.com" })).toThrow(
+      "add at least one allowed host",
+    );
+    expect(() => validateSecret({ name: "TOKEN", value: "v", domains: [5] })).toThrow(
+      "each allowed host must be a hostname",
+    );
+    expect(() => validateSecret({ name: "TOKEN", value: "v", domains: [null] })).toThrow(
+      "each allowed host must be a hostname",
+    );
   });
 
   it("requires an environment-variable name", () => {

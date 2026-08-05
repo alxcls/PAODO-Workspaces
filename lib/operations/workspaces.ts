@@ -181,6 +181,9 @@ export function validateMetadata(
 
   if (input.name !== undefined) metadata.name = validateWorkspaceName(input.name);
   if (input.description !== undefined) {
+    if (typeof input.description !== "string") {
+      throw new WorkspaceUpdateError("description must be a string", { field: "description" });
+    }
     const description = input.description.trim();
     if (description.length > MAX_WORKSPACE_DESCRIPTION_LENGTH) {
       throw new WorkspaceUpdateError(`description cannot exceed ${MAX_WORKSPACE_DESCRIPTION_LENGTH} characters`);
@@ -209,14 +212,23 @@ export function validateMetadata(
   }
 
   if (input.model !== undefined) {
-    // A present-but-blank field is a caller error, not an omission: resolution treats blank as "not
-    // supplied" and would quietly substitute a default for a value the caller did try to set. Checked
-    // before resolution so these keep naming the accepted values rather than reporting the substitute.
-    const blank = (value: string | undefined): boolean => value !== undefined && !value.trim();
-    if (blank(input.model.provider)) {
+    // A present field that cannot be read as a value is a caller error, not an omission — two ways over:
+    // blank, which resolution treats as "not supplied" and would quietly substitute a default for a
+    // value the caller did try to set; and non-string, which has no trim() at all and would leave this
+    // layer as a TypeError, reaching the caller as an opaque 500 rather than a named rejection. Both are
+    // checked before resolution so these keep naming the accepted values rather than the substitute.
+    const unusable = (value: unknown): boolean =>
+      value !== undefined && (typeof value !== "string" || !value.trim());
+    if (unusable(input.model.provider)) {
       throw new WorkspaceUpdateError(`llmProvider must be one of: ${SUPPORTED_PROVIDERS.join(", ")}`);
     }
-    if (blank(input.model.model)) throw new WorkspaceUpdateError("llmModel required");
+    if (unusable(input.model.model)) throw new WorkspaceUpdateError("llmModel required");
+    // Type only, unlike the two above: a blank effort stays an omission here, resolved to the provider's
+    // default, because that is what it already meant. Only the legality of a named level is this
+    // function's business, and that check needs the resolved provider — it waits below.
+    if (input.model.reasoningEffort !== undefined && typeof input.model.reasoningEffort !== "string") {
+      throw new WorkspaceUpdateError("reasoningEffort must be a string", { field: "reasoningEffort" });
+    }
 
     // Fill the gaps, then check what came out. Resolution is shared with the picker so a partial choice
     // means the same thing here as it does in the UI; see lib/workspace/modelSelection.ts.

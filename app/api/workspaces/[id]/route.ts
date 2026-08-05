@@ -70,15 +70,13 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     internetAccess?: boolean;
     workspaceApiAccess?: boolean;
     workspaceMcpAccess?: boolean;
-    secret?: { name?: string; value?: string; domains?: string[] };
+    secret?: { name: string; value: string; domains: string[] };
   };
 
-  if (body.description !== undefined && typeof body.description !== "string") {
-    return errorResponse("INVALID_REQUEST", "description must be a string", {
-      request: req,
-      details: { field: "description" },
-    });
-  }
+  // The field types above are what a well-formed request claims, not what this handler has checked. Each
+  // value's type is verified by the validator that owns its rules — see validateMetadata and
+  // validateSecret — so one layer states every rule once and every trigger gets the same rejection.
+  // Re-checking a field here only ever covered the one field someone remembered to add.
 
   // Reject anything not on the list rather than ignoring it. A misspelled field alongside a valid one
   // would otherwise apply the valid half and return 200 with the typo absent from `applied` — a
@@ -111,15 +109,11 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       ...(body.internetAccess !== undefined ? { internetAccess: body.internetAccess } : {}),
       ...(body.workspaceApiAccess !== undefined ? { workspaceApiAccess: body.workspaceApiAccess } : {}),
       ...(body.workspaceMcpAccess !== undefined ? { workspaceMcpAccess: body.workspaceMcpAccess } : {}),
-      ...(body.secret !== undefined
-        ? {
-            secret: {
-              name: body.secret.name ?? "",
-              value: body.secret.value ?? "",
-              domains: body.secret.domains ?? [],
-            },
-          }
-        : {}),
+      // Forwarded as sent. Filling absent members with "" and [] here read as a courtesy — it let
+      // validateSecret answer for a half-written secret — but it also meant reaching into `secret`
+      // before knowing it was an object at all, so `secret: null` died as a TypeError before any
+      // validator saw it. validateSecret now answers for every spelling, including that one.
+      ...(body.secret !== undefined ? { secret: body.secret } : {}),
       // Omitted fields are forwarded as omitted, not as "": the operation resolves each missing one
       // from the workspace's current choice, so any subset of the three is a complete request.
       ...(hasModel

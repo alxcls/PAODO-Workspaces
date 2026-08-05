@@ -101,24 +101,39 @@ export function deleteWorkspaceSecret(
 }
 
 /**
- * Checks a supplied secret without storing it. Pure, so a caller can validate a whole request before
- * its first write. Hosts are checked in normalized form because that is the form they are stored and
- * matched in — a caller may send `API.EXAMPLE.COM` and have it accepted.
+ * Checks a supplied secret without storing it, and returns it as the checked shape. Pure, so a caller
+ * can validate a whole request before its first write. Hosts are checked in normalized form because
+ * that is the form they are stored and matched in — a caller may send `API.EXAMPLE.COM` and have it
+ * accepted.
+ *
+ * Takes `unknown` rather than the input type, because this is the only field of the update contract
+ * whose whole object crosses the wire: the transport hands over what the caller nested under `secret`,
+ * so the shape is a claim to check here rather than one the compiler already established. Every
+ * rejection is a typed WorkspaceUpdateError, so no malformed spelling can escape as a TypeError and
+ * reach the caller as an opaque 500.
  */
-export function validateSecret(input: WorkspaceSecretInput): WorkspaceSecretInput {
-  if (!input.name || !SECRET_NAME_RE.test(input.name)) {
+export function validateSecret(input: unknown): WorkspaceSecretInput {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    throw new WorkspaceUpdateError("secret must be an object with name, value and domains");
+  }
+  const { name, value, domains } = input as Partial<Record<keyof WorkspaceSecretInput, unknown>>;
+
+  // Each check leads with the type so a missing field and a wrong-typed one give the same answer: both
+  // are a field the caller has not usably supplied, and the message that names the accepted form is the
+  // one they need either way.
+  if (typeof name !== "string" || !SECRET_NAME_RE.test(name)) {
     throw new WorkspaceUpdateError("name must be uppercase letters, digits, and underscores (e.g. OPENAI_KEY)");
   }
-  if (!input.value?.trim()) throw new WorkspaceUpdateError("value required");
-  if (!Array.isArray(input.domains) || input.domains.length === 0) {
+  if (typeof value !== "string" || !value.trim()) throw new WorkspaceUpdateError("value required");
+  if (!Array.isArray(domains) || domains.length === 0) {
     throw new WorkspaceUpdateError("add at least one allowed host");
   }
-  for (const raw of input.domains) {
-    if (!SECRET_DOMAIN_RE.test(normalizeDomain(raw ?? ""))) {
+  for (const raw of domains) {
+    if (typeof raw !== "string" || !SECRET_DOMAIN_RE.test(normalizeDomain(raw))) {
       throw new WorkspaceUpdateError("each allowed host must be a hostname the key is sent to (e.g. api.openai.com)");
     }
   }
-  return input;
+  return { name, value, domains };
 }
 
 /**

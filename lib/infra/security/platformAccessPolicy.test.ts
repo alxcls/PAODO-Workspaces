@@ -34,10 +34,26 @@ describe("platform access policy", () => {
     }
   });
 
-  it("denies nested resources and token administration by default", () => {
-    expect(isPlatformRouteAllowed("GET", "/api/workspaces/ws-1/files")).toBe(false);
+  it("denies token administration by default", () => {
     expect(isPlatformRouteAllowed("GET", "/api/settings/cli-access")).toBe(false);
     // The route that mints the platform token itself: a leaked key must not renew itself.
     expect(isPlatformRouteAllowed("POST", "/api/settings/cli-access")).toBe(false);
+  });
+
+  it("allows only the file methods used by the CLI", () => {
+    // Listing, reading and deleting: the routes the UI uses too.
+    expect(isPlatformRouteAllowed("GET", "/api/workspaces/ws-1/files")).toBe(true);
+    expect(isPlatformRouteAllowed("GET", "/api/workspaces/ws-1/files/content")).toBe(true);
+    expect(isPlatformRouteAllowed("DELETE", "/api/workspaces/ws-1/files/content")).toBe(true);
+    // Push and pull: the one CLI-specific transport.
+    expect(isPlatformRouteAllowed("GET", "/api/workspaces/ws-1/files/transfer")).toBe(true);
+    expect(isPlatformRouteAllowed("PUT", "/api/workspaces/ws-1/files/transfer")).toBe(true);
+
+    // Nothing wider than the CLI calls. The browser's transports would be a second, non-atomic way to
+    // do what transfer does; the editor's save and move have no CLI command behind them at all.
+    expect(isPlatformRouteAllowed("POST", "/api/workspaces/ws-1/files/upload")).toBe(false);
+    expect(isPlatformRouteAllowed("POST", "/api/workspaces/ws-1/files/download")).toBe(false);
+    expect(isPlatformRouteAllowed("PUT", "/api/workspaces/ws-1/files/content")).toBe(false);
+    expect(isPlatformRouteAllowed("PATCH", "/api/workspaces/ws-1/files/content")).toBe(false);
   });
 });

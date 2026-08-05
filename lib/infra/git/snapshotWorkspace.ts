@@ -6,6 +6,24 @@ import { createLogger } from "../logger";
 
 const log = createLogger("api");
 
+export interface SnapshotResult {
+  sha: string;
+  changed: boolean;
+}
+
+/**
+ * Awaited snapshot for a caller whose response promises a durable revision. Unlike the UI helper
+ * below, failures propagate: a transfer receipt must never claim it created a restore point when it
+ * did not.
+ */
+export function snapshotWorkspaceStrict(
+  versioning: IWorkspaceSnapshotWriter,
+  ws: { id: string; dir: string },
+  label: string,
+): Promise<SnapshotResult> {
+  return versioning.commitResult(ws.id, ws.dir, label);
+}
+
 // Snapshot the workspace after a user-driven file change so it shows up in version history, just
 // like an agent run does. Fire-and-forget: a versioning failure must never fail the user's action.
 // commitResult force-stages everything and skips itself if nothing actually changed.
@@ -15,10 +33,25 @@ export async function snapshotWorkspace(
   label: string,
 ): Promise<void> {
   try {
-    await versioning.commitResult(ws.id, ws.dir, label);
+    await snapshotWorkspaceStrict(versioning, ws, label);
   } catch (err) {
     log.warn({ err, workspaceId: ws.id }, "versioning snapshot failed");
   }
+}
+
+/**
+ * Strict counterpart used immediately before a batch transfer. It separates a pending browser
+ * upload burst from the transfer that follows and refuses to hide a failed pre-transfer snapshot.
+ */
+export async function flushSnapshotBurstStrict(
+  versioning: IWorkspaceSnapshotWriter,
+  ws: { id: string; dir: string },
+): Promise<SnapshotResult | null> {
+  const burst = pending.get(ws.id);
+  if (!burst) return null;
+  clearTimeout(burst.timer);
+  pending.delete(ws.id);
+  return snapshotWorkspaceStrict(versioning, ws, burst.label(burst.changes, burst.firstChange));
 }
 
 // A folder upload arrives as one request per file, and commitResult force-stages the whole tree on

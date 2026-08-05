@@ -92,6 +92,8 @@ const PATHS = [
   `/api/workspaces/${ID}/env-vars/API_KEY`,
   `/api/workspaces/${ID}/files`,
   `/api/workspaces/${ID}/files/content`,
+  `/api/workspaces/${ID}/files/transfer`,
+  // These two exist and must stay UI-only, so they are probed to prove the gateway refuses them.
   `/api/workspaces/${ID}/files/download`,
   `/api/workspaces/${ID}/files/upload`,
   `/api/workspaces/${ID}/history`,
@@ -124,7 +126,7 @@ describe("public gateway allowlist", () => {
     expect(disagreements).toEqual([]);
   });
 
-  it("covers all eleven policy rules, so the corpus cannot pass by matching nothing", () => {
+  it("covers every policy rule, so the corpus cannot pass by matching nothing", () => {
     const matchers = gatewayMatchers();
     const forwarded = METHODS.flatMap((method) =>
       PATHS.filter((pathname) => gatewayAllows(matchers, method, pathname)).map((pathname) => `${method} ${pathname}`),
@@ -132,15 +134,20 @@ describe("public gateway allowlist", () => {
     expect(forwarded.sort()).toEqual([
       `DELETE /api/workspaces/${ID}`,
       `DELETE /api/workspaces/${ID}/api-key`,
+      `DELETE /api/workspaces/${ID}/files/content`,
       `DELETE /api/workspaces/${ID}/mcp-config`,
       "GET /api/models",
       "GET /api/status",
       "GET /api/workspaces",
       `GET /api/workspaces/${ID}`,
+      `GET /api/workspaces/${ID}/files`,
+      `GET /api/workspaces/${ID}/files/content`,
+      `GET /api/workspaces/${ID}/files/transfer`,
       `PATCH /api/workspaces/${ID}`,
       "POST /api/workspaces",
       `POST /api/workspaces/${ID}/api-key`,
       `POST /api/workspaces/${ID}/mcp-config`,
+      `PUT /api/workspaces/${ID}/files/transfer`,
     ]);
   });
 

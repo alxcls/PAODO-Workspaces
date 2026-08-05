@@ -16,6 +16,12 @@ export const ERROR_CODES = {
   FILE_NOT_WRITABLE: "FILE_NOT_WRITABLE",
   /** Over MAX_UPLOAD_BYTES, which is our own policy — hence FILE_, not the 413 status name. */
   FILE_TOO_LARGE: "FILE_TOO_LARGE",
+  /**
+   * One transfer carried too many entries or too many bytes in total, though no single file was over
+   * the limit. Deliberately not FILE_TOO_LARGE: a caller that is told one file is too big drops or
+   * splits that file, while a caller told the transfer is too big has to split the transfer.
+   */
+  TRANSFER_TOO_LARGE: "TRANSFER_TOO_LARGE",
   STORAGE_EXHAUSTED: "STORAGE_EXHAUSTED",
   WORKSPACE_NAME_INVALID: "WORKSPACE_NAME_INVALID",
   WORKSPACE_NAME_CONFLICT: "WORKSPACE_NAME_CONFLICT",

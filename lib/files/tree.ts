@@ -3,10 +3,10 @@
 // Kept here, shared and tested once, rather than copy-pasted into each route.
 //
 // The depth cap is the panel's, not the filesystem's: it exists so one pathological tree cannot make
-// the file panel's single JSON response unbounded, and it is now a named option rather than a literal
-// buried in the recursion — a caller that must see the whole tree (a transfer manifest, where a
-// silently truncated answer means a nested project diverges without anyone being told) passes
-// Infinity and gets it.
+// the file panel's single JSON response unbounded, and it is a named option rather than a literal
+// buried in the recursion — a caller that must see the whole tree passes Infinity and gets it. That
+// caller is the CLI listing (`?depth=full` on the tree route): a truncation is survivable when it
+// feeds a panel someone is scrolling, and not when it feeds a client that will act on the result.
 import path from "path";
 import { createLogger } from "@/lib/infra/logger";
 import { readTransferEntries } from "./entries";

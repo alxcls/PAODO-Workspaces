@@ -2,11 +2,19 @@
 // whose destination comes from the `?path=` query param.
 //
 // The body is streamed to disk and never buffered. The container has less RAM than MAX_UPLOAD_BYTES,
-// so reading an upload into a Buffer would OOM the process long before the limit was reached. This
-// is also why there is no server-side archive extraction: the browser uploads a folder as N of these
-// one-file requests (see lib/client/hooks/useFileUpload.ts) rather than one ZIP, which keeps memory
-// flat on both ends, lets each file fail and retry on its own, and removes the zip-slip surface that
-// caller-named archive entries otherwise create.
+// so reading an upload into a Buffer would OOM the process long before the limit was reached. This is
+// also why the browser uploads a folder as N of these one-file requests (see
+// lib/client/hooks/useFileUpload.ts) rather than one archive: it keeps memory flat on both ends, lets
+// each file fail and retry on its own, and removes the zip-slip surface that caller-named archive
+// entries otherwise create.
+//
+// One path does extract a caller-authored archive server-side — the CLI's tar transfer
+// (lib/operations/files/transfer.ts) — and it is worth being exact about which of the three reasons
+// above it answers. Memory: it streams entry by entry to a staging directory, so it is as flat as this
+// handler. Zip-slip: entry names are normalised and every one must resolve inside a single virtual
+// `payload` root, and only regular files and directories are accepted. Per-file retry: it has none, and
+// that is the trade — one request is what makes the transfer atomic, which a scripted client wants more
+// than resumability, and a browser on a flaky connection wants far less.
 //
 // Containment: the target directory is realpath'd once, then the write target is resolved against it
 // via the shared resolveContained() helper (lib/files/containment.ts — also used by the

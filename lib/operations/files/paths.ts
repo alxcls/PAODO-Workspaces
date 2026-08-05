@@ -66,13 +66,3 @@ export async function resolveHostPath(rootDir: string, relPath: string, field = 
   }
   return resolved;
 }
-
-/** The common case: validate one entry path and resolve it in a single step. */
-export async function resolveEntry(
-  rootDir: string,
-  value: unknown,
-  field = "path",
-): Promise<{ relPath: string; hostPath: string }> {
-  const relPath = requireEntryPath(value, field);
-  return { relPath, hostPath: await resolveHostPath(rootDir, relPath, field) };
-}

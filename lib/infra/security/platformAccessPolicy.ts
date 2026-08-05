@@ -38,6 +38,11 @@ const RULES: ReadonlyArray<{
   workspaceRule("DELETE", "api-key"),
   workspaceRule("POST", "mcp-config"),
   workspaceRule("DELETE", "mcp-config"),
+  workspaceRule("GET", "files"),
+  workspaceRule("GET", "files/content"),
+  workspaceRule("DELETE", "files/content"),
+  workspaceRule("GET", "files/transfer"),
+  workspaceRule("PUT", "files/transfer"),
 ];
 
 export function isPlatformRouteAllowed(method: string, pathname: string): boolean {

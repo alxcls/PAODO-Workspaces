@@ -154,6 +154,12 @@ describe("checkAuth", () => {
       ["DELETE", "/api/workspaces/ws-1/api-key"],
       ["POST", "/api/workspaces/ws-1/mcp-config"],
       ["DELETE", "/api/workspaces/ws-1/mcp-config"],
+      // The file surface: the tree, reading and deleting content, and the transfer pair.
+      ["GET", "/api/workspaces/ws-1/files"],
+      ["GET", "/api/workspaces/ws-1/files/content"],
+      ["DELETE", "/api/workspaces/ws-1/files/content"],
+      ["GET", "/api/workspaces/ws-1/files/transfer"],
+      ["PUT", "/api/workspaces/ws-1/files/transfer"],
     ]) {
       expect(
         checkAuth("ip", req({ method, pathname, authorization: "Bearer cli_good" }), CREDS, tracker, validate),
@@ -161,7 +167,12 @@ describe("checkAuth", () => {
     }
 
     for (const [method, pathname] of [
-      ["GET", "/api/workspaces/ws-1/files"],
+      // The browser's own transports stay UI-only — the CLI pushes and pulls through the transfer pair.
+      ["POST", "/api/workspaces/ws-1/files/upload"],
+      ["POST", "/api/workspaces/ws-1/files/download"],
+      // The UI editor's save and its drag-and-drop move: no CLI command issues either.
+      ["PUT", "/api/workspaces/ws-1/files/content"],
+      ["PATCH", "/api/workspaces/ws-1/files/content"],
       // Rotate and revoke are shared; reading and toggling a channel stay UI-only.
       ["GET", "/api/workspaces/ws-1/api-key"],
       ["PATCH", "/api/workspaces/ws-1/api-key"],
@@ -187,7 +198,7 @@ describe("checkAuth", () => {
       expect(
         checkAuth(
           "ip",
-          req({ method: "GET", pathname: "/api/workspaces/ws-1/files", authorization: "Bearer cli_good" }),
+          req({ method: "POST", pathname: "/api/workspaces/ws-1/files/upload", authorization: "Bearer cli_good" }),
           CREDS,
           tracker,
           (token) => token === "cli_good",

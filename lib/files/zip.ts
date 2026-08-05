@@ -4,43 +4,27 @@
 // trees, with similar ratios) and streaming the archive as it's produced rather than buffering the
 // whole thing in memory before the first byte ships, so the browser's download starts immediately.
 //
-// All filesystem access goes through a bounded semaphore: a naive Promise.all over a large tree
-// opens every file at once and hits EMFILE ("too many open files"), which silently drops the
-// unreadable files from the archive. Capping concurrent fds keeps the zip complete.
+// All filesystem access goes through the shared descriptor budget (./fdLimit.ts): a naive
+// Promise.all over a large tree opens every file at once and hits EMFILE ("too many open files"),
+// which silently drops the unreadable files from the archive. Capping concurrent fds keeps the zip
+// complete.
+//
+// What goes in is the shared ignore contract (./ignore.ts), not "everything under the selected
+// paths". The archive is the read side of a file transfer, so it has to answer the question the same
+// way the tree and an upload do — a zip that carries node_modules the tree never showed and an upload
+// would never send back is the download and the upload disagreeing about what the workspace is.
+// A path named EXPLICITLY by the caller is still archived even if the contract would exclude it: that
+// is a deliberate selection, not a traversal, and refusing it would leave no way to fetch such a
+// directory at all.
 
 import fs from "fs/promises";
 import path from "path";
 import type JSZip from "jszip";
-
-// Conservative enough to stay under a typical macOS soft limit (ulimit -n 256) while leaving headroom
-// for sockets and the rest of the process; still plenty of parallelism to keep the disk busy.
-const MAX_OPEN_FILES = 64;
-
-// Counting semaphore. Releasing hands the permit straight to the next waiter (without touching the
-// active count) so the in-flight total never exceeds `max`.
-class Semaphore {
-  private active = 0;
-  private waiters: (() => void)[] = [];
-  constructor(private readonly max: number) {}
-
-  async run<T>(fn: () => Promise<T>): Promise<T> {
-    if (this.active >= this.max) {
-      await new Promise<void>((resolve) => this.waiters.push(resolve));
-    } else {
-      this.active++;
-    }
-    try {
-      return await fn();
-    } finally {
-      const next = this.waiters.shift();
-      if (next) next();
-      else this.active--;
-    }
-  }
-}
+import { readTransferEntries } from "./entries";
+import { openFileLimiter, type Semaphore } from "./fdLimit";
 
 async function addDirToZip(zip: JSZip, sem: Semaphore, dirPath: string, zipPath: string) {
-  const entries = await sem.run(() => fs.readdir(dirPath, { withFileTypes: true }));
+  const entries = await readTransferEntries(dirPath, sem);
   // JSZip only materializes a folder when something is placed inside it, so a directory with no
   // files anywhere beneath it would vanish from the archive. Add an explicit folder entry to keep
   // empty directories (and dirs holding only empty subdirs) present in the download.
@@ -74,7 +58,7 @@ export async function addSelectedToZip(
   rootFolder?: string,
 ) {
   const target = rootFolder ? (zip.folder(rootFolder) ?? zip) : zip;
-  const sem = new Semaphore(MAX_OPEN_FILES);
+  const sem = openFileLimiter();
   await Promise.all(
     paths.map(async (filePath) => {
       const resolved = path.resolve(filePath);

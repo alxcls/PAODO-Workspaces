@@ -27,7 +27,15 @@ export async function snapshotWorkspace(
 // between files in a burst and short enough that history still updates while the user watches.
 const COALESCE_MS = 2_000;
 
-const pending = new Map<string, { timer: NodeJS.Timeout; changes: number; firstChange: string }>();
+interface Burst {
+  timer: NodeJS.Timeout;
+  changes: number;
+  firstChange: string;
+  /** Kept with the burst so a flush produces the same message the timer would have. */
+  label: (changes: number, firstChange: string) => string;
+}
+
+const pending = new Map<string, Burst>();
 
 /**
  * Collapse a burst of file changes into the single snapshot the user actually wants. Each call
@@ -56,5 +64,31 @@ export function snapshotWorkspaceCoalesced(
   }, COALESCE_MS);
   timer.unref();
 
-  pending.set(ws.id, { timer, changes, firstChange });
+  pending.set(ws.id, { timer, changes, firstChange, label });
+}
+
+/**
+ * Commit the workspace's pending burst now, awaited, instead of waiting out the quiet period.
+ *
+ * The timer above is the right default when nobody has told us the burst is over — a browser folder
+ * upload never does. A caller that *knows* it has sent its last file wants two things the timer
+ * cannot give it: exactly one commit no matter how long the burst took (a transfer slower than
+ * COALESCE_MS between files commits once per gap otherwise), and a commit that has actually happened
+ * by the time the request it belongs to returns, so the reply can name the revision the caller can
+ * later restore to. Fire-and-forget is fine for a save the user watches land in the panel; it is not
+ * fine as the only durability story for a client that exits the moment it gets its response.
+ *
+ * Returns whether there was anything pending, so a caller can tell "committed your batch" from
+ * "nothing had changed" rather than reporting a snapshot it did not take.
+ */
+export async function flushSnapshotBurst(
+  versioning: IWorkspaceSnapshotWriter,
+  ws: { id: string; dir: string },
+): Promise<boolean> {
+  const burst = pending.get(ws.id);
+  if (!burst) return false;
+  clearTimeout(burst.timer);
+  pending.delete(ws.id);
+  await snapshotWorkspace(versioning, ws, burst.label(burst.changes, burst.firstChange));
+  return true;
 }

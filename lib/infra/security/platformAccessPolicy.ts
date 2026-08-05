@@ -6,6 +6,18 @@
 // /api/settings/cli-access is deliberately absent: it mints and rotates the very token used to
 // authenticate here, so a leaked key must not be able to renew itself.
 
+/**
+ * A rule for a route under one workspace: `/api/workspaces/<id>/<suffix>`, or the workspace itself
+ * when `suffix` is omitted. Most of this policy is that shape, and hand-writing the regex each time
+ * is how a rule ends up matching more (or less) than its author read it as — an unescaped dot or a
+ * missing `$` is invisible in review and silent at runtime. The id segment matches one path segment
+ * and nothing else, so a rule can never span into a sub-resource it did not name.
+ */
+function workspaceRule(method: string, suffix?: string) {
+  const tail = suffix === undefined ? "" : `/${suffix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`;
+  return { method, pathname: new RegExp(`^/api/workspaces/[^/]+${tail}$`) };
+}
+
 const RULES: ReadonlyArray<{
   method: string;
   pathname: RegExp;
@@ -19,13 +31,13 @@ const RULES: ReadonlyArray<{
   { method: "GET", pathname: /^\/api\/models$/ },
   { method: "GET", pathname: /^\/api\/workspaces$/ },
   { method: "POST", pathname: /^\/api\/workspaces$/ },
-  { method: "GET", pathname: /^\/api\/workspaces\/[^/]+$/ },
-  { method: "PATCH", pathname: /^\/api\/workspaces\/[^/]+$/ },
-  { method: "DELETE", pathname: /^\/api\/workspaces\/[^/]+$/ },
-  { method: "POST", pathname: /^\/api\/workspaces\/[^/]+\/api-key$/ },
-  { method: "DELETE", pathname: /^\/api\/workspaces\/[^/]+\/api-key$/ },
-  { method: "POST", pathname: /^\/api\/workspaces\/[^/]+\/mcp-config$/ },
-  { method: "DELETE", pathname: /^\/api\/workspaces\/[^/]+\/mcp-config$/ },
+  workspaceRule("GET"),
+  workspaceRule("PATCH"),
+  workspaceRule("DELETE"),
+  workspaceRule("POST", "api-key"),
+  workspaceRule("DELETE", "api-key"),
+  workspaceRule("POST", "mcp-config"),
+  workspaceRule("DELETE", "mcp-config"),
 ];
 
 export function isPlatformRouteAllowed(method: string, pathname: string): boolean {

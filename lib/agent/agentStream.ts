@@ -2,9 +2,7 @@
 // Translates AgentEvents from runAgent into SSE data frames and closes the stream on completion or error.
 
 import type { Logger } from "pino";
-import { buildSystemPrompt, buildPromptConfig } from "./systemPrompt";
-import { buildWorkspacePromptInputs } from "./promptContext";
-import { loadAgentConfig } from "./buildTools";
+import { buildWorkspaceSystemPrompt } from "./workspacePrompt";
 import { runAgent } from "./runner";
 import type { AgentEvent, AgentRuntimeDeps } from "./runner";
 import type { Workspace } from "@/lib/workspace/types";
@@ -113,8 +111,7 @@ export function makeAgentStream(ws: Workspace, message: string, log: Logger, dep
         send({ type: "done" });
       };
       try {
-        const inputs = buildWorkspacePromptInputs(ws.id, ws.dir);
-        const isolatedMessages = [buildSystemPrompt(ws.name, buildPromptConfig(loadAgentConfig(ws.id)), inputs)];
+        const isolatedMessages = [buildWorkspaceSystemPrompt(ws)];
         for await (const event of runAgent(isolatedMessages, message, ws.dir, ws.id, {
           maxIterations: ws.maxIterations,
           ...deps,

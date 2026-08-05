@@ -17,7 +17,7 @@ import type { BaseMessage } from "@langchain/core/messages";
 import { canCall } from "@/lib/agent/network/graph";
 import { loadSkills } from "@/lib/skills/store";
 import { createConversation, getMessages, persist } from "@/lib/conversations/store";
-import { setSystemPrompt } from "../messageSerialization";
+import { refreshWorkspaceSystemPrompt } from "../workspacePrompt";
 import { appendUsage, recordRunError, recordTurnUsage } from "@/lib/usage/record";
 import type { SessionOrigin } from "@/lib/usage/types";
 import {
@@ -28,8 +28,7 @@ import {
   type SkillSchema,
 } from "@/lib/skills/types";
 import type { IWorkspaceLookup, IContainerManager } from "../../infra/interfaces";
-import { buildSystemPrompt, buildPromptConfig, buildStructuredResponderBlock } from "../systemPrompt";
-import { buildWorkspacePromptInputs } from "../promptContext";
+import { buildStructuredResponderBlock } from "../systemPrompt";
 import { createLogger } from "../../infra/logger";
 import type { runAgent, AgentEvent } from "../runner";
 import { createWorkspaceRunTimeout, USER_STOPPED_CONVERSATION_MESSAGE, WorkspaceRunTimeoutError } from "../runTimeout";
@@ -237,7 +236,6 @@ export async function executeSkill(
   const { loadAgentConfig } = await import("../buildTools");
   const config = loadAgentConfig(callee.id);
   const run = opts.runAgentFn ?? (await import("../runner")).runAgent;
-  const inputs = buildWorkspacePromptInputs(callee.id, callee.dir);
   const caller = opts.store?.getWorkspace(callerId);
 
   // Created only now, after every pre-run rejection has been ruled out, so failed validations
@@ -249,7 +247,7 @@ export async function executeSkill(
     kind: "skill-call",
   });
   const messages = (opts.getMessagesFn ?? getMessages)(callee.id, conv.id) ?? ([] as BaseMessage[]);
-  setSystemPrompt(messages, buildSystemPrompt(callee.name, buildPromptConfig(config), inputs));
+  refreshWorkspaceSystemPrompt(callee, messages, config);
 
   // Keep the call metadata and arguments in one machine-readable envelope. This is a normal
   // user message to the callee agent, but JSON makes the protocol boundary clear when reviewing

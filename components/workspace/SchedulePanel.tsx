@@ -11,23 +11,11 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { timezoneOffsetMinutes, timezoneOptionLabel } from "@/lib/client/timezoneLabel";
-
-type IntervalUnit = "minute" | "hour" | "day" | "week";
-
-interface Schedule {
-  id: string;
-  prompt: string;
-  intervalValue: number;
-  intervalUnit: IntervalUnit;
-  startAt: string;
-  endAt?: string;
-  timezone: string;
-  enabled: boolean;
-  nextRunAt: string | null;
-  lastRunAt?: string;
-  lastRunStatus?: "ok" | "error";
-  lastRunSnippet?: string;
-}
+// The entity itself, not a copy of it. lib/schedules/types.ts is dependency-free — no store, no
+// luxon — so this panel types its fetch result and its unit picker from the same declaration the
+// validator and the scheduler use. The previous local duplicate could disagree with the server
+// silently; adding an interval unit now cannot leave this picker behind.
+import { INTERVAL_UNITS, type IntervalUnit, type ScheduleEntry } from "@/lib/schedules/types";
 
 interface FormState {
   prompt: string;
@@ -77,7 +65,7 @@ const emptyForm = (): FormState => ({
   enabled: true,
 });
 
-const toForm = (s: Schedule): FormState => ({
+const toForm = (s: ScheduleEntry): FormState => ({
   prompt: s.prompt,
   intervalValue: String(s.intervalValue),
   intervalUnit: s.intervalUnit,
@@ -204,7 +192,7 @@ function ScheduleModal({ workspaceId, onClose, onStatus }: ModalProps) {
       try {
         const res = await fetch(url);
         if (!res.ok) throw new Error(`Failed to load schedule (${res.status})`);
-        const s = (await res.json()) as Schedule | null;
+        const s = (await res.json()) as ScheduleEntry | null;
         if (!alive) return;
         if (s) {
           setForm(toForm(s));
@@ -243,7 +231,7 @@ function ScheduleModal({ workspaceId, onClose, onStatus }: ModalProps) {
         const body = (await res.json().catch(() => ({}))) as { error?: string };
         throw new Error(body.error ?? `Save failed (${res.status})`);
       }
-      const saved = (await res.json()) as Schedule;
+      const saved = (await res.json()) as ScheduleEntry;
       onStatus(saved.enabled);
       onClose();
     } catch (err) {
@@ -321,10 +309,11 @@ function ScheduleModal({ workspaceId, onClose, onStatus }: ModalProps) {
                       value={form.intervalUnit}
                       onChange={(e) => set("intervalUnit", e.target.value as IntervalUnit)}
                     >
-                      <option value="minute">minutes</option>
-                      <option value="hour">hours</option>
-                      <option value="day">days</option>
-                      <option value="week">weeks</option>
+                      {INTERVAL_UNITS.map((unit) => (
+                        <option key={unit} value={unit}>
+                          {unit}s
+                        </option>
+                      ))}
                     </select>
                   </div>
                 </Field>

@@ -20,8 +20,9 @@ import { buildSystemPrompt, buildPromptConfig } from "../../agent/systemPrompt";
 import { buildWorkspacePromptInputs } from "../../agent/promptContext";
 import { loadAgentConfig } from "../../agent/buildTools";
 import { setSystemPrompt } from "../../agent/messageSerialization";
-import { listAll, getSchedule, setNextRunAt, recordRun, type ScheduleEntry, type RunStatus } from "./scheduleStore";
-import { computeNextRun } from "./nextRun";
+import { listAll, getSchedule, setNextRunAt, recordRun } from "./scheduleStore";
+import { computeNextRun } from "@/lib/schedules/nextRun";
+import type { RunStatus, ScheduleEntry } from "@/lib/schedules/types";
 
 const log = createLogger("scheduler");
 

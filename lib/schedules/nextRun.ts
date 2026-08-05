@@ -4,8 +4,12 @@
 // schedule's IANA `timezone`. Day/week intervals are advanced in wall-clock time within that zone
 // (via luxon) so "every 1 day at 09:00 Europe/Brussels" keeps 09:00 across DST transitions, rather
 // than drifting by an hour as fixed-millisecond arithmetic would.
+//
+// Pure: luxon and the entity shape, nothing else. This is product policy — "when does this fire
+// next" is the same answer whether a route, the tick loop, or a test is asking — so it sits beside
+// the entity rather than in lib/infra/, which is for talking to the outside world.
 import { DateTime } from "luxon";
-import type { ScheduleEntry } from "./scheduleStore";
+import { MIN_INTERVAL_VALUE, type ScheduleEntry } from "./types";
 
 const LUXON_UNIT = {
   minute: "minutes",
@@ -24,11 +28,19 @@ const APPROX_MS = {
 } as const;
 
 /**
+ * Just the fields the recurrence is derived from. Narrower than ScheduleEntry so a caller can ask
+ * "when would this fire?" about a configuration it has validated but not yet given an identity —
+ * which is exactly the order lib/operations/schedules/schedule.ts needs. A full entry still
+ * satisfies it.
+ */
+export type Recurrence = Pick<ScheduleEntry, "intervalValue" | "intervalUnit" | "startAt" | "timezone" | "endAt">;
+
+/**
  * The first occurrence strictly after `after`, or `null` if the schedule is invalid or has passed
  * its `endAt` bound. If `startAt` is itself after `after`, that first anchor is returned.
  */
-export function computeNextRun(entry: ScheduleEntry, after: Date): Date | null {
-  if (entry.intervalValue < 1) return null;
+export function computeNextRun(entry: Recurrence, after: Date): Date | null {
+  if (entry.intervalValue < MIN_INTERVAL_VALUE) return null;
 
   const zone = entry.timezone;
   const luxonUnit = LUXON_UNIT[entry.intervalUnit];

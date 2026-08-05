@@ -4,7 +4,7 @@
 import { describe, it, expect } from "vitest";
 import { DateTime } from "luxon";
 import { computeNextRun, isValidTimezone } from "./nextRun";
-import type { ScheduleEntry, IntervalUnit } from "./scheduleStore";
+import type { ScheduleEntry, IntervalUnit } from "./types";
 
 function entry(over: Partial<ScheduleEntry> = {}): ScheduleEntry {
   return {

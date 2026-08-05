@@ -1,7 +1,7 @@
 // Pure, view-agnostic logic behind the usage dashboard: fold the light per-turn usage records into
 // one row per run (session), and format the scalar cells. Kept out of the page component so it's unit
 // testable and the component stays presentational.
-import type { LightTurnRecord, SessionOrigin } from "../workspace/usageStore";
+import type { LightTurnRecord, SessionOrigin } from "@/lib/usage/types";
 
 // One user message ("turn line") = one run = one sessionId, aggregated from the light per-turn
 // records. The row shows both IDs: the session id (the per-run identifier) and the conversation

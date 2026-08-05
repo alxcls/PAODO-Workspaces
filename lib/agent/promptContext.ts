@@ -6,7 +6,7 @@
 import fs from "fs";
 import path from "path";
 import { createLogger } from "../infra/logger";
-import { getDrivesForWorkspace, formatDriveLine } from "../workspace/driveStore";
+import { getDrivesForWorkspace, formatDriveLine } from "@/lib/drives/store";
 import { listSecretMeta } from "../infra/security/workspaceSecretStore";
 import { getContainers, getStore } from "../infra/services";
 

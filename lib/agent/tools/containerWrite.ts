@@ -8,7 +8,7 @@
 import path from "path";
 import type { ExecRunner } from "../interfaces";
 import { toolError } from "../toolUtils";
-import { requireFreeSpace } from "../../workspace/diskSpace";
+import { requireFreeSpace } from "@/lib/infra/storage/diskSpace";
 
 export async function writeContainerFile(
   runner: ExecRunner,

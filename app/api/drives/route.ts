@@ -1,7 +1,7 @@
 // REST endpoint for the shared-drive collection.
 // GET returns all drives; POST creates a new one with an isolated content directory on disk.
 import { NextRequest, NextResponse } from "next/server";
-import { listDrives, createDrive, DriveNameError } from "@/lib/workspace/driveStore";
+import { listDrives, createDrive, DriveNameError } from "@/lib/drives/store";
 import { createLogger } from "@/lib/infra/logger";
 
 export function GET() {

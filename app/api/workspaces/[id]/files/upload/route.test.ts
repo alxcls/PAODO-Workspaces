@@ -28,13 +28,13 @@ const { ROOT, WS_DIR, LIMIT } = vi.hoisted(() => {
   return { ROOT: root, WS_DIR: wsDir, LIMIT: 64 };
 });
 
-vi.mock("@/lib/workspace/uploadLimits", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/workspace/uploadLimits")>()),
+vi.mock("@/lib/uploads/limits", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/uploads/limits")>()),
   MAX_UPLOAD_BYTES: LIMIT,
 }));
 
 const checkFreeSpace = vi.hoisted(() => vi.fn().mockResolvedValue({ ok: true, freeBytes: Infinity }));
-vi.mock("@/lib/workspace/diskSpace", () => ({ checkFreeSpace, RESERVED_FREE_BYTES: 1024 * 1024 * 1024 }));
+vi.mock("@/lib/infra/storage/diskSpace", () => ({ checkFreeSpace, RESERVED_FREE_BYTES: 1024 * 1024 * 1024 }));
 
 vi.mock("@/lib/infra/services", () => ({
   getStore: () => ({ getWorkspace: (id: string) => (id === "ws" ? { id: "ws", name: "ws", dir: WS_DIR } : undefined) }),

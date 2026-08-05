@@ -14,7 +14,7 @@ import { buildSystemPrompt, buildPromptConfig } from "@/lib/agent/systemPrompt";
 import { buildWorkspacePromptInputs } from "@/lib/agent/promptContext";
 import { loadAgentConfig } from "@/lib/agent/buildTools";
 import { setSystemPrompt } from "@/lib/agent/messageSerialization";
-import * as conversations from "@/lib/workspace/conversationStore";
+import * as conversations from "@/lib/conversations/store";
 import * as broker from "@/lib/agent/runBroker";
 import { SSE_HEADERS, startKeepalive } from "@/lib/agent/sse";
 

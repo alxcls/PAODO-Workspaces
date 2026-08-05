@@ -6,7 +6,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { ExecRunner } from "../interfaces";
 
 const requireFreeSpace = vi.hoisted(() => vi.fn());
-vi.mock("../../workspace/diskSpace", () => ({ requireFreeSpace }));
+vi.mock("@/lib/infra/storage/diskSpace", () => ({ requireFreeSpace }));
 
 import { writeContainerFile } from "./containerWrite";
 

@@ -7,12 +7,12 @@ import os from "os";
 import type { ExecRunner } from "../interfaces";
 
 const requireFreeSpace = vi.hoisted(() => vi.fn());
-vi.mock("../../workspace/diskSpace", () => ({ requireFreeSpace }));
+vi.mock("@/lib/infra/storage/diskSpace", () => ({ requireFreeSpace }));
 
 import { FileEditTool } from "./fileEdit";
 
 // A real, existing directory — FileEditTool also realpath-checks against it (see
-// lib/workspace/pathContainment.ts via resolveWorkspacePath).
+// lib/files/containment.ts via resolveWorkspacePath).
 const WORKSPACE_DIR = os.tmpdir();
 
 function makeRunner(fileContent: string) {

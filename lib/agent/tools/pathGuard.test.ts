@@ -18,7 +18,7 @@ import { FileEditTool } from "./fileEdit";
 import type { ExecRunner } from "../interfaces";
 
 // FileWriteTool/FileEditTool now also realpath-check against a real workspaceDir (see
-// lib/workspace/pathContainment.ts), so this needs a real, existing directory — the OS temp dir
+// lib/files/containment.ts), so this needs a real, existing directory — the OS temp dir
 // always exists and nothing is actually written under it (runner.exec is mocked below).
 const WORKSPACE_DIR = os.tmpdir();
 

@@ -2,7 +2,7 @@
 export const runtime = "nodejs";
 
 import { type NextRequest, NextResponse } from "next/server";
-import { listUsageLight } from "@/lib/workspace/usageStore";
+import { listUsageLight } from "@/lib/usage/queries";
 
 // Light list: token counts + tool names only. Heavy content (user input, reasoning,
 // tool args/output) is loaded lazily per session via /api/usage/[sessionId].

@@ -6,13 +6,13 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import fs from "fs";
 import os from "os";
 import path from "path";
-import type { Drive } from "../workspace/driveStore";
+import type { Drive } from "@/lib/drives/store";
 
 // The drive list is looked up by id; mock it so the test owns the result without touching disk.
 // formatDriveLine is pure presentation — mirror the production rendering so the prompt assertions
 // exercise the real one-line shape (`- <name> (id: <id>)<desc>`).
 const getDrivesForWorkspace = vi.fn<(workspaceId: string) => Drive[]>();
-vi.mock("../workspace/driveStore", () => ({
+vi.mock("@/lib/drives/store", () => ({
   getDrivesForWorkspace: (id: string) => getDrivesForWorkspace(id),
   formatDriveLine: (d: Drive) => `- ${d.name} (id: ${d.id})${d.description ? ` — ${d.description}` : ""}`,
 }));

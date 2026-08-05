@@ -7,9 +7,9 @@ import { buildWorkspacePromptInputs } from "./promptContext";
 import { loadAgentConfig } from "./buildTools";
 import { runAgent } from "./runner";
 import type { AgentEvent, AgentRuntimeDeps } from "./runner";
-import type { Workspace } from "../workspace/workspaceStore";
-import { recordRunError, recordTurnUsage } from "../workspace/usageStore";
-import type { SessionOrigin } from "../workspace/usageStore";
+import type { Workspace } from "@/lib/workspace/types";
+import { recordRunError, recordTurnUsage } from "@/lib/usage/record";
+import type { SessionOrigin } from "@/lib/usage/types";
 import { createWorkspaceRunTimeout } from "./runTimeout";
 import { SSE_HEADERS, startKeepalive } from "./sse";
 

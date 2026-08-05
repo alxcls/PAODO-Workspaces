@@ -2,7 +2,7 @@
 "use client";
 
 import { useState } from "react";
-import { MAX_WORKSPACE_DESCRIPTION_LENGTH } from "@/lib/workspace/workspaceLimits";
+import { MAX_WORKSPACE_DESCRIPTION_LENGTH } from "@/lib/workspace/limits";
 
 export default function DescriptionBlock({ value, onChange }: { value: string; onChange: (d: string) => void }) {
   const [editing, setEditing] = useState(false);

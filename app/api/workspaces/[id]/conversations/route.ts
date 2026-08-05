@@ -6,10 +6,10 @@
 //   POST → create a new conversation and make it active
 import { type NextRequest, NextResponse } from "next/server";
 import { requireWorkspace } from "@/lib/api/guards";
-import * as conversations from "@/lib/workspace/conversationStore";
+import * as conversations from "@/lib/conversations/store";
 import * as broker from "@/lib/agent/runBroker";
 import { messagesToTranscript } from "@/lib/agent/messageSerialization";
-import { getConversationOutputTokens } from "@/lib/workspace/usageStore";
+import { getConversationOutputTokens } from "@/lib/usage/queries";
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;

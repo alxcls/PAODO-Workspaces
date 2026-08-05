@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import type { ThirdPartySecret } from "@/lib/operations/workspaceSecrets";
+import type { ThirdPartySecret } from "@/lib/operations/workspace/secrets";
 
 export default function EnvVarsBlock({ wsId }: { wsId: string }) {
   const [secrets, setSecrets] = useState<ThirdPartySecret[]>([]);

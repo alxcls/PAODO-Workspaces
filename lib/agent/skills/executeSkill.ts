@@ -14,18 +14,19 @@
 // no HTTP, no serialization.
 import Ajv, { type ErrorObject, type ValidateFunction } from "ajv";
 import type { BaseMessage } from "@langchain/core/messages";
-import { canCall } from "../../workspace/workspaceGraph";
-import { loadSkills } from "../../workspace/skillStore";
-import { createConversation, getMessages, persist } from "../../workspace/conversationStore";
+import { canCall } from "@/lib/agent/network/graph";
+import { loadSkills } from "@/lib/skills/store";
+import { createConversation, getMessages, persist } from "@/lib/conversations/store";
 import { setSystemPrompt } from "../messageSerialization";
-import { appendUsage, recordRunError, recordTurnUsage, type SessionOrigin } from "../../workspace/usageStore";
+import { appendUsage, recordRunError, recordTurnUsage } from "@/lib/usage/record";
+import type { SessionOrigin } from "@/lib/usage/types";
 import {
   NEEDS_INPUT_KEY,
   type SkillCallResult,
   type SkillErrorCode,
   type SkillDefinition,
   type SkillSchema,
-} from "../../workspace/skillTypes";
+} from "@/lib/skills/types";
 import type { IWorkspaceLookup, IContainerManager } from "../../infra/interfaces";
 import { buildSystemPrompt, buildPromptConfig, buildStructuredResponderBlock } from "../systemPrompt";
 import { buildWorkspacePromptInputs } from "../promptContext";

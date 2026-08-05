@@ -96,5 +96,5 @@ Related requirements:
 `doc/prd/accepted/prd-monitoring-dashboard.md`.
 
 Implementation:
-`lib/data/database.ts`, `lib/data/migrations/`, `lib/workspace/conversationStore.ts`,
-`lib/workspace/usageStore.ts`, `app/api/usage/`, and `app/dashboard/page.tsx`.
+`lib/data/database.ts`, `lib/data/migrations/`, `lib/conversations/store.ts`,
+`lib/usage/store.ts`, `app/api/usage/`, and `app/dashboard/page.tsx`.

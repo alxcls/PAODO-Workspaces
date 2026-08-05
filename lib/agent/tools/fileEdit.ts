@@ -10,7 +10,7 @@ import { z } from "zod";
 import { containWorkspacePath } from "../pathUtils";
 import { toolError } from "../toolUtils";
 import { writeContainerFile } from "./containerWrite";
-import { requireFreeSpace } from "../../workspace/diskSpace";
+import { requireFreeSpace } from "@/lib/infra/storage/diskSpace";
 import type { ExecRunner } from "../interfaces";
 
 const schema = z.object({
@@ -39,7 +39,7 @@ export class FileEditTool extends StructuredTool<typeof schema> {
 
   protected async _call({ file_path, old_string, new_string, replace_all }: z.infer<typeof schema>): Promise<string> {
     // Realpath-contains against a symlink planted inside the workspace, not just a lexical "../"
-    // check (see lib/workspace/pathContainment.ts). Covers both branches below since relpath is
+    // check (see lib/files/containment.ts). Covers both branches below since relpath is
     // resolved once, up front.
     const relpath = await containWorkspacePath(this.workspaceDir, file_path);
     if (relpath === null) return "Error: path is outside the workspace";

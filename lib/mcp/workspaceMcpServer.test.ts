@@ -11,7 +11,7 @@ import {
   callWorkspaceMcpTool,
   type WorkspaceMcpDeps,
 } from "./workspaceMcpServer";
-import type { SkillDefinition } from "../workspace/skillTypes";
+import type { SkillDefinition } from "@/lib/skills/types";
 
 const CHECK_STOCK: SkillDefinition = {
   id: "check_stock",

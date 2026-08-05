@@ -1,6 +1,6 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { notFound } from "@/lib/api/guards";
-import { deleteWorkspaceSecret } from "@/lib/operations/workspaceSecrets";
+import { deleteWorkspaceSecret } from "@/lib/operations/workspace/secrets";
 
 export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string; name: string }> }) {
   const { id, name } = await params;

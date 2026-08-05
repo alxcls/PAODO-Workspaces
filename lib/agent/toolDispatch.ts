@@ -1,7 +1,7 @@
 // Executes one normalized batch of model-requested tools. The runner owns turn ordering and history;
 // this module owns invocation, result classification, truncation, and live call-agent link delivery.
 import type { Logger } from "pino";
-import type { ToolStatus } from "../workspace/usageStore";
+import type { ToolStatus } from "@/lib/usage/types";
 import type { CallAgentMeta } from "./tools/agentCall";
 import { classifyToolStatus } from "./toolUtils";
 import type { ResolvedToolCall } from "./modelTurn";

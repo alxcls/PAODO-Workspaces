@@ -14,7 +14,7 @@ import {
   type CredentialKind,
   type CredentialSubject,
 } from "@/lib/infra/security/credentialStore";
-import type { WorkspaceAccessDetails } from "@/lib/operations/workspaceAccess";
+import type { WorkspaceAccessDetails } from "@/lib/operations/workspace/access";
 import { appErrorResponse, errorResponse, readJsonObject } from "@/lib/api/errorResponse";
 import { createLogger } from "@/lib/infra/logger";
 

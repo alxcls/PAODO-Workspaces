@@ -28,10 +28,10 @@ import { DriveReadTool } from "./tools/driveRead";
 import { DriveDeleteTool } from "./tools/driveDelete";
 import { DriveDownloadTool } from "./tools/driveDownload";
 import { DriveUploadTool } from "./tools/driveUpload";
-import { getDrivesForWorkspace } from "../workspace/driveStore";
-import { isCaller } from "../workspace/workspaceGraph";
+import { getDrivesForWorkspace } from "@/lib/drives/store";
+import { isCaller } from "@/lib/agent/network/graph";
 import { defaultContainerManager } from "../infra/docker/defaultContainerManager";
-import { defaultWorkspaceStore } from "../workspace/workspaceStore";
+import { defaultWorkspaceStore } from "@/lib/infra/workspace/registry";
 import { getVersioning } from "../infra/services";
 import { broadcastToWorkspace } from "../infra/realtime/wsHub";
 import type {
@@ -42,7 +42,7 @@ import type {
   IWorkspaceLookup,
 } from "../infra/interfaces";
 import type { AgentConfig, PrivilegedRunner, StreamingExecFn, BackgroundExecFn } from "./interfaces";
-import { DEFAULT_LLM } from "./interfaces";
+import { DEFAULT_LLM } from "../models/llmSelection";
 
 function makeContainerRunner(workspaceId: string, workspaceDir: string, containers: IContainerExec): PrivilegedRunner {
   return {

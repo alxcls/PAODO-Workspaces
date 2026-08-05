@@ -28,10 +28,10 @@ import { getStore, getContainers, getVersioning, getCredentialProxy } from "./li
 import { ensureCA } from "./lib/infra/proxy/proxyCA";
 import { WORKSPACES_ROOT } from "./lib/infra/paths";
 import { assertSecretStoreAvailable, getWorkspaceRules } from "./lib/infra/security/workspaceSecretStore";
-import { setTodos } from "./lib/workspace/todoStore";
-import { loadIndex } from "./lib/workspace/conversationStore";
+import { setTodos } from "./lib/todos/store";
+import { loadIndex } from "./lib/conversations/store";
 import { addConnection, removeConnection, getConnectionCount } from "./lib/infra/realtime/wsHub";
-import { ensureWatcher, stopWatcher, markSelfWrite, stopAllWatchers } from "./lib/workspace/workspaceWatcher";
+import { ensureWatcher, stopWatcher, markSelfWrite, stopAllWatchers } from "./lib/infra/workspace/watcher";
 import {
   AuthFailureTracker,
   authRequestFromIncoming,
@@ -45,7 +45,7 @@ import { mintSessionCookie, sessionCookieNeedsRefresh, verifySessionCookie } fro
 import { buildSecurityHeaders } from "./lib/infra/security/securityHeaders";
 import { startScheduler, stopScheduler } from "./lib/infra/schedules/scheduler";
 import { startProxyReconciler, stopProxyReconciler } from "./lib/infra/docker/proxyReconciler";
-import { startUploadSweeper, stopUploadSweeper } from "./lib/workspace/uploadSweeper";
+import { startUploadSweeper, stopUploadSweeper } from "./lib/uploads/sweeper";
 import { checkApiRateLimit } from "./lib/infra/security/rateLimit";
 import { hasConfiguredProviderApiKey } from "./lib/agent/buildModel";
 import { assertDataRootAvailable, assertWorkspaceRegistryAvailable } from "./lib/infra/startupChecks";

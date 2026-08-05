@@ -27,7 +27,7 @@ vi.mock("@/lib/infra/security/credentialStore", () => ({
   mint: h.mint,
   revoke: h.revoke,
 }));
-vi.mock("@/lib/workspace/skillStore", () => ({ loadSkills: h.loadSkills }));
+vi.mock("@/lib/skills/store", () => ({ loadSkills: h.loadSkills }));
 // The exposed set comes from the shared listWorkspaceSkills operation, which resolves the workspace
 // through the store to find its directory — the same set the workspace-details route reports.
 vi.mock("@/lib/infra/services", () => ({

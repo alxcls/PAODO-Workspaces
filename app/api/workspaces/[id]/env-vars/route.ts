@@ -6,8 +6,8 @@ import { type NextRequest, NextResponse } from "next/server";
 import { notFound, requireWorkspace } from "@/lib/api/guards";
 import { appErrorResponse, errorResponse, readJsonObject } from "@/lib/api/errorResponse";
 import { createLogger } from "@/lib/infra/logger";
-import { listWorkspaceSecrets } from "@/lib/operations/workspaceSecrets";
-import { updateWorkspace } from "@/lib/operations/workspaceUpdate";
+import { listWorkspaceSecrets } from "@/lib/operations/workspace/secrets";
+import { updateWorkspace } from "@/lib/operations/workspace/update";
 
 const log = createLogger("api").child({ route: "env-vars" });
 const NO_STORE = { "Cache-Control": "no-store" } as const;

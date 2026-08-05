@@ -3,7 +3,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createLogger } from "@/lib/infra/logger";
 import { appErrorResponse, errorResponse, readJsonObject } from "@/lib/api/errorResponse";
-import { createWorkspace, listWorkspaces } from "@/lib/operations/workspaces";
+import { createWorkspace } from "@/lib/operations/workspace/create";
+import { listWorkspaces } from "@/lib/operations/workspace/read";
 
 export async function GET() {
   return NextResponse.json(listWorkspaces());

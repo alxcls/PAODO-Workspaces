@@ -13,8 +13,8 @@ import { notFound, requireWorkspace } from "@/lib/api/guards";
 import { appErrorResponse, errorResponse, readJsonObject } from "@/lib/api/errorResponse";
 import { receiptResponse } from "@/lib/api/workspaceUpdateReceipt";
 import { createLogger } from "@/lib/infra/logger";
-import { updateWorkspace } from "@/lib/operations/workspaceUpdate";
-import { validateInternetAccess } from "@/lib/operations/workspaceEgress";
+import { updateWorkspace } from "@/lib/operations/workspace/update";
+import { validateInternetAccess } from "@/lib/operations/workspace/egress";
 
 const log = createLogger("api").child({ route: "internet-access" });
 

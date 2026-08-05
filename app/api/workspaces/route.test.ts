@@ -4,7 +4,7 @@
 // faked — its uniqueness/validation logic is covered in workspaceStore.uniqueness.test.ts; here we
 // only assert the route maps a thrown WorkspaceNameError to the right status via guards.ts.
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { WorkspaceNameError } from "@/lib/workspace/workspaceName";
+import { WorkspaceNameError } from "@/lib/workspace/name";
 
 const store = { createWorkspace: vi.fn(), listWorkspaces: vi.fn() };
 vi.mock("@/lib/infra/services", () => ({ getStore: () => store }));

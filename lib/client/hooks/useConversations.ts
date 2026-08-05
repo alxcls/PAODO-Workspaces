@@ -5,7 +5,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { useSearchParams } from "next/navigation";
-import type { Message } from "@/lib/client/agentTranscript";
+import type { Message } from "@/lib/transcript/message";
 
 export interface ConversationMeta {
   id: string;

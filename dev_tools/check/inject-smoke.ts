@@ -7,7 +7,8 @@
 //   2. A real file tool (FileReadTool) runs against the fake container — ZERO Docker spawned.
 //   3. The production global store is untouched — ZERO shared/global state leakage.
 // When a test framework is later chosen, this ports directly into a real test.
-import { WorkspaceStore, defaultWorkspaceStore, type Workspace } from "../../lib/workspace/workspaceStore";
+import { WorkspaceStore, defaultWorkspaceStore } from "../../lib/infra/workspace/registry";
+import type { Workspace } from "../../lib/workspace/types";
 import { getStore, getContainers, setServices, resetServices } from "../../lib/infra/services";
 import type { IContainerManager } from "../../lib/infra/interfaces";
 import type { DockerResult } from "../../lib/infra/docker/dockerClient";

@@ -42,7 +42,7 @@ vi.mock("@/lib/infra/services", () => ({
 }));
 
 import { GET, PUT, PATCH } from "./route";
-import { buildTree } from "@/lib/workspace/fileTree";
+import { buildTree } from "@/lib/files/tree";
 
 const ctx = { params: Promise.resolve({ id: "ws" }) };
 const getFile = (p: string) => GET(new Request(`http://x/api/files/content?path=${encodeURIComponent(p)}`), ctx);

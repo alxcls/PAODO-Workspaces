@@ -3,10 +3,10 @@
 import { useState, useEffect } from "react";
 // DEFAULT_LLM is a plain const in a type-only module (no runtime imports), so it's safe in a client
 // component and keeps the picker's fallback in lockstep with the server's actual default.
-import { DEFAULT_LLM as DEFAULT, type ReasoningEffort } from "@/lib/agent/interfaces";
+import { DEFAULT_LLM as DEFAULT, type ReasoningEffort } from "@/lib/models/llmSelection";
 // The model/effort defaulting rules, shared with the server-side update path so the picker and a
 // partial PATCH resolve a gap the same way.
-import { defaultEffortFor, defaultModelFor } from "@/lib/workspace/modelSelection";
+import { defaultEffortFor, defaultModelFor } from "@/lib/models/selection";
 import { confirmedValues } from "@/lib/client/workspaceReceipt";
 
 // Compact fixed widths so the row of controls stays roughly half the block width. Applied inline

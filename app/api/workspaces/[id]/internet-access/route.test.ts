@@ -14,7 +14,7 @@ const h = vi.hoisted(() => ({
 vi.mock("@/lib/api/guards", () => ({
   requireWorkspace: () => h.workspace,
 }));
-vi.mock("@/lib/workspace/workspaceStore", () => ({
+vi.mock("@/lib/infra/workspace/registry", () => ({
   setWorkspaceInternetAccess: h.setWorkspaceInternetAccess,
 }));
 vi.mock("@/lib/infra/proxy/internetAccessPolicy", () => ({

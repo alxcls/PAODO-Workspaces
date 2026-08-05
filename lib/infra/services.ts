@@ -4,7 +4,7 @@
 //
 // Leaf module: imports only the concrete infra. The agent layer must NOT import this file — it
 // receives store/containers via constructor/argument injection to stay cycle-free and pure.
-import { defaultWorkspaceStore } from "../workspace/workspaceStore";
+import { defaultWorkspaceStore } from "@/lib/infra/workspace/registry";
 import { defaultContainerManager } from "./docker/defaultContainerManager";
 import { defaultWorkspaceVersioning } from "./git";
 import type { IWorkspaceStore, IContainerManager, IWorkspaceVersioning } from "./interfaces";

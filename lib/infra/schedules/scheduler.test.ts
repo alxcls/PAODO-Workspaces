@@ -35,7 +35,7 @@ vi.mock("../../agent/runBroker", () => ({
     return { replay: [], userInput: "", status: h.subStatus, unsubscribe: h.unsubscribe };
   },
 }));
-vi.mock("../../workspace/conversationStore", () => ({
+vi.mock("@/lib/conversations/store", () => ({
   createConversation: (workspaceId: string, opts?: { title?: string; kind?: "user" | "skill-call" | "scheduled" }) => {
     h.createConversation(workspaceId, opts);
     return { id: "conv-1" };

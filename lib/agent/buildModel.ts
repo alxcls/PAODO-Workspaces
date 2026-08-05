@@ -3,9 +3,8 @@
 
 import { ChatOpenAI } from "@langchain/openai";
 import { ChatAnthropic } from "@langchain/anthropic";
-import type { LLMProviderConfig, ReasoningEffort } from "./interfaces";
-
-export type { ReasoningEffort };
+import type { LLMProviderConfig } from "./interfaces";
+import type { ReasoningEffort } from "../models/llmSelection";
 
 // Legacy extended-thinking budgets, keyed by the workspace's reasoning-effort knob. Used only for
 // models that still accept thinking:{type:"enabled", budget_tokens} — see ANTHROPIC_ADAPTIVE_MODELS.
@@ -20,7 +19,7 @@ const ANTHROPIC_THINKING_BUDGET: Partial<Record<ReasoningEffort, number>> = {
 // Anthropic models that require the adaptive-thinking API (thinking:{type:"adaptive"} +
 // output_config.effort) and REJECT the legacy thinking:{type:"enabled", budget_tokens} shape with a
 // 400 ("thinking.type.enabled is not supported for this model"). Keep in sync with the `anthropic`
-// list in lib/workspace/models.ts: a model listed there but absent here falls through to the legacy
+// list in lib/models/registry.ts: a model listed there but absent here falls through to the legacy
 // budget_tokens path (correct for older models like claude-haiku-4-5, which in turn rejects effort).
 const ANTHROPIC_ADAPTIVE_MODELS = new Set<string>(["claude-opus-4-8", "claude-sonnet-5"]);
 
@@ -58,7 +57,7 @@ interface ProviderDescriptor extends ProviderMetadata {
 
 // The single source of truth for provider support: capabilities, key env var and model construction
 // in one entry. Adding a provider means adding one entry here plus its models in
-// lib/workspace/models.ts — nothing else in the agent layer changes.
+// lib/models/registry.ts — nothing else in the agent layer changes.
 const PROVIDERS: Record<string, ProviderDescriptor> = {
   anthropic: {
     apiKeyEnv: "ANTHROPIC_API_KEY",

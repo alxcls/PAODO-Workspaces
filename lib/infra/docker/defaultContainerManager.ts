@@ -1,7 +1,7 @@
 // Production composition for ContainerManager. This is the only module that binds Docker lifecycle
 // policy to the concrete workspace registry and credential store.
 import { createHash } from "crypto";
-import { defaultWorkspaceStore } from "../../workspace/workspaceStore";
+import { defaultWorkspaceStore } from "@/lib/infra/workspace/registry";
 import { listSecretMeta, PROXY_TOKEN_FORMAT_VERSION } from "../security/workspaceSecretStore";
 import { buildCredentialEnv, installProxyCA } from "./containerCredentials";
 import { ContainerManager, type ContainerWorkspaceDependencies } from "./containerManager";

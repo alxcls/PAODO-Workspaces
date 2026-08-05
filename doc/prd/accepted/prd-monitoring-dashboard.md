@@ -63,7 +63,7 @@ loads a bounded recent window without deleting older database records.
 
 ## Implementation notes
 
-The store (`lib/workspace/usageStore.ts`) commits one `TurnRecord` and its ordered tool calls to
+The store (`lib/usage/store.ts`) commits one `TurnRecord` and its ordered tool calls to
 SQLite per model turn via `appendUsage`; `recordTurnUsage` folds a `turn_usage` event into the store
 under a session/workspace context and is shared by all three call sites (chat route, agent stream,
 nested skill calls) so the field mapping can't drift. Lightweight list queries omit large text and

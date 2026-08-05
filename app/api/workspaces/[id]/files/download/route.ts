@@ -7,7 +7,7 @@ import { requireWorkspace } from "@/lib/api/guards";
 import path from "path";
 import JSZip from "jszip";
 import { createLogger } from "@/lib/infra/logger";
-import { addSelectedToZip, zipToStreamResponse } from "@/lib/workspace/zipDownload";
+import { addSelectedToZip, zipToStreamResponse } from "@/lib/files/zip";
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;

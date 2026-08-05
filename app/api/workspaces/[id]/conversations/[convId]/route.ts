@@ -4,10 +4,10 @@
 // re-attaches to the live stream to watch the rest (see chat/route.ts attach mode).
 import { type NextRequest, NextResponse } from "next/server";
 import { requireWorkspace } from "@/lib/api/guards";
-import * as conversations from "@/lib/workspace/conversationStore";
+import * as conversations from "@/lib/conversations/store";
 import * as broker from "@/lib/agent/runBroker";
 import { messagesToTranscript } from "@/lib/agent/messageSerialization";
-import { getConversationOutputTokens } from "@/lib/workspace/usageStore";
+import { getConversationOutputTokens } from "@/lib/usage/queries";
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string; convId: string }> }) {
   const { id, convId } = await params;

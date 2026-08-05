@@ -47,13 +47,13 @@ vi.mock("@/lib/infra/services", () => ({
     },
   }),
 }));
-vi.mock("@/lib/workspace/driveStore", () => ({
+vi.mock("@/lib/drives/store", () => ({
   disconnectWorkspace: (id: string) => {
     track("drives");
     return h.disconnectWorkspace(id);
   },
 }));
-vi.mock("@/lib/workspace/workspaceGraph", () => ({
+vi.mock("@/lib/agent/network/graph", () => ({
   removeWorkspaceFromGraph: (id: string) => {
     track("graph");
     return h.removeWorkspaceFromGraph(id);

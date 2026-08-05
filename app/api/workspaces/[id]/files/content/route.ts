@@ -14,10 +14,10 @@ import path from "path";
 import { getContainers, getVersioning } from "@/lib/infra/services";
 import { requireWorkspace } from "@/lib/api/guards";
 import { snapshotWorkspace } from "@/lib/infra/git/snapshotWorkspace";
-import { getFileContent, putFileContent, deleteFileContent } from "@/lib/workspace/fileContent";
-import { moveFileContent } from "@/lib/workspace/fileMove";
-import type { FileBackend } from "@/lib/workspace/fileBackend";
-import type { Workspace } from "@/lib/workspace/workspaceStore";
+import { getFileContent, putFileContent, deleteFileContent } from "@/lib/files/content";
+import { moveFileContent } from "@/lib/files/move";
+import type { FileBackend } from "@/lib/files/backend";
+import type { Workspace } from "@/lib/workspace/types";
 
 function backend(ws: Workspace): FileBackend {
   return {

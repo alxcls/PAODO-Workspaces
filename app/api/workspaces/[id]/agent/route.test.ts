@@ -35,7 +35,7 @@ vi.mock("@/lib/infra/security/rateLimit", () => ({
   checkRateLimit: () => rateLimit,
   checkRateLimitPolicy: () => rateLimit,
 }));
-vi.mock("@/lib/workspace/conversationStore", () => ({
+vi.mock("@/lib/conversations/store", () => ({
   createConversation: h.createConversation,
   getMessages: h.getMessages,
 }));

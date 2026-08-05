@@ -17,7 +17,7 @@ import type {
 } from "../infra/interfaces";
 import { getWsForWorkspace } from "../infra/realtime/wsHub";
 import { createLogger } from "../infra/logger";
-import type { ToolStatus } from "../workspace/usageStore";
+import type { ToolStatus } from "@/lib/usage/types";
 import type { CallAgentMeta } from "./tools/agentCall";
 import { streamModelTurn, synthesizeLimit, usageTokens, type ResolvedToolCall } from "./modelTurn";
 import { dispatchTools, type RunnerTool } from "./toolDispatch";

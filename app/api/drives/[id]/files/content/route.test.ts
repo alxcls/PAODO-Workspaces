@@ -20,13 +20,13 @@ beforeAll(() => {
   fs.writeFileSync(path.join(root, "secret.txt"), "TOPSECRET");
 });
 
-vi.mock("@/lib/workspace/driveStore", () => ({
+vi.mock("@/lib/drives/store", () => ({
   getDrive: (id: string) => (id === "drive-1" ? { id: "drive-1", name: "shared", createdAt: "" } : undefined),
   driveContentDir: () => fixture.driveDir,
 }));
 
 import { PATCH } from "./route";
-import { buildTree } from "@/lib/workspace/fileTree";
+import { buildTree } from "@/lib/files/tree";
 
 const patchMove = (body: unknown, id = "drive-1") =>
   PATCH(

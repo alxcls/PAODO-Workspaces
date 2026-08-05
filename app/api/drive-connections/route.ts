@@ -2,7 +2,7 @@
 // GET lists all connections; POST connects a drive to a workspace; DELETE removes a connection.
 // Kept separate from the agent-call graph so drive links never leak into list_agents/call_agent.
 import { NextRequest, NextResponse } from "next/server";
-import { listConnections, connectDrive, disconnectDrive, getDrive } from "@/lib/workspace/driveStore";
+import { listConnections, connectDrive, disconnectDrive, getDrive } from "@/lib/drives/store";
 import { getStore } from "@/lib/infra/services";
 
 export function GET() {

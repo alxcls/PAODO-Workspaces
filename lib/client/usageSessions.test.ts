@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import type { LightTurnRecord } from "../workspace/usageStore";
+import type { LightTurnRecord } from "@/lib/usage/types";
 import { groupBySessions, formatTokens, formatCost, originLabel } from "./usageSessions";
 
 function rec(over: Partial<LightTurnRecord> = {}): LightTurnRecord {

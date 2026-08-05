@@ -12,8 +12,9 @@ import type { BaseMessage } from "@langchain/core/messages";
 import { runAgent, type AgentEvent } from "./runner";
 import type { RunAgentOptions } from "./runner";
 import { getStore, getContainers, getVersioning } from "../infra/services";
-import { recordRunError, recordTurnUsage, type RunErrorRecord, type SessionOrigin } from "../workspace/usageStore";
-import * as conversations from "../workspace/conversationStore";
+import { recordRunError, recordTurnUsage } from "@/lib/usage/record";
+import type { RunErrorRecord, SessionOrigin } from "@/lib/usage/types";
+import * as conversations from "@/lib/conversations/store";
 import { createLogger } from "../infra/logger";
 import { createWorkspaceRunTimeout, USER_STOPPED_CONVERSATION_MESSAGE } from "./runTimeout";
 

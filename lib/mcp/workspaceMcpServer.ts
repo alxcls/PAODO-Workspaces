@@ -11,11 +11,11 @@
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { ListToolsRequestSchema, CallToolRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import type { Tool, CallToolResult } from "@modelcontextprotocol/sdk/types.js";
-import { loadSkills } from "../workspace/skillStore";
+import { loadSkills } from "@/lib/skills/store";
 import { executeSkill } from "../agent/skills/executeSkill";
 import { getStore, getContainers } from "../infra/services";
 import { createLogger } from "../infra/logger";
-import type { SkillDefinition } from "../workspace/skillTypes";
+import type { SkillDefinition } from "@/lib/skills/types";
 
 const log = createLogger("workspaceMcp");
 

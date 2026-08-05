@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-vi.mock("@/lib/operations/modelCatalog", () => ({
+vi.mock("@/lib/operations/models/catalog", () => ({
   getModelCatalog: () => ({
     openai: { models: ["gpt-5.5"], reasoningEfforts: ["none", "low", "high"] },
     deepseek: { models: ["deepseek-v4-pro"], reasoningEfforts: [] },

@@ -5,10 +5,10 @@ export const runtime = "nodejs";
 import { NextResponse } from "next/server";
 import path from "path";
 import JSZip from "jszip";
-import { driveContentDir } from "@/lib/workspace/driveStore";
+import { driveContentDir } from "@/lib/drives/store";
 import { requireDrive } from "@/lib/api/guards";
 import { createLogger } from "@/lib/infra/logger";
-import { addSelectedToZip, zipToStreamResponse } from "@/lib/workspace/zipDownload";
+import { addSelectedToZip, zipToStreamResponse } from "@/lib/files/zip";
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;

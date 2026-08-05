@@ -1,7 +1,7 @@
 // Returns the workspace file tree as a nested JSON structure for the file tree panel.
 import { NextResponse } from "next/server";
 import { requireWorkspace } from "@/lib/api/guards";
-import { buildTree } from "@/lib/workspace/fileTree";
+import { buildTree } from "@/lib/files/tree";
 
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;

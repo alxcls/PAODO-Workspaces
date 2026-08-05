@@ -15,7 +15,7 @@ import { getStore } from "../services";
 import { createLogger } from "../logger";
 import { globalSingleton } from "../globalSingleton";
 import * as broker from "../../agent/runBroker";
-import * as conversations from "../../workspace/conversationStore";
+import * as conversations from "@/lib/conversations/store";
 import { buildSystemPrompt, buildPromptConfig } from "../../agent/systemPrompt";
 import { buildWorkspacePromptInputs } from "../../agent/promptContext";
 import { loadAgentConfig } from "../../agent/buildTools";

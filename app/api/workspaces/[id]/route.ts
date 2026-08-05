@@ -6,9 +6,9 @@ import { notFound, workspaceIdParam } from "@/lib/api/guards";
 import { appErrorResponse, errorResponse, readJsonObject } from "@/lib/api/errorResponse";
 import { publicBaseUrl } from "@/lib/api/credentialRoutes";
 import { receiptResponse } from "@/lib/api/workspaceUpdateReceipt";
-import { getWorkspaceOverview } from "@/lib/operations/workspaceDetails";
-import { updateWorkspace } from "@/lib/operations/workspaceUpdate";
-import { deleteWorkspace } from "@/lib/operations/workspaceDelete";
+import { getWorkspaceOverview } from "@/lib/operations/workspace/overview";
+import { updateWorkspace } from "@/lib/operations/workspace/update";
+import { deleteWorkspace } from "@/lib/operations/workspace/delete";
 import { workspaceDeleteDeps } from "@/lib/infra/workspaceDeleteDeps";
 
 const log = createLogger("api").child({ route: "workspace" });

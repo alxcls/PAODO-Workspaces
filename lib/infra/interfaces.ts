@@ -3,10 +3,9 @@
 // that tests and the agent layer can inject isolated instances. Production keeps the
 // default singletons via lib/infra/services.ts.
 //
-// Type-only imports below: erased at compile time, so the apparent cycle with
-// workspaceStore.ts (which implements IWorkspaceStore) carries no runtime edge.
-import type { Workspace } from "../workspace/workspaceStore";
-import type { ReasoningEffort } from "../agent/interfaces";
+// Type-only imports below are erased at compile time.
+import type { Workspace } from "../workspace/types";
+import type { ReasoningEffort } from "../models/llmSelection";
 import type { DockerResult } from "./docker/dockerClient";
 import type { BackgroundTask } from "./docker/backgroundTaskManager";
 

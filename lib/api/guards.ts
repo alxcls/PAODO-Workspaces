@@ -11,8 +11,8 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { getStore } from "@/lib/infra/services";
-import { getDrive, type Drive } from "@/lib/workspace/driveStore";
-import type { Workspace } from "@/lib/workspace/workspaceStore";
+import { getDrive, type Drive } from "@/lib/drives/store";
+import type { Workspace } from "@/lib/workspace/types";
 import {
   checkRateLimit,
   checkRateLimitPolicy,

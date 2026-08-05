@@ -5,10 +5,10 @@
 
 import { StructuredTool } from "@langchain/core/tools";
 import { z } from "zod";
-import { getCallees } from "../../workspace/workspaceGraph";
-import { loadSkills } from "../../workspace/skillStore";
+import { getCallees } from "@/lib/agent/network/graph";
+import { loadSkills } from "@/lib/skills/store";
 import type { IWorkspaceReader } from "../../infra/interfaces";
-import type { SkillDefinition, SkillSchema } from "../../workspace/skillTypes";
+import type { SkillDefinition, SkillSchema } from "@/lib/skills/types";
 
 const schema = z.object({});
 

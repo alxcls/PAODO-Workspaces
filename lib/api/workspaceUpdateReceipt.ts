@@ -12,7 +12,7 @@ import {
   type UpdateWorkspaceInput,
   type UpdateWorkspaceResult,
   type WorkspaceUpdateValues,
-} from "@/lib/operations/workspaceUpdate";
+} from "@/lib/operations/workspace/update";
 
 export interface WorkspaceUpdateReceipt {
   ok: true;

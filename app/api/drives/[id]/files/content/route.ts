@@ -7,10 +7,10 @@ export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
 import { requireDrive } from "@/lib/api/guards";
-import { driveContentDir } from "@/lib/workspace/driveStore";
-import { getFileContent, putFileContent, deleteFileContent } from "@/lib/workspace/fileContent";
-import { moveFileContent } from "@/lib/workspace/fileMove";
-import type { FileBackend } from "@/lib/workspace/fileBackend";
+import { driveContentDir } from "@/lib/drives/store";
+import { getFileContent, putFileContent, deleteFileContent } from "@/lib/files/content";
+import { moveFileContent } from "@/lib/files/move";
+import type { FileBackend } from "@/lib/files/backend";
 
 function backend(id: string): FileBackend {
   return { dir: driveContentDir(id), logContext: { driveId: id, route: "drive-files/content" } };

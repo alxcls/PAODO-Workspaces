@@ -1,7 +1,7 @@
 // REST endpoint for a single shared drive.
 // PATCH renames it; DELETE removes the drive, its connections, and its files on disk.
 import { type NextRequest, NextResponse } from "next/server";
-import { updateDrive, deleteDrive, DriveNameError } from "@/lib/workspace/driveStore";
+import { updateDrive, deleteDrive, DriveNameError } from "@/lib/drives/store";
 import { requireDrive, notFound } from "@/lib/api/guards";
 import { createLogger } from "@/lib/infra/logger";
 

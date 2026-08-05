@@ -1,7 +1,7 @@
 // CRUD endpoint for the per-workspace agent graph (nodes + edges); guarded by the GRAPH_ENABLED flag.
 import { NextResponse } from "next/server";
-import { getGraph, saveGraph } from "@/lib/workspace/workspaceGraph";
-import type { GraphEdge } from "@/lib/workspace/workspaceGraph";
+import { getGraph, saveGraph } from "@/lib/agent/network/graph";
+import type { GraphEdge } from "@/lib/agent/network/graph";
 import { createLogger } from "@/lib/infra/logger";
 
 const log = createLogger("api");

@@ -4,7 +4,7 @@
 import { SystemMessage } from "@langchain/core/messages";
 import { getProviderMetadata } from "./buildModel";
 import type { LLMProviderConfig } from "./interfaces";
-import { NEEDS_INPUT_KEY, type SkillDefinition } from "../workspace/skillTypes";
+import { NEEDS_INPUT_KEY, type SkillDefinition } from "@/lib/skills/types";
 import type { WorkspacePromptInputs } from "./promptContext";
 
 export interface PromptConfig {

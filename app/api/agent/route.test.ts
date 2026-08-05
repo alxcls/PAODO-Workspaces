@@ -8,6 +8,15 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
+const h = vi.hoisted(() => ({
+  startWorkspaceRun: vi.fn(() => ({
+    workspaceId: "ws-a",
+    conversationId: "conv-created",
+    origin: "api",
+    started: true,
+  })),
+}));
+
 // Two workspaces, each with its own key. credentialStore.validate is the real scoping primitive
 // (tested in credentialStore.test.ts); here we fake it so the test owns the key→workspace mapping and
 // these tests assert that the ROUTE consults it with the right kind and workspace id. Asserting on
@@ -25,7 +34,6 @@ vi.mock("@/lib/infra/security/credentialStore", () => ({
 }));
 vi.mock("@/lib/infra/services", () => ({
   getStore: () => ({ getWorkspaceByName: (name: string) => WORKSPACES[name] }),
-  getContainers: () => ({}),
 }));
 vi.mock("@/lib/infra/realtime/clientIp", () => ({ getClientIp: () => "1.2.3.4" }));
 // Rate limit is a separate concern (rateLimit.ts); default it to "allowed" so it never masks an
@@ -35,10 +43,9 @@ vi.mock("@/lib/infra/security/rateLimit", () => ({
   checkRateLimit: () => rateLimit,
   checkRateLimitPolicy: () => rateLimit,
 }));
-// makeAgentStream proceeding == auth passed. Tag the response so "did we get through?" is a
-// status-code check, not a real agent run.
-vi.mock("@/lib/agent/agentStream", () => ({
-  makeAgentStream: () => new Response("stream", { status: 200, headers: { "x-agent-stream": "1" } }),
+vi.mock("@/lib/operations/agent/run", () => ({ startWorkspaceRun: h.startWorkspaceRun }));
+vi.mock("@/lib/api/workspaceRunStream", () => ({
+  apiConversationStream: () => new Response("stream", { status: 200, headers: { "x-agent-stream": "1" } }),
 }));
 
 import { POST } from "./route";
@@ -57,6 +64,13 @@ const reachedAgent = (res: Response) => res.headers.get("x-agent-stream") === "1
 
 beforeEach(() => {
   rateLimit.ok = true;
+  h.startWorkspaceRun.mockClear();
+  h.startWorkspaceRun.mockReturnValue({
+    workspaceId: "ws-a",
+    conversationId: "conv-created",
+    origin: "api",
+    started: true,
+  });
 });
 
 describe("POST /api/agent — Bearer key auth & per-workspace scoping", () => {
@@ -64,6 +78,11 @@ describe("POST /api/agent — Bearer key auth & per-workspace scoping", () => {
     const res = await post({ workspace: "alpha", message: "hi" }, "key-a");
     expect(res.status).toBe(200);
     expect(reachedAgent(res)).toBe(true);
+    expect(h.startWorkspaceRun).toHaveBeenCalledWith("ws-a", {
+      prompt: "hi",
+      origin: "api",
+      conversation: { mode: "create" },
+    });
   });
 
   it("401s when no Authorization header is present", async () => {

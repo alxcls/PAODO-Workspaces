@@ -9,83 +9,9 @@ import { validate } from "@/lib/infra/security/credentialStore";
 import { getClientIp } from "@/lib/infra/realtime/clientIp";
 import { createAuditLogger, createLogger } from "@/lib/infra/logger";
 import { throttleLogWithSources } from "@/lib/infra/logThrottle";
-import type { AgentEvent } from "@/lib/agent/runner";
-import * as broker from "@/lib/agent/runBroker";
-import { SSE_HEADERS, startKeepalive } from "@/lib/agent/sse";
+import { apiConversationStream } from "@/lib/api/workspaceRunStream";
 import { ConversationNotFoundError } from "@/lib/operations/agent/errors";
 import { startWorkspaceRun } from "@/lib/operations/agent/run";
-
-function apiConversationStream(req: NextRequest, workspaceId: string, conversationId: string): Response {
-  const encoder = new TextEncoder();
-  const stream = new ReadableStream({
-    start(controller) {
-      let closed = false;
-      let response = "";
-      let limitReached = false;
-      let failure: Extract<AgentEvent, { type: "error" }> | undefined;
-      // This stream is quieter than the UI's: tokens are accumulated rather than forwarded, so a
-      // long run may send nothing at all between tool_start frames. Without a keepalive the caller
-      // (or a proxy in front of it) drops the connection long before the run finishes.
-      const stopKeepalive = startKeepalive(controller, encoder);
-      const send = (event: object) => {
-        if (!closed) controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
-      };
-      const close = () => {
-        if (closed) return;
-        closed = true;
-        stopKeepalive();
-        sub?.unsubscribe();
-        try {
-          controller.close();
-        } catch {
-          /* already closed */
-        }
-      };
-      const handle = (event: AgentEvent) => {
-        switch (event.type) {
-          case "token":
-            response += event.content;
-            break;
-          case "tool_start":
-            send({ type: "tool_start", name: event.name });
-            break;
-          case "limit_reached":
-            limitReached = true;
-            break;
-          case "error":
-            failure = event;
-            send({ type: "error", message: event.message, ...(event.code ? { code: event.code } : {}) });
-            break;
-          case "done":
-            if (!failure) {
-              send({ type: "response", content: response, iterationLimitReached: limitReached, conversationId });
-            }
-            send({
-              type: "done",
-              conversationId,
-              ...(failure ? { status: "failed", ...(failure.code ? { code: failure.code } : {}) } : {}),
-            });
-            close();
-            break;
-        }
-      };
-
-      const sub = broker.subscribe(workspaceId, conversationId, handle);
-      if (!sub) {
-        // The run completed before this response subscribed. Its conversation was persisted by
-        // the broker; callers can use the returned id to fetch or continue it through the UI.
-        send({ type: "done", conversationId });
-        close();
-        return;
-      }
-      for (const event of sub.replay) handle(event);
-      if (sub.status === "done") close();
-      // Disconnecting an API caller detaches this SSE viewer; it must not cancel the agent run.
-      req.signal.addEventListener("abort", close);
-    },
-  });
-  return new Response(stream, { headers: { ...SSE_HEADERS, "X-Conversation-Id": conversationId } });
-}
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;

@@ -3,17 +3,11 @@
 // the verbs are identical, so they live here once and the routes stay thin adapters.
 //
 // GET is deliberately NOT generic: each endpoint returns different extras (publicBaseUrl, available
-// skills), so abstracting it would cost more than it saves. Every GET spreads `state(kind, subject)`
-// instead, which keeps the wire shape identical without pretending the responses are the same.
+// skills), so abstracting it would cost more than it saves. Every GET spreads the shared operation's
+// credential state instead, which keeps the wire shape identical without pretending the responses are the same.
 import { NextResponse } from "next/server";
-import {
-  mint,
-  revoke,
-  setEnabled,
-  state,
-  type CredentialKind,
-  type CredentialSubject,
-} from "@/lib/infra/security/credentialStore";
+import type { CredentialKind, CredentialSubject } from "@/lib/infra/security/credentialStore";
+import { issueCredential, revokeCredential, setCredentialEnabled } from "@/lib/operations/credentials/manage";
 import type { WorkspaceAccessDetails } from "@/lib/operations/workspace/access";
 import { appErrorResponse, errorResponse, readJsonObject } from "@/lib/api/errorResponse";
 import { createLogger } from "@/lib/infra/logger";
@@ -65,58 +59,10 @@ interface CredentialHandlerOptions {
 
 const NO_STORE = { "Cache-Control": "no-store" } as const;
 
-type CredentialOperation = "generate" | "rotate";
-
-/** Every operation whose legality turns on whether the credential already exists. */
-type GuardedOperation = CredentialOperation | "revoke";
-
-async function readCredentialOperation(request: Request): Promise<CredentialOperation | Response> {
+async function readCredentialOperation(request: Request): Promise<unknown | Response> {
   const body = await readJsonObject(request);
   if (body instanceof Response) return body;
-  if (body.operation !== "generate" && body.operation !== "rotate") {
-    return errorResponse("INVALID_REQUEST", 'operation must be "generate" or "rotate"', {
-      request,
-      details: { field: "operation" },
-    });
-  }
   return body.operation;
-}
-
-/**
- * The whole rule set, in three lines: each operation is refused only by the presence or absence of
- * the credential it acts on. `generate` needs the slot empty; `rotate` and `revoke` both need
- * something there to act on, and say so in their own words — the advice that follows a refusal
- * differs even though the condition does not.
- *
- * The channel's enabled flag is deliberately absent. Access and credentials are independent axes —
- * a key presented against a disabled channel is already rejected by validate() in
- * credentialStore.ts, so gating here would add no safety and would cost the two orders that matter:
- * issuing a key before opening the channel, and destroying a leaked one after closing it.
- */
-function credentialStateError(
-  kind: CredentialKind,
-  subject: CredentialSubject,
-  operation: GuardedOperation,
-  request: Request,
-): Response | null {
-  const { hasKey } = state(kind, subject);
-  const details = { credentialKind: kind, operation };
-  if (operation === "generate" && hasKey) {
-    return errorResponse("CREDENTIAL_ALREADY_CONFIGURED", "A credential already exists; rotate it instead.", {
-      request,
-      details,
-    });
-  }
-  if ((operation === "rotate" || operation === "revoke") && !hasKey) {
-    return errorResponse(
-      "CREDENTIAL_NOT_CONFIGURED",
-      operation === "rotate"
-        ? "No credential is configured; generate one instead."
-        : "No credential is configured; there is nothing to revoke.",
-      { request, details },
-    );
-  }
-  return null;
 }
 
 async function readEnabled(request: Request): Promise<boolean | Response> {
@@ -167,13 +113,11 @@ export function credentialHandlers<P>(
         if (subject instanceof Response) return subject;
         const operation = await readCredentialOperation(request);
         if (operation instanceof Response) return operation;
-        const invalidState = credentialStateError(kind, subject, operation, request);
-        if (invalidState) return invalidState;
         // Both operations write the same kind of record; naming which one you meant is what stops a
         // rotation from landing on a channel the caller thought was empty, and a generation from
         // silently replacing a key someone is still using. This is the one moment the plaintext
         // exists outside the caller's client, and no-store keeps it out of any intermediary cache.
-        return NextResponse.json({ plain: mint(kind, subject) }, { headers: NO_STORE });
+        return NextResponse.json(issueCredential(kind, subject, operation), { headers: NO_STORE });
       } catch (err) {
         return failed(request, "mint", err);
       }
@@ -188,17 +132,14 @@ export function credentialHandlers<P>(
         // leak cannot tell whether this request is what ended it. The cost is that a retry after a
         // dropped response now answers 409 rather than confirming the key is gone — read the channel
         // back to tell that apart from a key that was never there.
-        const invalidState = credentialStateError(kind, subject, "revoke", request);
-        if (invalidState) return invalidState;
         // Independent of the enabled flag either way: revoking is how a leaked credential is destroyed,
         // so it must never depend on the channel being open.
-        revoke(kind, subject);
         // Reports both axes afterwards rather than a bare ok, because revoking moves only one of them.
         // Destroying the last key leaves the channel open and keyless — reachable, and rejecting
         // everything — and a caller that got `{ ok: true }` had to ask a second time to find that out.
         // The timestamps stay out: they describe the key that was just destroyed, so a revocation
         // receipt is the one place they can only mislead.
-        const after = state(kind, subject);
+        const after = revokeCredential(kind, subject);
         return NextResponse.json(
           { ok: true, [axisFields.access]: after.enabled, [axisFields.hasKey]: after.hasKey },
           { headers: NO_STORE },
@@ -216,7 +157,7 @@ export function credentialHandlers<P>(
         if (enabled instanceof Response) return enabled;
         const response = options.setEnabled
           ? await options.setEnabled(kind, subject, enabled, request)
-          : setEnabled(kind, subject, enabled);
+          : setCredentialEnabled(kind, subject, enabled);
         if (response instanceof Response) return response;
         return NextResponse.json({ ok: true }, { headers: NO_STORE });
       } catch (err) {

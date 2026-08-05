@@ -2,12 +2,13 @@
 export const runtime = "nodejs";
 
 import { type NextRequest } from "next/server";
-import { getStore, getContainers } from "@/lib/infra/services";
+import { getStore } from "@/lib/infra/services";
 import { validate } from "@/lib/infra/security/credentialStore";
 import { getClientIp } from "@/lib/infra/realtime/clientIp";
 import { createAuditLogger, createLogger } from "@/lib/infra/logger";
-import { makeAgentStream } from "@/lib/agent/agentStream";
 import { rateLimited, subjectRateLimited } from "@/lib/api/guards";
+import { startWorkspaceRun } from "@/lib/operations/agent/run";
+import { apiConversationStream } from "@/lib/api/workspaceRunStream";
 
 export async function POST(req: NextRequest) {
   const log = createLogger("api").child({ route: "agent" });
@@ -43,9 +44,14 @@ export async function POST(req: NextRequest) {
   });
   if (workspaceLimited) return workspaceLimited;
 
-  return makeAgentStream(ws, body.message!.trim(), log, {
-    store: getStore(),
-    containers: getContainers(),
+  const receipt = startWorkspaceRun(ws.id, {
+    prompt: body.message,
     origin: "api",
+    conversation: { mode: "create" },
   });
+  if (!receipt) return new Response("Workspace not found", { status: 404 });
+  if (!receipt.started) return new Response("A run is already in progress", { status: 409 });
+
+  log.debug({ conversationId: receipt.conversationId }, "legacy public API stream started");
+  return apiConversationStream(req, ws.id, receipt.conversationId);
 }

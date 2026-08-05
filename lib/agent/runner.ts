@@ -84,7 +84,7 @@ export type RunAgentOptions = {
 };
 
 // The injectable infra pair, threaded from the route layer (via getStore()/getContainers())
-// down through agentStream and nested agent-to-agent calls so a single setServices() swap
+// down through the run broker and nested agent-to-agent calls so a single setServices() swap
 // flows end-to-end. Kept separate from RunAgentOptions so callers that only forward infra
 // don't have to know about the test-only override seams.
 export type AgentRuntimeDeps = Pick<RunAgentOptions, "store" | "containers" | "versioning">;

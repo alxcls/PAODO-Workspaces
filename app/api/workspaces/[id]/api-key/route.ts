@@ -5,7 +5,7 @@ export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
 import { credentialHandlers, publicBaseUrl } from "@/lib/api/credentialRoutes";
-import { state } from "@/lib/infra/security/credentialStore";
+import { getCredentialState } from "@/lib/operations/credentials/manage";
 import { requireWorkspaceId } from "@/lib/api/guards";
 import { channelSetEnabled } from "@/lib/api/workspaceUpdateReceipt";
 
@@ -36,7 +36,7 @@ export async function GET(req: Request, { params }: { params: Promise<Params> })
   const ws = requireWorkspaceId(id, req);
   if (ws instanceof NextResponse) return ws;
   return NextResponse.json(
-    { ...state("workspace-api", ws.id), publicBaseUrl: publicBaseUrl() },
+    { ...getCredentialState("workspace-api", ws.id), publicBaseUrl: publicBaseUrl() },
     { headers: { "Cache-Control": "no-store" } },
   );
 }

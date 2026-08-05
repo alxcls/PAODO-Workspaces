@@ -12,7 +12,7 @@ export const runtime = "nodejs";
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 import { credentialHandlers, publicBaseUrl } from "@/lib/api/credentialRoutes";
-import { state } from "@/lib/infra/security/credentialStore";
+import { getCredentialState } from "@/lib/operations/credentials/manage";
 import { listWorkspaceSkills } from "@/lib/operations/workspace/skills";
 import { requireWorkspaceId } from "@/lib/api/guards";
 import { channelSetEnabled } from "@/lib/api/workspaceUpdateReceipt";
@@ -44,7 +44,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<Params
   const exposedSkills = await listWorkspaceSkills(ws.id);
   return NextResponse.json(
     {
-      ...state("workspace-mcp", ws.id),
+      ...getCredentialState("workspace-mcp", ws.id),
       exposedSkills,
       publicBaseUrl: publicBaseUrl(),
     },

@@ -11,7 +11,7 @@ export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
 import { credentialHandlers, publicBaseUrl } from "@/lib/api/credentialRoutes";
-import { state } from "@/lib/infra/security/credentialStore";
+import { getCredentialState } from "@/lib/operations/credentials/manage";
 
 const handlers = credentialHandlers<Record<string, never>>("platform", async () => null);
 
@@ -21,7 +21,7 @@ export const PATCH = handlers.PATCH;
 
 export function GET() {
   return NextResponse.json(
-    { ...state("platform"), publicBaseUrl: publicBaseUrl() },
+    { ...getCredentialState("platform"), publicBaseUrl: publicBaseUrl() },
     { headers: { "Cache-Control": "no-store" } },
   );
 }

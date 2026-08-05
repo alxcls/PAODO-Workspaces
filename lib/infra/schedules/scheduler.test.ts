@@ -17,18 +17,25 @@ const h = vi.hoisted(() => ({
   subCb: null as null | ((e: { type: string; content?: string; message?: string }) => void),
   unsubscribe: vi.fn(),
   subStatus: "running" as "running" | "done",
+  alreadyRunning: false,
+  workspaceLookups: 0,
+  workspaceDisappears: false,
 }));
 
 vi.mock("../services", () => ({
   getStore: () => ({
-    getWorkspace: (id: string) =>
-      id === "w1" ? { id: "w1", name: "WS", dir: "/tmp/w1", maxIterations: 10, maxRunMinutes: 5 } : undefined,
+    getWorkspace: (id: string) => {
+      h.workspaceLookups += 1;
+      return id === "w1" && (!h.workspaceDisappears || h.workspaceLookups === 1)
+        ? { id: "w1", name: "WS", dir: "/tmp/w1", maxIterations: 10, maxRunMinutes: 5 }
+        : undefined;
+    },
   }),
 }));
 vi.mock("../../agent/runBroker", () => ({
   startRun: (p: unknown) => {
     h.startRun(p);
-    return { alreadyRunning: false };
+    return { alreadyRunning: h.alreadyRunning };
   },
   subscribe: (_w: string, _c: string, cb: (e: { type: string }) => void) => {
     h.subCb = cb;
@@ -42,6 +49,7 @@ vi.mock("@/lib/conversations/store", () => ({
   },
   getMessages: () => [],
 }));
+// These prompt mocks intercept the shared workspacePrompt helper one layer below the operation.
 vi.mock("../../agent/systemPrompt", () => ({ buildSystemPrompt: () => ({}), buildPromptConfig: () => ({}) }));
 vi.mock("../../agent/promptContext", () => ({ buildWorkspacePromptInputs: () => ({}) }));
 vi.mock("../../agent/buildTools", () => ({ loadAgentConfig: () => ({}) }));
@@ -85,6 +93,9 @@ beforeEach(async () => {
   h.unsubscribe.mockClear();
   h.subCb = null;
   h.subStatus = "running";
+  h.alreadyRunning = false;
+  h.workspaceLookups = 0;
+  h.workspaceDisappears = false;
   clearSingletons();
   vi.resetModules();
   store = await import("./scheduleStore");
@@ -144,5 +155,39 @@ describe("scheduler tick", () => {
     seed({ nextRunAt: future });
     scheduler._tick();
     expect(h.startRun).not.toHaveBeenCalled();
+  });
+
+  it("clears inflight and advances when the workspace disappears before the operation starts", () => {
+    seed();
+    h.workspaceDisappears = true;
+
+    scheduler._tick();
+
+    expect(h.startRun).not.toHaveBeenCalled();
+    expect(new Date(store.getSchedule("w1")!.nextRunAt!).getTime()).toBeGreaterThan(Date.now());
+
+    // Re-seed the due instant: a second fire proves the first skip removed the in-flight guard.
+    h.workspaceDisappears = false;
+    h.workspaceLookups = 0;
+    seed();
+    scheduler._tick();
+    expect(h.startRun).toHaveBeenCalledOnce();
+  });
+
+  it("does not subscribe or record an outcome when the broker reports an in-flight run", () => {
+    seed();
+    h.alreadyRunning = true;
+
+    scheduler._tick();
+
+    expect(h.startRun).toHaveBeenCalledOnce();
+    expect(h.subCb).toBeNull();
+    expect(store.getSchedule("w1")?.lastRunStatus).toBeUndefined();
+
+    // A later due fire can proceed because the skip removed the scheduler's in-flight guard.
+    h.alreadyRunning = false;
+    seed();
+    scheduler._tick();
+    expect(h.startRun).toHaveBeenCalledTimes(2);
   });
 });

@@ -9,12 +9,14 @@ export const ERROR_CODES = {
   FORBIDDEN: "FORBIDDEN",
   RATE_LIMITED: "RATE_LIMITED",
   /**
-   * The filesystem refused the write. Deliberately not FORBIDDEN: that means "you are not
-   * authorised", and a client conflating the two would sign the user out over a read-only directory.
+   * The filesystem refused the write. Deliberately not FORBIDDEN: 403 already means CSRF rejection in
+   * this app (server.ts), so a read-only file answering 403 would be indistinguishable from "this
+   * request was not allowed to be made" in a log or to a CLI author reading a status.
    */
   FILE_NOT_WRITABLE: "FILE_NOT_WRITABLE",
-  PAYLOAD_TOO_LARGE: "PAYLOAD_TOO_LARGE",
-  INSUFFICIENT_STORAGE: "INSUFFICIENT_STORAGE",
+  /** Over MAX_UPLOAD_BYTES, which is our own policy — hence FILE_, not the 413 status name. */
+  FILE_TOO_LARGE: "FILE_TOO_LARGE",
+  STORAGE_EXHAUSTED: "STORAGE_EXHAUSTED",
   WORKSPACE_NAME_INVALID: "WORKSPACE_NAME_INVALID",
   WORKSPACE_NAME_CONFLICT: "WORKSPACE_NAME_CONFLICT",
   WORKSPACE_UPDATE_INVALID: "WORKSPACE_UPDATE_INVALID",

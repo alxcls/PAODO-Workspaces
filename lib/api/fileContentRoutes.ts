@@ -4,30 +4,22 @@
 //
 // Paths in and out are workspace-relative (lib/files/relpath.ts). A client names "src/main.ts"; the
 // host directory never appears in a request or a response.
+//
+// Each verb spells out its own two branches — the expected AppError through appErrorResponse, then one
+// literal log record and an opaque 500 — rather than sharing a helper for the second one. That is the
+// convention lib/api/errorResponse.ts describes, and the reason is that an operator greps an event name
+// to find the code that raised it: a shared `file_operation_failed` with the verb in a field passes the
+// errorLogContract check and defeats what the check is for.
 import { NextResponse } from "next/server";
 import path from "path";
-import type pino from "pino";
 import { createLogger } from "@/lib/infra/logger";
 import { appErrorResponse, errorResponse, readJsonObject } from "@/lib/api/errorResponse";
 import type { FileBackend } from "@/lib/files/backend";
 import { readFileEntry, removeEntry, writeTextFile } from "@/lib/operations/files/content";
 import { requireEntryPath } from "@/lib/operations/files/paths";
 
-/**
- * The two branches every verb below spells out, per the convention in lib/api/errorResponse.ts: the
- * expected AppError through appErrorResponse, then one literal log record and an opaque 500.
- *
- * Reaching the second branch means an errno lib/operations/files/errors.ts has no entry for, so it is
- * ours to fix rather than the client's — which is why the response says nothing specific. It used to
- * be a 400 carrying `err.message`, and libuv writes the host path into that message.
- */
-function failure(request: Request, err: unknown, log: pino.Logger, verb: string, relPath?: string): Response {
-  const known = appErrorResponse(err, request);
-  if (known) return known;
-  log.error(
-    { event: "file_operation_failed", outcome: "file_unchanged", err, verb, relPath },
-    "unclassified file operation failure",
-  );
+/** The opaque answer for a failure the operations layer had no public code for, so it is ours to fix. */
+function internalFailure(request: Request): NextResponse {
   return errorResponse("INTERNAL_ERROR", "The file operation failed", { request });
 }
 
@@ -54,7 +46,13 @@ export async function getFileContent(request: Request, be: FileBackend): Promise
     if (file.type === "text") return NextResponse.json({ type: "text", content: file.content });
     return NextResponse.json({ type: file.type });
   } catch (err) {
-    return failure(request, err, log, "GET", relPath);
+    const known = appErrorResponse(err, request);
+    if (known) return known;
+    log.error(
+      { event: "file_read_failed", outcome: "file_not_returned", code: "INTERNAL_ERROR", err, relPath },
+      "failed to read file",
+    );
+    return internalFailure(request);
   }
 }
 
@@ -72,7 +70,13 @@ export async function putFileContent(request: Request, be: FileBackend): Promise
     await writeTextFile(be.dir, relPath, body.content, be);
     return NextResponse.json({ ok: true });
   } catch (err) {
-    return failure(request, err, log, "PUT", relPath);
+    const known = appErrorResponse(err, request);
+    if (known) return known;
+    log.error(
+      { event: "file_write_failed", outcome: "file_not_written", code: "INTERNAL_ERROR", err, relPath },
+      "failed to write file",
+    );
+    return internalFailure(request);
   }
 }
 
@@ -85,6 +89,12 @@ export async function deleteFileContent(request: Request, be: FileBackend): Prom
     await removeEntry(be.dir, relPath, be);
     return NextResponse.json({ ok: true });
   } catch (err) {
-    return failure(request, err, log, "DELETE", relPath);
+    const known = appErrorResponse(err, request);
+    if (known) return known;
+    log.error(
+      { event: "file_delete_failed", outcome: "file_not_deleted", code: "INTERNAL_ERROR", err, relPath },
+      "failed to delete file",
+    );
+    return internalFailure(request);
   }
 }

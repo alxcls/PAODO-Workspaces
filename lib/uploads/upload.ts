@@ -68,7 +68,7 @@ export async function handleUpload(req: NextRequest, be: UploadBackend): Promise
       "upload rejected — payload exceeds the per-file upload limit",
     );
     return errorResponse(
-      "PAYLOAD_TOO_LARGE",
+      "FILE_TOO_LARGE",
       `File is ${formatBytes(actualBytes)}, which is over the ${limitLabel} per-file upload limit.`,
       { request: req, details: { field: "path", limitBytes: MAX_UPLOAD_BYTES } },
     );
@@ -89,7 +89,7 @@ export async function handleUpload(req: NextRequest, be: UploadBackend): Promise
       },
       "upload rejected — not enough free disk space",
     );
-    return errorResponse("INSUFFICIENT_STORAGE", "Not enough free disk space to accept this upload.", {
+    return errorResponse("STORAGE_EXHAUSTED", "Not enough free disk space to accept this upload.", {
       request: req,
     });
   };

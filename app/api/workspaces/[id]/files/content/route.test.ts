@@ -150,7 +150,7 @@ describe("files/content — errno reaches the client as a code", () => {
   const deleteFile = (p: string) =>
     DELETE(new Request(`http://x/api/files/content?path=${encodeURIComponent(p)}`, { method: "DELETE" }), ctx);
 
-  it("answers a permission failure with FILE_NOT_WRITABLE at 403, naming no host path", async () => {
+  it("answers a permission failure with FILE_NOT_WRITABLE at 409, naming no host path", async () => {
     fs.mkdirSync(abs("locked"));
     fs.writeFileSync(abs("locked/pinned.txt"), "x");
     fs.chmodSync(abs("locked"), 0o555);
@@ -165,8 +165,9 @@ describe("files/content — errno reaches the client as a code", () => {
       fs.chmodSync(abs("locked"), 0o755);
     }
 
-    // Not 403 FORBIDDEN — that would read as an authorisation failure and could sign the user out.
-    expect(status).toBe(403);
+    // Deliberately not 403: server.ts already answers 403 for a CSRF rejection, so a read-only file
+    // sharing that status would be indistinguishable from a request that was refused outright.
+    expect(status).toBe(409);
     expect(body.code).toBe("FILE_NOT_WRITABLE");
     expect(body.error).not.toContain(WS_DIR);
   });
@@ -404,7 +405,10 @@ describe("files/content PATCH — move", () => {
     });
 
     expect(res.status).toBe(400);
-    expect((await res.json()).results).toEqual([]);
+    const body = await res.json();
+    // A refusal carries the whole error envelope AND the empty result list: the client tells a rejected
+    // batch from a request that was never understood by whether `results` is there at all.
+    expect(body).toMatchObject({ ok: false, code: "INVALID_REQUEST", results: [] });
     expect(fs.existsSync(abs("valid-first.txt"))).toBe(true);
     expect(fs.readdirSync(abs("all-or-nothing"))).toEqual([]);
   });
@@ -466,6 +470,8 @@ describe("files/content PATCH — move", () => {
     const body = await res.json();
     expect(body.ok).toBe(false);
     expect(body.error).toMatch(/already exists/i);
+    // The reason travels as a code even here, where the status is 200 and cannot carry it.
+    expect(body.code).toBe("CONFLICT");
     expect(body.failedSourcePath).toBe("partial-blocked.txt");
     expect(body.results.map((r: { sourcePath: string }) => r.sourcePath)).toEqual(["partial-first.txt"]);
 

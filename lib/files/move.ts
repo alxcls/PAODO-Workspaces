@@ -10,8 +10,8 @@ import { NextResponse } from "next/server";
 import fs from "fs/promises";
 import path from "path";
 import { createLogger } from "@/lib/infra/logger";
-import { AppError, type AppErrorCode } from "@/lib/errors/appError";
-import { errorResponse, readJsonObject } from "@/lib/api/errorResponse";
+import { AppError, publicErrorBody, type AppErrorCode, type ErrorDetails } from "@/lib/errors/appError";
+import { errorResponse, readJsonObject, requestIdOf, statusForCode } from "@/lib/api/errorResponse";
 import { fileSystemAppError } from "@/lib/operations/files/errors";
 import { requireDirPath, requireEntryPath, resolveHostPath } from "@/lib/operations/files/paths";
 import type { FileBackend } from "./backend";
@@ -188,6 +188,40 @@ async function moveOne(
   }
 }
 
+/**
+ * What a batch move answers with, whether or not it succeeded.
+ *
+ * This is deliberately its own declared shape rather than the plain error envelope: a batch that moved
+ * two of three items has to report both halves at once, because the client needs the per-item results
+ * to reconcile its tree no matter what stopped the rest. `results` is therefore present on every
+ * response, including a refusal — its absence is how the client tells a rejected batch from a request
+ * that was never understood (see useFileOperations.handleMoveMany).
+ */
+interface MoveBatchBody {
+  ok?: boolean;
+  results: { sourcePath: string; path: string; unchanged: boolean }[];
+  /** The error envelope's fields, present when something stopped the batch. */
+  code?: AppErrorCode;
+  error?: string;
+  details?: ErrorDetails;
+  requestId?: string;
+  failedSourcePath?: string | null;
+}
+
+/** Refuse the batch, carrying the envelope's fields plus the empty result list its client expects. */
+function refuseBatch(
+  req: Request,
+  failure: MoveFailure,
+  extras: { details?: ErrorDetails; failedSourcePath?: string | null } = {},
+): Response {
+  const body: MoveBatchBody = {
+    ...publicErrorBody(failure.code, failure.error, { details: extras.details, requestId: requestIdOf(req) }),
+    results: [],
+    ...(extras.failedSourcePath !== undefined ? { failedSourcePath: extras.failedSourcePath } : {}),
+  };
+  return NextResponse.json(body, { status: statusForCode(failure.code) });
+}
+
 /** Move one or more root items into one directory, stopping at the first failed item. */
 export async function moveFileContent(req: Request, be: FileBackend): Promise<Response> {
   const candidate = await readJsonObject(req);
@@ -202,9 +236,7 @@ export async function moveFileContent(req: Request, be: FileBackend): Promise<Re
   }
 
   // Every path is validated up front rather than per item, so a batch containing one unsayable path is
-  // refused whole instead of moving the items before it and then stopping. `results: []` travels with
-  // the refusal because the client distinguishes a rejected batch from a malformed request by its
-  // presence.
+  // refused whole instead of moving the items before it and then stopping.
   let sourcePaths: string[];
   let destinationDirectory: string;
   try {
@@ -213,7 +245,7 @@ export async function moveFileContent(req: Request, be: FileBackend): Promise<Re
     destinationDirectory = requireDirPath(candidate.destinationDirectory ?? null, "destinationDirectory");
   } catch (err) {
     if (!(err instanceof AppError)) throw err;
-    return errorResponse(err.code, err.message, { request: req, details: err.details, extra: { results: [] } });
+    return refuseBatch(req, { code: err.code, error: err.message }, { details: err.details });
   }
 
   const log = createLogger("api").child(be.logContext);
@@ -248,13 +280,9 @@ export async function moveFileContent(req: Request, be: FileBackend): Promise<Re
   // A batch that moved nothing is a plain failure and takes the status its code maps to. One that moved
   // some of its items is a 200 carrying both halves — the transport succeeded, and the client needs the
   // per-item results to reconcile its tree whatever else went wrong.
-  if (failure && results.length === 0) {
-    return errorResponse(failure.code, failure.error, {
-      request: req,
-      extra: { results: [], failedSourcePath },
-    });
-  }
-  return NextResponse.json({
+  if (failure && results.length === 0) return refuseBatch(req, failure, { failedSourcePath });
+
+  const body: MoveBatchBody = {
     ok: failure === null,
     results: results.map(({ sourcePath, path: destination, unchanged }) => ({
       sourcePath,
@@ -262,5 +290,6 @@ export async function moveFileContent(req: Request, be: FileBackend): Promise<Re
       unchanged,
     })),
     ...(failure ? { code: failure.code, error: failure.error, failedSourcePath } : {}),
-  });
+  };
+  return NextResponse.json(body);
 }

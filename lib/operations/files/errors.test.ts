@@ -56,19 +56,18 @@ describe("fileSystemAppError", () => {
     fs.chmodSync(target, 0o444);
     try {
       const failure = await failureOf("locked.txt", () => fsp.writeFile(target, "y"));
-      // Not FORBIDDEN: that means "you are not authorised", and a client conflating the two would sign
-      // the user out over a read-only file.
+      // Not FORBIDDEN: 403 already means CSRF rejection in this app (server.ts), so a read-only file
+      // answering 403 would be indistinguishable from a request that was not allowed to be made.
       expect(failure).toMatchObject({ code: "FILE_NOT_WRITABLE", message: "locked.txt is not writable" });
     } finally {
       fs.chmodSync(target, 0o644);
     }
   });
 
-  it("maps a non-empty directory to CONFLICT", async () => {
-    fs.mkdirSync(path.join(WS_DIR, "full"));
-    fs.writeFileSync(path.join(WS_DIR, "full", "leaf.txt"), "x");
-    const failure = await failureOf("full", () => fsp.rmdir(path.join(WS_DIR, "full")));
-    expect(failure).toMatchObject({ code: "CONFLICT" });
+  it("maps a path that runs through a file to INVALID_REQUEST", async () => {
+    fs.writeFileSync(path.join(WS_DIR, "notes.txt"), "x");
+    const failure = await failureOf("notes.txt/inner", () => fsp.readFile(path.join(WS_DIR, "notes.txt", "inner")));
+    expect(failure).toMatchObject({ code: "INVALID_REQUEST", message: "notes.txt/inner is not a directory" });
   });
 
   it("names the field so a client can point at the argument that failed", async () => {
@@ -100,8 +99,12 @@ describe("fileSystemAppError", () => {
   });
 
   it("leaves an errno it has no public answer for unclassified, so the caller answers 500", () => {
-    // A caller that turned every failure into a 4xx would report its own bugs as user error.
+    // A caller that turned every failure into a 4xx would report its own bugs as user error. The table
+    // is deliberately short for the same reason: an errno nobody has reasoned about is not classified
+    // on the strength of it looking plausible.
     expect(fileSystemAppError({ code: "EWHATEVER" }, "x.txt")).toBeNull();
+    expect(fileSystemAppError({ code: "EDQUOT" }, "x.txt")).toBeNull();
+    expect(fileSystemAppError({ code: "EMFILE" }, "x.txt")).toBeNull();
     expect(fileSystemAppError(new Error("not an errno at all"), "x.txt")).toBeNull();
     expect(fileSystemAppError(null, "x.txt")).toBeNull();
   });

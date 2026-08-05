@@ -21,32 +21,27 @@ interface Classification {
   message: (relPath: string) => string;
 }
 
+/**
+ * Only errnos a real call path reaches. A first version mapped sixteen, including EDQUOT, EFBIG, ELOOP,
+ * EMFILE and EBUSY — added because they sat next to these in the errno list, which is the wrong reason
+ * to put something in a vocabulary the codebase promises never to redefine. An unmapped errno is not a
+ * gap: it becomes a logged 500, which is the honest answer for a failure nobody has reasoned about yet.
+ */
 const BY_ERRNO: Record<string, Classification> = {
+  // read, stat and unlink of something that is not there.
   ENOENT: { code: "NOT_FOUND", message: (p) => `${p} does not exist` },
+  // readFile of a directory.
   EISDIR: { code: "INVALID_REQUEST", message: (p) => `${p} is a directory, not a file` },
+  // A path that runs *through* a file, e.g. "notes.txt/inner".
   ENOTDIR: { code: "INVALID_REQUEST", message: (p) => `${p} is not a directory` },
-  ENOTEMPTY: { code: "CONFLICT", message: (p) => `${p} is not empty` },
-  EEXIST: { code: "CONFLICT", message: (p) => `${p} already exists` },
 
-  // Retrying cannot help until someone changes the permissions, so this is not a 400 asking the
-  // client to fix its request. Kept distinct from FORBIDDEN, which means "you are not authorised" —
-  // a client that conflates the two would sign the user out over a read-only directory.
+  // Retrying cannot help until someone changes the permissions, so this is not a 400 asking the client
+  // to fix its request.
   EACCES: { code: "FILE_NOT_WRITABLE", message: (p) => `${p} is not writable` },
   EPERM: { code: "FILE_NOT_WRITABLE", message: (p) => `${p} is not writable` },
-  EROFS: { code: "FILE_NOT_WRITABLE", message: () => "The filesystem is read-only" },
 
-  ENOSPC: { code: "INSUFFICIENT_STORAGE", message: () => "Not enough free disk space" },
-  EDQUOT: { code: "INSUFFICIENT_STORAGE", message: () => "The disk quota is exhausted" },
-  EFBIG: { code: "PAYLOAD_TOO_LARGE", message: (p) => `${p} is larger than the filesystem allows` },
-  ENAMETOOLONG: { code: "INVALID_REQUEST", message: (p) => `${p} is too long a path for this filesystem` },
-  ELOOP: { code: "INVALID_REQUEST", message: (p) => `${p} is a symlink loop` },
-
-  // Transient and worth retrying, unlike everything above: the descriptor budget (lib/files/fdLimit.ts)
-  // keeps our own traversals under the limit, but nothing stops the rest of the process from using it up.
-  EMFILE: { code: "SERVICE_UNAVAILABLE", message: () => "The server is out of file descriptors — retry" },
-  ENFILE: { code: "SERVICE_UNAVAILABLE", message: () => "The server is out of file descriptors — retry" },
-  EBUSY: { code: "CONFLICT", message: (p) => `${p} is in use` },
-  EAGAIN: { code: "SERVICE_UNAVAILABLE", message: () => "The file is temporarily unavailable — retry" },
+  // A write or an upload that ran the volume out mid-stream.
+  ENOSPC: { code: "STORAGE_EXHAUSTED", message: () => "Not enough free disk space" },
 };
 
 /**

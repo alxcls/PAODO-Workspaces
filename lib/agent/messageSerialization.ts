@@ -14,23 +14,7 @@ import {
 } from "@langchain/core/messages";
 import type { Message } from "@/lib/transcript/message";
 import { toolArgSummary } from "@/lib/transcript/toolDisplay";
-
-// Newer models return content as an array of typed blocks instead of a plain string.
-// Mirror of runner.ts's helper — duplicated (not imported) to keep this module off the heavy
-// runner import chain.
-function contentToText(content: unknown): string {
-  if (typeof content === "string") return content;
-  if (Array.isArray(content)) {
-    return content
-      .map((block) => {
-        if (typeof block === "string") return block;
-        if (block && typeof block === "object" && "text" in block) return (block as { text: string }).text;
-        return "";
-      })
-      .join("");
-  }
-  return "";
-}
+import { contentToText } from "@/lib/transcript/content";
 
 function isSystem(m: BaseMessage): boolean {
   return m._getType() === "system";

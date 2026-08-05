@@ -4,6 +4,7 @@ import { AIMessage, HumanMessage } from "@langchain/core/messages";
 import type { AIMessageChunk, BaseMessage } from "@langchain/core/messages";
 import type { Logger } from "pino";
 import { throttleLog } from "../infra/logThrottle";
+import { contentToText } from "@/lib/transcript/content";
 import type { AgentEvent } from "./runner";
 
 export type ResolvedToolCall = { id: string; name: string; args: Record<string, unknown> };
@@ -19,18 +20,6 @@ type ContentBlock =
   | { type: "reasoning"; reasoning?: string }
   | { type: "thinking"; thinking?: string }
   | { type: string };
-
-function contentToText(content: unknown): string {
-  if (typeof content === "string") return content;
-  if (!Array.isArray(content)) return "";
-  return content
-    .map((block) => {
-      if (typeof block === "string") return block;
-      if (block && typeof block === "object" && "text" in block) return (block as { text: string }).text;
-      return "";
-    })
-    .join("");
-}
 
 function extractContentFromChunk(chunk: AIMessageChunk, log: Logger): { tokens: string[]; reasoning: string[] } {
   const tokens: string[] = [];

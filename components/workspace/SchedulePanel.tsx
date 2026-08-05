@@ -2,7 +2,7 @@
 
 // Schedule button for the TopBar's right slot (sibling of HistoryPanel). The calendar icon opens an
 // overlay modal to configure this workspace's single recurring agent run: a prompt fired "every N
-// minutes/hours/days/weeks" in a chosen IANA timezone, bounded by a start and optional end date.
+// minutes/hours/days/weeks" in a chosen IANA timezone, bounded by a start and optional end time.
 // Backed by GET/PUT /api/workspaces/:id/schedule.
 //
 // Structure: SchedulePanel is just the trigger button + open state. ScheduleModal owns all of the
@@ -65,12 +65,19 @@ const emptyForm = (): FormState => ({
   enabled: true,
 });
 
+const endAtForInput = (endAt: string | undefined): string => {
+  if (!endAt) return "";
+  // Older schedules stored a date-only inclusive bound. Give those a useful value in the new
+  // date-time control instead of rendering it blank; 23:59 retains the former end-of-day intent.
+  return endAt.length <= 10 ? `${endAt}T23:59` : endAt.slice(0, 16);
+};
+
 const toForm = (s: ScheduleEntry): FormState => ({
   prompt: s.prompt,
   intervalValue: String(s.intervalValue),
   intervalUnit: s.intervalUnit,
   startAt: s.startAt.slice(0, 16),
-  endAt: s.endAt ? s.endAt.slice(0, 10) : "",
+  endAt: endAtForInput(s.endAt),
   timezone: s.timezone,
   enabled: s.enabled,
 });
@@ -343,7 +350,8 @@ function ScheduleModal({ workspaceId, onClose, onStatus }: ModalProps) {
 
                 <Field label="End" hint="optional">
                   <input
-                    type="date"
+                    type="datetime-local"
+                    min={form.startAt}
                     className="input input-sm"
                     value={form.endAt}
                     onChange={(e) => set("endAt", e.target.value)}

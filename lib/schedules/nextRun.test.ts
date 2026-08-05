@@ -93,6 +93,21 @@ describe("computeNextRun", () => {
     expect(computeNextRun(e, iso("2026-07-13T12:00:00Z"))).not.toBeNull();
   });
 
+  it("uses a date-time end as an exact cutoff for a working-hours schedule", () => {
+    const e = entry({
+      startAt: "2026-07-13T09:00",
+      intervalUnit: "minute",
+      intervalValue: 30,
+      endAt: "2026-07-13T18:00",
+      timezone: "Europe/Brussels",
+    });
+
+    // 15:00Z is 17:00 locally, so the next half-hour run is still inside the window.
+    expect(computeNextRun(e, iso("2026-07-13T15:00:00Z"))?.toISOString()).toBe("2026-07-13T15:30:00.000Z");
+    // At 17:30 locally, the next occurrence would equal the 18:00 cutoff and is not scheduled.
+    expect(computeNextRun(e, iso("2026-07-13T15:30:00Z"))).toBeNull();
+  });
+
   it("returns null for an interval below 1", () => {
     expect(computeNextRun(entry({ intervalValue: 0 }), iso("2026-07-13T10:00:00Z"))).toBeNull();
   });

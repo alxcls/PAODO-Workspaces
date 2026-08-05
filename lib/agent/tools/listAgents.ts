@@ -7,7 +7,7 @@ import { StructuredTool } from "@langchain/core/tools";
 import { z } from "zod";
 import { getCallees } from "../../workspace/workspaceGraph";
 import { loadSkills } from "../../workspace/skillStore";
-import type { IWorkspaceStore } from "../../infra/interfaces";
+import type { IWorkspaceReader } from "../../infra/interfaces";
 import type { SkillDefinition, SkillSchema } from "../../workspace/skillTypes";
 
 const schema = z.object({});
@@ -53,7 +53,7 @@ export class ListAgentsTool extends StructuredTool<typeof schema> {
 
   constructor(
     private readonly callerWorkspaceId: string,
-    private readonly store: IWorkspaceStore,
+    private readonly store: IWorkspaceReader,
     private readonly loadSkillsFn: typeof loadSkills = loadSkills,
   ) {
     super();

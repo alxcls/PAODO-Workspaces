@@ -3,25 +3,24 @@
 // drive the ensure() wrapper with a stubbed _ensureContainer so they exercise verifyProxyAttached in
 // isolation — covering the healthy, self-heal, and loud-failure paths regardless of how the container
 // was brought up (create / resume-stopped / reattach-running).
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect } from "vitest";
 import type { IDockerClient, DockerResult } from "./dockerClient";
+import type { ContainerWorkspaceDependencies } from "./containerManager";
 
 const OK: DockerResult = { stdout: "", stderr: "", code: 0 };
 const SIDECAR = "paodo_ws_credproxy";
-
-// The workspace store singleton is backed by a global map (survives module reloads). The proxy
-// self-heal path only runs for an internet-on workspace, so seed one directly — a missing record
-// now fails closed (no reattach) rather than defaulting to on.
-function seedWorkspace(id: string, internetAccess: boolean) {
-  const g = global as typeof global & { _workspaces?: Map<string, unknown> };
-  if (!g._workspaces) g._workspaces = new Map();
-  g._workspaces.set(id, { id, internetAccess });
-}
 
 // verifyProxyAttached only runs in "prod" (WORKSPACES_VOLUME_NAME set). Set it before importing the
 // module so its module-level const captures the prod value, then import dynamically.
 process.env.WORKSPACES_VOLUME_NAME = "paodo_ws_workspaces";
 const { ContainerManager } = await import("./containerManager");
+
+const workspaceDeps: ContainerWorkspaceDependencies = {
+  internetAccessFor: () => true,
+  credentialFingerprint: () => "test",
+  credentialEnvironment: () => ({ envArgs: [], hasProxyCA: false }),
+  installProxyCA: async () => {},
+};
 
 // Programmable docker mock. `attached` seeds whether `network inspect` reports the sidecar as an
 // endpoint; a `network connect` with code 0 flips it to attached when `attachOnConnect` is set.
@@ -51,16 +50,12 @@ const connectCalls = (calls: string[][]) => calls.filter((c) => c[0] === "networ
 
 // Isolate the ensure() wrapper: stub the container bring-up so only verifyProxyAttached runs.
 function makeManager(docker: IDockerClient) {
-  const mgr = new ContainerManager(docker);
+  const mgr = new ContainerManager(docker, workspaceDeps);
   (mgr as unknown as { _ensureContainer(id: string, dir: string): Promise<void> })._ensureContainer = async () => {};
   return mgr;
 }
 
 describe("ContainerManager proxy attachment invariant", () => {
-  beforeEach(() => {
-    seedWorkspace("ws1", true);
-  });
-
   it("no-ops when the sidecar is already attached", async () => {
     const { docker, calls } = makeDocker({ attached: true, attachOnConnect: false });
     await makeManager(docker).ensure("ws1", "/w");
@@ -85,10 +80,6 @@ describe("ContainerManager proxy attachment invariant", () => {
 // an agent tool call's ensure() must not let the two interleave (e.g. stop() tearing the network down
 // mid-reattach, or ensure() reattaching the sidecar right after stop() detached it).
 describe("ContainerManager ensure()/stop() mutual exclusion", () => {
-  beforeEach(() => {
-    seedWorkspace("ws1", true);
-  });
-
   // A docker mock where a chosen command (matched by its first arg) doesn't resolve until the test
   // explicitly releases it — lets us pin one operation "in flight" while starting a second.
   function makeGatedDocker(gatedCmd: string, order: string[]) {
@@ -115,7 +106,7 @@ describe("ContainerManager ensure()/stop() mutual exclusion", () => {
   it("makes stop() wait for an in-flight ensure() to finish before tearing the network down", async () => {
     const order: string[] = [];
     const { docker, release } = makeGatedDocker("start", order); // gate ensure()'s "docker start" call
-    const mgr = new ContainerManager(docker);
+    const mgr = new ContainerManager(docker, workspaceDeps);
     (mgr as unknown as { _ensureContainer(id: string, dir: string): Promise<void> })._ensureContainer = async () => {
       await docker.cmd("start", "wsnet_ws1"); // stands in for the real bring-up sequence
     };
@@ -134,7 +125,7 @@ describe("ContainerManager ensure()/stop() mutual exclusion", () => {
   it("makes ensure() wait out an in-flight stop() and then run its own fresh pass", async () => {
     const order: string[] = [];
     const { docker, release } = makeGatedDocker("stop", order); // gate stop()'s "docker stop" call
-    const mgr = new ContainerManager(docker);
+    const mgr = new ContainerManager(docker, workspaceDeps);
     let ensureCalls = 0;
     (mgr as unknown as { _ensureContainer(id: string, dir: string): Promise<void> })._ensureContainer = async () => {
       ensureCalls++;

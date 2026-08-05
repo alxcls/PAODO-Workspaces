@@ -8,20 +8,17 @@
 // Resource limits:  CONTAINER_MEMORY / CONTAINER_CPUS env vars (defaults: 1g / 1.0)
 import { rm } from "fs/promises";
 import { spawn } from "child_process";
-import { randomUUID, createHash } from "crypto";
+import { randomUUID } from "crypto";
 import path from "path";
 import { createLogger, exitAfterLogs } from "../logger";
-import { DockerClient, IDockerClient } from "./dockerClient";
+import type { IDockerClient } from "./dockerClient";
 import { ImageManager, HASH_LABEL } from "./imageManager";
 import type { IContainerManager } from "../interfaces";
-import { listSecretMeta, PROXY_TOKEN_FORMAT_VERSION } from "../security/workspaceSecretStore";
-import { buildCredentialEnv, installProxyCA } from "./containerCredentials";
 import { containerName, networkName } from "./naming";
 import { BackgroundTaskManager, type BackgroundTask } from "./backgroundTaskManager";
 import { ProxyNetworkManager } from "./proxyNetworkManager";
-import { defaultWorkspaceStore } from "../../workspace/workspaceStore";
 
-// Re-exported for back-compat: consumers (interfaces.ts) still import BackgroundTask from here.
+// Re-exported for back-compat with external consumers.
 export type { BackgroundTask } from "./backgroundTaskManager";
 
 const log = createLogger("container");
@@ -35,13 +32,6 @@ const log = createLogger("container");
 // restarted with the same (stale) env Docker can't amend in place.
 const SECRETS_LABEL = "paodo.workspace-secrets-hash";
 
-function hashSecretNames(secrets: { name: string }[], internetAccess: boolean): string {
-  const sorted = secrets.map((s) => s.name).sort();
-  return createHash("sha256")
-    .update(`${PROXY_TOKEN_FORMAT_VERSION}\0${internetAccess}\0${sorted.join(",")}`)
-    .digest("hex");
-}
-
 const CONTAINER_IMAGE = process.env.CONTAINER_IMAGE ?? "paodo-workspace";
 const CONTAINER_MEMORY = process.env.CONTAINER_MEMORY ?? "1g";
 const CONTAINER_CPUS = process.env.CONTAINER_CPUS ?? "1.0";
@@ -51,6 +41,24 @@ const IDLE_TIMEOUT_MS = parseInt(process.env.CONTAINER_IDLE_MS ?? "", 10) || 10 
 // so local dev (app running directly on host) still works without Docker Compose.
 const WORKSPACES_VOLUME_NAME = process.env.WORKSPACES_VOLUME_NAME ?? "";
 
+/** Workspace policy and credential material needed by the Docker lifecycle. The concrete
+ * workspace/secret stores are wired only by defaultContainerManager.ts. */
+export interface ContainerWorkspaceDependencies {
+  internetAccessFor(workspaceId: string): boolean;
+  credentialFingerprint(workspaceId: string, internetAccess: boolean): string;
+  credentialEnvironment(workspaceId: string, internetAccess: boolean): { envArgs: string[]; hasProxyCA: boolean };
+  installProxyCA(docker: IDockerClient, containerName: string, workspaceId: string): Promise<void>;
+}
+
+// Safe standalone default for isolated unit tests and explicit custom composition. Production
+// always supplies the real adapter from defaultContainerManager.ts.
+const isolatedWorkspaceDependencies: ContainerWorkspaceDependencies = {
+  internetAccessFor: () => false,
+  credentialFingerprint: () => "isolated-no-credentials",
+  credentialEnvironment: () => ({ envArgs: [], hasProxyCA: false }),
+  installProxyCA: async () => {},
+};
+
 export class ContainerManager implements IContainerManager {
   private docker: IDockerClient;
   private imageManager: ImageManager;
@@ -59,7 +67,10 @@ export class ContainerManager implements IContainerManager {
   // lifecycle and exec, and delegates those two subdomains. Both share our injected docker client.
   private background: BackgroundTaskManager;
   private proxy: ProxyNetworkManager;
-  constructor(docker: IDockerClient = new DockerClient()) {
+  constructor(
+    docker: IDockerClient,
+    private readonly workspaceDeps: ContainerWorkspaceDependencies = isolatedWorkspaceDependencies,
+  ) {
     this.docker = docker;
     this.imageManager = new ImageManager(docker);
     this.background = new BackgroundTaskManager(docker);
@@ -155,14 +166,13 @@ export class ContainerManager implements IContainerManager {
     // that exists but predates this field defaults to true (see workspaceStore.ts hydration).
     // Read once so the network-create and proxy-attach decisions below can't disagree with each
     // other partway through this method.
-    const ws = defaultWorkspaceStore.getWorkspace(workspaceId);
-    const internetAccess = ws ? (ws.internetAccess ?? true) : false;
+    const internetAccess = this.workspaceDeps.internetAccessFor(workspaceId);
     try {
       const status = await this.getContainerStatus(workspaceId);
       stage = "hash_workspace_image";
       const hash = await this.imageManager.getCurrentHash("Dockerfile.workspace");
       stage = "read_workspace_secrets";
-      const secretsHash = hashSecretNames(listSecretMeta(workspaceId), internetAccess);
+      const secretsHash = this.workspaceDeps.credentialFingerprint(workspaceId, internetAccess);
 
       if (status === "running" || status === "stopped") {
         stage = "inspect_container_image";
@@ -228,7 +238,10 @@ export class ContainerManager implements IContainerManager {
       // Build the credential-proxy + secret env args (tokens only — real values stay in the proxy).
       // See containerCredentials.ts for how tokens, the proxy URL, and the CA-trust vars are derived.
       stage = "build_credential_environment";
-      const { envArgs: credentialEnvArgs, hasProxyCA } = buildCredentialEnv(workspaceId, internetAccess);
+      const { envArgs: credentialEnvArgs, hasProxyCA } = this.workspaceDeps.credentialEnvironment(
+        workspaceId,
+        internetAccess,
+      );
       // Attach the sidecar to this workspace's network so the proxy alias resolves inside the
       // container. Only when this workspace actually has a proxy CA (attach() itself no-ops in
       // local dev — no sidecar, proxy is in-process) AND internet access is on — an off workspace's
@@ -307,7 +320,7 @@ export class ContainerManager implements IContainerManager {
       // Install the proxy CA and build the combined trust bundle inside the fresh container (no-op
       // when the proxy isn't set up). See containerCredentials.installProxyCA.
       stage = "install_proxy_ca";
-      await installProxyCA(this.docker, containerName(workspaceId), workspaceId);
+      await this.workspaceDeps.installProxyCA(this.docker, containerName(workspaceId), workspaceId);
     } catch (err) {
       log.error(
         {
@@ -344,8 +357,7 @@ export class ContainerManager implements IContainerManager {
       // entirely for an off workspace — verify()'s whole purpose is to *reattach* a dropped
       // connection, which would silently undo the isolation an off workspace depends on. Fails
       // closed (skips reattach) if the workspace record can't be found at all.
-      const wakeWs = defaultWorkspaceStore.getWorkspace(workspaceId);
-      const internetAccess = wakeWs ? (wakeWs.internetAccess ?? true) : false;
+      const internetAccess = this.workspaceDeps.internetAccessFor(workspaceId);
       if (internetAccess) {
         try {
           await this.proxy.verify(workspaceId);
@@ -501,8 +513,7 @@ export class ContainerManager implements IContainerManager {
   // Fails closed (excluded) if the workspace record can't be found at all.
   async reattachProxyNetworks(): Promise<void> {
     await this.proxy.reattachAll((workspaceId) => {
-      const ws = defaultWorkspaceStore.getWorkspace(workspaceId);
-      return ws ? (ws.internetAccess ?? true) : false;
+      return this.workspaceDeps.internetAccessFor(workspaceId);
     });
   }
 
@@ -617,11 +628,3 @@ export class ContainerManager implements IContainerManager {
     }
   }
 }
-
-// Singleton — module-level state intentionally lives here (not on `global`) because Next.js
-// hot-reload doesn't re-import server-side-only infra modules through the app bundle.
-const _manager = new ContainerManager();
-
-// Exposed for lib/infra/services.ts as the default IContainerManager. Consumers call through this
-// instance (or the getContainers() DI seam); there is no separate free-function call path.
-export const defaultContainerManager = _manager;

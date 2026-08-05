@@ -1,48 +1,68 @@
 // Permanent removal of a workspace and every resource keyed by its id. Kept apart from the read and
-// update operations because deletion is the only path that reaches the container runtime, git
-// versioning, the Drive store, the agent graph and the filesystem at once — and the only one whose
-// every step is audit-logged.
-import { getContainers, getStore, getVersioning } from "@/lib/infra/services";
-import { removeWorkspace as removeWorkspaceCredentials } from "@/lib/infra/security/credentialStore";
-import { createAuditLogger, createLogger } from "@/lib/infra/logger";
-import { disconnectWorkspace } from "@/lib/workspace/driveStore";
-import { removeWorkspaceFromGraph } from "@/lib/workspace/workspaceGraph";
-import { deleteWorkspaceConversations } from "@/lib/workspace/conversationStore";
-import { deleteAllForWorkspace } from "@/lib/infra/security/workspaceSecretStore";
-import { getCredentialProxy } from "@/lib/infra/proxy";
-import { deleteInternetAccessPolicy } from "@/lib/infra/proxy/internetAccessPolicy";
-import { clearSchedule } from "@/lib/infra/schedules/scheduleStore";
-import { rm } from "fs/promises";
-import path from "path";
-import { WORKSPACES_ROOT } from "@/lib/infra/paths";
+// update operations because deletion is the only path that reaches all owned resources at once — and
+// the only one whose every step is audit-logged. The concrete cleanup plan is assembled at the HTTP
+// composition boundary; this module only owns deletion policy and ordering.
 
 export interface DeleteWorkspaceResult {
   deleted: true;
 }
 
-const deleteLog = createLogger("workspaceOperations");
-const deleteAudit = createAuditLogger("workspaceOperations");
+export interface WorkspaceDeletionTarget {
+  id: string;
+  name: string;
+  dir: string;
+}
+
+/** The registry is deliberately narrower than the application's full workspace store. */
+export interface WorkspaceDeleteRegistry {
+  getWorkspace(id: string): WorkspaceDeletionTarget | undefined;
+  deleteWorkspace(id: string): boolean | Promise<boolean>;
+}
+
+/** One independently observable resource cleanup. */
+export interface WorkspaceDeleteStage {
+  name: string;
+  run(workspace: WorkspaceDeletionTarget): unknown | Promise<unknown>;
+}
+
+interface DeleteLogger {
+  debug(fields: Record<string, unknown>, message: string): void;
+  error(fields: Record<string, unknown>, message: string): void;
+}
+
+interface DeleteAuditLogger {
+  info(fields: Record<string, unknown>, message: string): void;
+}
+
+export interface WorkspaceDeleteDeps {
+  registry: WorkspaceDeleteRegistry;
+  /** Groups run in order; stages within a group may run concurrently. */
+  cleanupGroups: readonly (readonly WorkspaceDeleteStage[])[];
+  log: DeleteLogger;
+  audit: DeleteAuditLogger;
+}
 
 async function runDeleteCleanup(
   workspaceId: string,
-  stage: string,
-  cleanup: () => unknown | Promise<unknown>,
+  stage: WorkspaceDeleteStage,
+  workspace: WorkspaceDeletionTarget,
+  log: DeleteLogger,
 ): Promise<void> {
   try {
-    await cleanup();
-    deleteLog.debug(
-      { event: "workspace_delete_stage_completed", outcome: "diagnostic_recorded", workspaceId, stage },
+    await stage.run(workspace);
+    log.debug(
+      { event: "workspace_delete_stage_completed", outcome: "diagnostic_recorded", workspaceId, stage: stage.name },
       "workspace deletion stage completed",
     );
   } catch (err) {
-    deleteLog.error(
+    log.error(
       {
         event: "workspace_delete_cleanup_failed",
         outcome: "workspace_cleanup_incomplete",
         code: "INTERNAL_ERROR",
         err,
         workspaceId,
-        stage,
+        stage: stage.name,
       },
       "workspace deletion cleanup failed",
     );
@@ -56,12 +76,11 @@ async function runDeleteCleanup(
  * deletion. A missing registry record is not evidence of an interrupted deletion and is reported
  * as not found without touching unrelated id-keyed stores.
  */
-export async function deleteWorkspace(id: string): Promise<DeleteWorkspaceResult | null> {
-  const store = getStore();
-  const workspace = store.getWorkspace(id);
+export async function deleteWorkspace(id: string, deps: WorkspaceDeleteDeps): Promise<DeleteWorkspaceResult | null> {
+  const workspace = deps.registry.getWorkspace(id);
   if (!workspace) return null;
 
-  deleteAudit.info(
+  deps.audit.info(
     {
       event: "workspace_delete_started",
       outcome: "workspace_deletion_started",
@@ -71,27 +90,17 @@ export async function deleteWorkspace(id: string): Promise<DeleteWorkspaceResult
     "workspace deletion started",
   );
 
-  await runDeleteCleanup(id, "drive_connections", () => disconnectWorkspace(id));
-  await runDeleteCleanup(id, "agent_graph", () => removeWorkspaceFromGraph(id));
-  await runDeleteCleanup(id, "credentials", () => removeWorkspaceCredentials(id));
-  await Promise.all([
-    runDeleteCleanup(id, "conversations", () => deleteWorkspaceConversations(id)),
-    runDeleteCleanup(id, "third_party_secrets", () => deleteAllForWorkspace(id)),
-    runDeleteCleanup(id, "credential_proxy_rules", () => getCredentialProxy().clearRules(id)),
-    runDeleteCleanup(id, "internet_access_policy", () => deleteInternetAccessPolicy(id)),
-    runDeleteCleanup(id, "schedule", () => clearSchedule(id)),
-  ]);
-  await Promise.all([
-    runDeleteCleanup(id, "container", () => getContainers().remove(id)),
-    runDeleteCleanup(id, "workspace_directory", () => getContainers().deleteWorkspaceDir(workspace.dir)),
-    runDeleteCleanup(id, "version_history", () => getVersioning().deleteRepo(id)),
-    runDeleteCleanup(id, "agent_permissions", () =>
-      rm(path.join(WORKSPACES_ROOT, ".agent-permissions", `${id}.json`), { force: true }),
-    ),
-  ]);
-  await runDeleteCleanup(id, "workspace_registry", () => store.deleteWorkspace(id));
+  for (const group of deps.cleanupGroups) {
+    await Promise.all(group.map((stage) => runDeleteCleanup(id, stage, workspace, deps.log)));
+  }
+  await runDeleteCleanup(
+    id,
+    { name: "workspace_registry", run: () => deps.registry.deleteWorkspace(id) },
+    workspace,
+    deps.log,
+  );
 
-  deleteAudit.info(
+  deps.audit.info(
     {
       event: "workspace_deleted",
       outcome: "workspace_and_owned_resources_deleted",

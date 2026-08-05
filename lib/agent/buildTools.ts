@@ -30,7 +30,7 @@ import { DriveDownloadTool } from "./tools/driveDownload";
 import { DriveUploadTool } from "./tools/driveUpload";
 import { getDrivesForWorkspace } from "../workspace/driveStore";
 import { isCaller } from "../workspace/workspaceGraph";
-import { defaultContainerManager } from "../infra/docker/containerManager";
+import { defaultContainerManager } from "../infra/docker/defaultContainerManager";
 import { defaultWorkspaceStore } from "../workspace/workspaceStore";
 import { getVersioning } from "../infra/services";
 import { broadcastToWorkspace } from "../infra/realtime/wsHub";
@@ -38,8 +38,8 @@ import type {
   IContainerManager,
   IContainerExec,
   IBackgroundTasks,
-  IWorkspaceStore,
-  IWorkspaceVersioning,
+  IAgentWorkspaceVersioning,
+  IWorkspaceLookup,
 } from "../infra/interfaces";
 import type { AgentConfig, PrivilegedRunner, StreamingExecFn, BackgroundExecFn } from "./interfaces";
 import { DEFAULT_LLM } from "./interfaces";
@@ -99,7 +99,7 @@ export function buildTools(
   workspaceId: string,
   workspaceDir: string,
   config: AgentConfig,
-  deps: { containers?: IContainerManager; store?: IWorkspaceStore; versioning?: IWorkspaceVersioning } = {},
+  deps: { containers?: IContainerManager; store?: IWorkspaceLookup; versioning?: IAgentWorkspaceVersioning } = {},
 ) {
   const containers = deps.containers ?? defaultContainerManager;
   const store = deps.store ?? defaultWorkspaceStore;

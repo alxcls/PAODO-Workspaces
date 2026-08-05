@@ -36,6 +36,7 @@ async function freshModules() {
     workspaces,
     schedules: await import("../infra/schedules/scheduleStore"),
     operations: await import("../operations/workspaceDelete"),
+    deletion: await import("../infra/workspaceDeleteDeps"),
   };
 }
 
@@ -56,14 +57,14 @@ function scheduleFor(workspaceId: string, prompt: string) {
 
 describe("workspace deletion cascade", () => {
   it("clears the deleted workspace's schedule, on disk as well as in memory", async () => {
-    const { workspaces, schedules, operations } = await freshModules();
+    const { workspaces, schedules, operations, deletion } = await freshModules();
     const ws = await workspaces.defaultWorkspaceStore.createWorkspace("scheduled-ws");
 
     const prompt = "prompt that must not outlive the workspace";
     schedules.setSchedule(scheduleFor(ws.id, prompt));
     expect(schedules.getSchedule(ws.id)).not.toBeNull();
 
-    await operations.deleteWorkspace(ws.id);
+    await operations.deleteWorkspace(ws.id, deletion.workspaceDeleteDeps());
 
     expect(schedules.getSchedule(ws.id)).toBeNull();
     const onDisk = fs.existsSync(SCHEDULES_FILE) ? fs.readFileSync(SCHEDULES_FILE, "utf8") : "{}";
@@ -72,24 +73,26 @@ describe("workspace deletion cascade", () => {
   });
 
   it("leaves other workspaces' schedules intact", async () => {
-    const { workspaces, schedules, operations } = await freshModules();
+    const { workspaces, schedules, operations, deletion } = await freshModules();
     const doomed = await workspaces.defaultWorkspaceStore.createWorkspace("doomed-ws");
     const survivor = await workspaces.defaultWorkspaceStore.createWorkspace("survivor-ws");
 
     schedules.setSchedule(scheduleFor(doomed.id, "goes away"));
     schedules.setSchedule(scheduleFor(survivor.id, "stays put"));
 
-    await operations.deleteWorkspace(doomed.id);
+    await operations.deleteWorkspace(doomed.id, deletion.workspaceDeleteDeps());
 
     expect(schedules.getSchedule(doomed.id)).toBeNull();
     expect(schedules.getSchedule(survivor.id)?.prompt).toBe("stays put");
   });
 
   it("deletes a workspace that never had a schedule without error", async () => {
-    const { workspaces, schedules, operations } = await freshModules();
+    const { workspaces, schedules, operations, deletion } = await freshModules();
     const ws = await workspaces.defaultWorkspaceStore.createWorkspace("unscheduled-ws");
 
-    await expect(operations.deleteWorkspace(ws.id)).resolves.toEqual({ deleted: true });
+    await expect(operations.deleteWorkspace(ws.id, deletion.workspaceDeleteDeps())).resolves.toEqual({
+      deleted: true,
+    });
     expect(schedules.getSchedule(ws.id)).toBeNull();
   });
 });

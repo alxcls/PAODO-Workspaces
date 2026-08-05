@@ -10,7 +10,7 @@ import { StructuredTool } from "@langchain/core/tools";
 import { z } from "zod";
 import { normalizeRelpath } from "../pathUtils";
 import { toolError } from "../toolUtils";
-import type { IWorkspaceVersioning, VersionStat } from "../../infra/interfaces";
+import type { IWorkspaceVersionReader, VersionStat } from "../../infra/interfaces";
 
 const SHA = /^[0-9a-fA-F]{4,40}$/;
 const MAX_FILES_PER_VERSION = 6;
@@ -134,7 +134,7 @@ This is read-only: it never changes workspace files.`;
   constructor(
     private readonly workspaceId: string,
     private readonly workspaceDir: string,
-    private readonly versioning: IWorkspaceVersioning,
+    private readonly versioning: IWorkspaceVersionReader,
   ) {
     super();
   }

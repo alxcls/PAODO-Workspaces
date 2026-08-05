@@ -26,7 +26,7 @@ import {
   type SkillDefinition,
   type SkillSchema,
 } from "../../workspace/skillTypes";
-import type { IWorkspaceStore, IContainerManager } from "../../infra/interfaces";
+import type { IWorkspaceLookup, IContainerManager } from "../../infra/interfaces";
 import { buildSystemPrompt, buildPromptConfig, buildStructuredResponderBlock } from "../systemPrompt";
 import { buildWorkspacePromptInputs } from "../promptContext";
 import { createLogger } from "../../infra/logger";
@@ -42,7 +42,7 @@ export interface ExecuteSkillOptions {
   signal?: AbortSignal;
   /** Provenance for the callee's usage session. Direct agent calls default to `agent`. */
   origin?: SessionOrigin;
-  store?: IWorkspaceStore;
+  store?: IWorkspaceLookup;
   containers?: IContainerManager;
   /** Test seams — production uses the real graph, skill store, runner, and conversation store. */
   canCallFn?: typeof canCall;

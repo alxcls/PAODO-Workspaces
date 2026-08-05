@@ -1,7 +1,7 @@
 // Shared fire-and-forget snapshot helper for user-driven file changes (save/delete/upload).
 // Takes the versioning service as an argument rather than importing services.ts, so this stays
 // out of the services import graph and cycle-free.
-import type { IWorkspaceVersioning } from "../interfaces";
+import type { IWorkspaceSnapshotWriter } from "../interfaces";
 import { createLogger } from "../logger";
 
 const log = createLogger("api");
@@ -10,7 +10,7 @@ const log = createLogger("api");
 // like an agent run does. Fire-and-forget: a versioning failure must never fail the user's action.
 // commitResult force-stages everything and skips itself if nothing actually changed.
 export async function snapshotWorkspace(
-  versioning: IWorkspaceVersioning,
+  versioning: IWorkspaceSnapshotWriter,
   ws: { id: string; dir: string },
   label: string,
 ): Promise<void> {
@@ -40,7 +40,7 @@ const pending = new Map<string, { timer: NodeJS.Timeout; changes: number; firstC
  * force-stages everything, so the next one picks up whatever this one would have committed.
  */
 export function snapshotWorkspaceCoalesced(
-  versioning: IWorkspaceVersioning,
+  versioning: IWorkspaceSnapshotWriter,
   ws: { id: string; dir: string },
   change: string,
   label: (changes: number, firstChange: string) => string,

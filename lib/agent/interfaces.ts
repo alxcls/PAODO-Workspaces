@@ -2,7 +2,7 @@
 // config, and the combined AgentConfig consumed by buildTools and the runner.
 import type { BaseMessage } from "@langchain/core/messages";
 import type { BaseChatModel } from "@langchain/core/language_models/chat_models";
-import type { IWorkspaceVersioning } from "../infra/interfaces";
+import type { IWorkspaceVersionRestorer } from "../infra/interfaces";
 
 export interface ExecResult {
   code: number;
@@ -91,7 +91,7 @@ export interface AgentConfig extends LLMProviderConfig, ExecConfig, SkillConfig 
 // seams so they can broadcast WS events and log warnings without importing infra directly.
 export interface PostDispatchContext {
   messages: BaseMessage[];
-  versioning: IWorkspaceVersioning | undefined;
+  versioning: IWorkspaceVersionRestorer | undefined;
   workspaceId: string;
   workspaceDir: string;
   /** The bare model (no bound tools) — required by the compact handler to summarize history. Absent for handlers that don't need it. */

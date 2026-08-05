@@ -9,6 +9,7 @@ import { receiptResponse } from "@/lib/api/workspaceUpdateReceipt";
 import { getWorkspaceOverview } from "@/lib/operations/workspaceDetails";
 import { updateWorkspace } from "@/lib/operations/workspaceUpdate";
 import { deleteWorkspace } from "@/lib/operations/workspaceDelete";
+import { workspaceDeleteDeps } from "@/lib/infra/workspaceDeleteDeps";
 
 const log = createLogger("api").child({ route: "workspace" });
 
@@ -152,7 +153,7 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
   if (param instanceof NextResponse) return param;
   const id = param;
   try {
-    const result = await deleteWorkspace(id);
+    const result = await deleteWorkspace(id, workspaceDeleteDeps());
     if (!result) return notFound(req);
     return NextResponse.json(result);
   } catch {

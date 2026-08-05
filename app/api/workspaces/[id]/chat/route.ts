@@ -7,14 +7,11 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { requireWorkspace } from "@/lib/api/guards";
 import type { AgentEvent } from "@/lib/agent/runner";
-import { buildSystemPrompt, buildPromptConfig } from "@/lib/agent/systemPrompt";
-import { buildWorkspacePromptInputs } from "@/lib/agent/promptContext";
-import { loadAgentConfig } from "@/lib/agent/buildTools";
-import { setSystemPrompt } from "@/lib/agent/messageSerialization";
 import * as conversations from "@/lib/conversations/store";
 import * as broker from "@/lib/agent/runBroker";
 import { SSE_HEADERS, startKeepalive } from "@/lib/agent/sse";
 import { createLogger } from "@/lib/infra/logger";
+import { startWorkspaceRun } from "@/lib/operations/agent/run";
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -29,21 +26,13 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
   const userMessage = body.message?.trim();
   if (userMessage) {
-    // Refresh the system prompt on every run so AGENTS.md and drive changes are always picked up.
-    const inputs = buildWorkspacePromptInputs(ws.id, ws.dir);
-    setSystemPrompt(messages, buildSystemPrompt(ws.name, buildPromptConfig(loadAgentConfig(ws.id)), inputs));
-    const { alreadyRunning } = broker.startRun({
-      workspaceId: ws.id,
-      workspaceName: ws.name,
-      workspaceDir: ws.dir,
-      conversationId,
-      messages,
-      userInput: userMessage,
-      maxIterations: ws.maxIterations,
-      maxRunMinutes: ws.maxRunMinutes,
+    const receipt = startWorkspaceRun(ws.id, {
+      prompt: userMessage,
       origin: "chat",
+      conversation: { mode: "existing", id: conversationId },
     });
-    if (alreadyRunning) return new Response("A run is already in progress", { status: 409 });
+    if (!receipt) return new Response("Workspace not found", { status: 404 });
+    if (!receipt.started) return new Response("A run is already in progress", { status: 409 });
     conversations.setActiveId(ws.id, conversationId);
   }
 

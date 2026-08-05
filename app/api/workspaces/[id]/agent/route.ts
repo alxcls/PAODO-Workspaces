@@ -10,13 +10,10 @@ import { getClientIp } from "@/lib/infra/realtime/clientIp";
 import { createAuditLogger, createLogger } from "@/lib/infra/logger";
 import { throttleLogWithSources } from "@/lib/infra/logThrottle";
 import type { AgentEvent } from "@/lib/agent/runner";
-import { buildSystemPrompt, buildPromptConfig } from "@/lib/agent/systemPrompt";
-import { buildWorkspacePromptInputs } from "@/lib/agent/promptContext";
-import { loadAgentConfig } from "@/lib/agent/buildTools";
-import { setSystemPrompt } from "@/lib/agent/messageSerialization";
-import * as conversations from "@/lib/conversations/store";
 import * as broker from "@/lib/agent/runBroker";
 import { SSE_HEADERS, startKeepalive } from "@/lib/agent/sse";
+import { ConversationNotFoundError } from "@/lib/operations/agent/errors";
+import { startWorkspaceRun } from "@/lib/operations/agent/run";
 
 function apiConversationStream(req: NextRequest, workspaceId: string, conversationId: string): Response {
   const encoder = new TextEncoder();
@@ -133,24 +130,23 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   // API calls start independent conversations by default so an automation cannot unexpectedly
   // append to whichever conversation a human last selected in the UI. Pass conversationId to
   // continue a previous API/UI conversation deliberately.
-  const conversationId = body.conversationId ?? conversations.createConversation(ws.id).id;
-  const messages = conversations.getMessages(ws.id, conversationId);
-  if (!messages) return new Response("Conversation not found", { status: 404 });
+  let receipt;
+  try {
+    receipt = startWorkspaceRun(ws.id, {
+      prompt: body.message,
+      origin: "api",
+      conversation: body.conversationId ? { mode: "existing", id: body.conversationId } : { mode: "create" },
+    });
+  } catch (err) {
+    if (err instanceof ConversationNotFoundError) {
+      return new Response("Conversation not found", { status: 404 });
+    }
+    throw err;
+  }
+  if (!receipt) return new Response("Workspace not found", { status: 404 });
+  if (!receipt.started) return new Response("A run is already in progress", { status: 409 });
 
-  const inputs = buildWorkspacePromptInputs(ws.id, ws.dir);
-  setSystemPrompt(messages, buildSystemPrompt(ws.name, buildPromptConfig(loadAgentConfig(ws.id)), inputs));
-  const { alreadyRunning } = broker.startRun({
-    workspaceId: ws.id,
-    workspaceName: ws.name,
-    workspaceDir: ws.dir,
-    conversationId,
-    messages,
-    userInput: body.message.trim(),
-    maxIterations: ws.maxIterations,
-    maxRunMinutes: ws.maxRunMinutes,
-    origin: "api",
-  });
-  if (alreadyRunning) return new Response("A run is already in progress", { status: 409 });
+  const { conversationId } = receipt;
 
   log.debug({ conversationId }, "public API chat stream started");
   return apiConversationStream(req, ws.id, conversationId);

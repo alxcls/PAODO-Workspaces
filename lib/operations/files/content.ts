@@ -25,7 +25,7 @@ export interface FileWriteHooks {
    *
    * It must never create a missing path — see writeTextFile's O_CREAT note.
    */
-  writeFallback?: (relPath: string, content: string) => Promise<void>;
+  writeFallback?: (relPath: string, content: Uint8Array) => Promise<void>;
   /** Git snapshot hook. Failure here must not invalidate a write that already reached disk. */
   afterWrite?: (message: string) => Promise<void>;
 }
@@ -92,7 +92,7 @@ export async function writeTextFile(
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code;
     if ((code === "EACCES" || code === "EPERM") && hooks.writeFallback) {
-      await fileSystemCall(relPath, () => hooks.writeFallback!(relPath, content));
+      await fileSystemCall(relPath, () => hooks.writeFallback!(relPath, Buffer.from(content, "utf-8")));
     } else if (code === "ENOENT") {
       // Deliberately not the classifier's NOT_FOUND: on a write, a path that is not there means the
       // save lost a race to a move, which the client resolves by reloading rather than by retrying.

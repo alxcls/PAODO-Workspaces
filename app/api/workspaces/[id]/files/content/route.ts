@@ -31,7 +31,7 @@ function backend(ws: Workspace): FileBackend {
       const overwriteExisting = [
         "const fs=require('fs');",
         "const fd=fs.openSync(process.argv[1],'r+');",
-        "try{fs.ftruncateSync(fd,0);fs.writeFileSync(fd,fs.readFileSync(0,'utf8'),'utf8');}",
+        "try{fs.ftruncateSync(fd,0);fs.writeFileSync(fd,fs.readFileSync(0));}",
         "finally{fs.closeSync(fd);}",
       ].join("");
       const r = await getContainers().exec(ws.id, ws.dir, ["node", "-e", overwriteExisting, `/workspace/${relPath}`], {

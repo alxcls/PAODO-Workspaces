@@ -3,13 +3,14 @@
 import { spawn } from "child_process";
 
 export type DockerResult = { stdout: string; stderr: string; code: number };
+export type DockerStdin = string | Uint8Array;
 
 export interface IDockerClient {
   cmd(...args: string[]): Promise<DockerResult>;
   exec(
     containerName: string,
     cmdArgs: string[],
-    opts?: { stdin?: string; asRoot?: boolean; cwd?: string; trimStdout?: boolean },
+    opts?: { stdin?: DockerStdin; asRoot?: boolean; cwd?: string; trimStdout?: boolean },
   ): Promise<DockerResult>;
   build(buildArgs: string[], dockerfile: Buffer): Promise<void>;
 }
@@ -17,7 +18,7 @@ export interface IDockerClient {
 export class DockerClient implements IDockerClient {
   // Single spawn+collect implementation used by all methods.
   // trimStdout=false preserves exact content (trailing newlines matter for file reads).
-  private _spawn(args: string[], opts: { stdin?: string; trimStdout?: boolean } = {}): Promise<DockerResult> {
+  private _spawn(args: string[], opts: { stdin?: DockerStdin; trimStdout?: boolean } = {}): Promise<DockerResult> {
     return new Promise((resolve) => {
       let stdout = "";
       let stderr = "";
@@ -65,7 +66,7 @@ export class DockerClient implements IDockerClient {
   exec(
     containerName: string,
     cmdArgs: string[],
-    opts: { stdin?: string; asRoot?: boolean; cwd?: string; trimStdout?: boolean } = {},
+    opts: { stdin?: DockerStdin; asRoot?: boolean; cwd?: string; trimStdout?: boolean } = {},
   ): Promise<DockerResult> {
     const { stdin, asRoot = false, cwd = "/workspace", trimStdout = false } = opts;
     const args = ["exec", "-i"];

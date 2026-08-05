@@ -389,7 +389,12 @@ export class ContainerManager implements IContainerManager {
    * cmdArgs are passed directly to execvp — no shell interpolation, so injection is impossible.
    * stdout is NOT trimmed so callers receive exact file content (trailing newlines preserved).
    */
-  async exec(workspaceId: string, workspaceDir: string, cmdArgs: string[], opts: { stdin?: string } = {}) {
+  async exec(
+    workspaceId: string,
+    workspaceDir: string,
+    cmdArgs: string[],
+    opts: { stdin?: import("./dockerClient").DockerStdin } = {},
+  ) {
     await this.ensure(workspaceId, workspaceDir);
     return this.docker.exec(containerName(workspaceId), cmdArgs, { stdin: opts.stdin });
   }

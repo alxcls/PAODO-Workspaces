@@ -6,7 +6,7 @@
 // Type-only imports below are erased at compile time.
 import type { Workspace } from "../workspace/types";
 import type { ReasoningEffort } from "../models/llmSelection";
-import type { DockerResult } from "./docker/dockerClient";
+import type { DockerResult, DockerStdin } from "./docker/dockerClient";
 import type { BackgroundTask } from "./docker/backgroundTaskManager";
 
 /** Read capabilities used by agent/runtime consumers. */
@@ -123,7 +123,7 @@ export interface IContainerLifecycle {
 
 /** Foreground command execution inside a workspace container. */
 export interface IContainerExec {
-  exec(workspaceId: string, workspaceDir: string, cmdArgs: string[], opts?: { stdin?: string }): Promise<DockerResult>;
+  exec(workspaceId: string, workspaceDir: string, cmdArgs: string[], opts?: { stdin?: DockerStdin }): Promise<DockerResult>;
   execStreaming(
     workspaceId: string,
     workspaceDir: string,

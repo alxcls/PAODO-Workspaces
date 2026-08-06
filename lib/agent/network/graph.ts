@@ -6,6 +6,7 @@ import { WORKSPACES_ROOT } from "../../infra/paths";
 import { atomicSaveJson, readJson } from "../../infra/jsonPersist";
 import { globalSingleton } from "../../infra/globalSingleton";
 import { createLogger } from "../../infra/logger";
+import { AppError } from "../../errors/appError";
 
 const log = createLogger("workspaceGraph");
 
@@ -57,7 +58,7 @@ export function saveGraph(edges: GraphEdge[], positions: Record<string, { x: num
   // Not logged: the graph editor lets a user draw a cycle, and rejecting it is the feature working.
   // The route turns this into a 400 the user sees and acts on — nothing for an operator to do.
   if (hasCycle(edges)) {
-    throw new Error("Graph contains a cycle — only DAGs are allowed.");
+    throw new AppError("INVALID_REQUEST", "Graph contains a cycle — only DAGs are allowed.");
   }
   state.graph = { edges, positions };
   atomicSaveJson(GRAPH_FILE, state.graph);

@@ -23,6 +23,8 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
     if (!workspace) return notFound(req);
     return NextResponse.json(workspace, { headers: { "Cache-Control": "no-store" } });
   } catch (err) {
+    const expected = appErrorResponse(err, req);
+    if (expected) return expected;
     log.error(
       {
         event: "workspace_read_failed",
@@ -155,7 +157,10 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
   try {
     const result = await deleteWorkspace(id, workspaceDeleteDeps());
     if (!result) return notFound(req);
-    return NextResponse.json(result);
+    // `ok` alongside `deleted`, so this receipt branches the same way every other mutation's does. A
+    // failure is `{ ok: false, code, error }`; a success that carried only `deleted: true` was one a
+    // caller had to already know the shape of to read at all.
+    return NextResponse.json({ ok: true, ...result });
   } catch {
     // The deletion operation logs the exact failed cleanup stage once; do not duplicate the private
     // exception here. This boundary only converts it to the safe public contract.

@@ -207,17 +207,68 @@ describe("writeTextFile", () => {
 });
 
 describe("removeEntry", () => {
-  it("removes a file", async () => {
+  it("removes a file and names it", async () => {
     fs.writeFileSync(path.join(WS_DIR, "gone.txt"), "x");
-    await removeEntry(WS_DIR, "gone.txt");
+    expect(await removeEntry(WS_DIR, "gone.txt")).toEqual({ removed: ["gone.txt"], removedCount: 1 });
     expect(fs.existsSync(path.join(WS_DIR, "gone.txt"))).toBe(false);
   });
 
-  it("removes a directory and everything under it", async () => {
+  // The point of the receipt: one path in, a whole tree out. A caller that deletes a directory has no
+  // other chance to see what it took — afterwards there is nothing left to list.
+  it("removes a directory and names every path under it, parents before children", async () => {
     fs.mkdirSync(path.join(WS_DIR, "tree", "deep"), { recursive: true });
     fs.writeFileSync(path.join(WS_DIR, "tree", "deep", "leaf.txt"), "x");
-    await removeEntry(WS_DIR, "tree");
+    fs.writeFileSync(path.join(WS_DIR, "tree", "top.txt"), "x");
+
+    expect(await removeEntry(WS_DIR, "tree")).toEqual({
+      removed: ["tree", "tree/deep", "tree/deep/leaf.txt", "tree/top.txt"],
+      removedCount: 4,
+    });
     expect(fs.existsSync(path.join(WS_DIR, "tree"))).toBe(false);
+  });
+
+  // `rm` takes a node_modules whether or not a transfer would have carried one, so the receipt has to
+  // say so. Under-reporting is the one direction this must never be wrong in.
+  it("names what the transfer ignore contract would have left out", async () => {
+    fs.mkdirSync(path.join(WS_DIR, "app", "node_modules", "left-pad"), { recursive: true });
+    fs.writeFileSync(path.join(WS_DIR, "app", "node_modules", "left-pad", "index.js"), "x");
+
+    const { removed } = await removeEntry(WS_DIR, "app");
+    expect(removed).toContain("app/node_modules/left-pad/index.js");
+  });
+
+  // A symlink is unlinked, not followed, so its target's contents were never removed and must not be
+  // listed as though they were.
+  it("stops at a symlink to a directory rather than naming what is behind it", async () => {
+    fs.mkdirSync(path.join(WS_DIR, "real"), { recursive: true });
+    fs.writeFileSync(path.join(WS_DIR, "real", "kept.txt"), "x");
+    fs.mkdirSync(path.join(WS_DIR, "doomed"), { recursive: true });
+    fs.symlinkSync(path.join(WS_DIR, "real"), path.join(WS_DIR, "doomed", "link"));
+
+    expect(await removeEntry(WS_DIR, "doomed")).toEqual({
+      removed: ["doomed", "doomed/link"],
+      removedCount: 2,
+    });
+    expect(fs.readFileSync(path.join(WS_DIR, "real", "kept.txt"), "utf8")).toBe("x");
+  });
+
+  // The list is bounded so one call cannot answer with a few hundred thousand paths; the count is not,
+  // because how much went is the part a caller cannot reconstruct once the tree is gone. The note is
+  // there so a list that stops at a round number cannot be read as the whole answer.
+  it("caps the list it names, keeps counting past the cap, and says so", async () => {
+    const dir = path.join(WS_DIR, "many");
+    fs.mkdirSync(dir, { recursive: true });
+    for (let i = 0; i < 12; i++) fs.writeFileSync(path.join(dir, `f${i}.txt`), "x");
+
+    const receipt = await removeEntry(WS_DIR, "many", {}, { maxReported: 5 });
+    expect(receipt.removed).toHaveLength(5);
+    expect(receipt.removedCount).toBe(13); // the directory itself, plus its twelve files
+    expect(receipt.note).toBe("5 of 13 removed paths listed");
+  });
+
+  it("leaves the note off a delete it named in full", async () => {
+    fs.writeFileSync(path.join(WS_DIR, "small.txt"), "x");
+    expect(await removeEntry(WS_DIR, "small.txt")).not.toHaveProperty("note");
   });
 
   it("reports a missing entry as NOT_FOUND", async () => {

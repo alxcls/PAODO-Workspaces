@@ -110,10 +110,12 @@ export async function deleteFileContent(request: Request, be: FileBackend): Prom
   let relPath: string | undefined;
   try {
     relPath = requireEntryPath(searchParams.get("path"));
-    await removeEntry(be.dir, relPath, be);
+    const receipt = await removeEntry(be.dir, relPath, be);
     // The path that was removed, for the reason a write reports one — more so here, since this is the
-    // verb where acting on a path other than the one you meant cannot be undone.
-    return NextResponse.json({ ok: true, path: relPath });
+    // verb where acting on a path other than the one you meant cannot be undone. `removed` is the same
+    // answer for a directory, where the one path a caller named stands for a whole tree it never listed
+    // and now cannot: naming the tree is the only chance to see what a recursive delete actually took.
+    return NextResponse.json({ ok: true, path: relPath, ...receipt });
   } catch (err) {
     const known = appErrorResponse(err, request);
     if (known) return known;

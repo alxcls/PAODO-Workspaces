@@ -115,18 +115,13 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
   const dest = new URL(req.url).searchParams.get("dest");
   let receipt: PutTransferReceipt;
   try {
-    receipt = await putTransfer(
-      ws.dir,
-      dest,
-      Readable.fromWeb(req.body as Parameters<typeof Readable.fromWeb>[0]),
-      {
-        // A pending browser-upload burst is a different user action. Commit it only after this
-        // archive has passed validation, then apply the transfer and take its own snapshot below.
-        beforeApply: async () => {
-          await flushSnapshotBurstStrict(getVersioning(), ws);
-        },
+    receipt = await putTransfer(ws.dir, dest, Readable.fromWeb(req.body as Parameters<typeof Readable.fromWeb>[0]), {
+      // A pending browser-upload burst is a different user action. Commit it only after this
+      // archive has passed validation, then apply the transfer and take its own snapshot below.
+      beforeApply: async () => {
+        await flushSnapshotBurstStrict(getVersioning(), ws);
       },
-    );
+    });
   } catch (err) {
     if (err instanceof TransferApplyError) {
       const operationError = transferApplyAppError(err);

@@ -13,6 +13,8 @@
 import fs from "fs/promises";
 import path from "path";
 import { AppError } from "@/lib/errors/appError";
+import { openFileLimiter, type Semaphore } from "@/lib/files/fdLimit";
+import { createLogger } from "@/lib/infra/logger";
 import { fileSystemAppError, fileSystemCall } from "./errors";
 import { resolveHostPath } from "./paths";
 
@@ -188,8 +190,102 @@ export async function writeTextFile(
   await hooks.afterWrite?.(`saved ${path.basename(relPath)}`);
 }
 
-/** Remove one file, or one directory and everything under it. */
-export async function removeEntry(rootDir: string, relPath: string, hooks: FileWriteHooks = {}): Promise<void> {
+/**
+ * How many removed paths one receipt names before it stops listing and only counts.
+ *
+ * There has to be a bound, because a delete is one call whose result is the size of the tree it was
+ * pointed at: `rm node_modules` is a single request that would otherwise answer with a list of a few
+ * hundred thousand paths. Set where a list stops being read rather than where it stops being cheap — a
+ * hundred paths is about as much as anyone scrolls through in a terminal, and past that what the reader
+ * actually wants is the number. `removedCount` still tells the truth about what went, which is the part
+ * a caller cannot go back and measure once the tree is gone.
+ */
+export const MAX_REPORTED_REMOVALS = 100;
+
+export interface RemoveReceipt {
+  /**
+   * What was removed: the entry itself first, then everything that was under it, parents before their
+   * children and siblings in name order. No longer than `maxReported`.
+   */
+  removed: string[];
+  /** Everything that was removed, including whatever the cap left out of `removed`. */
+  removedCount: number;
+  /**
+   * Present only when the list was cut short — "100 of 1500 removed paths listed".
+   *
+   * `removed.length < removedCount` already says as much, but it says it to a client that thought to
+   * compare them. This is a receipt read by a person at a terminal, and a list that silently stops at
+   * a round number is exactly the shape that reads as the whole answer.
+   */
+  note?: string;
+}
+
+export interface RemoveOptions {
+  /** How many paths the receipt names. Defaults to MAX_REPORTED_REMOVALS. */
+  maxReported?: number;
+}
+
+/**
+ * Names every path a recursive removal is about to take, depth-first.
+ *
+ * Deliberately unfiltered by the ignore contract (lib/files/ignore.ts), unlike every other walk in the
+ * codebase: that contract decides what *travels*, and `rm` takes a `node_modules` with it whether or
+ * not a transfer would have carried one. A receipt that applied it would under-report a deletion, which
+ * is the one direction this must never be wrong in.
+ *
+ * A directory that cannot be read contributes only its own name. The removal below is about to try the
+ * same readdir and will fail loudly on anything more than a lost race, so the walk stays quiet rather
+ * than turning a delete into an error the remover is better placed to raise.
+ */
+async function collectRemovals(
+  hostPath: string,
+  relPath: string,
+  isDirectory: boolean,
+  sem: Semaphore,
+  maxReported: number,
+  receipt: RemoveReceipt,
+): Promise<void> {
+  receipt.removedCount += 1;
+  if (receipt.removed.length < maxReported) receipt.removed.push(relPath);
+  if (!isDirectory) return;
+
+  let entries;
+  try {
+    entries = await sem.run(() => fs.readdir(hostPath, { withFileTypes: true }));
+  } catch (err) {
+    createLogger("api").warn({ err, relPath }, "failed to read directory while listing a removal");
+    return;
+  }
+
+  for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
+    // isDirectory() is false for a symlink, so the walk stops at the link — which is exactly where the
+    // removal stops too, since fs.rm unlinks a symlink rather than descending through it.
+    await collectRemovals(
+      path.join(hostPath, entry.name),
+      `${relPath}/${entry.name}`,
+      entry.isDirectory(),
+      sem,
+      maxReported,
+      receipt,
+    );
+  }
+}
+
+/**
+ * Remove one file, or one directory and everything under it, and report each path that went.
+ *
+ * The paths are collected before the removal, since afterwards there is nothing left to ask. That
+ * leaves a window in which the tree can change under us, so the receipt is what was there when the
+ * delete began: a file created inside the directory a moment later is removed without being named. Not
+ * worth locking a workspace over — the alternative is a delete that can be starved by a writer — but it
+ * is why this is a receipt for one call rather than an audit of the directory.
+ */
+export async function removeEntry(
+  rootDir: string,
+  relPath: string,
+  hooks: FileWriteHooks = {},
+  options: RemoveOptions = {},
+): Promise<RemoveReceipt> {
   const hostPath = await resolveHostPath(rootDir, relPath);
   // Checked up front so an unwritable parent is reported as such, rather than as whichever errno the
   // unlink below happens to raise once part of a recursive removal has already succeeded.
@@ -199,8 +295,16 @@ export async function removeEntry(rootDir: string, relPath: string, hooks: FileW
   );
 
   const stat = await fileSystemCall(relPath, () => fs.stat(hostPath));
+  const receipt: RemoveReceipt = { removed: [], removedCount: 0 };
+  const maxReported = options.maxReported ?? MAX_REPORTED_REMOVALS;
+  await collectRemovals(hostPath, relPath, stat.isDirectory(), openFileLimiter(), maxReported, receipt);
+
   await fileSystemCall(relPath, () =>
     stat.isDirectory() ? fs.rm(hostPath, { recursive: true }) : fs.unlink(hostPath),
   );
   await hooks.afterWrite?.(`deleted ${path.basename(relPath)}`);
+  if (receipt.removed.length < receipt.removedCount) {
+    receipt.note = `${receipt.removed.length} of ${receipt.removedCount} removed paths listed`;
+  }
+  return receipt;
 }

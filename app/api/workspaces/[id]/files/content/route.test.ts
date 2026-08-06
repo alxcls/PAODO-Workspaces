@@ -246,6 +246,26 @@ describe("files/content — errno reaches the client as a code", () => {
   });
 });
 
+// A delete of a directory is the one call whose effect the caller cannot go back and look at, so what
+// went has to reach the wire with the response that took it.
+describe("files/content DELETE — receipt", () => {
+  it("names every path a recursive delete removed", async () => {
+    fs.mkdirSync(abs("doomed/inner"), { recursive: true });
+    fs.writeFileSync(abs("doomed/inner/leaf.txt"), "x");
+    fs.writeFileSync(abs("doomed/top.txt"), "x");
+
+    const res = await DELETE(new Request("http://x/api/files/content?path=doomed", { method: "DELETE" }), ctx);
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      ok: true,
+      path: "doomed",
+      removed: ["doomed", "doomed/inner", "doomed/inner/leaf.txt", "doomed/top.txt"],
+      removedCount: 4,
+    });
+  });
+});
+
 describe("files/content PATCH — move", () => {
   it("moves a file into a folder", async () => {
     fs.writeFileSync(abs("move-me.txt"), "move me");

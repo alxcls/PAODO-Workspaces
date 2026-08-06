@@ -18,11 +18,7 @@ import { appErrorResponse, errorResponse, requestIdOf, statusForCode } from "@/l
 import { publicErrorBody } from "@/lib/errors/appError";
 import { getVersioning } from "@/lib/infra/services";
 import { createLogger } from "@/lib/infra/logger";
-import {
-  flushSnapshotBurstStrict,
-  snapshotWorkspaceStrict,
-  type SnapshotResult,
-} from "@/lib/infra/git/snapshotWorkspace";
+import { flushSnapshotBurstStrict, snapshotWorkspaceStrict } from "@/lib/infra/git/snapshotWorkspace";
 import {
   collectTransfer,
   packTransfer,
@@ -67,23 +63,27 @@ function changed(receipt: PutTransferReceipt): number {
   return receipt.created.length + receipt.overwritten.length;
 }
 
-async function snapshot(
-  id: string,
-  ws: { id: string; dir: string },
-  receipt: PutTransferReceipt,
-): Promise<SnapshotResult | null> {
+/**
+ * Commit the pushed tree so the transfer is undoable from version history, and report only whether
+ * that succeeded. The commit sha is deliberately not returned to the client: it names a snapshot of
+ * the whole workspace rather than of what was pushed, so a caller reading it beside a list of pushed
+ * paths reads it as an identifier for those paths, which it is not. History and restore are where a
+ * revision is chosen, and both name it in a context that makes clear what it covers.
+ */
+async function snapshot(id: string, ws: { id: string; dir: string }, receipt: PutTransferReceipt): Promise<boolean> {
   try {
-    return await snapshotWorkspaceStrict(
+    await snapshotWorkspaceStrict(
       getVersioning(),
       ws,
       changed(receipt) === 1 ? "put 1 workspace entry" : `put ${changed(receipt)} workspace entries`,
     );
+    return true;
   } catch (err) {
     log.error(
       { event: "file_transfer_snapshot_failed", outcome: "transfer_applied_without_snapshot", workspaceId: id, err },
       "failed to snapshot imported workspace transfer",
     );
-    return null;
+    return false;
   }
 }
 
@@ -130,7 +130,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
   } catch (err) {
     if (err instanceof TransferApplyError) {
       const operationError = transferApplyAppError(err);
-      const committed = changed(err.receipt) > 0 ? await snapshot(id, ws, err.receipt) : null;
+      if (changed(err.receipt) > 0) await snapshot(id, ws, err.receipt);
       const code = operationError?.code ?? "INTERNAL_ERROR";
       if (!operationError) {
         log.error(
@@ -150,7 +150,6 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
           requestId: requestIdOf(req),
         }),
         ...err.receipt,
-        snapshot: committed,
       };
       return NextResponse.json(body, { status: statusForCode(code), headers: { "Cache-Control": "no-store" } });
     }
@@ -164,18 +163,18 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     return errorResponse("INTERNAL_ERROR", "The transfer could not be imported", { request: req });
   }
 
-  const committed = await snapshot(id, ws, receipt);
-  if (!committed) {
+  if (!(await snapshot(id, ws, receipt))) {
+    // The files landed, but there is no revision to undo them with. Worth failing the call over: a
+    // push that overwrote a tree and left no way back is not the operation the caller asked for.
     return NextResponse.json(
       {
         ...publicErrorBody("INTERNAL_ERROR", "The transfer was applied but its snapshot could not be created", {
           requestId: requestIdOf(req),
         }),
         ...receipt,
-        snapshot: null,
       },
       { status: statusForCode("INTERNAL_ERROR"), headers: { "Cache-Control": "no-store" } },
     );
   }
-  return NextResponse.json({ ok: true, ...receipt, snapshot: committed }, { headers: { "Cache-Control": "no-store" } });
+  return NextResponse.json({ ok: true, ...receipt }, { headers: { "Cache-Control": "no-store" } });
 }

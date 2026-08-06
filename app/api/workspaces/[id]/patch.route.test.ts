@@ -143,9 +143,6 @@ describe("workspace update body contract", () => {
       ["llmProvider", { llmProvider: 5 }],
       ["llmModel", { llmModel: 5 }],
       ["reasoningEffort", { reasoningEffort: 5 }],
-      ["secret", { secret: null }],
-      ["secret member", { secret: { name: 5, value: "v", domains: ["api.example.com"] } }],
-      ["secret domain", { secret: { name: "TOKEN", value: "v", domains: [5] } }],
     ];
 
     for (const [field, body] of cases) {
@@ -160,6 +157,45 @@ describe("workspace update body contract", () => {
     }
     // Nothing landed on the way to any of those rejections.
     expect({ renames: h.renames, descriptions: h.descriptions }).toEqual({ renames: [], descriptions: [] });
+  });
+
+  /**
+   * A secret is not a setting. It carries a plaintext value and its own domain scope, and it has
+   * endpoints that list and delete it — none of which the settings PATCH can express. The refusal is
+   * asserted on three axes because each one is a distinct way a caller could be misled: a code of its
+   * own (not the typo branch, which would have a caller retry with a different spelling), a message
+   * naming where secrets do live, and an accepted-fields list that never advertises it in the first
+   * place.
+   */
+  it("refuses a secret with its own code and sends the caller to the endpoint that stores one", async () => {
+    const res = await patch({ secret: { name: "TOKEN", value: "s3cr3t", domains: ["api.example.com"] } });
+
+    expect(res.status).toBe(403);
+    const body = await res.json();
+    expect(body).toMatchObject({
+      ok: false,
+      code: "WORKSPACE_SECRET_FORBIDDEN",
+      details: { field: "secret", endpoint: `/api/workspaces/${h.workspace.id}/env-vars` },
+    });
+    expect(body.error).toContain(`/api/workspaces/${h.workspace.id}/env-vars`);
+    // The refused value stays out of the answer, whatever else the body says.
+    expect(JSON.stringify(body)).not.toContain("s3cr3t");
+  });
+
+  it("refuses a secret before applying anything else in the same request", async () => {
+    const res = await patch({ name: "Renamed", secret: null });
+
+    expect(res.status).toBe(403);
+    expect(await res.json()).toMatchObject({ code: "WORKSPACE_SECRET_FORBIDDEN" });
+    expect(h.renames).toEqual([]);
+  });
+
+  it("never advertises secret among the accepted fields", async () => {
+    for (const res of [await patch({}), await patch({ internet_access: true })]) {
+      const { error, details } = await res.json();
+      expect(details.acceptedFields).not.toContain("secret");
+      expect(error).not.toContain("secret");
+    }
   });
 
   // The generic workspace PATCH is the widest-reaching mutation a programmatic caller has, so it is

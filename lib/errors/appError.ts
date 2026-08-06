@@ -27,6 +27,13 @@ export const ERROR_CODES = {
   WORKSPACE_NAME_CONFLICT: "WORKSPACE_NAME_CONFLICT",
   WORKSPACE_UPDATE_INVALID: "WORKSPACE_UPDATE_INVALID",
   WORKSPACE_UPDATE_FAILED: "WORKSPACE_UPDATE_FAILED",
+  /**
+   * A third-party secret was offered to a route that does not write secrets. Its own code rather than
+   * FORBIDDEN or INVALID_REQUEST: "unknown field" would invite a caller to retry with a better
+   * spelling, and a bare 403 is this app's CSRF rejection (server.ts) — neither tells a program that
+   * the field exists, is refused here on purpose, and has one endpoint of its own.
+   */
+  WORKSPACE_SECRET_FORBIDDEN: "WORKSPACE_SECRET_FORBIDDEN",
   SCHEDULE_INVALID: "SCHEDULE_INVALID",
   CREDENTIAL_ALREADY_CONFIGURED: "CREDENTIAL_ALREADY_CONFIGURED",
   CREDENTIAL_NOT_CONFIGURED: "CREDENTIAL_NOT_CONFIGURED",

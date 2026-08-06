@@ -42,6 +42,12 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
 // The wire names PATCH accepts, in one place so the emptiness check, the unknown-field rejection and
 // the error messages cannot drift apart. These are the request's field names, which differ from the
 // operation's input shape: the three llm* fields arrive separately and become one `model`.
+//
+// `secret` is deliberately absent. A third-party secret carries a plaintext value, is scoped to
+// domains, and is listed and deleted through its own endpoints — putting it on the general settings
+// PATCH meant the widest-reaching mutation a programmatic caller has could also plant a credential,
+// and advertising it here invited every such caller to try. It is refused explicitly below rather
+// than left to the unknown-field branch, which would misdescribe a real field as a typo.
 const UPDATABLE_FIELDS = [
   "name",
   "description",
@@ -50,7 +56,6 @@ const UPDATABLE_FIELDS = [
   "internetAccess",
   "workspaceApiAccess",
   "workspaceMcpAccess",
-  "secret",
   "llmProvider",
   "llmModel",
   "reasoningEffort",
@@ -73,13 +78,23 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     internetAccess?: boolean;
     workspaceApiAccess?: boolean;
     workspaceMcpAccess?: boolean;
-    secret?: { name: string; value: string; domains: string[] };
   };
 
   // The field types above are what a well-formed request claims, not what this handler has checked. Each
-  // value's type is verified by the validator that owns its rules — see validateMetadata and
-  // validateSecret — so one layer states every rule once and every trigger gets the same rejection.
-  // Re-checking a field here only ever covered the one field someone remembered to add.
+  // value's type is verified by the validator that owns its rules — see validateMetadata — so one layer
+  // states every rule once and every trigger gets the same rejection. Re-checking a field here only
+  // ever covered the one field someone remembered to add.
+
+  // Answered before the unknown-field branch, and before any write, so a caller learns the field is
+  // real and refused here rather than being told to check its spelling. The value it carried is not
+  // echoed back, not logged, and never reaches a validator: this route declines to handle it at all.
+  if ("secret" in parsed) {
+    return errorResponse(
+      "WORKSPACE_SECRET_FORBIDDEN",
+      `secrets cannot be set through this endpoint — POST /api/workspaces/${id}/env-vars stores one, GET lists them, DELETE /api/workspaces/${id}/env-vars/{name} removes one`,
+      { request: req, details: { field: "secret", endpoint: `/api/workspaces/${id}/env-vars` } },
+    );
+  }
 
   // Reject anything not on the list rather than ignoring it. A misspelled field alongside a valid one
   // would otherwise apply the valid half and return 200 with the typo absent from `applied` — a
@@ -112,11 +127,6 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       ...(body.internetAccess !== undefined ? { internetAccess: body.internetAccess } : {}),
       ...(body.workspaceApiAccess !== undefined ? { workspaceApiAccess: body.workspaceApiAccess } : {}),
       ...(body.workspaceMcpAccess !== undefined ? { workspaceMcpAccess: body.workspaceMcpAccess } : {}),
-      // Forwarded as sent. Filling absent members with "" and [] here read as a courtesy — it let
-      // validateSecret answer for a half-written secret — but it also meant reaching into `secret`
-      // before knowing it was an object at all, so `secret: null` died as a TypeError before any
-      // validator saw it. validateSecret now answers for every spelling, including that one.
-      ...(body.secret !== undefined ? { secret: body.secret } : {}),
       // Omitted fields are forwarded as omitted, not as "": the operation resolves each missing one
       // from the workspace's current choice, so any subset of the three is a complete request.
       ...(hasModel

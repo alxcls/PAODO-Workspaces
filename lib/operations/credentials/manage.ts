@@ -28,6 +28,22 @@ export interface CredentialRevocationResult {
   hasKey: false;
 }
 
+/**
+ * The plaintext, and the channel as it stands once the key exists.
+ *
+ * The two axes travel with the key for the same reason revocation reports them: minting says nothing
+ * about whether the channel is open, and a caller holding a `plain` with no answer to that has a
+ * credential it cannot tell apart from a working one. It finds out when every call using it is
+ * rejected, by which point the key has usually been handed on and there is nothing left pointing back
+ * at the toggle. Issuing against a closed channel stays legal — it is the safe order, since the door
+ * is opened after the key is delivered rather than before — so this is reported, not refused.
+ */
+export interface CredentialIssueResult {
+  plain: string;
+  enabled: boolean;
+  hasKey: true;
+}
+
 function defaultStore(): CredentialLifecycleStore {
   return { state, mint, revoke, setEnabled };
 }
@@ -55,7 +71,7 @@ export function issueCredential(
   subject: CredentialSubject,
   requestedOperation: unknown,
   store: CredentialLifecycleStore = defaultStore(),
-): { plain: string } {
+): CredentialIssueResult {
   const operation = validateCredentialIssueOperation(requestedOperation);
   const { hasKey } = store.state(kind, subject);
   const details = { credentialKind: kind, operation };
@@ -67,7 +83,11 @@ export function issueCredential(
     throw new AppError("CREDENTIAL_NOT_CONFIGURED", "No credential is configured; generate one instead.", details);
   }
 
-  return { plain: store.mint(kind, subject) };
+  const plain = store.mint(kind, subject);
+  // Read back rather than assumed, the same way revocation reads its result: `hasKey` is a confirmation
+  // that the key reached the store, which is only worth printing if something looked.
+  const after = store.state(kind, subject);
+  return { plain, enabled: after.enabled, hasKey: true };
 }
 
 /** Revokes exactly one configured credential and reports both channel axes afterwards. */

@@ -7,7 +7,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const h = vi.hoisted(() => ({
-  workspace: { id: "ws-1", name: "Alpha", dir: "/fake/alpha" },
+  // internetAccess is true here and false in the API-key fixture, so a receipt that hardcoded either
+  // one instead of reading the workspace would fail on one side of the pair.
+  workspace: { id: "ws-1", name: "Alpha", dir: "/fake/alpha", internetAccess: true },
   state: { enabled: false, hasKey: false, createdAt: null as string | null, lastUsedAt: null as string | null },
   setEnabled: vi.fn(),
   mint: vi.fn(() => "mcp_new"),
@@ -99,8 +101,7 @@ describe("workspace MCP configuration route", () => {
     expect(await res.json()).toEqual({
       ok: true,
       workspaceId: "ws-1",
-      applied: ["workspaceMcpAccess"],
-      values: { workspaceMcpAccess: true },
+      applied: { workspaceMcpAccess: true },
     });
     expect(h.mint).not.toHaveBeenCalled();
     expect(res.headers.get("cache-control")).toBe("no-store");
@@ -112,8 +113,7 @@ describe("workspace MCP configuration route", () => {
     expect(await res.json()).toEqual({
       ok: true,
       workspaceId: "ws-1",
-      applied: ["workspaceMcpAccess"],
-      values: { workspaceMcpAccess: true },
+      applied: { workspaceMcpAccess: true },
     });
     expect(h.mint).not.toHaveBeenCalled();
   });
@@ -123,8 +123,7 @@ describe("workspace MCP configuration route", () => {
     expect(await res.json()).toEqual({
       ok: true,
       workspaceId: "ws-1",
-      applied: ["workspaceMcpAccess"],
-      values: { workspaceMcpAccess: false },
+      applied: { workspaceMcpAccess: false },
     });
     expect(h.setEnabled).toHaveBeenCalledWith("workspace-mcp", "ws-1", false);
     expect(h.mint).not.toHaveBeenCalled();
@@ -132,19 +131,32 @@ describe("workspace MCP configuration route", () => {
 
   it("generates, rotates and revokes the secret without returning it from GET", async () => {
     expect(await (await POST(request("POST", JSON.stringify({ operation: "generate" })), ctx())).json()).toEqual({
-      plain: "mcp_new",
+      ok: true,
+      workspaceMcpKey: "mcp_new",
+      workspaceMcpAccess: false,
+      workspaceMcpHasKey: true,
+      internetAccess: true,
     });
 
     h.state = { enabled: true, hasKey: true, createdAt: "2026-01-01T00:00:00.000Z", lastUsedAt: null };
     expect(await (await POST(request("POST", JSON.stringify({ operation: "rotate" })), ctx())).json()).toEqual({
-      plain: "mcp_new",
+      ok: true,
+      workspaceMcpKey: "mcp_new",
+      workspaceMcpAccess: true,
+      workspaceMcpHasKey: true,
+      internetAccess: true,
     });
     expect(h.mint).toHaveBeenCalledWith("workspace-mcp", "ws-1");
     const revoked = await DELETE(request("DELETE"), ctx());
     expect(revoked.status).toBe(200);
     // This channel names its own axes, not the API key's — the receipt has to be readable next to the
     // workspace projection, where both channels appear side by side.
-    expect(await revoked.json()).toEqual({ ok: true, workspaceMcpAccess: true, workspaceMcpHasKey: false });
+    expect(await revoked.json()).toEqual({
+      ok: true,
+      workspaceMcpAccess: true,
+      workspaceMcpHasKey: false,
+      internetAccess: true,
+    });
     expect(h.revoke).toHaveBeenCalledWith("workspace-mcp", "ws-1");
   });
 

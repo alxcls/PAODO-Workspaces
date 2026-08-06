@@ -4,9 +4,9 @@
 //
 // The depth cap is the panel's, not the filesystem's: it exists so one pathological tree cannot make
 // the file panel's single JSON response unbounded, and it is a named option rather than a literal
-// buried in the recursion — a caller that must see the whole tree passes Infinity and gets it. That
-// caller is the CLI listing (`?depth=full` on the tree route): a truncation is survivable when it
-// feeds a panel someone is scrolling, and not when it feeds a client that will act on the result.
+// buried in the recursion, because the panel's budget is not every caller's. A client that navigates
+// asks for one level and lists again to descend (the CLI's `paodo file ls`); one that must see the
+// whole tree passes Infinity and gets it. Both are `?depth=` on the tree route.
 import path from "path";
 import { createLogger } from "@/lib/infra/logger";
 import { readTransferEntries } from "./entries";
@@ -22,6 +22,14 @@ export interface TreeNode {
    */
   path: string;
   children?: TreeNode[];
+  /**
+   * How many lines the content route would find in this file, so a caller can choose an `?offset=` and
+   * `?limit=` before reading rather than by overshooting and reading again.
+   *
+   * Present only when the caller asked to measure the listing, and then only for a file that is text —
+   * an image or an archive has no lines to count. See listEntries.
+   */
+  lines?: number;
 }
 
 /** What the file panel renders in one response. */
@@ -30,11 +38,18 @@ export const FILE_PANEL_MAX_DEPTH = 5;
 export interface BuildTreeOptions {
   /** Levels to descend before stopping. Infinity walks the whole tree. */
   maxDepth?: number;
+  /**
+   * The wire path of `rootDir` itself, for a walk that starts somewhere below the workspace root.
+   * Every node's `path` is built from it, so listing one subdirectory names its entries exactly as
+   * listing the whole workspace would — which is what keeps those paths valid arguments to the other
+   * file routes, with no rejoining for the caller to get wrong. Defaults to "", the root.
+   */
+  basePath?: string;
 }
 
 export async function buildTree(rootDir: string, options: BuildTreeOptions = {}): Promise<TreeNode[]> {
   const maxDepth = options.maxDepth ?? FILE_PANEL_MAX_DEPTH;
-  return walk(rootDir, "", 0, maxDepth, openFileLimiter());
+  return walk(rootDir, options.basePath ?? "", 0, maxDepth, openFileLimiter());
 }
 
 /**

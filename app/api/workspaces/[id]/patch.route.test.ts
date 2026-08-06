@@ -100,8 +100,7 @@ describe("workspace update body contract", () => {
     expect(await res.json()).toEqual({
       ok: true,
       workspaceId: h.workspace.id,
-      applied: ["name", "description"],
-      values: { name: "Renamed", description: "updated" },
+      applied: { name: "Renamed", description: "updated" },
     });
     expect(h.renames).toEqual(["Renamed"]);
     expect(h.descriptions).toEqual(["updated"]);
@@ -172,8 +171,7 @@ describe("workspace update body contract", () => {
     expect(await res.json()).toEqual({
       ok: true,
       workspaceId: h.workspace.id,
-      applied: ["workspaceApiAccess"],
-      values: { workspaceApiAccess: true },
+      applied: { workspaceApiAccess: true },
     });
     expect(res.headers.get("cache-control")).toBe("no-store");
   });
@@ -198,8 +196,7 @@ describe("workspace update body contract", () => {
     expect(await res.json()).toEqual({
       ok: true,
       workspaceId: h.workspace.id,
-      applied: ["llmProvider", "llmModel", "reasoningEffort"],
-      values: { llmProvider: "openai", llmModel: "gpt-5", reasoningEffort: "high" },
+      applied: { llmProvider: "openai", llmModel: "gpt-5", reasoningEffort: "high" },
     });
   });
 

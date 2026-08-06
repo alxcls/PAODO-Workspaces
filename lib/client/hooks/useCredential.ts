@@ -35,6 +35,13 @@ interface CredentialOptions {
    * channel does not, and omits this.
    */
   accessField?: "workspaceApiAccess" | "workspaceMcpAccess";
+  /**
+   * Which field of the mint response (generate/rotate) carries the plaintext. Each workspace channel
+   * names its own — `workspaceApiKey`, `workspaceMcpKey` — matching the workspace projection's own
+   * vocabulary; the instance-wide CLI channel has no workspace field to borrow a name from and keeps
+   * the credential routes' default of `plain`.
+   */
+  keyField?: string;
 }
 
 /**
@@ -45,7 +52,7 @@ interface CredentialOptions {
 export function useCredential<TExtra extends object = Record<string, never>>(
   endpoint: string,
   { feature }: Labels,
-  { load = true, accessField }: CredentialOptions = {},
+  { load = true, accessField, keyField = "plain" }: CredentialOptions = {},
 ) {
   const [enabled, setEnabled] = useState(false);
   const [hasKey, setHasKey] = useState(false);
@@ -152,7 +159,8 @@ export function useCredential<TExtra extends object = Record<string, never>>(
           if (response.status === 409) await resync();
           return;
         }
-        const { plain } = (await response.json()) as { plain?: unknown };
+        const body = (await response.json()) as Record<string, unknown>;
+        const plain = body[keyField];
         if (typeof plain !== "string" || !plain) throw new Error("The server returned an invalid key.");
         setPlaintext(plain);
         setHasKey(true);
@@ -164,7 +172,7 @@ export function useCredential<TExtra extends object = Record<string, never>>(
         setBusy(false);
       }
     },
-    [endpoint, resync],
+    [endpoint, resync, keyField],
   );
 
   /** Issues a first credential. Fails if one already exists — rotate that one instead. */

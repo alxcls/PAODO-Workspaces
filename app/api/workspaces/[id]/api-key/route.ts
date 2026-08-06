@@ -7,7 +7,7 @@ import { NextResponse } from "next/server";
 import { credentialHandlers, publicBaseUrl } from "@/lib/api/credentialRoutes";
 import { getCredentialState } from "@/lib/operations/credentials/manage";
 import { requireWorkspaceId } from "@/lib/api/guards";
-import { channelSetEnabled } from "@/lib/api/workspaceUpdateReceipt";
+import { channelSetEnabled, workspaceReceiptContext } from "@/lib/api/workspaceUpdateReceipt";
 
 type Params = { id: string };
 
@@ -20,10 +20,12 @@ const handlers = credentialHandlers<Params>(
     return ws instanceof NextResponse ? ws : ws.id;
   },
   {
+    keyField: "workspaceApiKey",
     setEnabled: channelSetEnabled("workspaceApiAccess"),
     // The workspace projection's own names, so revoking and reading the workspace back never call the
     // same two facts by different words.
     axisFields: { access: "workspaceApiAccess", hasKey: "workspaceApiHasKey" },
+    receiptContext: workspaceReceiptContext,
   },
 );
 

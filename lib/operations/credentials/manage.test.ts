@@ -28,11 +28,21 @@ function fixture(hasKey = false, enabled = false) {
 describe("credential lifecycle operations", () => {
   it("generates only into an empty slot and rotates only an existing key", () => {
     const empty = fixture();
-    expect(issueCredential("workspace-api", "ws-1", "generate", empty)).toEqual({ plain: "plain-secret" });
+    // The two axes travel with the plaintext: a key minted against a closed channel is real and
+    // rejected on every call, and the receipt that carries it is the only one a caller can ever read.
+    expect(issueCredential("workspace-api", "ws-1", "generate", empty)).toEqual({
+      plain: "plain-secret",
+      enabled: false,
+      hasKey: true,
+    });
     expect(() => issueCredential("workspace-api", "ws-1", "generate", empty)).toThrowError(
       expect.objectContaining({ code: "CREDENTIAL_ALREADY_CONFIGURED" }),
     );
-    expect(issueCredential("workspace-api", "ws-1", "rotate", empty)).toEqual({ plain: "plain-secret" });
+    expect(issueCredential("workspace-api", "ws-1", "rotate", empty)).toEqual({
+      plain: "plain-secret",
+      enabled: false,
+      hasKey: true,
+    });
 
     const missing = fixture();
     expect(() => issueCredential("workspace-mcp", "ws-1", "rotate", missing)).toThrowError(

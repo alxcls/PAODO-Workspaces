@@ -46,6 +46,12 @@ interface CredentialHandlerOptions {
     request: Request,
   ) => void | Response | Promise<void | Response>;
   /**
+   * Wire name for the key field in issue receipts. When supplied, the plaintext is returned under
+   * this name instead of `plain`, so the receipt vocabulary matches the broader context (workspace
+   * get, channel state). Absent for the instance-wide CLI token.
+   */
+  keyField?: string;
+  /**
    * Wire names for the two axes in the revocation receipt. A workspace channel passes the same pair the
    * workspace projection uses, so `revoke` and `get` describe one channel in one vocabulary instead of
    * renaming it between calls. Typed against WorkspaceAccessDetails so a rename there fails the build
@@ -55,6 +61,19 @@ interface CredentialHandlerOptions {
    * no workspace field to borrow a name from.
    */
   axisFields?: { access: keyof WorkspaceAccessDetails; hasKey: keyof WorkspaceAccessDetails };
+  /**
+   * Extra facts about the subject to carry on every key receipt, so generate, rotate and revoke all
+   * answer with the same set of fields and a caller reads one shape whichever verb it called.
+   *
+   * A workspace channel supplies its workspace's `internetAccess` here. That flag does not gate either
+   * channel — egress and inbound are independent (lib/operations/workspace/access.ts) — and it is
+   * reported rather than acted on for exactly that reason: a caller assembling a workspace's external
+   * posture wants all of it in one answer, and getting it as a plain boolean beside the two axes is
+   * what stops it being mistaken for the thing that made a key work or not.
+   *
+   * Absent for the instance-wide CLI token, which has no subject to describe.
+   */
+  receiptContext?: (subject: CredentialSubject) => Record<string, unknown>;
 }
 
 const NO_STORE = { "Cache-Control": "no-store" } as const;
@@ -88,6 +107,9 @@ export function credentialHandlers<P>(
   }
 
   const axisFields = options.axisFields ?? ({ access: "enabled", hasKey: "hasKey" } as const);
+  // Not named `context`: every handler below already takes a route `context` parameter, which would
+  // shadow this and turn each receipt into an opaque 500.
+  const subjectFacts = (subject: CredentialSubject) => options.receiptContext?.(subject) ?? {};
 
   function failed(request: Request, operation: string, err: unknown): Response {
     const expected = appErrorResponse(err, request);
@@ -117,7 +139,22 @@ export function credentialHandlers<P>(
         // rotation from landing on a channel the caller thought was empty, and a generation from
         // silently replacing a key someone is still using. This is the one moment the plaintext
         // exists outside the caller's client, and no-store keeps it out of any intermediary cache.
-        return NextResponse.json(issueCredential(kind, subject, operation), { headers: NO_STORE });
+        //
+        // Answers with both axes, in the same words and beside the same context DELETE uses. Handing
+        // back a bare `{ plain }` made the one receipt a caller cannot ask for twice the only one that
+        // said nothing about whether the key it carries is currently accepted.
+        const issued = issueCredential(kind, subject, operation);
+        const keyFieldName = options.keyField || "plain";
+        return NextResponse.json(
+          {
+            ok: true,
+            [keyFieldName]: issued.plain,
+            [axisFields.access]: issued.enabled,
+            [axisFields.hasKey]: issued.hasKey,
+            ...subjectFacts(subject),
+          },
+          { headers: NO_STORE },
+        );
       } catch (err) {
         return failed(request, "mint", err);
       }
@@ -141,7 +178,7 @@ export function credentialHandlers<P>(
         // receipt is the one place they can only mislead.
         const after = revokeCredential(kind, subject);
         return NextResponse.json(
-          { ok: true, [axisFields.access]: after.enabled, [axisFields.hasKey]: after.hasKey },
+          { ok: true, [axisFields.access]: after.enabled, [axisFields.hasKey]: after.hasKey, ...subjectFacts(subject) },
           { headers: NO_STORE },
         );
       } catch (err) {

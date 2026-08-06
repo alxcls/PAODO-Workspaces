@@ -12,7 +12,7 @@ import fsp from "fs/promises";
 import os from "os";
 import path from "path";
 import { AppError } from "@/lib/errors/appError";
-import { readFileEntry, removeEntry, writeTextFile } from "./content";
+import { countLines, readFileEntry, removeEntry, requireLineRange, sliceLines, writeTextFile } from "./content";
 
 const ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "files-ops-test-"));
 const WS_DIR = path.join(ROOT, "ws");
@@ -71,6 +71,99 @@ describe("readFileEntry", () => {
     fs.writeFileSync(path.join(OUTSIDE, "secret.txt"), "TOPSECRET");
     fs.symlinkSync(path.join(OUTSIDE, "secret.txt"), path.join(WS_DIR, "escape"));
     expect(await codeOf(() => readFileEntry(WS_DIR, "escape"))).toBe("INVALID_REQUEST");
+  });
+});
+
+// A window is asked for by a caller that cannot hold the whole file, so the two ways it can quietly go
+// wrong are the ones to pin: lines that come back shifted from the ones asked for, and a range the
+// caller got wrong answering with content instead of a refusal.
+describe("requireLineRange", () => {
+  it("is null only when neither value was named, so a caller that never pages is unaffected", () => {
+    expect(requireLineRange(null, null)).toBeNull();
+    expect(requireLineRange(undefined, undefined)).toBeNull();
+  });
+
+  it("defaults the unnamed half: an offset alone runs to the end, a limit alone starts at the top", () => {
+    expect(requireLineRange("49", null)).toEqual({ offset: 49 });
+    expect(requireLineRange(null, "50")).toEqual({ offset: 0, limit: 50 });
+    expect(requireLineRange("49", "50")).toEqual({ offset: 49, limit: 50 });
+  });
+
+  // Rounding or ignoring any of these would answer with a different part of the file than the caller
+  // named, and the lines that come back say nothing about which part they are.
+  it("refuses a value that is not a whole number, and names which one it was", () => {
+    for (const offset of ["abc", "1.5", "-1", "", " ", "1e3x", "Infinity"]) {
+      expect(() => requireLineRange(offset, null)).toThrow(AppError);
+      try {
+        requireLineRange(offset, null);
+      } catch (err) {
+        expect(err).toMatchObject({ code: "INVALID_REQUEST", details: { field: "offset" } });
+      }
+    }
+    // Offset counts from zero and limit counts lines, so zero means something for one and nothing for
+    // the other — a `limit: 0` that answered with an empty file would read as an empty file.
+    expect(requireLineRange("0", null)).toEqual({ offset: 0 });
+    expect(() => requireLineRange(null, "0")).toThrow(AppError);
+  });
+});
+
+describe("sliceLines", () => {
+  const FILE = "one\ntwo\nthree\nfour\n";
+
+  it("counts the offset from zero and the limit in lines", () => {
+    expect(sliceLines(FILE, { offset: 0, limit: 2 })).toBe("one\ntwo\n");
+    expect(sliceLines(FILE, { offset: 1, limit: 2 })).toBe("two\nthree\n");
+    expect(sliceLines(FILE, { offset: 2 })).toBe("three\nfour\n");
+    expect(sliceLines(FILE, { offset: 0 })).toBe(FILE);
+  });
+
+  it("does not count the terminator as a line, so the last line is reachable and the end is empty", () => {
+    expect(sliceLines(FILE, { offset: 3, limit: 1 })).toBe("four\n");
+    expect(sliceLines(FILE, { offset: 4 })).toBe("");
+    expect(sliceLines(FILE, { offset: 99, limit: 10 })).toBe("");
+    expect(sliceLines("", { offset: 0 })).toBe("");
+  });
+
+  // So `cat --offset` of the tail of a file is byte-identical to the tail of that file: a caller
+  // reading a file in windows and joining them back gets the file, not the file plus a newline.
+  it("keeps each line's own terminator, including a last line that never had one", () => {
+    expect(sliceLines("one\ntwo", { offset: 1 })).toBe("two");
+    expect(sliceLines("one\ntwo", { offset: 0, limit: 1 })).toBe("one\n");
+    expect(sliceLines("one\r\ntwo\r\n", { offset: 0, limit: 1 })).toBe("one\r\n");
+    expect(sliceLines("\n\n", { offset: 1 })).toBe("\n");
+  });
+});
+
+describe("countLines", () => {
+  it("does not count the terminator, so a file with and without a trailing newline agree", () => {
+    expect(countLines("one\ntwo\nthree\nfour\n")).toBe(4);
+    expect(countLines("one\ntwo\nthree\nfour")).toBe(4);
+    expect(countLines("one")).toBe(1);
+    expect(countLines("one\n")).toBe(1);
+    expect(countLines("\n\n")).toBe(2);
+  });
+
+  // An empty file has nothing to read, not one empty line — which is what lets a caller read `lines: 0`
+  // as "do not bother" rather than as a line it should go and fetch.
+  it("counts an empty file as no lines at all", () => {
+    expect(countLines("")).toBe(0);
+  });
+
+  // The property that matters, stated as one: this is the count a listing reports so a caller can pick
+  // a window, and sliceLines is what applies that window. If they disagreed by one, every caller
+  // reading a file to its end would either miss its last line or ask for one past it — and the content
+  // it did get back would look perfectly correct.
+  it("is exactly the number of lines sliceLines can reach", () => {
+    for (const content of ["", "one", "one\n", "one\ntwo", "one\ntwo\n", "\n\n", "a\r\nb\r\n", "\n"]) {
+      const total = countLines(content);
+      // Every line up to the count is reachable, and the one past it is not.
+      for (let offset = 0; offset < total; offset++) {
+        expect(sliceLines(content, { offset, limit: 1 })).not.toBe("");
+      }
+      expect(sliceLines(content, { offset: total, limit: 1 })).toBe("");
+      // And reading from the top for exactly that many lines is the whole file back.
+      expect(sliceLines(content, { offset: 0, limit: total || 1 })).toBe(content);
+    }
   });
 });
 

@@ -9,9 +9,7 @@ const responseOf = (body: string) => new Response(body, { headers: { "content-ty
 
 describe("confirmedValues", () => {
   it("returns the canonical values a receipt carries", async () => {
-    const res = responseOf(
-      JSON.stringify({ ok: true, workspaceId: "ws-1", applied: ["description"], values: { description: "trimmed" } }),
-    );
+    const res = responseOf(JSON.stringify({ ok: true, workspaceId: "ws-1", applied: { description: "trimmed" } }));
     expect(await confirmedValues(res)).toEqual({ description: "trimmed" });
   });
 

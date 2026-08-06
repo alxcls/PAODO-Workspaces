@@ -84,8 +84,7 @@ describe("workspace API key route", () => {
     expect(await res.json()).toEqual({
       ok: true,
       workspaceId: "ws-1",
-      applied: ["workspaceApiAccess"],
-      values: { workspaceApiAccess: true },
+      applied: { workspaceApiAccess: true },
     });
     expect(h.setEnabled).toHaveBeenCalledWith("workspace-api", "ws-1", true);
     expect(h.mint).not.toHaveBeenCalled();
@@ -99,8 +98,7 @@ describe("workspace API key route", () => {
     expect(await res.json()).toEqual({
       ok: true,
       workspaceId: "ws-1",
-      applied: ["workspaceApiAccess"],
-      values: { workspaceApiAccess: true },
+      applied: { workspaceApiAccess: true },
     });
     expect(h.mint).not.toHaveBeenCalled();
   });
@@ -110,8 +108,7 @@ describe("workspace API key route", () => {
     expect(await res.json()).toEqual({
       ok: true,
       workspaceId: "ws-1",
-      applied: ["workspaceApiAccess"],
-      values: { workspaceApiAccess: false },
+      applied: { workspaceApiAccess: false },
     });
     expect(h.setEnabled).toHaveBeenCalledWith("workspace-api", "ws-1", false);
     expect(h.mint).not.toHaveBeenCalled();
@@ -119,12 +116,20 @@ describe("workspace API key route", () => {
 
   it("generates the first key and rotates it afterwards", async () => {
     expect(await (await POST(request("POST", JSON.stringify({ operation: "generate" })), ctx())).json()).toEqual({
-      plain: "pak_new",
+      ok: true,
+      workspaceApiKey: "pak_new",
+      workspaceApiAccess: false,
+      workspaceApiHasKey: true,
+      internetAccess: false,
     });
 
     h.state = { enabled: true, hasKey: true, createdAt: "2026-01-01T00:00:00.000Z", lastUsedAt: null };
     expect(await (await POST(request("POST", JSON.stringify({ operation: "rotate" })), ctx())).json()).toEqual({
-      plain: "pak_new",
+      ok: true,
+      workspaceApiKey: "pak_new",
+      workspaceApiAccess: true,
+      workspaceApiHasKey: true,
+      internetAccess: false,
     });
     expect(h.mint).toHaveBeenCalledWith("workspace-api", "ws-1");
     expect(h.mint).toHaveBeenCalledTimes(2);
@@ -137,7 +142,16 @@ describe("workspace API key route", () => {
     h.state = { enabled: false, hasKey: false, createdAt: null, lastUsedAt: null };
     const generated = await POST(request("POST", JSON.stringify({ operation: "generate" })), ctx());
     expect(generated.status).toBe(200);
-    expect(await generated.json()).toEqual({ plain: "pak_new" });
+    // The key is real, and the receipt says in the same breath that nothing will accept it yet. This
+    // is the case the CLI's `key generate` exists to stop being silent: an agent that reads only
+    // the key field hands the key on, every call fails, and nothing points back at the closed channel.
+    expect(await generated.json()).toEqual({
+      ok: true,
+      workspaceApiKey: "pak_new",
+      workspaceApiAccess: false,
+      workspaceApiHasKey: true,
+      internetAccess: false,
+    });
 
     h.state = { enabled: false, hasKey: true, createdAt: "2026-01-01T00:00:00.000Z", lastUsedAt: null };
     const rotated = await POST(request("POST", JSON.stringify({ operation: "rotate" })), ctx());
@@ -175,7 +189,12 @@ describe("workspace API key route", () => {
 
     const first = await DELETE(request("DELETE"), ctx());
     expect(first.status).toBe(200);
-    expect(await first.json()).toEqual({ ok: true, workspaceApiAccess: true, workspaceApiHasKey: false });
+    expect(await first.json()).toEqual({
+      ok: true,
+      workspaceApiAccess: true,
+      workspaceApiHasKey: false,
+      internetAccess: false,
+    });
 
     const second = await DELETE(request("DELETE"), ctx());
     expect(second.status).toBe(409);
@@ -193,7 +212,12 @@ describe("workspace API key route", () => {
 
     const res = await DELETE(request("DELETE"), ctx());
 
-    expect(await res.json()).toEqual({ ok: true, workspaceApiAccess: true, workspaceApiHasKey: false });
+    expect(await res.json()).toEqual({
+      ok: true,
+      workspaceApiAccess: true,
+      workspaceApiHasKey: false,
+      internetAccess: false,
+    });
     // Closing the channel is the caller's next decision, not a side effect of revoking.
     expect(h.setEnabled).not.toHaveBeenCalled();
   });

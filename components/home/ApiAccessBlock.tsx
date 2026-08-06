@@ -10,7 +10,7 @@ import { useCredential } from "@/lib/client/hooks/useCredential";
 // Module scope, not an inline literal: the options object is a dependency of the hook's callbacks, so
 // a fresh one each render would rebuild them every time.
 const LABELS = { feature: "API access" };
-const OPTIONS = { accessField: "workspaceApiAccess" } as const;
+const OPTIONS = { accessField: "workspaceApiAccess", keyField: "workspaceApiKey" } as const;
 
 export default function ApiAccessBlock({ wsId }: { wsId: string }) {
   const endpoint = `/api/workspaces/${wsId}/api-key`;

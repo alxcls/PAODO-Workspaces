@@ -15,10 +15,10 @@ export type { WorkspaceUpdateReceipt };
  * come from our own typed routes, and re-checking each type here would only restate the contract
  * this module exists to hold in one place.
  */
-export async function confirmedValues(response: Response): Promise<WorkspaceUpdateReceipt["values"]> {
+export async function confirmedValues(response: Response): Promise<WorkspaceUpdateReceipt["applied"]> {
   try {
     const body = (await response.json()) as Partial<WorkspaceUpdateReceipt> | null;
-    return body?.values ?? {};
+    return body?.applied ?? {};
   } catch {
     return {};
   }

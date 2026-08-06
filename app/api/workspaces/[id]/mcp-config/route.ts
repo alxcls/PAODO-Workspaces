@@ -15,7 +15,7 @@ import { credentialHandlers, publicBaseUrl } from "@/lib/api/credentialRoutes";
 import { getCredentialState } from "@/lib/operations/credentials/manage";
 import { listWorkspaceSkills } from "@/lib/operations/workspace/skills";
 import { requireWorkspaceId } from "@/lib/api/guards";
-import { channelSetEnabled } from "@/lib/api/workspaceUpdateReceipt";
+import { channelSetEnabled, workspaceReceiptContext } from "@/lib/api/workspaceUpdateReceipt";
 
 type Params = { id: string };
 
@@ -26,9 +26,11 @@ const handlers = credentialHandlers<Params>(
     return ws instanceof NextResponse ? ws : ws.id;
   },
   {
+    keyField: "workspaceMcpKey",
     setEnabled: channelSetEnabled("workspaceMcpAccess"),
     // Same vocabulary as the workspace projection, for the same reason as the API-key route.
     axisFields: { access: "workspaceMcpAccess", hasKey: "workspaceMcpHasKey" },
+    receiptContext: workspaceReceiptContext,
   },
 );
 

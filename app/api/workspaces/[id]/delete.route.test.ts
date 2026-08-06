@@ -99,7 +99,9 @@ describe("DELETE /api/workspaces/[id]", () => {
     const res = await DELETE(request(), ctx());
 
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ deleted: true });
+    // `ok` beside `deleted`, so this receipt branches the same way every other mutation's does rather
+    // than being the one success a caller has to recognise by name.
+    expect(await res.json()).toEqual({ ok: true, deleted: true });
     // The ordering guarantee: whatever else ran, the registry came last.
     expect(h.calls.at(-1)).toBe("registry");
     expect(h.calls).toContain("directory");

@@ -133,6 +133,73 @@ describe("files/content GET — workspace containment", () => {
   });
 });
 
+// The transport half of a line window: which query parameters reach the rule, and that the raw body a
+// CLI pipes to stdout is the window rather than the file. The line arithmetic itself is pinned in
+// lib/operations/files/content.test.ts.
+describe("files/content GET — a window of lines", () => {
+  const window = (query: string) => GET(new Request(`http://x/api/files/content?${query}`), ctx);
+
+  it("serves only the lines asked for, raw, so a caller can read part of a file it cannot hold", async () => {
+    fs.writeFileSync(abs("long.txt"), "one\ntwo\nthree\nfour\n");
+
+    const res = await window("path=long.txt&raw=1&offset=1&limit=2");
+
+    expect(res.status).toBe(200);
+    // The body is the window's own bytes, not the file's with the rest ignored — this is what the CLI
+    // pipes to stdout, and what the whole point of asking for a window is not to have transferred.
+    expect(await res.text()).toBe("two\nthree\n");
+  });
+
+  it("serves the window through the JSON shape too, so both clients read one file the same way", async () => {
+    fs.writeFileSync(abs("long-json.txt"), "one\ntwo\nthree\nfour\n");
+    expect(await (await window("path=long-json.txt&offset=2")).json()).toEqual({
+      type: "text",
+      content: "three\nfour\n",
+    });
+  });
+
+  it("serves the whole file when neither parameter is named — the file panel's own request", async () => {
+    fs.writeFileSync(abs("whole.txt"), "one\ntwo\n");
+    expect(await (await window("path=whole.txt")).json()).toEqual({ type: "text", content: "one\ntwo\n" });
+  });
+
+  it("refuses a window a caller cannot ask for, naming the parameter that was wrong", async () => {
+    fs.writeFileSync(abs("bad-window.txt"), "one\ntwo\n");
+    for (const [query, field] of [
+      ["offset=abc", "offset"],
+      ["offset=-1", "offset"],
+      ["limit=0", "limit"],
+      ["limit=", "limit"],
+    ]) {
+      const res = await window(`path=bad-window.txt&${query}`);
+      expect(res.status).toBe(400);
+      expect(await res.json()).toMatchObject({ code: "INVALID_REQUEST", details: { field } });
+    }
+  });
+
+  // Serving the whole thing instead would be the expensive way to learn the file has no lines, and
+  // twenty "lines" of a decoded PNG is mojibake a caller would have to recognise as such.
+  it("refuses a window of a file that is not text rather than slicing bytes", async () => {
+    fs.writeFileSync(abs("blob.bin"), Buffer.from([0xff, 0xfe, 0x00, 0x01]));
+
+    const res = await window("path=blob.bin&raw=1&offset=0&limit=1");
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({
+      code: "INVALID_REQUEST",
+      error: expect.stringMatching(/not a text file/),
+    });
+  });
+
+  // The parameters are checked before the file is opened, so an unreadable request costs no read and a
+  // caller that got both wrong is told about the one it can fix without guessing.
+  it("checks the window before reading, so a bad one is refused whether or not the path exists", async () => {
+    const res = await window("path=nope.txt&offset=abc");
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ code: "INVALID_REQUEST", details: { field: "offset" } });
+  });
+});
+
 describe("files/content PUT — save", () => {
   it("overwrites an existing file without leaving trailing content", async () => {
     fs.writeFileSync(abs("edit-me.txt"), "a much longer original value");

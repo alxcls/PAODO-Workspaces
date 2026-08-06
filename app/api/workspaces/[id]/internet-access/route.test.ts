@@ -80,8 +80,7 @@ describe("PATCH /api/workspaces/[id]/internet-access", () => {
     expect(await res.json()).toEqual({
       ok: true,
       workspaceId: "ws-1",
-      applied: ["internetAccess"],
-      values: { internetAccess: true },
+      applied: { internetAccess: true },
     });
     expect(h.setWorkspaceInternetAccess).toHaveBeenCalledWith("ws-1", true);
     expect(h.setInternetAccessPolicy).toHaveBeenCalledWith("ws-1", true);

@@ -87,6 +87,21 @@ describe("files tree GET", () => {
     expect(measured.find((node: { path: string }) => node.path === "AGENTS.md")).toMatchObject({ lines: 1 });
   });
 
+  // Same opt-in shape as ?measure=1, and for a sharper reason: a one-level listing that counted by
+  // default would walk the entire workspace to answer a request for its top directory.
+  it("counts what is under each directory only when ?count=1 asks it to", async () => {
+    const dirOf = (tree: Array<{ path: string }>) => tree.find((node) => node.path === "src")!;
+
+    for (const query of ["?depth=1", "?depth=1&count=0", "?depth=1&count=true", "?depth=1&count="]) {
+      expect(dirOf((await (await list(query)).json()).tree)).not.toHaveProperty("files");
+    }
+
+    // Depth 1, so `src` comes back with no children at all — the count is the whole of what the caller
+    // learns about what is down there.
+    const counted = dirOf((await (await list("?depth=1&count=1")).json()).tree);
+    expect(counted).toMatchObject({ children: [], files: 2 });
+  });
+
   // A path a caller mistyped has to be distinguishable from a directory that happens to be empty:
   // both would otherwise be `{ tree: [] }` with a 200.
   it("answers NOT_FOUND for a path that is not there", async () => {

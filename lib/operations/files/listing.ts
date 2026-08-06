@@ -36,6 +36,16 @@ export interface ListEntriesOptions {
    * how long a file is by running off the end of it.
    */
   measure?: boolean;
+  /**
+   * Add `files` to every directory: everything underneath it, however deep.
+   *
+   * Off by default and paid for only when asked, like `measure` above — a one-level listing has to walk
+   * the whole subtree to answer, so the cost of an `ls` stops being the shape of the directory listed and
+   * becomes the size of the tree below it. It exists for a caller deciding where to go next rather than
+   * rendering what it already has: a directory of three entries holding fourteen thousand files is worth
+   * knowing about before descending, and the tree alone cannot say so.
+   */
+  countFiles?: boolean;
 }
 
 /**
@@ -62,7 +72,7 @@ export async function listEntries(
   // as an ordinary row, so listing through it is the same permission as reading through it.
   const stat = await fileSystemCall(relPath || "The workspace root", () => fs.stat(hostPath));
   const tree = stat.isDirectory()
-    ? await buildTree(hostPath, { maxDepth: options.maxDepth, basePath: relPath })
+    ? await buildTree(hostPath, { maxDepth: options.maxDepth, basePath: relPath, countFiles: options.countFiles })
     : [{ name: path.posix.basename(relPath), type: "file" as const, path: relPath }];
   if (options.measure) await measure(rootDir, tree, openFileLimiter());
   return tree;

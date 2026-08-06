@@ -66,9 +66,14 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
     // `?measure=1` — how big each file is, and how many lines it has. Opt-in because it is the one
     // thing a listing can be asked for that costs a read per entry, and the panel that makes most of
     // these requests renders neither. A client choosing a `cat` window asks for it; nothing else does.
+    // `?count=1` — how many files sit under each directory, at any depth. Opt-in for the same reason and
+    // with the same shape as ?measure=1: a one-level listing has to walk everything below it to answer,
+    // which is a cost the panel must not pay for a number it does not render. The caller it is for is the
+    // one deciding where to look next, and cannot see from a tree alone which directory is enormous.
     const tree = await listEntries(ws.dir, source, {
       ...(depth === undefined ? {} : { maxDepth: depth }),
       ...(searchParams.get("measure") === "1" ? { measure: true } : {}),
+      ...(searchParams.get("count") === "1" ? { countFiles: true } : {}),
     });
     return NextResponse.json({ tree });
   } catch (err) {

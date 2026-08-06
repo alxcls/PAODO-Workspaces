@@ -145,6 +145,55 @@ describe("listEntries", () => {
     });
   });
 
+  // What a caller needs before it descends: whether a directory is worth going into. A tree alone cannot
+  // say — the answer is below the level being listed, which is exactly what the caller cannot see.
+  describe("countFiles", () => {
+    /** A node by the path it is named at, since a listing comes back in readdir order. */
+    const at = (nodes: Awaited<ReturnType<typeof listEntries>>, relPath: string) =>
+      nodes.find((node) => node.path === relPath)!;
+
+    it("adds nothing at all unless it is asked for", async () => {
+      const [dir] = await listEntries(WS, "src/lib");
+      expect(dir).not.toHaveProperty("files");
+    });
+
+    it("counts every file under a directory, however deep, and leaves files uncounted", async () => {
+      const src = at(await listEntries(WS, null, { countFiles: true }), "src");
+      expect(src.files).toBe(2); // src/main.ts and src/lib/util.ts
+      expect(at(src.children!, "src/lib").files).toBe(1);
+      expect(await listEntries(WS, "AGENTS.md", { countFiles: true })).toEqual([
+        { name: "AGENTS.md", type: "file", path: "AGENTS.md" },
+      ]);
+    });
+
+    // The whole point of the count: a listing that stops at one level hands back an empty branch, and the
+    // number is the only thing in the answer that says how much is behind it.
+    it("counts past the depth the listing itself stops at", async () => {
+      fs.mkdirSync(abs("src/lib/deep/deeper"), { recursive: true });
+      fs.writeFileSync(abs("src/lib/deep/deeper/buried.ts"), "buried\n");
+
+      const src = at(await listEntries(WS, null, { maxDepth: 1, countFiles: true }), "src");
+      expect(src.children).toEqual([]);
+      expect(src.files).toBe(3); // main.ts, lib/util.ts and the buried one, none of them listed
+    });
+
+    // The count describes the tree the caller is looking at. A number that included what the listing
+    // hides would describe a directory they cannot navigate — and would report the same node_modules the
+    // listing exists to keep out of the way.
+    it("counts only what the ignore contract lets the listing show", async () => {
+      fs.mkdirSync(abs("src/node_modules/dep"), { recursive: true });
+      fs.writeFileSync(abs("src/node_modules/dep/index.js"), "dep\n");
+
+      expect(at(await listEntries(WS, null, { countFiles: true }), "src").files).toBe(2);
+    });
+
+    it("reports an empty directory as holding nothing, rather than saying nothing about it", async () => {
+      fs.mkdirSync(abs("src/hollow/inner"), { recursive: true });
+      const src = at(await listEntries(WS, null, { countFiles: true }), "src");
+      expect(at(src.children!, "src/hollow").files).toBe(0);
+    });
+  });
+
   describe("containment", () => {
     it("refuses a path that escapes the root, however it is spelled", async () => {
       for (const escape of ["..", "../ws", "/etc", "/workspace/src"]) {

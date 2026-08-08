@@ -17,6 +17,3 @@ export interface Workspace {
   /** Whether the workspace container is permitted to route traffic to the internet. */
   internetAccess: boolean;
 }
-
-/** Backward-compatible name for code that describes the persisted workspace metadata shape. */
-export type WorkspaceMetadata = Workspace;

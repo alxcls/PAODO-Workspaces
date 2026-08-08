@@ -84,6 +84,7 @@ function fire(entry: ScheduleEntry, now: Date): void {
         "schedule fire skipped — run already in progress",
       );
       inflight.delete(entry.workspaceId);
+      setNextRunAt(entry.workspaceId, nextRunIso(entry, now));
       return;
     }
     log.info({ workspaceId: ws.id, conversationId, scheduleId: entry.id }, "schedule fired");

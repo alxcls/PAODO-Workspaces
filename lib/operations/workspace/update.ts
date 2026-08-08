@@ -21,6 +21,19 @@ import {
 } from "./secrets";
 import { WorkspaceUpdateFailure } from "./errors";
 
+/** Runs `validate` only when `value` was supplied — the update contract's "omitted means unchanged" rule. */
+function ifDefined<T, R>(value: T | undefined, validate: (value: T) => R): R | undefined {
+  return value === undefined ? undefined : validate(value);
+}
+
+/** One result field, present only when `value` was set — so a typo'd key fails to compile instead of silently vanishing. */
+function field<K extends keyof WorkspaceUpdateValues>(
+  key: K,
+  value: WorkspaceUpdateValues[K] | undefined,
+): Pick<WorkspaceUpdateValues, K> | Record<string, never> {
+  return value === undefined ? {} : ({ [key]: value } as Pick<WorkspaceUpdateValues, K>);
+}
+
 /**
  * Everything a caller may change in one request, assembled from the capabilities that own each field.
  * Omitted fields are unchanged, including an omitted description; an explicitly empty description
@@ -94,16 +107,10 @@ export async function updateWorkspace(
 
   // Phase one: validate everything, touch nothing.
   const metadata = validateMetadata(input, currentModelSelection(existing));
-  const internetAccess = input.internetAccess === undefined ? undefined : validateInternetAccess(input.internetAccess);
-  const apiAccess =
-    input.workspaceApiAccess === undefined
-      ? undefined
-      : validateChannelEnabled("workspaceApiAccess", input.workspaceApiAccess);
-  const mcpAccess =
-    input.workspaceMcpAccess === undefined
-      ? undefined
-      : validateChannelEnabled("workspaceMcpAccess", input.workspaceMcpAccess);
-  const secretInput = input.secret === undefined ? undefined : validateSecret(input.secret);
+  const internetAccess = ifDefined(input.internetAccess, validateInternetAccess);
+  const apiAccess = ifDefined(input.workspaceApiAccess, (value) => validateChannelEnabled("workspaceApiAccess", value));
+  const mcpAccess = ifDefined(input.workspaceMcpAccess, (value) => validateChannelEnabled("workspaceMcpAccess", value));
+  const secretInput = ifDefined(input.secret, validateSecret);
 
   // Phase two: apply. Past this point the workspace is known to exist, and every store setter refuses
   // only for an unknown id — so a refusal here means the workspace was deleted mid-update. Returning
@@ -159,15 +166,15 @@ export async function updateWorkspace(
     workspaceId: id,
     applied: appliedFields,
     values: {
-      ...(metadata.name !== undefined ? { name: metadata.name } : {}),
-      ...(metadata.description !== undefined ? { description: metadata.description } : {}),
-      ...(metadata.maxIterations !== undefined ? { maxIterations: metadata.maxIterations } : {}),
-      ...(metadata.maxRunMinutes !== undefined ? { maxRunMinutes: metadata.maxRunMinutes } : {}),
+      ...field("name", metadata.name),
+      ...field("description", metadata.description),
+      ...field("maxIterations", metadata.maxIterations),
+      ...field("maxRunMinutes", metadata.maxRunMinutes),
       ...(modelValues ?? {}),
-      ...(internetAccess !== undefined ? { internetAccess } : {}),
-      ...(apiAccess !== undefined ? { workspaceApiAccess: apiAccess } : {}),
-      ...(mcpAccess !== undefined ? { workspaceMcpAccess: mcpAccess } : {}),
-      ...(secret ? { secret } : {}),
+      ...field("internetAccess", internetAccess),
+      ...field("workspaceApiAccess", apiAccess),
+      ...field("workspaceMcpAccess", mcpAccess),
+      ...field("secret", secret),
     },
   };
 }

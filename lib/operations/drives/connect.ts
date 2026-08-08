@@ -9,7 +9,7 @@
 //
 // Input is validated before either lookup, so a caller that sent nothing at all is told what the
 // request needs rather than which of its two absent entities was missed first.
-import { AppError } from "@/lib/errors/appError";
+import { AppError, requireNonEmptyString } from "@/lib/errors/appError";
 import { connectDrive, disconnectDrive, getDrive, type DriveConnection } from "@/lib/drives/store";
 import { getStore } from "@/lib/infra/services";
 
@@ -46,18 +46,6 @@ function defaultDeps(): DriveConnectionDeps {
   };
 }
 
-/**
- * An id is required and must be a string. A non-string id is refused rather than coerced: every id
- * here is an opaque key, so `String(value)` would turn a wrong-typed field into a lookup that
- * reports "not found" and sends the caller looking for a deleted entity instead of a bad request.
- */
-function requiredId(value: unknown, field: string): string {
-  if (typeof value !== "string" || !value.trim()) {
-    throw new AppError("INVALID_REQUEST", `${field} is required`, { field });
-  }
-  return value;
-}
-
 /** A handle is optional; absent and null both mean "no handle recorded". */
 function optionalHandle(value: unknown, field: string): string | undefined {
   if (value === undefined || value === null) return undefined;
@@ -76,8 +64,8 @@ export function connectDriveToWorkspace(
   input: ConnectDriveInput,
   deps: DriveConnectionDeps = defaultDeps(),
 ): DriveConnection {
-  const driveId = requiredId(input.driveId, "driveId");
-  const workspaceId = requiredId(input.workspaceId, "workspaceId");
+  const driveId = requireNonEmptyString(input.driveId, "driveId");
+  const workspaceId = requireNonEmptyString(input.workspaceId, "workspaceId");
   const sourceHandle = optionalHandle(input.sourceHandle, "sourceHandle");
   const targetHandle = optionalHandle(input.targetHandle, "targetHandle");
 
@@ -100,6 +88,6 @@ export function disconnectDriveFromWorkspace(
   input: DisconnectDriveInput,
   deps: DriveConnectionDeps = defaultDeps(),
 ): DisconnectDriveResult {
-  const connectionId = requiredId(input.connectionId, "connectionId");
+  const connectionId = requireNonEmptyString(input.connectionId, "connectionId");
   return { deleted: deps.disconnect(connectionId) };
 }

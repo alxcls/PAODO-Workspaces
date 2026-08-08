@@ -121,28 +121,32 @@ async function walk(
     return { nodes: [], files: 0 };
   }
 
-  const nodes: TreeNode[] = [];
-  let files = 0;
-  for (const e of entries) {
-    const hostPath = path.join(dirPath, e.name);
-    const entryRelPath = relPath === "" ? e.name : `${relPath}/${e.name}`;
-    if (e.isDirectory()) {
-      const below = await walk(hostPath, entryRelPath, depth + 1, maxDepth, sem, countFiles);
-      files += below.files;
-      nodes.push({
-        name: e.name,
-        type: "directory",
-        path: entryRelPath,
-        children: below.nodes,
-        ...(countFiles ? { files: below.files } : {}),
-      });
-    } else {
-      files += 1;
-      nodes.push({ name: e.name, type: "file", path: entryRelPath });
-    }
-  }
+  const entryResults = await Promise.all(
+    entries.map(async (e): Promise<{ node: TreeNode; files: number }> => {
+      const hostPath = path.join(dirPath, e.name);
+      const entryRelPath = relPath === "" ? e.name : `${relPath}/${e.name}`;
+      if (e.isDirectory()) {
+        const below = await walk(hostPath, entryRelPath, depth + 1, maxDepth, sem, countFiles);
+        return {
+          node: {
+            name: e.name,
+            type: "directory",
+            path: entryRelPath,
+            children: below.nodes,
+            ...(countFiles ? { files: below.files } : {}),
+          },
+          files: below.files,
+        };
+      }
+      return { node: { name: e.name, type: "file", path: entryRelPath }, files: 1 };
+    }),
+  );
 
-  return { nodes, files };
+  return {
+    // Promise.all preserves input order regardless of resolution order, so entries keep readdir's order.
+    nodes: entryResults.map((r) => r.node),
+    files: entryResults.reduce((sum, r) => sum + r.files, 0),
+  };
 }
 
 /**
@@ -162,9 +166,8 @@ async function countFilesUnder(dirPath: string, sem: Semaphore): Promise<number>
     return 0;
   }
 
-  let files = 0;
-  for (const e of entries) {
-    files += e.isDirectory() ? await countFilesUnder(path.join(dirPath, e.name), sem) : 1;
-  }
-  return files;
+  const counts = await Promise.all(
+    entries.map((e) => (e.isDirectory() ? countFilesUnder(path.join(dirPath, e.name), sem) : Promise.resolve(1))),
+  );
+  return counts.reduce((sum, count) => sum + count, 0);
 }

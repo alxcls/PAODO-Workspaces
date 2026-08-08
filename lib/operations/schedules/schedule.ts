@@ -12,6 +12,7 @@
 // record, and a three-line read module would be filing without dividing. Split when a projection or
 // a second query earns it.
 import { randomUUID } from "crypto";
+import { requireString } from "@/lib/errors/appError";
 import type { IWorkspaceStore } from "@/lib/infra/interfaces";
 import { getStore } from "@/lib/infra/services";
 import * as scheduleStore from "@/lib/infra/schedules/scheduleStore";
@@ -62,9 +63,8 @@ export interface SetScheduleDeps {
 }
 
 /** A present field that cannot be read as text is a caller error, not an omission — see metadata.ts. */
-function requireString(value: unknown, field: string): string {
-  if (typeof value !== "string") throw new ScheduleInvalidError(`${field} must be a string`, { field });
-  return value;
+function requireScheduleString(value: unknown, field: string): string {
+  return requireString(value, field, (message) => new ScheduleInvalidError(message, { field }));
 }
 
 /**
@@ -76,7 +76,7 @@ function requireString(value: unknown, field: string): string {
  * reached `.trim()` as a number.
  */
 export function validateSchedule(input: ScheduleInput): ScheduleConfig {
-  const prompt = requireString(input.prompt ?? "", "prompt").trim();
+  const prompt = requireScheduleString(input.prompt ?? "", "prompt").trim();
   if (!prompt) throw new ScheduleInvalidError("prompt is required", { field: "prompt" });
 
   const intervalValue = input.intervalValue;
@@ -95,12 +95,12 @@ export function validateSchedule(input: ScheduleInput): ScheduleConfig {
 
   // Checked before startAt is read: the anchor is a wall-clock time that only means something once
   // the zone it is interpreted in is known to exist.
-  const timezone = requireString(input.timezone ?? "", "timezone");
+  const timezone = requireScheduleString(input.timezone ?? "", "timezone");
   if (!timezone || !isValidTimezone(timezone)) {
     throw new ScheduleInvalidError("timezone must be a valid IANA timezone", { field: "timezone" });
   }
 
-  const startAt = requireString(input.startAt ?? "", "startAt");
+  const startAt = requireScheduleString(input.startAt ?? "", "startAt");
   if (!startAt || Number.isNaN(Date.parse(startAt))) {
     throw new ScheduleInvalidError("startAt must be a valid date-time", { field: "startAt" });
   }
@@ -109,7 +109,7 @@ export function validateSchedule(input: ScheduleInput): ScheduleConfig {
   // than a wrong type. A blank string means the same thing.
   let endAt: string | undefined;
   if (input.endAt !== undefined && input.endAt !== null) {
-    endAt = requireString(input.endAt, "endAt").trim() || undefined;
+    endAt = requireScheduleString(input.endAt, "endAt").trim() || undefined;
     if (endAt) {
       if (Number.isNaN(Date.parse(endAt))) {
         throw new ScheduleInvalidError("endAt must be a valid date", { field: "endAt" });

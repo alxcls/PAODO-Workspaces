@@ -85,7 +85,6 @@ export function useGraphDocument({ onGraphDisabled, showError }: GraphDocumentOp
   const [saved, setSaved] = useState(false);
   const [isDirty, setIsDirty] = useState(false);
   const [pendingDriveDeletes, setPendingDriveDeletes] = useState<Node[]>([]);
-  const driveIdsRef = useRef<Set<string>>(new Set());
   const savedDriveConnectionsRef = useRef<Map<string, DriveConnectionItem>>(new Map());
   const nodesRef = useRef<Node[]>([]);
   const edgesRef = useRef<Edge[]>([]);
@@ -96,6 +95,13 @@ export function useGraphDocument({ onGraphDisabled, showError }: GraphDocumentOp
   useEffect(() => {
     edgesRef.current = edges;
   }, [edges]);
+
+  // Derived from `nodes` rather than tracked separately, so a drive removed from the canvas (even
+  // before the delete is saved) stops counting as a drive immediately instead of until the next save/reload.
+  const driveIds = useMemo(
+    () => new Set(nodes.filter((node) => node.data?.kind === "drive").map((node) => node.id)),
+    [nodes],
+  );
 
   const selection = useMemo(() => {
     const drives = nodes.filter((node) => node.selected && node.data?.kind === "drive");
@@ -144,7 +150,6 @@ export function useGraphDocument({ onGraphDisabled, showError }: GraphDocumentOp
       .then(([workspaces, graph, drives, connections]) => {
         const positions = graph.positions ?? {};
         const workspaceIds = new Set(workspaces.map((workspace) => workspace.id));
-        driveIdsRef.current = new Set(drives.map((drive) => drive.id));
         const workspaceNodes: Node[] = workspaces.map((workspace, index) => ({
           id: workspace.id,
           type: "workspace",
@@ -203,8 +208,8 @@ export function useGraphDocument({ onGraphDisabled, showError }: GraphDocumentOp
         showError("A node cannot connect to itself.");
         return;
       }
-      const sourceIsDrive = driveIdsRef.current.has(connection.source);
-      const targetIsDrive = driveIdsRef.current.has(connection.target);
+      const sourceIsDrive = driveIds.has(connection.source);
+      const targetIsDrive = driveIds.has(connection.target);
       if (sourceIsDrive || targetIsDrive) {
         if (sourceIsDrive && targetIsDrive) {
           showError("Drives can only connect to workspaces.");
@@ -241,7 +246,7 @@ export function useGraphDocument({ onGraphDisabled, showError }: GraphDocumentOp
       setEdges((current) => addEdge({ ...connection, ...EDGE_STYLE }, current));
       setIsDirty(true);
     },
-    [setEdges, showError],
+    [driveIds, setEdges, showError],
   );
 
   const onNodeDragStop = useCallback(() => setIsDirty(true), []);
@@ -260,7 +265,6 @@ export function useGraphDocument({ onGraphDisabled, showError }: GraphDocumentOp
 
     for (const drive of pendingDriveDeletes) {
       await send(`/api/drives/${drive.id}`, { method: "DELETE" }, `Failed to delete ${drive.data.label}`);
-      driveIdsRef.current.delete(drive.id);
       for (const [id, connection] of savedConnections) {
         if (connection.driveId === drive.id) savedConnections.delete(id);
       }
@@ -365,7 +369,6 @@ export function useGraphDocument({ onGraphDisabled, showError }: GraphDocumentOp
           throw new Error(body.error ?? "Create failed");
         }
         const drive = (await response.json()) as DriveItem;
-        driveIdsRef.current.add(drive.id);
         setNodes((current) => [
           ...current,
           {

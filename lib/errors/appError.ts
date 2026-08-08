@@ -78,3 +78,31 @@ export class AppError extends Error {
     this.name = "AppError";
   }
 }
+
+/**
+ * A present value that must be a string. Callers with their own error type (e.g. a capability-specific
+ * AppError subclass) pass `fail` instead of taking the default INVALID_REQUEST.
+ */
+export function requireString(
+  value: unknown,
+  field: string,
+  fail: (message: string) => Error = (message) => new AppError("INVALID_REQUEST", message, { field }),
+): string {
+  if (typeof value !== "string") throw fail(`${field} must be a string`);
+  return value;
+}
+
+/**
+ * A present value that must be a non-empty (post-trim) string — the common "id"/"name is required"
+ * guard. A non-string is refused rather than coerced: every field this guards is an opaque key or
+ * label, so `String(value)` would turn a wrong-typed field into a lookup that reports "not found"
+ * instead of "bad request".
+ */
+export function requireNonEmptyString(
+  value: unknown,
+  field: string,
+  fail: (message: string) => Error = (message) => new AppError("INVALID_REQUEST", message, { field }),
+): string {
+  if (typeof value !== "string" || !value.trim()) throw fail(`${field} is required`);
+  return value;
+}

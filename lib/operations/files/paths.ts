@@ -11,7 +11,7 @@
 // inspects a path itself, and so the same rules apply to a UI click, a CLI command and an agent tool
 // without three copies of them.
 
-import { AppError } from "@/lib/errors/appError";
+import { AppError, requireNonEmptyString } from "@/lib/errors/appError";
 import { resolveContained } from "@/lib/files/containment";
 import { InvalidPathError, relativeDirPath, relativeEntryPath } from "@/lib/files/relpath";
 
@@ -23,16 +23,9 @@ function invalidPath(error: unknown, field: string): AppError {
   throw error;
 }
 
-function requireString(value: unknown, field: string): string {
-  if (typeof value !== "string" || value.trim() === "") {
-    throw new AppError("INVALID_REQUEST", `${field} is required`, { field });
-  }
-  return value;
-}
-
 /** Validate a required path naming one entry. Returns the wire-space relative path. */
 export function requireEntryPath(value: unknown, field = "path"): string {
-  const raw = requireString(value, field);
+  const raw = requireNonEmptyString(value, field);
   try {
     return relativeEntryPath(raw);
   } catch (err) {

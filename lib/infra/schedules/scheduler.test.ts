@@ -190,4 +190,17 @@ describe("scheduler tick", () => {
     scheduler._tick();
     expect(h.startRun).toHaveBeenCalledTimes(2);
   });
+
+  it("advances nextRunAt on an in-flight skip, so an unchanged past instant cannot re-fire every tick", () => {
+    seed();
+    h.alreadyRunning = true;
+
+    scheduler._tick();
+
+    expect(new Date(store.getSchedule("w1")!.nextRunAt!).getTime()).toBeGreaterThan(Date.now());
+
+    // Without re-seeding: a second tick must not fire again, because nextRunAt is no longer due.
+    scheduler._tick();
+    expect(h.startRun).toHaveBeenCalledOnce();
+  });
 });

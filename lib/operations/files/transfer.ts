@@ -73,23 +73,25 @@ async function collectDirectory(
 ): Promise<void> {
   items.push({ type: "directory", relPath, hostPath });
   const entries = await fileSystemCall(relPath || "The workspace root", () => readTransferEntries(hostPath, sem));
-  for (const entry of entries) {
-    const childRel = relPath === "" ? entry.name : path.posix.join(relPath, entry.name);
-    const childHost = path.join(hostPath, entry.name);
-    if (entry.isDirectory()) {
-      await collectDirectory(childHost, childRel, sem, items);
-      continue;
-    }
-    if (!entry.isFile()) throw unsupported(childRel);
-    const stat = await fileSystemCall(childRel, () => sem.run(() => fs.stat(childHost)));
-    items.push({
-      type: "file",
-      relPath: childRel,
-      hostPath: childHost,
-      size: stat.size,
-      executable: (stat.mode & 0o111) !== 0,
-    });
-  }
+  await Promise.all(
+    entries.map(async (entry) => {
+      const childRel = relPath === "" ? entry.name : path.posix.join(relPath, entry.name);
+      const childHost = path.join(hostPath, entry.name);
+      if (entry.isDirectory()) {
+        await collectDirectory(childHost, childRel, sem, items);
+        return;
+      }
+      if (!entry.isFile()) throw unsupported(childRel);
+      const stat = await fileSystemCall(childRel, () => sem.run(() => fs.stat(childHost)));
+      items.push({
+        type: "file",
+        relPath: childRel,
+        hostPath: childHost,
+        size: stat.size,
+        executable: (stat.mode & 0o111) !== 0,
+      });
+    }),
+  );
 }
 
 /** Validate and collect a complete manifest before response headers are sent. */

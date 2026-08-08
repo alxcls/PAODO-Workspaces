@@ -29,6 +29,8 @@ function makeRunner() {
   return { runner: { exec } as ExecRunner, exec };
 }
 
+const noopBroadcast = () => {};
+
 // Paths that must all be rejected: parent traversal, absolute, and a sneaky path that only
 // escapes after normalization collapses the `..` segments.
 const ESCAPING = ["../etc/passwd", "/etc/passwd", "foo/../../etc/passwd"];
@@ -51,17 +53,18 @@ describe("file tools wire the workspace containment guard", () => {
     { name: "file_read", call: (file_path) => callOf(new FileReadTool(runner))({ file_path }) },
     {
       name: "file_write",
-      call: (file_path) => callOf(new FileWriteTool(runner, WORKSPACE_DIR))({ file_path, content: "x" }),
+      call: (file_path) =>
+        callOf(new FileWriteTool(runner, WORKSPACE_DIR, noopBroadcast))({ file_path, content: "x" }),
     },
     {
       name: "file_edit (edit branch)",
       call: (file_path) =>
-        callOf(new FileEditTool(runner, WORKSPACE_DIR))({ file_path, old_string: "a", new_string: "b" }),
+        callOf(new FileEditTool(runner, WORKSPACE_DIR, noopBroadcast))({ file_path, old_string: "a", new_string: "b" }),
     },
     {
       name: "file_edit (create branch)",
       call: (file_path) =>
-        callOf(new FileEditTool(runner, WORKSPACE_DIR))({ file_path, old_string: "", new_string: "b" }),
+        callOf(new FileEditTool(runner, WORKSPACE_DIR, noopBroadcast))({ file_path, old_string: "", new_string: "b" }),
     },
   ];
 

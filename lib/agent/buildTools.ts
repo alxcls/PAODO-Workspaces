@@ -118,8 +118,8 @@ export function buildTools(
     // error) so the model can't even attempt them, matching the network-layer boundary.
     ...(config.internetAccess ? [new AptInstallTool(runner)] : []),
     new FileReadTool(runner),
-    new FileEditTool(runner, workspaceDir),
-    new FileWriteTool(runner, workspaceDir),
+    new FileEditTool(runner, workspaceDir, broadcast),
+    new FileWriteTool(runner, workspaceDir, broadcast),
     new TodoWriteTool(workspaceId),
     new CompactContextTool(),
     ...(config.internetAccess ? [new WebFetchTool(runner)] : []),

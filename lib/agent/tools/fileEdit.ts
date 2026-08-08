@@ -33,6 +33,7 @@ export class FileEditTool extends StructuredTool<typeof schema> {
   constructor(
     private runner: ExecRunner,
     private workspaceDir: string,
+    private broadcast: (msg: string) => void,
   ) {
     super();
   }
@@ -46,7 +47,7 @@ export class FileEditTool extends StructuredTool<typeof schema> {
 
     if (old_string === "") {
       // Create new file branch — same mkdir + write as file_write.
-      const err = await writeContainerFile(this.runner, this.workspaceDir, relpath, new_string);
+      const err = await writeContainerFile(this.runner, this.workspaceDir, relpath, new_string, this.broadcast);
       return err ?? `Created ${file_path}`;
     }
 
@@ -73,6 +74,7 @@ export class FileEditTool extends StructuredTool<typeof schema> {
 
       const writeR = await this.runner.exec(["tee", `/workspace/${relpath}`], { stdin: updated });
       if (writeR.code !== 0) return `Error: ${writeR.stderr || "write failed"}`;
+      this.broadcast(JSON.stringify({ type: "files_changed", paths: [relpath] }));
       return `Updated ${file_path}`;
     } catch (err: unknown) {
       return toolError(err);

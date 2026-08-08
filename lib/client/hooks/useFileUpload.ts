@@ -1,8 +1,8 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { MAX_UPLOAD_BYTES, formatBytes } from "@/lib/workspace/uploadLimits";
-import { partitionByIgnore } from "@/lib/workspace/uploadIgnore";
+import { MAX_UPLOAD_BYTES, formatBytes } from "@/lib/uploads/limits";
+import { partitionByIgnore } from "@/lib/files/ignore";
 
 /** A file paired with its intended path inside the workspace (folder uploads keep structure). */
 export interface PathedFile {

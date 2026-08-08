@@ -18,7 +18,7 @@ import { FileEditTool } from "./fileEdit";
 import type { ExecRunner } from "../interfaces";
 
 // FileWriteTool/FileEditTool now also realpath-check against a real workspaceDir (see
-// lib/workspace/pathContainment.ts), so this needs a real, existing directory — the OS temp dir
+// lib/files/containment.ts), so this needs a real, existing directory — the OS temp dir
 // always exists and nothing is actually written under it (runner.exec is mocked below).
 const WORKSPACE_DIR = os.tmpdir();
 
@@ -28,6 +28,8 @@ function makeRunner() {
   const exec = vi.fn(async () => ({ code: 0, stdout: "", stderr: "" }));
   return { runner: { exec } as ExecRunner, exec };
 }
+
+const noopBroadcast = () => {};
 
 // Paths that must all be rejected: parent traversal, absolute, and a sneaky path that only
 // escapes after normalization collapses the `..` segments.
@@ -51,17 +53,18 @@ describe("file tools wire the workspace containment guard", () => {
     { name: "file_read", call: (file_path) => callOf(new FileReadTool(runner))({ file_path }) },
     {
       name: "file_write",
-      call: (file_path) => callOf(new FileWriteTool(runner, WORKSPACE_DIR))({ file_path, content: "x" }),
+      call: (file_path) =>
+        callOf(new FileWriteTool(runner, WORKSPACE_DIR, noopBroadcast))({ file_path, content: "x" }),
     },
     {
       name: "file_edit (edit branch)",
       call: (file_path) =>
-        callOf(new FileEditTool(runner, WORKSPACE_DIR))({ file_path, old_string: "a", new_string: "b" }),
+        callOf(new FileEditTool(runner, WORKSPACE_DIR, noopBroadcast))({ file_path, old_string: "a", new_string: "b" }),
     },
     {
       name: "file_edit (create branch)",
       call: (file_path) =>
-        callOf(new FileEditTool(runner, WORKSPACE_DIR))({ file_path, old_string: "", new_string: "b" }),
+        callOf(new FileEditTool(runner, WORKSPACE_DIR, noopBroadcast))({ file_path, old_string: "", new_string: "b" }),
     },
   ];
 

@@ -5,6 +5,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { confirmedValues } from "@/lib/client/workspaceReceipt";
 
 export function useWorkspaceInternetAccess(workspaceId: string | null) {
   const [loaded, setLoaded] = useState<{ id: string; enabled: boolean } | null>(null);
@@ -38,7 +39,12 @@ export function useWorkspaceInternetAccess(workspaceId: string | null) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ enabled: next }),
     });
-    if (!res.ok) setLoaded({ id: workspaceId, enabled: !next });
+    if (!res.ok) {
+      setLoaded({ id: workspaceId, enabled: !next });
+      return;
+    }
+    const { internetAccess } = await confirmedValues(res);
+    setLoaded({ id: workspaceId, enabled: internetAccess ?? next });
   }, [workspaceId, enabled]);
 
   return { enabled, toggle };

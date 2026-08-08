@@ -1,14 +1,16 @@
 // Route-level coverage for MCP configuration validation and persistence boundaries.
 //
-// Only credentialStore is mocked, because the credential is the only thing this endpoint writes: the
-// exposed tool set is read straight from .skills/ and has no store behind it. Asserting the
-// credential kind is part of the point — "workspace-mcp" is what keeps this endpoint from managing
-// the workspace's agent key or the instance-wide CLI token.
+// credentialStore is the only thing mocked for writes, because the credential is the only thing this
+// endpoint writes; the store and skillStore are stubbed purely as read sources for the exposed set.
+// Asserting the credential kind is part of the point — "workspace-mcp" is what keeps this endpoint
+// from managing the workspace's agent key or the instance-wide CLI token.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const h = vi.hoisted(() => ({
-  workspace: { id: "ws-1", name: "Alpha", dir: "/fake/alpha" },
-  state: { enabled: false, hasSecret: false, createdAt: null as string | null, lastUsedAt: null as string | null },
+  // internetAccess is true here and false in the API-key fixture, so a receipt that hardcoded either
+  // one instead of reading the workspace would fail on one side of the pair.
+  workspace: { id: "ws-1", name: "Alpha", dir: "/fake/alpha", internetAccess: true },
+  state: { enabled: false, hasKey: false, createdAt: null as string | null, lastUsedAt: null as string | null },
   setEnabled: vi.fn(),
   mint: vi.fn(() => "mcp_new"),
   revoke: vi.fn(),
@@ -19,7 +21,7 @@ const h = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/api/guards", () => ({
-  requireWorkspace: () => h.workspace,
+  requireWorkspaceId: () => h.workspace,
 }));
 vi.mock("@/lib/infra/security/credentialStore", () => ({
   state: () => h.state,
@@ -27,7 +29,15 @@ vi.mock("@/lib/infra/security/credentialStore", () => ({
   mint: h.mint,
   revoke: h.revoke,
 }));
-vi.mock("@/lib/workspace/skillStore", () => ({ loadSkills: h.loadSkills }));
+vi.mock("@/lib/skills/store", () => ({ loadSkills: h.loadSkills }));
+// The exposed set comes from the shared listWorkspaceSkills operation, which resolves the workspace
+// through the store to find its directory — the same set the workspace-details route reports.
+vi.mock("@/lib/infra/services", () => ({
+  getStore: () => ({
+    getWorkspace: (id: string) => (id === h.workspace.id ? h.workspace : undefined),
+    listWorkspaces: () => [h.workspace],
+  }),
+}));
 
 import * as route from "./route";
 const { DELETE, GET, PATCH, POST } = route;
@@ -41,18 +51,23 @@ const request = (method: string, body?: string) =>
   }) as never;
 
 beforeEach(() => {
-  h.state = { enabled: false, hasSecret: false, createdAt: null, lastUsedAt: null };
+  h.state = { enabled: false, hasKey: false, createdAt: null, lastUsedAt: null };
   h.setEnabled.mockClear();
   h.mint.mockClear();
   h.revoke.mockClear();
   h.loadSkills.mockClear();
+  // Mirrors the store: revoking clears the hash. DELETE's precondition and its receipt read the same
+  // state, so a mock that never mutated would report a secret still present after it was destroyed.
+  h.revoke.mockImplementation(() => {
+    h.state = { ...h.state, hasKey: false };
+  });
 });
 
 describe("workspace MCP configuration route", () => {
   it("reports every declared skill as exposed, without leaking the secret hash", async () => {
-    h.state = { enabled: true, hasSecret: true, createdAt: "2026-01-01T00:00:00.000Z", lastUsedAt: null };
+    h.state = { enabled: true, hasKey: true, createdAt: "2026-01-01T00:00:00.000Z", lastUsedAt: null };
     const body = await (await GET(request("GET"), ctx())).json();
-    expect(body).toMatchObject({ enabled: true, hasSecret: true });
+    expect(body).toMatchObject({ enabled: true, hasKey: true });
     expect(body).not.toHaveProperty("secretHash");
     expect(body).not.toHaveProperty("hash");
     expect(body.exposedSkills).toEqual([
@@ -79,10 +94,96 @@ describe("workspace MCP configuration route", () => {
     expect(h.setEnabled).toHaveBeenCalledWith("workspace-mcp", "ws-1", true);
   });
 
-  it("mints and revokes a secret without returning it from GET", async () => {
-    expect(await (await POST(request("POST"), ctx())).json()).toEqual({ plain: "mcp_new" });
+  // Exposing the endpoint and issuing the secret that guards it are separate steps, so opening the
+  // channel never hands back a read-once secret the caller was not expecting.
+  it("opens the channel without minting a secret", async () => {
+    const res = await PATCH(request("PATCH", JSON.stringify({ enabled: true })), ctx());
+    expect(await res.json()).toEqual({
+      ok: true,
+      workspaceId: "ws-1",
+      applied: { workspaceMcpAccess: true },
+    });
+    expect(h.mint).not.toHaveBeenCalled();
+    expect(res.headers.get("cache-control")).toBe("no-store");
+  });
+
+  it("leaves an existing secret alone when the channel is reopened", async () => {
+    h.state = { enabled: false, hasKey: true, createdAt: "2026-01-01T00:00:00.000Z", lastUsedAt: null };
+    const res = await PATCH(request("PATCH", JSON.stringify({ enabled: true })), ctx());
+    expect(await res.json()).toEqual({
+      ok: true,
+      workspaceId: "ws-1",
+      applied: { workspaceMcpAccess: true },
+    });
+    expect(h.mint).not.toHaveBeenCalled();
+  });
+
+  it("mints nothing when the channel is closed", async () => {
+    const res = await PATCH(request("PATCH", JSON.stringify({ enabled: false })), ctx());
+    expect(await res.json()).toEqual({
+      ok: true,
+      workspaceId: "ws-1",
+      applied: { workspaceMcpAccess: false },
+    });
+    expect(h.setEnabled).toHaveBeenCalledWith("workspace-mcp", "ws-1", false);
+    expect(h.mint).not.toHaveBeenCalled();
+  });
+
+  it("generates, rotates and revokes the secret without returning it from GET", async () => {
+    expect(await (await POST(request("POST", JSON.stringify({ operation: "generate" })), ctx())).json()).toEqual({
+      ok: true,
+      workspaceMcpKey: "mcp_new",
+      workspaceMcpAccess: false,
+      workspaceMcpHasKey: true,
+      internetAccess: true,
+    });
+
+    h.state = { enabled: true, hasKey: true, createdAt: "2026-01-01T00:00:00.000Z", lastUsedAt: null };
+    expect(await (await POST(request("POST", JSON.stringify({ operation: "rotate" })), ctx())).json()).toEqual({
+      ok: true,
+      workspaceMcpKey: "mcp_new",
+      workspaceMcpAccess: true,
+      workspaceMcpHasKey: true,
+      internetAccess: true,
+    });
     expect(h.mint).toHaveBeenCalledWith("workspace-mcp", "ws-1");
+    const revoked = await DELETE(request("DELETE"), ctx());
+    expect(revoked.status).toBe(200);
+    // This channel names its own axes, not the API key's — the receipt has to be readable next to the
+    // workspace projection, where both channels appear side by side.
+    expect(await revoked.json()).toEqual({
+      ok: true,
+      workspaceMcpAccess: true,
+      workspaceMcpHasKey: false,
+      internetAccess: true,
+    });
+    expect(h.revoke).toHaveBeenCalledWith("workspace-mcp", "ws-1");
+  });
+
+  // Mirrors the API-key route exactly: the MCP secret is a credential like any other, so a closed
+  // channel neither blocks issuing its secret nor blocks destroying it.
+  it("issues and destroys a secret while MCP access is disabled", async () => {
+    h.state = { enabled: false, hasKey: false, createdAt: null, lastUsedAt: null };
+    expect((await POST(request("POST", JSON.stringify({ operation: "generate" })), ctx())).status).toBe(200);
+
+    h.state = { enabled: false, hasKey: true, createdAt: "2026-01-01T00:00:00.000Z", lastUsedAt: null };
+    expect((await POST(request("POST", JSON.stringify({ operation: "rotate" })), ctx())).status).toBe(200);
     expect((await DELETE(request("DELETE"), ctx())).status).toBe(200);
     expect(h.revoke).toHaveBeenCalledWith("workspace-mcp", "ws-1");
+    expect(h.setEnabled).not.toHaveBeenCalled();
+  });
+
+  it("refuses generation over an existing secret and rotation of a missing one", async () => {
+    h.state = { enabled: true, hasKey: true, createdAt: "2026-01-01T00:00:00.000Z", lastUsedAt: null };
+    const conflict = await POST(request("POST", JSON.stringify({ operation: "generate" })), ctx());
+    expect(conflict.status).toBe(409);
+    expect(await conflict.json()).toMatchObject({ ok: false, code: "CREDENTIAL_ALREADY_CONFIGURED" });
+
+    h.state = { enabled: true, hasKey: false, createdAt: null, lastUsedAt: null };
+    const missing = await POST(request("POST", JSON.stringify({ operation: "rotate" })), ctx());
+    expect(missing.status).toBe(409);
+    expect(await missing.json()).toMatchObject({ ok: false, code: "CREDENTIAL_NOT_CONFIGURED" });
+
+    expect(h.mint).not.toHaveBeenCalled();
   });
 });

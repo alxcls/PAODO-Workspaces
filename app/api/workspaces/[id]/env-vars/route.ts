@@ -1,57 +1,57 @@
+// REST endpoint for a workspace's third-party secrets: GET lists their safe metadata, POST stores
+// one. POST answers with the stored secret's metadata rather than the full update receipt — the
+// caller needs the derived fields (createdAt, blockedBy) this endpoint is about, and the value is
+// never echoed.
 import { type NextRequest, NextResponse } from "next/server";
-import { requireWorkspace } from "@/lib/api/guards";
-import {
-  listSecretMeta,
-  setSecret,
-  getWorkspaceRules,
-  normalizeDomain,
-} from "@/lib/infra/security/workspaceSecretStore";
-import { getCredentialProxy } from "@/lib/infra/proxy";
+import { notFound, requireWorkspace } from "@/lib/api/guards";
+import { appErrorResponse, errorResponse, readJsonObject } from "@/lib/api/errorResponse";
+import { createLogger } from "@/lib/infra/logger";
+import { listWorkspaceSecrets } from "@/lib/operations/workspace/secrets";
+import { updateWorkspace } from "@/lib/operations/workspace/update";
 
-const NAME_RE = /^[A-Z_][A-Z0-9_]*$/;
-// Bare hostname: labels of letters/digits/hyphens separated by dots, at least one dot.
-const DOMAIN_RE = /^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$/;
+const log = createLogger("api").child({ route: "env-vars" });
+const NO_STORE = { "Cache-Control": "no-store" } as const;
 
-export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const ws = requireWorkspace(id);
+  const ws = requireWorkspace(id, req);
   if (ws instanceof NextResponse) return ws;
-  return NextResponse.json(listSecretMeta(id));
+  // Shared with the workspace-details route so the UI block and CLI report one identical shape.
+  // no-store like every other credential-adjacent response: the values never appear here, but which
+  // secrets exist and what hosts they are scoped to is not something to leave in an intermediary.
+  return NextResponse.json(listWorkspaceSecrets(id), { headers: NO_STORE });
 }
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const ws = requireWorkspace(id);
+  const ws = requireWorkspace(id, req);
   if (ws instanceof NextResponse) return ws;
 
-  const body = (await req.json()) as { name?: string; value?: string; domains?: string[] };
-  const { name, value } = body;
+  const parsed = await readJsonObject(req);
+  if (parsed instanceof Response) return parsed;
+  const body = parsed as { name?: string; value?: string; domains?: string[] };
 
-  if (!name || !NAME_RE.test(name)) {
-    return NextResponse.json(
-      { error: "name must be uppercase letters, digits, and underscores (e.g. OPENAI_KEY)" },
-      { status: 400 },
+  try {
+    // Missing fields are forwarded as empty rather than rejected here: the shared validator owns the
+    // name, value and domain rules, so this route cannot state a narrower version of them.
+    const result = await updateWorkspace(id, {
+      secret: { name: body.name ?? "", value: body.value ?? "", domains: body.domains ?? [] },
+    });
+    if (!result) return notFound(req);
+    return NextResponse.json(result.values.secret, { headers: NO_STORE });
+  } catch (err) {
+    const expected = appErrorResponse(err, req);
+    if (expected) return expected;
+    log.error(
+      {
+        event: "workspace_secret_store_failed",
+        outcome: "secret_not_stored",
+        code: "INTERNAL_ERROR",
+        err,
+        workspaceId: id,
+      },
+      "failed to store the secret",
     );
+    return errorResponse("INTERNAL_ERROR", "failed to store the secret", { request: req });
   }
-  if (!value?.trim()) return NextResponse.json({ error: "value required" }, { status: 400 });
-
-  // Validate shape only — reject an empty list or a host that isn't a bare hostname. Canonicalization
-  // (normalize + dedup + sort) is owned by setSecret's sanitizeDomains, so we pass the raw hosts
-  // through rather than duplicate that logic here.
-  if (!Array.isArray(body.domains) || body.domains.length === 0) {
-    return NextResponse.json({ error: "add at least one allowed host" }, { status: 400 });
-  }
-  for (const raw of body.domains) {
-    if (!DOMAIN_RE.test(normalizeDomain(raw ?? ""))) {
-      return NextResponse.json(
-        { error: "each allowed host must be a hostname the key is sent to (e.g. api.openai.com)" },
-        { status: 400 },
-      );
-    }
-  }
-
-  setSecret(id, name, value, body.domains);
-  getCredentialProxy().setRules(id, getWorkspaceRules(id));
-
-  return NextResponse.json(listSecretMeta(id).find((s) => s.name === name));
 }

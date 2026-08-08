@@ -13,7 +13,7 @@ vi.mock("../skills/executeSkill", () => ({ executeSkill: vi.fn() }));
 
 import { AgentCallTool } from "./agentCall";
 import { executeSkill } from "../skills/executeSkill";
-import type { SkillCallResult } from "../../workspace/skillTypes";
+import type { SkillCallResult } from "@/lib/skills/types";
 import type { IWorkspaceStore, IContainerManager } from "../../infra/interfaces";
 
 const mockedExecute = vi.mocked(executeSkill);

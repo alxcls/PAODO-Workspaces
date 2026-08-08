@@ -1,13 +1,13 @@
 // Settings modal for the instance-wide CLI access token.
 //
-// Drives the same useCredential hook and reuses CredentialSecret like the workspace API-key and MCP
+// Drives the same useCredential hook and reuses CredentialReveal like the workspace API-key and MCP
 // blocks; only the chrome differs, because this is a modal rather than a card, and it also shows the
 // endpoint the CLI should connect to. Enabling and generating are two steps here, exactly as they are
 // for the other two channels.
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import CredentialSecret from "@/components/shared/CredentialSecret";
+import CredentialReveal from "@/components/shared/CredentialReveal";
 import { useCredential } from "@/lib/client/hooks/useCredential";
 
 interface CliAccessModalProps {
@@ -18,13 +18,13 @@ interface CliAccessModalProps {
 export default function CliAccessModal({ open, onClose }: CliAccessModalProps) {
   const credential = useCredential<{ publicBaseUrl: string | null }>(
     "/api/settings/cli-access",
-    { noun: "key", feature: "CLI access" },
+    { feature: "CLI access" },
     { load: open },
   );
   const [copied, setCopied] = useState(false);
 
   const close = useCallback(() => {
-    credential.dismissSecret();
+    credential.dismissPlaintext();
     onClose();
   }, [credential, onClose]);
 
@@ -101,20 +101,24 @@ export default function CliAccessModal({ open, onClose }: CliAccessModalProps) {
 
             <div className="flex flex-col gap-1.5">
               <span className="text-xs font-medium">Key</span>
-              {credential.secret ? (
-                <CredentialSecret secret={credential.secret} noun="key" />
+              {credential.plaintext ? (
+                <CredentialReveal plaintext={credential.plaintext} />
               ) : (
                 <code className="rounded border border-border bg-bg-tint px-2 py-1 font-mono text-xs text-text-3">
-                  {credential.hasSecret ? "••••••••••••••••••••••••" : "No key"}
+                  {credential.hasKey ? "••••••••••••••••••••••••" : "No key"}
                 </code>
               )}
             </div>
 
             <div className="flex items-center gap-2.5">
-              <button className="linkbtn self-start" onClick={credential.mint} disabled={credential.busy}>
-                {credential.busy ? "Working…" : credential.hasSecret ? "Rotate key" : "Generate key"}
+              <button
+                className="linkbtn self-start"
+                onClick={credential.hasKey ? credential.rotate : credential.generate}
+                disabled={credential.busy}
+              >
+                {credential.busy ? "Working…" : credential.hasKey ? "Rotate key" : "Generate key"}
               </button>
-              {credential.hasSecret && (
+              {credential.hasKey && (
                 <button className="linkbtn text-danger" onClick={credential.revoke} disabled={credential.busy}>
                   Revoke
                 </button>

@@ -29,6 +29,27 @@ different:
 
 Those adapters should still delegate to the same underlying run, skill, file or workspace operation.
 
+## Read and mutation results
+
+Query operations own resource representations. For workspaces, `GET /api/workspaces/<id>` is the one
+authoritative overview assembled from workspace metadata, access state, exposed skills and secret
+metadata.
+
+Mutation operations return receipts: the target id, the capability fields successfully applied, and
+the canonical values established for those fields. The values are assembled by
+the operation after shared validation; an adapter must not echo its request as if it were the result.
+Receipt field names use the public vocabulary shared by mutation requests and query representations.
+An internal atomic grouping such as `model` is projected back to `llmProvider`, `llmModel` and, when
+supported, `reasoningEffort`. Every name in `applied` has the same-named canonical value in `values`.
+They are mutation outcomes, not partial resource snapshots: an adapter that needs fields outside the
+write still performs the ordinary query. This keeps every trigger reading the same complete
+representation and prevents mutations from silently adding work or sensitive metadata.
+
+A receipt never carries a read-once secret. An operation that would produce one belongs on its own
+explicit route, so the plaintext only ever reaches a caller that asked for it by name — a caller
+updating unrelated settings cannot be handed a credential it will never see again by discarding a
+field it had no reason to read.
+
 ## Programmatic access
 
 `lib/infra/security/platformAccessPolicy.ts` is the single review point for exposing an existing

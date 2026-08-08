@@ -8,7 +8,7 @@
 
 import { StructuredTool } from "@langchain/core/tools";
 import { z } from "zod";
-import type { IWorkspaceStore, IContainerManager } from "../../infra/interfaces";
+import type { IWorkspaceLookup, IContainerManager } from "../../infra/interfaces";
 import type { SkillConfig } from "../interfaces";
 import { executeSkill } from "../skills/executeSkill";
 import { createLogger } from "../../infra/logger";
@@ -56,7 +56,7 @@ A workspace with no declared skills is not callable. If the workspace is not con
 
   constructor(
     private readonly callerWorkspaceId: string,
-    private readonly store: IWorkspaceStore,
+    private readonly store: IWorkspaceLookup,
     private readonly containers: IContainerManager,
     private readonly skillConfig: SkillConfig,
   ) {

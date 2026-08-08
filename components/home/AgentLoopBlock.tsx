@@ -1,6 +1,14 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
+import { isBoundedIntegerDraft } from "@/lib/client/integerDraft";
+import { confirmedValues } from "@/lib/client/workspaceReceipt";
+import {
+  MAX_MAX_ITERATIONS,
+  MAX_MAX_RUN_MINUTES,
+  MIN_MAX_ITERATIONS,
+  MIN_MAX_RUN_MINUTES,
+} from "@/lib/workspace/limits";
 
 const LABEL_WIDTH = 120;
 const CONTROL_WIDTH = 80;
@@ -36,15 +44,15 @@ export default function AgentLoopBlock({ wsId }: { wsId: string }) {
   useEffect(() => {
     if (loadedForWsId.current !== wsId || iterationsDraft.trim() === "" || minutesDraft.trim() === "") return;
 
-    const nextIterations = Math.floor(Number(iterationsDraft));
-    const nextMinutes = Math.floor(Number(minutesDraft));
+    const nextIterations = Number(iterationsDraft);
+    const nextMinutes = Number(minutesDraft);
     const valid =
-      Number.isFinite(nextIterations) &&
-      nextIterations >= 1 &&
-      nextIterations <= 500 &&
-      Number.isFinite(nextMinutes) &&
-      nextMinutes >= 1 &&
-      nextMinutes <= 1440;
+      Number.isInteger(nextIterations) &&
+      nextIterations >= MIN_MAX_ITERATIONS &&
+      nextIterations <= MAX_MAX_ITERATIONS &&
+      Number.isInteger(nextMinutes) &&
+      nextMinutes >= MIN_MAX_RUN_MINUTES &&
+      nextMinutes <= MAX_MAX_RUN_MINUTES;
     if (!valid || (nextIterations === iterations && nextMinutes === minutes)) return;
 
     const controller = new AbortController();
@@ -57,8 +65,13 @@ export default function AgentLoopBlock({ wsId }: { wsId: string }) {
           signal: controller.signal,
         });
         if (!response.ok || controller.signal.aborted) return;
-        setIterations(nextIterations);
-        setMinutes(nextMinutes);
+        const { maxIterations, maxRunMinutes } = await confirmedValues(response);
+        const confirmedIterations = maxIterations ?? nextIterations;
+        const confirmedMinutes = maxRunMinutes ?? nextMinutes;
+        setIterations(confirmedIterations);
+        setIterationsDraft(String(confirmedIterations));
+        setMinutes(confirmedMinutes);
+        setMinutesDraft(String(confirmedMinutes));
       } catch (error) {
         if (!(error instanceof DOMException && error.name === "AbortError")) console.error(error);
       }
@@ -80,13 +93,21 @@ export default function AgentLoopBlock({ wsId }: { wsId: string }) {
         <div className="flex items-center" style={{ gap: CONTROL_GAP }}>
           <input
             id={`max-tool-calls-${wsId}`}
-            type="number"
-            min={1}
-            max={500}
+            type="text"
+            inputMode="numeric"
+            pattern="[0-9]*"
+            title={`Whole number from ${MIN_MAX_ITERATIONS} to ${MAX_MAX_ITERATIONS}`}
             className="input input-sm flex-none text-center text-text"
             style={{ width: CONTROL_WIDTH }}
             value={iterationsDraft}
-            onChange={(e) => setIterationsDraft(e.target.value)}
+            onChange={(e) => {
+              if (isBoundedIntegerDraft(e.target.value, MIN_MAX_ITERATIONS, MAX_MAX_ITERATIONS)) {
+                setIterationsDraft(e.target.value);
+              }
+            }}
+            onBlur={() => {
+              if (iterationsDraft === "") setIterationsDraft(String(iterations));
+            }}
           />
           <label htmlFor={`max-tool-calls-${wsId}`} className="text-xs text-text-3" style={{ width: LABEL_WIDTH }}>
             Max tool calls
@@ -95,13 +116,21 @@ export default function AgentLoopBlock({ wsId }: { wsId: string }) {
         <div className="flex items-center" style={{ gap: CONTROL_GAP }}>
           <input
             id={`timeout-minutes-${wsId}`}
-            type="number"
-            min={1}
-            max={1440}
+            type="text"
+            inputMode="numeric"
+            pattern="[0-9]*"
+            title={`Whole number from ${MIN_MAX_RUN_MINUTES} to ${MAX_MAX_RUN_MINUTES}`}
             className="input input-sm flex-none text-center text-text"
             style={{ width: CONTROL_WIDTH }}
             value={minutesDraft}
-            onChange={(e) => setMinutesDraft(e.target.value)}
+            onChange={(e) => {
+              if (isBoundedIntegerDraft(e.target.value, MIN_MAX_RUN_MINUTES, MAX_MAX_RUN_MINUTES)) {
+                setMinutesDraft(e.target.value);
+              }
+            }}
+            onBlur={() => {
+              if (minutesDraft === "") setMinutesDraft(String(minutes));
+            }}
           />
           <label htmlFor={`timeout-minutes-${wsId}`} className="text-xs text-text-3" style={{ width: LABEL_WIDTH }}>
             Timeout in minutes

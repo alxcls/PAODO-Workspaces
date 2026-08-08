@@ -2,7 +2,8 @@
 // config, and the combined AgentConfig consumed by buildTools and the runner.
 import type { BaseMessage } from "@langchain/core/messages";
 import type { BaseChatModel } from "@langchain/core/language_models/chat_models";
-import type { IWorkspaceVersioning } from "../infra/interfaces";
+import type { IWorkspaceVersionRestorer } from "../infra/interfaces";
+import type { ReasoningEffort } from "../models/llmSelection";
 
 export interface ExecResult {
   code: number;
@@ -33,27 +34,6 @@ export type StreamingExecFn = (
 // with a taskId + the in-container log path. Used by execute_command's run_in_background branch.
 // Kept separate from StreamingExecFn so the streaming/timeout machinery never touches this path.
 export type BackgroundExecFn = (command: string) => Promise<{ taskId: string; logFile: string }>;
-
-// The full set of reasoning-effort levels across all providers, quietest first. Each provider accepts
-// only a SUBSET (see PROVIDER_METADATA in buildModel.ts): OpenAI takes none…xhigh, Anthropic low…max,
-// DeepSeek none. A stored/selected value is validated against the chosen provider's subset, not this
-// union — so this type is deliberately the widest thing any provider might carry.
-export type ReasoningEffort = "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
-
-// Per-workspace LLM selection: provider + model + reasoning effort are chosen in the UI and stored on
-// the workspace record (not in .env). When a workspace has made no choice, the agent falls back to
-// DEFAULT_LLM. .env carries only the provider API keys.
-export interface WorkspaceLlmSelection {
-  provider: string;
-  model: string;
-  reasoningEffort: ReasoningEffort;
-}
-
-export const DEFAULT_LLM: WorkspaceLlmSelection = {
-  provider: "deepseek",
-  model: "deepseek-v4-pro",
-  reasoningEffort: "low",
-};
 
 // The resolved LLM config for one run: the single provider that was selected, plus the model and key
 // that belong to it. Deliberately provider-agnostic — adding a provider adds an entry to the PROVIDERS
@@ -91,7 +71,7 @@ export interface AgentConfig extends LLMProviderConfig, ExecConfig, SkillConfig 
 // seams so they can broadcast WS events and log warnings without importing infra directly.
 export interface PostDispatchContext {
   messages: BaseMessage[];
-  versioning: IWorkspaceVersioning | undefined;
+  versioning: IWorkspaceVersionRestorer | undefined;
   workspaceId: string;
   workspaceDir: string;
   /** The bare model (no bound tools) — required by the compact handler to summarize history. Absent for handlers that don't need it. */

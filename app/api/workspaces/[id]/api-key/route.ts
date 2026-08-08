@@ -1,24 +1,44 @@
 // REST endpoint for managing a workspace's agent API key.
-// GET returns the current state; POST mints/rotates the key (plaintext returned once); DELETE revokes
-// it; PATCH toggles the channel. Everything but GET comes from the shared credential handlers.
+// GET returns current state; POST explicitly generates/rotates the key (plaintext returned once);
+// DELETE revokes it; PATCH toggles the channel. Everything but GET comes from shared handlers.
 export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
 import { credentialHandlers, publicBaseUrl } from "@/lib/api/credentialRoutes";
-import { state } from "@/lib/infra/security/credentialStore";
+import { getCredentialState } from "@/lib/operations/credentials/manage";
+import { requireWorkspaceId } from "@/lib/api/guards";
+import { channelSetEnabled, workspaceReceiptContext } from "@/lib/api/workspaceUpdateReceipt";
 
 type Params = { id: string };
 
-const handlers = credentialHandlers<Params>("workspace-api", async ({ id }) => id);
+const handlers = credentialHandlers<Params>(
+  "workspace-api",
+  // Guarded like the MCP route: an unchecked id would let a typo mint a key against a workspace that
+  // does not exist, leaving an orphan credential record nothing ever cleans up.
+  async ({ id }, request) => {
+    const ws = requireWorkspaceId(id, request);
+    return ws instanceof NextResponse ? ws : ws.id;
+  },
+  {
+    keyField: "workspaceApiKey",
+    setEnabled: channelSetEnabled("workspaceApiAccess"),
+    // The workspace projection's own names, so revoking and reading the workspace back never call the
+    // same two facts by different words.
+    axisFields: { access: "workspaceApiAccess", hasKey: "workspaceApiHasKey" },
+    receiptContext: workspaceReceiptContext,
+  },
+);
 
 export const POST = handlers.POST;
 export const DELETE = handlers.DELETE;
 export const PATCH = handlers.PATCH;
 
-export async function GET(_req: Request, { params }: { params: Promise<Params> }) {
+export async function GET(req: Request, { params }: { params: Promise<Params> }) {
   const { id } = await params;
+  const ws = requireWorkspaceId(id, req);
+  if (ws instanceof NextResponse) return ws;
   return NextResponse.json(
-    { ...state("workspace-api", id), publicBaseUrl: publicBaseUrl() },
+    { ...getCredentialState("workspace-api", ws.id), publicBaseUrl: publicBaseUrl() },
     { headers: { "Cache-Control": "no-store" } },
   );
 }

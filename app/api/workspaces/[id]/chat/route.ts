@@ -4,50 +4,33 @@
 //   - attach: body has an empty/absent `message` → re-attach to a conversation's in-flight run
 // In both modes the run is owned by the run broker (not this request), so closing the tab only
 // detaches this viewer — the agent keeps going until it finishes or is explicitly stopped.
-import { type NextRequest, NextResponse } from "next/server";
-import { requireWorkspace } from "@/lib/api/guards";
+import type { NextRequest } from "next/server";
 import type { AgentEvent } from "@/lib/agent/runner";
-import { buildSystemPrompt, buildPromptConfig } from "@/lib/agent/systemPrompt";
-import { buildWorkspacePromptInputs } from "@/lib/agent/promptContext";
-import { loadAgentConfig } from "@/lib/agent/buildTools";
-import { setSystemPrompt } from "@/lib/agent/messageSerialization";
-import * as conversations from "@/lib/workspace/conversationStore";
 import * as broker from "@/lib/agent/runBroker";
 import { SSE_HEADERS, startKeepalive } from "@/lib/agent/sse";
 import { createLogger } from "@/lib/infra/logger";
+import { appErrorResponse } from "@/lib/api/errorResponse";
+import { ConversationNotFoundError } from "@/lib/operations/agent/errors";
+import { prepareWorkspaceChat } from "@/lib/operations/conversations/manage";
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const log = createLogger("api").child({ workspaceId: id, route: "chat" });
-  const ws = requireWorkspace(id);
-  if (ws instanceof NextResponse) return ws;
-
   const body = (await req.json()) as { message?: string; conversationId?: string };
-  const conversationId = body.conversationId ?? conversations.getActiveId(ws.id);
-  const messages = conversations.getMessages(ws.id, conversationId);
-  if (!messages) return new Response("Conversation not found", { status: 404 });
-
-  const userMessage = body.message?.trim();
-  if (userMessage) {
-    // Refresh the system prompt on every run so AGENTS.md and drive changes are always picked up.
-    const inputs = buildWorkspacePromptInputs(ws.id, ws.dir);
-    setSystemPrompt(messages, buildSystemPrompt(ws.name, buildPromptConfig(loadAgentConfig(ws.id)), inputs));
-    const { alreadyRunning } = broker.startRun({
-      workspaceId: ws.id,
-      workspaceName: ws.name,
-      workspaceDir: ws.dir,
-      conversationId,
-      messages,
-      userInput: userMessage,
-      maxIterations: ws.maxIterations,
-      maxRunMinutes: ws.maxRunMinutes,
-      origin: "chat",
-    });
-    if (alreadyRunning) return new Response("A run is already in progress", { status: 409 });
-    conversations.setActiveId(ws.id, conversationId);
+  let prepared;
+  try {
+    prepared = prepareWorkspaceChat(id, body);
+  } catch (err) {
+    if (err instanceof ConversationNotFoundError) {
+      return appErrorResponse(err, req) ?? new Response("Conversation not found", { status: 404 });
+    }
+    throw err;
   }
+  if (!prepared) return new Response("Workspace not found", { status: 404 });
+  if (prepared.started === false) return new Response("A run is already in progress", { status: 409 });
+  const { conversationId } = prepared;
 
-  log.debug({ conversationId, mode: userMessage ? "send" : "attach" }, "chat stream started");
+  log.debug({ conversationId, mode: prepared.started === null ? "attach" : "send" }, "chat stream started");
   const encoder = new TextEncoder();
 
   const stream = new ReadableStream({
@@ -74,7 +57,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       };
 
       // Live events arrive here; 'done' ends the stream for this viewer.
-      const sub = broker.subscribe(ws.id, conversationId, (event) => {
+      const sub = broker.subscribe(id, conversationId, (event) => {
         send(event);
         if (event.type === "done") close();
       });

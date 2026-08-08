@@ -3,7 +3,7 @@
 // connected to, with traversal guarded. Drives are touched host-side only — never via a container.
 import path from "path";
 import { normalizeRelpath } from "./pathUtils";
-import { resolveDriveDir, type Drive } from "../workspace/driveStore";
+import { resolveDriveDir, type Drive } from "@/lib/drives/store";
 
 export interface ResolvedDrivePath {
   drive: Drive;

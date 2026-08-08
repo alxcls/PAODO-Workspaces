@@ -8,27 +8,11 @@ export const runtime = "nodejs";
 
 import { type NextRequest, NextResponse } from "next/server";
 import { requireWorkspace } from "@/lib/api/guards";
-import { buildSystemPrompt, buildPromptConfig } from "@/lib/agent/systemPrompt";
-import { buildWorkspacePromptInputs } from "@/lib/agent/promptContext";
-import { loadAgentConfig } from "@/lib/agent/buildTools";
+import { workspaceSystemPromptText } from "@/lib/agent/workspacePrompt";
 
-// The SystemMessage content is an array of text blocks; join their text into one string.
-function systemPromptText(content: unknown): string {
-  if (typeof content === "string") return content;
-  if (Array.isArray(content)) {
-    return content
-      .map((b) => (b && typeof b === "object" && "text" in b ? String((b as { text: string }).text) : ""))
-      .filter(Boolean)
-      .join("\n\n");
-  }
-  return "";
-}
-
-export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const ws = requireWorkspace(id);
+  const ws = requireWorkspace(id, req);
   if (ws instanceof NextResponse) return ws;
-  const inputs = buildWorkspacePromptInputs(ws.id, ws.dir);
-  const msg = buildSystemPrompt(ws.name, buildPromptConfig(loadAgentConfig(ws.id)), inputs);
-  return NextResponse.json({ prompt: systemPromptText(msg.content) });
+  return NextResponse.json({ prompt: workspaceSystemPromptText(ws) });
 }

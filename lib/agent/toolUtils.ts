@@ -1,4 +1,4 @@
-import type { ToolStatus } from "../workspace/usageStore";
+import type { ToolStatus } from "@/lib/usage/types";
 
 // Render a caught error as a tool result string. The leading "Error:" is load-bearing —
 // classifyToolStatus below reads it to tag the call as failed (red dot in the dashboard). Every

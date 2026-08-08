@@ -1,89 +1,76 @@
 // REST endpoint for a workspace's single agent schedule.
 // GET returns the schedule (or null); PUT creates/replaces it.
 // The scheduler (started in server.ts) reads the same store and fires runs on the recurrence.
+//
+// Translation only: the rules, the messages and the "a replace keeps the id and the run history"
+// behaviour are lib/operations/schedules/schedule.ts, so the CLI and any later adapter get the same
+// answers without restating them. What is left here is HTTP — the not-found body, the unknown-field
+// rejection, and turning an AppError into a status.
 export const runtime = "nodejs";
 
-import { randomUUID } from "crypto";
 import { NextResponse, type NextRequest } from "next/server";
-import { requireWorkspace } from "@/lib/api/guards";
-import { getSchedule, setSchedule, type IntervalUnit, type ScheduleEntry } from "@/lib/infra/schedules/scheduleStore";
-import { computeNextRun, isValidTimezone } from "@/lib/infra/schedules/nextRun";
+import { createLogger } from "@/lib/infra/logger";
+import { notFound, requireWorkspace, workspaceIdParam } from "@/lib/api/guards";
+import { appErrorResponse, errorResponse, readJsonObject } from "@/lib/api/errorResponse";
+import { getWorkspaceSchedule, setWorkspaceSchedule, type ScheduleInput } from "@/lib/operations/schedules/schedule";
 
-const UNITS: IntervalUnit[] = ["minute", "hour", "day", "week"];
+const log = createLogger("api").child({ route: "schedule" });
 
-export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const ws = requireWorkspace(id);
+  // Guarded here rather than in the operation: on this path "no such workspace" and "no schedule yet"
+  // are both answers, and only the route can tell them apart in its response.
+  const ws = requireWorkspace(id, req);
   if (ws instanceof NextResponse) return ws;
-  return NextResponse.json(getSchedule(id));
+  return NextResponse.json(getWorkspaceSchedule(id));
 }
 
+/** The wire names PUT accepts, in one place so the rejection and its message cannot drift apart. */
+const SCHEDULE_FIELDS = ["prompt", "intervalValue", "intervalUnit", "startAt", "endAt", "timezone", "enabled"] as const;
+
 export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const { id } = await params;
-  const ws = requireWorkspace(id);
-  if (ws instanceof NextResponse) return ws;
+  const param = workspaceIdParam((await params).id, req);
+  if (param instanceof NextResponse) return param;
+  const id = param;
 
-  const body = (await req.json().catch(() => null)) as {
-    prompt?: string;
-    intervalValue?: number;
-    intervalUnit?: string;
-    startAt?: string;
-    endAt?: string | null;
-    timezone?: string;
-    enabled?: boolean;
-  } | null;
-  if (!body) return NextResponse.json({ error: "invalid JSON body" }, { status: 400 });
+  const parsed = await readJsonObject(req);
+  if (parsed instanceof Response) return parsed;
 
-  const prompt = body.prompt?.trim();
-  if (!prompt) return NextResponse.json({ error: "prompt is required" }, { status: 400 });
-
-  const intervalValue = body.intervalValue;
-  if (!Number.isInteger(intervalValue) || (intervalValue as number) < 1) {
-    return NextResponse.json({ error: "intervalValue must be an integer >= 1" }, { status: 400 });
+  // Reject anything not on the list rather than ignoring it. PUT is a replace, so a misspelled field
+  // is a field the caller believes it set and we silently dropped — and the 200 that follows carries
+  // the old value back, which reads as confirmation. The message names the accepted fields because a
+  // programmatic caller has no form to discover them from.
+  const unknown = Object.keys(parsed).filter((key) => !(SCHEDULE_FIELDS as readonly string[]).includes(key));
+  if (unknown.length > 0) {
+    return errorResponse(
+      "INVALID_REQUEST",
+      `unknown field(s): ${unknown.join(", ")} — accepted: ${SCHEDULE_FIELDS.join(", ")}`,
+      {
+        request: req,
+        details: { fields: unknown, acceptedFields: [...SCHEDULE_FIELDS] },
+      },
+    );
   }
 
-  if (!UNITS.includes(body.intervalUnit as IntervalUnit)) {
-    return NextResponse.json({ error: `intervalUnit must be one of ${UNITS.join(", ")}` }, { status: 400 });
+  try {
+    // Forwarded as sent. Every value's type is checked by the validator that owns its rules, so one
+    // layer states each rule once and every trigger gets the same rejection.
+    const entry = setWorkspaceSchedule(id, parsed as ScheduleInput);
+    if (!entry) return notFound(req);
+    return NextResponse.json(entry);
+  } catch (err) {
+    const expected = appErrorResponse(err, req);
+    if (expected) return expected;
+    log.error(
+      {
+        event: "schedule_save_failed",
+        outcome: "schedule_not_saved",
+        code: "INTERNAL_ERROR",
+        err,
+        workspaceId: id,
+      },
+      "failed to save schedule",
+    );
+    return errorResponse("INTERNAL_ERROR", "failed to save schedule", { request: req });
   }
-
-  if (!body.timezone || !isValidTimezone(body.timezone)) {
-    return NextResponse.json({ error: "timezone must be a valid IANA timezone" }, { status: 400 });
-  }
-
-  if (!body.startAt || Number.isNaN(Date.parse(body.startAt))) {
-    return NextResponse.json({ error: "startAt must be a valid date-time" }, { status: 400 });
-  }
-
-  const endAt = body.endAt?.trim() || undefined;
-  if (endAt) {
-    if (Number.isNaN(Date.parse(endAt))) {
-      return NextResponse.json({ error: "endAt must be a valid date" }, { status: 400 });
-    }
-    if (Date.parse(endAt) <= Date.parse(body.startAt)) {
-      return NextResponse.json({ error: "endAt must be after startAt" }, { status: 400 });
-    }
-  }
-
-  const existing = getSchedule(id);
-  const entry: ScheduleEntry = {
-    id: existing?.id ?? randomUUID(),
-    workspaceId: id,
-    prompt,
-    intervalValue: intervalValue as number,
-    intervalUnit: body.intervalUnit as IntervalUnit,
-    startAt: body.startAt,
-    endAt,
-    timezone: body.timezone,
-    enabled: body.enabled ?? true,
-    createdAt: existing?.createdAt ?? new Date().toISOString(),
-    nextRunAt: null,
-    lastRunAt: existing?.lastRunAt,
-    lastRunStatus: existing?.lastRunStatus,
-    lastRunSnippet: existing?.lastRunSnippet,
-  };
-  const next = entry.enabled ? computeNextRun(entry, new Date()) : null;
-  entry.nextRunAt = next ? next.toISOString() : null;
-
-  setSchedule(entry);
-  return NextResponse.json(entry);
 }

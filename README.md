@@ -30,6 +30,9 @@ _Demo video of PAODO in action_ :
 
 - **Shared drives** — connect shared storage to selected workspaces so agents can exchange files and collaborate on the same materials.
 
+- **CLI access** — Access the app directly through console, optimized for coding agents. (still in progress)
+
+
 ## Quick start
 
 **Requirements:** Node.js 20+, [Docker](https://docs.docker.com/get-docker/) (running), and an OpenAI, Anthropic, or DeepSeek API key.
@@ -125,20 +128,6 @@ Skill calls are one-shot, unlike the chat API above: each runs in a fresh, isola
 there is no `conversationId` to continue — a caller that needs different arguments calls again
 rather than resumes. Those conversations are still persisted and visible in the workspace UI and dashboard for
 auditing.
-
-## Project structure
-
-```
-server.ts                Custom entry: Next.js + WebSocket on one port
-Dockerfile(.workspace)   Platform image / per-workspace sandbox image
-app/api/                 REST + SSE endpoints, agent network API
-lib/agent/               ReAct loop, system prompt, one file per tool
-lib/operations/          Trigger-neutral application operations shared by UI, API and MCP
-lib/infra/               Persistence + runtime (store, containers, WS hub)
-components/              UI panels (chat, file tree, console, graph editor)
-data/                    Runtime state (gitignored)
-doc/                     Architecture docs, PRDs, ADRs
-```
 
 ## Known limitations
 

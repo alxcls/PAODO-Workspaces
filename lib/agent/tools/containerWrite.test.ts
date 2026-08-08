@@ -6,7 +6,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { ExecRunner } from "../interfaces";
 
 const requireFreeSpace = vi.hoisted(() => vi.fn());
-vi.mock("../../workspace/diskSpace", () => ({ requireFreeSpace }));
+vi.mock("@/lib/infra/storage/diskSpace", () => ({ requireFreeSpace }));
 
 import { writeContainerFile } from "./containerWrite";
 
@@ -15,9 +15,12 @@ function makeRunner() {
   return { runner: { exec } as ExecRunner, exec };
 }
 
+const noopBroadcast = vi.fn();
+
 beforeEach(() => {
   requireFreeSpace.mockReset();
   requireFreeSpace.mockResolvedValue(null);
+  noopBroadcast.mockReset();
 });
 
 describe("writeContainerFile — disk-space guard", () => {
@@ -25,25 +28,27 @@ describe("writeContainerFile — disk-space guard", () => {
     requireFreeSpace.mockResolvedValue("Error: not enough free disk space to write this file.");
     const { runner, exec } = makeRunner();
 
-    const result = await writeContainerFile(runner, "/data/ws1", "notes.md", "hello");
+    const result = await writeContainerFile(runner, "/data/ws1", "notes.md", "hello", noopBroadcast);
 
     expect(result).toMatch(/^Error:/);
     expect(result).toContain("not enough free disk space");
     expect(exec).not.toHaveBeenCalled();
+    expect(noopBroadcast).not.toHaveBeenCalled();
   });
 
   it("sizes the check off the content being written", async () => {
     const { runner } = makeRunner();
-    await writeContainerFile(runner, "/data/ws1", "notes.md", "hello");
+    await writeContainerFile(runner, "/data/ws1", "notes.md", "hello", noopBroadcast);
 
     expect(requireFreeSpace).toHaveBeenCalledWith("/data/ws1", Buffer.byteLength("hello"));
   });
 
-  it("proceeds to mkdir + tee when there's room", async () => {
+  it("proceeds to mkdir + tee when there's room, then broadcasts the change", async () => {
     const { runner, exec } = makeRunner();
-    const result = await writeContainerFile(runner, "/data/ws1", "src/notes.md", "hello");
+    const result = await writeContainerFile(runner, "/data/ws1", "src/notes.md", "hello", noopBroadcast);
 
     expect(result).toBeNull();
     expect(exec).toHaveBeenCalledTimes(2); // mkdir -p, then tee
+    expect(noopBroadcast).toHaveBeenCalledWith(JSON.stringify({ type: "files_changed", paths: ["src/notes.md"] }));
   });
 });

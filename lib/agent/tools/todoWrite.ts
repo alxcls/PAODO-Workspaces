@@ -4,8 +4,8 @@
 
 import { StructuredTool } from "@langchain/core/tools";
 import { z } from "zod";
-import { setTodos } from "../../workspace/todoStore";
-import type { Todo } from "../../workspace/todoStore";
+import { setTodos } from "@/lib/todos/store";
+import type { Todo } from "@/lib/todos/store";
 
 const schema = z.object({
   todos: z

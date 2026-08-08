@@ -5,90 +5,14 @@ export const runtime = "nodejs";
 
 import { type NextRequest, NextResponse } from "next/server";
 import { requireWorkspace, rateLimited, subjectRateLimited } from "@/lib/api/guards";
+import { appErrorResponse } from "@/lib/api/errorResponse";
 import { validate } from "@/lib/infra/security/credentialStore";
 import { getClientIp } from "@/lib/infra/realtime/clientIp";
 import { createAuditLogger, createLogger } from "@/lib/infra/logger";
 import { throttleLogWithSources } from "@/lib/infra/logThrottle";
-import type { AgentEvent } from "@/lib/agent/runner";
-import { buildSystemPrompt, buildPromptConfig } from "@/lib/agent/systemPrompt";
-import { buildWorkspacePromptInputs } from "@/lib/agent/promptContext";
-import { loadAgentConfig } from "@/lib/agent/buildTools";
-import { setSystemPrompt } from "@/lib/agent/messageSerialization";
-import * as conversations from "@/lib/workspace/conversationStore";
-import * as broker from "@/lib/agent/runBroker";
-import { SSE_HEADERS, startKeepalive } from "@/lib/agent/sse";
-
-function apiConversationStream(req: NextRequest, workspaceId: string, conversationId: string): Response {
-  const encoder = new TextEncoder();
-  const stream = new ReadableStream({
-    start(controller) {
-      let closed = false;
-      let response = "";
-      let limitReached = false;
-      let failure: Extract<AgentEvent, { type: "error" }> | undefined;
-      // This stream is quieter than the UI's: tokens are accumulated rather than forwarded, so a
-      // long run may send nothing at all between tool_start frames. Without a keepalive the caller
-      // (or a proxy in front of it) drops the connection long before the run finishes.
-      const stopKeepalive = startKeepalive(controller, encoder);
-      const send = (event: object) => {
-        if (!closed) controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
-      };
-      const close = () => {
-        if (closed) return;
-        closed = true;
-        stopKeepalive();
-        sub?.unsubscribe();
-        try {
-          controller.close();
-        } catch {
-          /* already closed */
-        }
-      };
-      const handle = (event: AgentEvent) => {
-        switch (event.type) {
-          case "token":
-            response += event.content;
-            break;
-          case "tool_start":
-            send({ type: "tool_start", name: event.name });
-            break;
-          case "limit_reached":
-            limitReached = true;
-            break;
-          case "error":
-            failure = event;
-            send({ type: "error", message: event.message, ...(event.code ? { code: event.code } : {}) });
-            break;
-          case "done":
-            if (!failure) {
-              send({ type: "response", content: response, iterationLimitReached: limitReached, conversationId });
-            }
-            send({
-              type: "done",
-              conversationId,
-              ...(failure ? { status: "failed", ...(failure.code ? { code: failure.code } : {}) } : {}),
-            });
-            close();
-            break;
-        }
-      };
-
-      const sub = broker.subscribe(workspaceId, conversationId, handle);
-      if (!sub) {
-        // The run completed before this response subscribed. Its conversation was persisted by
-        // the broker; callers can use the returned id to fetch or continue it through the UI.
-        send({ type: "done", conversationId });
-        close();
-        return;
-      }
-      for (const event of sub.replay) handle(event);
-      if (sub.status === "done") close();
-      // Disconnecting an API caller detaches this SSE viewer; it must not cancel the agent run.
-      req.signal.addEventListener("abort", close);
-    },
-  });
-  return new Response(stream, { headers: { ...SSE_HEADERS, "X-Conversation-Id": conversationId } });
-}
+import { apiConversationStream } from "@/lib/api/workspaceRunStream";
+import { ConversationNotFoundError } from "@/lib/operations/agent/errors";
+import { startWorkspaceRun } from "@/lib/operations/agent/run";
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -133,24 +57,23 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   // API calls start independent conversations by default so an automation cannot unexpectedly
   // append to whichever conversation a human last selected in the UI. Pass conversationId to
   // continue a previous API/UI conversation deliberately.
-  const conversationId = body.conversationId ?? conversations.createConversation(ws.id).id;
-  const messages = conversations.getMessages(ws.id, conversationId);
-  if (!messages) return new Response("Conversation not found", { status: 404 });
+  let receipt;
+  try {
+    receipt = startWorkspaceRun(ws.id, {
+      prompt: body.message,
+      origin: "api",
+      conversation: body.conversationId ? { mode: "existing", id: body.conversationId } : { mode: "create" },
+    });
+  } catch (err) {
+    if (err instanceof ConversationNotFoundError) {
+      return appErrorResponse(err, req) ?? new Response("Conversation not found", { status: 404 });
+    }
+    throw err;
+  }
+  if (!receipt) return new Response("Workspace not found", { status: 404 });
+  if (!receipt.started) return new Response("A run is already in progress", { status: 409 });
 
-  const inputs = buildWorkspacePromptInputs(ws.id, ws.dir);
-  setSystemPrompt(messages, buildSystemPrompt(ws.name, buildPromptConfig(loadAgentConfig(ws.id)), inputs));
-  const { alreadyRunning } = broker.startRun({
-    workspaceId: ws.id,
-    workspaceName: ws.name,
-    workspaceDir: ws.dir,
-    conversationId,
-    messages,
-    userInput: body.message.trim(),
-    maxIterations: ws.maxIterations,
-    maxRunMinutes: ws.maxRunMinutes,
-    origin: "api",
-  });
-  if (alreadyRunning) return new Response("A run is already in progress", { status: 409 });
+  const { conversationId } = receipt;
 
   log.debug({ conversationId }, "public API chat stream started");
   return apiConversationStream(req, ws.id, conversationId);

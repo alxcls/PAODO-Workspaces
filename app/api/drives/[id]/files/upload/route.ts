@@ -7,8 +7,8 @@ export const runtime = "nodejs";
 
 import { type NextRequest, NextResponse } from "next/server";
 import { requireDrive, rateLimited } from "@/lib/api/guards";
-import { driveContentDir } from "@/lib/workspace/driveStore";
-import { handleUpload } from "@/lib/workspace/fileUpload";
+import { driveContentDir } from "@/lib/drives/store";
+import { handleUpload } from "@/lib/uploads/upload";
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;

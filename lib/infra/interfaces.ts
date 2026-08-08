@@ -3,17 +3,27 @@
 // that tests and the agent layer can inject isolated instances. Production keeps the
 // default singletons via lib/infra/services.ts.
 //
-// Type-only imports below: erased at compile time, so the apparent cycle with
-// workspaceStore.ts (which implements IWorkspaceStore) carries no runtime edge.
-import type { Workspace } from "../workspace/workspaceStore";
-import type { ReasoningEffort } from "../agent/interfaces";
-import type { DockerResult } from "./docker/dockerClient";
-import type { BackgroundTask } from "./docker/containerManager";
+// Type-only imports below are erased at compile time.
+import type { Workspace } from "../workspace/types";
+import type { ReasoningEffort } from "../models/llmSelection";
+import type { DockerResult, DockerStdin } from "./docker/dockerClient";
+import type { BackgroundTask } from "./docker/backgroundTaskManager";
 
-export interface IWorkspaceStore {
+/** Read capabilities used by agent/runtime consumers. */
+export interface IWorkspaceReader {
   getWorkspace(id: string): Workspace | undefined;
+}
+
+export interface IWorkspaceLookup extends IWorkspaceReader {
   getWorkspaceByName(name: string): Workspace | undefined;
+}
+
+export interface IWorkspaceCatalog extends IWorkspaceLookup {
   listWorkspaces(): Workspace[];
+}
+
+/** Full registry surface retained for the composition root and workspace operations. */
+export interface IWorkspaceStore extends IWorkspaceCatalog {
   createWorkspace(name: string): Promise<Workspace>;
   renameWorkspace(id: string, name: string): Promise<boolean>;
   deleteWorkspace(id: string): Promise<boolean>;
@@ -57,17 +67,33 @@ export interface VersionStat {
 
 // Per-workspace git versioning. Methods take (workspaceId, workspaceDir): the id keys the
 // external git-dir (stable across renames), the dir is the work-tree. See workspaceVersioning.ts.
-export interface IWorkspaceVersioning {
-  initRepo(workspaceId: string, workspaceDir: string): Promise<void>;
+export interface IWorkspaceSnapshotWriter {
   commitBaseline(workspaceId: string, workspaceDir: string, prompt: string): Promise<{ sha: string }>;
   commitResult(workspaceId: string, workspaceDir: string, summary: string): Promise<{ sha: string; changed: boolean }>;
-  history(workspaceId: string, workspaceDir: string): Promise<HistoryEntry[]>;
-  diff(workspaceId: string, workspaceDir: string, from: string, to: string): Promise<string>;
+}
+
+export interface IWorkspaceVersionReader {
   /** Snapshots, newest-first, each with its per-file diffstat vs its parent. Omit `n` to list all. */
   versionStats(workspaceId: string, workspaceDir: string, n?: number): Promise<VersionStat[]>;
   /** Raw diff for one snapshot (`git show sha`), optionally narrowed to one path. */
   versionDiff(workspaceId: string, workspaceDir: string, sha: string, opts?: { path?: string }): Promise<string>;
+}
+
+export interface IWorkspaceVersionRestorer {
   restore(workspaceId: string, workspaceDir: string, sha: string): Promise<boolean>;
+}
+
+/** Capabilities needed during an agent run, without administrative/versioning setup methods. */
+export interface IAgentWorkspaceVersioning
+  extends IWorkspaceSnapshotWriter,
+    IWorkspaceVersionReader,
+    IWorkspaceVersionRestorer {}
+
+/** Full versioning surface retained for infrastructure composition and lifecycle operations. */
+export interface IWorkspaceVersioning extends IAgentWorkspaceVersioning {
+  initRepo(workspaceId: string, workspaceDir: string): Promise<void>;
+  history(workspaceId: string, workspaceDir: string): Promise<HistoryEntry[]>;
+  diff(workspaceId: string, workspaceDir: string, from: string, to: string): Promise<string>;
   /** Permanently remove a workspace's versioning repo. Called when the workspace is deleted. */
   deleteRepo(workspaceId: string): Promise<void>;
   /**
@@ -97,7 +123,7 @@ export interface IContainerLifecycle {
 
 /** Foreground command execution inside a workspace container. */
 export interface IContainerExec {
-  exec(workspaceId: string, workspaceDir: string, cmdArgs: string[], opts?: { stdin?: string }): Promise<DockerResult>;
+  exec(workspaceId: string, workspaceDir: string, cmdArgs: string[], opts?: { stdin?: DockerStdin }): Promise<DockerResult>;
   execStreaming(
     workspaceId: string,
     workspaceDir: string,

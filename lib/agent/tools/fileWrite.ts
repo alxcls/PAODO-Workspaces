@@ -25,16 +25,17 @@ If the file already exists and you need to preserve or merge its content, read i
   constructor(
     private runner: ExecRunner,
     private workspaceDir: string,
+    private broadcast: (msg: string) => void,
   ) {
     super();
   }
 
   protected async _call({ file_path, content }: z.infer<typeof schema>): Promise<string> {
     // Realpath-contains against a symlink planted inside the workspace, not just a lexical "../"
-    // check (see lib/workspace/pathContainment.ts).
+    // check (see lib/files/containment.ts).
     const relpath = await containWorkspacePath(this.workspaceDir, file_path);
     if (relpath === null) return "Error: path is outside the workspace";
-    const err = await writeContainerFile(this.runner, this.workspaceDir, relpath, content);
+    const err = await writeContainerFile(this.runner, this.workspaceDir, relpath, content, this.broadcast);
     return err ?? `Written ${file_path} (${content.length} chars)`;
   }
 }

@@ -7,15 +7,20 @@ import { HumanMessage, ToolMessage, AIMessage } from "@langchain/core/messages";
 import type { AIMessageChunk, BaseMessage } from "@langchain/core/messages";
 import type { Logger } from "pino";
 import { buildTools, loadAgentConfig } from "./buildTools";
-import { classifyToolStatus } from "./toolUtils";
 import type { AgentConfig, PostDispatchContext, PostDispatchFn } from "./interfaces";
 import { getContainers } from "../infra/services";
-import type { IContainerManager, IWorkspaceStore, IWorkspaceVersioning } from "../infra/interfaces";
+import type {
+  IAgentWorkspaceVersioning,
+  IContainerManager,
+  IWorkspaceLookup,
+  IWorkspaceSnapshotWriter,
+} from "../infra/interfaces";
 import { getWsForWorkspace } from "../infra/realtime/wsHub";
 import { createLogger } from "../infra/logger";
-import { throttleLog } from "../infra/logThrottle";
-import type { ToolStatus } from "../workspace/usageStore";
+import type { ToolStatus } from "@/lib/usage/types";
 import type { CallAgentMeta } from "./tools/agentCall";
+import { streamModelTurn, synthesizeLimit, usageTokens, type ResolvedToolCall } from "./modelTurn";
+import { dispatchTools, type RunnerTool } from "./toolDispatch";
 
 const log = createLogger("agent");
 
@@ -64,13 +69,13 @@ export type RunAgentOptions = {
   /** Container lifecycle manager — defaults to the production singleton. Inject for testing. */
   containers?: IContainerManager;
   /** Workspace store — defaults to the production singleton. Inject for testing. */
-  store?: IWorkspaceStore;
+  store?: IWorkspaceLookup;
   /**
    * Workspace git versioning. When provided, the run is bracketed by a baseline snapshot (start)
    * and a single result commit (end). Omitted in tests that don't care about versioning — every
    * git call is guarded, so an absent service simply skips all snapshotting.
    */
-  versioning?: IWorkspaceVersioning;
+  versioning?: IAgentWorkspaceVersioning;
   /**
    * Post-dispatch signal handlers — one per signal-tool name. Defaults to the map returned by
    * buildAgentTools. Inject for testing to exercise runner dispatch without a full buildTools call.
@@ -79,262 +84,15 @@ export type RunAgentOptions = {
 };
 
 // The injectable infra pair, threaded from the route layer (via getStore()/getContainers())
-// down through agentStream and nested agent-to-agent calls so a single setServices() swap
+// down through the run broker and nested agent-to-agent calls so a single setServices() swap
 // flows end-to-end. Kept separate from RunAgentOptions so callers that only forward infra
 // don't have to know about the test-only override seams.
 export type AgentRuntimeDeps = Pick<RunAgentOptions, "store" | "containers" | "versioning">;
 
-type AnyTool = {
-  name: string;
-  invoke: (args: Record<string, unknown>, config?: { signal?: AbortSignal }) => Promise<unknown>;
-  /** When true the runner skips the WS tool_result_log broadcast for this tool's result. */
-  suppressResultNotify?: boolean;
-  /** When true the runner skips the MAX_RESULT_CHARS truncation for this tool's result. */
-  skipResultCap?: boolean;
-  /** Present on tools that need to return UI metadata alongside the model-facing string. */
-  callWithMeta?: AgentCallWithMeta;
-};
-type ResolvedToolCall = { id: string; name: string; args: Record<string, unknown> };
-// Structural type for AgentCallTool.callWithMeta — duck-typed so the runner needn't import the
-// concrete tool class (which would deepen the buildTools → agentCall import chain). The optional
-// onLink callback fires as soon as the callee's conversation is created (before the call resolves)
-// so the runner can surface the deep-link mid-run.
-type AgentCallWithMeta = (
-  args: Record<string, unknown>,
-  onLink?: (meta: CallAgentMeta) => void,
-  callerSignal?: AbortSignal,
-) => Promise<{ result: string; meta?: CallAgentMeta }>;
-type PartialTC = { id: string; name: string; args: string };
-
-type TurnEvent =
-  | { type: "token"; content: string }
-  | { type: "reasoning"; content: string }
-  | { type: "turn_complete"; fullText: string; toolCalls: ResolvedToolCall[]; accumulatedChunk: AIMessageChunk | null };
-
-// Newer models return content as an array of typed blocks instead of a plain string.
-function contentToText(content: unknown): string {
-  if (typeof content === "string") return content;
-  if (Array.isArray(content)) {
-    return content
-      .map((block) => {
-        if (typeof block === "string") return block;
-        if (block && typeof block === "object" && "text" in block) return (block as { text: string }).text;
-        return "";
-      })
-      .join("");
-  }
-  return "";
-}
-
-const MAX_RESULT_CHARS = 50_000;
-
-async function invokeTool(tool: AnyTool, args: Record<string, unknown>, signal?: AbortSignal): Promise<string> {
-  // Thread the abort signal into the tool so a user escape reaches long-running work (e.g.
-  // execute_command's in-container process). Tools that ignore the config are unaffected.
-  const result = await tool.invoke(args, { signal });
-  const str = String(result);
-  // Tools with their own paging (e.g. file_read) opt out via skipResultCap. Every other tool
-  // (execute_command, web_fetch, glob, …) has no paging and unpredictable output, so the cap
-  // stays as a guardrail against one result blowing out the context window.
-  if (tool.skipResultCap) return str;
-  if (str.length <= MAX_RESULT_CHARS) return str;
-  // Cut on a line boundary so the model never sees a half-line (e.g. mid-token in a JSON
-  // value). Fall back to a hard slice if the first line alone already exceeds the budget.
-  const lastNewline = str.lastIndexOf("\n", MAX_RESULT_CHARS);
-  const cut = lastNewline > 0 ? lastNewline : MAX_RESULT_CHARS;
-  return str.slice(0, cut) + `\n\n[output truncated — ${str.length} chars total, showing first ${cut}]`;
-}
-
 export { classifyToolStatus } from "./toolUtils";
 
-// Splits a stream chunk into text tokens and reasoning/thinking blocks.
-// Centralises all provider-specific branch logic (OpenAI reasoning, Anthropic thinking,
-// additional_kwargs.reasoning_content) so adding a new provider only touches this function.
-type ContentBlock =
-  | { type: "text"; text?: string }
-  | { type: "reasoning"; reasoning?: string }
-  | { type: "thinking"; thinking?: string }
-  | { type: string };
-
-function extractContentFromChunk(chunk: AIMessageChunk): { tokens: string[]; reasoning: string[] } {
-  const tokens: string[] = [];
-  const reasoning: string[] = [];
-  const rawContent = chunk.content;
-  if (typeof rawContent === "string") {
-    if (rawContent) tokens.push(rawContent);
-  } else if (Array.isArray(rawContent)) {
-    for (const block of rawContent as (string | ContentBlock)[]) {
-      if (typeof block === "string") {
-        if (block) tokens.push(block);
-        continue;
-      }
-      switch (block.type) {
-        case "text":
-          if ("text" in block && block.text) tokens.push(block.text);
-          break;
-        case "reasoning":
-          if ("reasoning" in block && block.reasoning) reasoning.push(block.reasoning);
-          break;
-        case "thinking":
-          if ("thinking" in block && block.thinking) reasoning.push(block.thinking);
-          break;
-        default:
-          // A provider/schema change can otherwise discard output silently. Warn at most once per
-          // throttle window because the same unknown block can appear in every streamed chunk.
-          const suppressed = throttleLog("agent_content_block_unhandled");
-          if (suppressed !== null) {
-            log.warn(
-              {
-                event: "agent_content_block_unhandled",
-                outcome: "content_block_ignored",
-                blockType: block.type,
-                suppressed,
-              },
-              "unhandled model content block type",
-            );
-          }
-      }
-    }
-  }
-  const reasoningContent = (chunk as unknown as { additional_kwargs?: { reasoning_content?: string } })
-    .additional_kwargs?.reasoning_content;
-  if (reasoningContent) reasoning.push(reasoningContent);
-  return { tokens, reasoning };
-}
-
-// Extracts the per-turn token counts from the accumulated stream chunk's usage metadata.
-function usageTokens(chunk: AIMessageChunk | null) {
-  return {
-    inputTokensTotal: chunk?.usage_metadata?.input_tokens ?? 0,
-    outputTokensTotal: chunk?.usage_metadata?.output_tokens ?? 0,
-    outputTokensReasoning: chunk?.usage_metadata?.output_token_details?.reasoning ?? 0,
-    // DeepSeek exposes cache hits in prompt_cache_hit_tokens and Moonshot in cached_tokens — both at
-    // the TOP level of usage, not in prompt_tokens_details.cached_tokens where LangChain's OpenAI
-    // adapter looks, so it misses them. Left unread, a cache hit is billed as fresh input: on Kimi K3
-    // that is $3.00/Mtok instead of $0.30, a 10x overstatement on a mostly-cached agent turn.
-    inputTokensCacheRead:
-      chunk?.usage_metadata?.input_token_details?.cache_read ??
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (chunk?.response_metadata as any)?.usage?.prompt_cache_hit_tokens ??
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (chunk?.response_metadata as any)?.usage?.cached_tokens ??
-      0,
-    inputTokensCacheWrite: chunk?.usage_metadata?.input_token_details?.cache_creation ?? 0,
-  };
-}
-
-function assembleToolCalls(partials: PartialTC[]): ResolvedToolCall[] {
-  return partials
-    .filter((p) => p.name)
-    .map((p, i) => {
-      let args: Record<string, unknown> = {};
-      try {
-        args = JSON.parse(p.args || "{}");
-      } catch {
-        /* leave empty */
-      }
-      return { id: p.id || `tc_${i}_${Date.now()}`, name: p.name, args };
-    });
-}
-
-// Streams one model turn, yielding tokens and reasoning as they arrive, then a
-// turn_complete event with the assembled tool calls and accumulated chunk.
-/* eslint-disable @typescript-eslint/no-explicit-any */
-async function* streamModelTurn(
-  modelWithTools: any,
-  messages: BaseMessage[],
-  iteration: number,
-  signal: AbortSignal | undefined,
-  wlog: Logger,
-): AsyncGenerator<TurnEvent> {
-  /* eslint-enable @typescript-eslint/no-explicit-any */
-  const partials: PartialTC[] = [];
-  let fullText = "";
-  let accumulatedChunk: AIMessageChunk | null = null;
-
-  const t0 = Date.now();
-  const stream = await modelWithTools.stream(messages, { signal });
-  let ttftMs: number | null = null;
-
-  for await (const chunk of stream as AsyncIterable<AIMessageChunk>) {
-    if (ttftMs === null) ttftMs = Date.now() - t0;
-    accumulatedChunk = accumulatedChunk ? accumulatedChunk.concat(chunk) : chunk;
-
-    const { tokens, reasoning } = extractContentFromChunk(chunk);
-    for (const text of tokens) {
-      fullText += text;
-      yield { type: "token", content: text };
-    }
-    for (const r of reasoning) {
-      yield { type: "reasoning", content: r };
-    }
-
-    for (const tcc of chunk.tool_call_chunks ?? []) {
-      const idx = tcc.index ?? 0;
-      if (!partials[idx]) partials[idx] = { id: "", name: "", args: "" };
-      if (tcc.id) partials[idx].id = tcc.id;
-      if (tcc.name) partials[idx].name += tcc.name;
-      if (tcc.args) partials[idx].args += tcc.args;
-    }
-  }
-
-  wlog.debug({ iteration, ttftMs, streamMs: Date.now() - t0 }, "model stream timing");
-  yield { type: "turn_complete", fullText, toolCalls: assembleToolCalls(partials), accumulatedChunk };
-}
-
-// Streams a summary turn after the iteration limit is reached.
-// Mutates messages to append the summary so subsequent history is coherent.
-/* eslint-disable @typescript-eslint/no-explicit-any */
-async function* synthesizeLimit(
-  model: any,
-  messages: BaseMessage[],
-  signal: AbortSignal | undefined,
-  wlog: Logger,
-  modelId?: string,
-): AsyncGenerator<AgentEvent> {
-  /* eslint-enable @typescript-eslint/no-explicit-any */
-  wlog.debug("limit synthesis started");
-  try {
-    const synthMessages = [
-      ...messages,
-      new HumanMessage(
-        "You have reached the maximum number of steps. Briefly summarize what you accomplished and what still needs to be done. Do not attempt any tool calls.",
-      ),
-    ];
-    const synthStream = await model.stream(synthMessages, { signal });
-    const turnId = crypto.randomUUID();
-    let synthText = "";
-    let accumulatedChunk: AIMessageChunk | null = null;
-    for await (const chunk of synthStream as AsyncIterable<AIMessageChunk>) {
-      accumulatedChunk = accumulatedChunk ? accumulatedChunk.concat(chunk) : chunk;
-      const text = contentToText(chunk.content);
-      if (text) {
-        synthText += text;
-        yield { type: "token", content: text };
-      }
-    }
-    if (synthText) {
-      messages.push(new AIMessage({ content: synthText, response_metadata: { executionTurnId: turnId } }));
-      yield {
-        type: "turn_usage",
-        turnId,
-        ...usageTokens(accumulatedChunk),
-        ...(modelId ? { model: modelId } : {}),
-        outputText: synthText,
-        toolCalls: [],
-      };
-    }
-    wlog.debug({ chars: synthText.length }, "limit synthesis done");
-  } catch (err) {
-    wlog.error(
-      { event: "agent_limit_synthesis_failed", outcome: "response_summary_missing", err },
-      "limit synthesis failed",
-    );
-  }
-}
-
 async function tryCommitBaseline(
-  versioning: IWorkspaceVersioning | undefined,
+  versioning: IWorkspaceSnapshotWriter | undefined,
   workspaceId: string,
   workspaceDir: string,
   prompt: string,
@@ -349,7 +107,7 @@ async function tryCommitBaseline(
 }
 
 async function tryCommitResult(
-  versioning: IWorkspaceVersioning | undefined,
+  versioning: IWorkspaceSnapshotWriter | undefined,
   workspaceId: string,
   workspaceDir: string,
   prompt: string,
@@ -361,36 +119,6 @@ async function tryCommitResult(
   } catch (err) {
     wlog.warn({ err }, "versioning result commit failed");
   }
-}
-
-type QueuedLink = { name: string; id?: string; meta: CallAgentMeta };
-
-function createLinkQueue() {
-  const queue: QueuedLink[] = [];
-  let wakeUp: (() => void) | null = null;
-  let done = false;
-
-  return {
-    emitLink(link: QueuedLink) {
-      queue.push(link);
-      wakeUp?.();
-      wakeUp = null;
-    },
-    notifySettled() {
-      done = true;
-      wakeUp?.();
-      wakeUp = null;
-    },
-    async *drainUntilSettled(): AsyncGenerator<QueuedLink> {
-      while (!done || queue.length) {
-        while (queue.length) yield queue.shift()!;
-        if (done) break;
-        await new Promise<void>((res) => {
-          wakeUp = res;
-        });
-      }
-    },
-  };
 }
 
 export async function* runAgent(
@@ -422,7 +150,7 @@ export async function* runAgent(
     signalHandlers: builtHandlers,
   } = (buildAgentTools ?? buildTools)(workspaceId, workspaceDir, config, { containers: resolvedContainers, store });
   const signalHandlers: Record<string, PostDispatchFn> = injectedHandlers ?? builtHandlers ?? {};
-  const typedToolMap = toolMap as Record<string, AnyTool>;
+  const typedToolMap = toolMap as Record<string, RunnerTool>;
 
   const resolvedNotify = notify ?? ((msg: object) => getWsForWorkspace(workspaceId)?.send(JSON.stringify(msg)));
   const resolvedWarmContainer =
@@ -540,71 +268,17 @@ export async function* runAgent(
         wlog.debug({ name: tc.name, argumentKeys: Object.keys(tc.args) }, "tool call");
       }
 
-      // call_agent surfaces its callee-session deep-link the moment the callee conversation is
-      // created (via the onLink callback below), not when the whole call finishes — so the caller
-      // sees "View session" while the callee is still working. Links are drained as they arrive;
-      // all tools settle before the atomic history-commit block below.
-      const lq = createLinkQueue();
-      const settledPromise = Promise.all(
-        activeCalls.map(async (tc) => {
-          const tool = typedToolMap[tc.name];
-          const toolStart = Date.now();
-          let resultStr: string;
-          let meta: CallAgentMeta | undefined;
-          let invocationThrew = false;
-          // Tools that return UI metadata alongside the model-facing string expose callWithMeta
-          // (a bound arrow property, so it can be called free-standing without a thisArg).
-          const withMeta = tool?.callWithMeta;
-          if (withMeta) {
-            const r = await withMeta(tc.args, (m) => lq.emitLink({ name: tc.name, id: tc.id, meta: m }), signal).catch(
-              (err) => {
-                invocationThrew = true;
-                if (!signal?.aborted) wlog.warn({ err, name: tc.name }, "tool invocation threw");
-                return {
-                  result: `Error: ${String(err)}`,
-                  meta: undefined,
-                };
-              },
-            );
-            resultStr = r.result;
-            meta = r.meta;
-          } else {
-            if (tool) {
-              resultStr = await invokeTool(tool, tc.args, signal).catch((err) => {
-                invocationThrew = true;
-                if (!signal?.aborted) wlog.warn({ err, name: tc.name }, "tool invocation threw");
-                return `Error: ${String(err)}`;
-              });
-            } else {
-              wlog.warn({ name: tc.name }, "model requested unknown tool");
-              resultStr = `Error: unknown tool "${tc.name}"`;
-            }
-          }
-          const toolMs = Date.now() - toolStart;
-          const status = classifyToolStatus(resultStr);
-          // Tool implementations commonly return an Error-prefixed result instead of throwing.
-          // Persist a safe operational signal without retaining arguments or result text, either
-          // of which may contain credentials or workspace contents. Unknown tools were warned
-          // above already; user cancellation is expected and should not become an incident log.
-          if (tool && status === "error" && !invocationThrew && !signal?.aborted) {
-            wlog.warn({ name: tc.name, toolMs, status }, "tool returned error");
-          } else {
-            wlog.debug({ name: tc.name, toolMs, status }, "tool timing");
-          }
-          return { tc, resultStr, meta, status };
-        }),
-      ).then((s) => {
-        lq.notifySettled();
-        return s;
-      });
+      // Tool execution is delegated, while this loop keeps ownership of event ordering and the
+      // atomic history commit below.
+      const dispatch = dispatchTools(activeCalls, typedToolMap, signal, wlog);
 
       // Drain link events as they arrive; exits once all tools settled and queue is empty.
       // Suspends only before the atomic history-commit below — an abort during the wait can
       // never leave a half-written turn.
-      for await (const link of lq.drainUntilSettled()) {
+      for await (const link of dispatch.links) {
         yield { type: "tool_link", name: link.name, id: link.id, meta: link.meta };
       }
-      const settled = await settledPromise;
+      const settled = await dispatch.settled;
 
       // Commit the assistant turn and all its tool results in one synchronous block, with no
       // yield or await in between. If the request is aborted (the user hits escape) the runner

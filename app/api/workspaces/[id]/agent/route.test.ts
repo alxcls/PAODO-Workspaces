@@ -8,7 +8,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const h = vi.hoisted(() => ({
   createConversation: vi.fn(() => ({ id: "conv-created" })),
-  getMessages: vi.fn(() => []),
+  getMessages: vi.fn((): never[] | null => []),
   startRun: vi.fn(() => ({ alreadyRunning: false })),
 }));
 
@@ -35,7 +35,7 @@ vi.mock("@/lib/infra/security/rateLimit", () => ({
   checkRateLimit: () => rateLimit,
   checkRateLimitPolicy: () => rateLimit,
 }));
-vi.mock("@/lib/workspace/conversationStore", () => ({
+vi.mock("@/lib/conversations/store", () => ({
   createConversation: h.createConversation,
   getMessages: h.getMessages,
 }));
@@ -43,6 +43,7 @@ vi.mock("@/lib/agent/runBroker", () => ({
   startRun: h.startRun,
   subscribe: () => ({ replay: [{ type: "done" }], status: "done", unsubscribe: vi.fn() }),
 }));
+// These prompt mocks intercept the shared workspacePrompt helper one layer below the operation.
 vi.mock("@/lib/agent/systemPrompt", () => ({ buildSystemPrompt: () => "system", buildPromptConfig: () => ({}) }));
 vi.mock("@/lib/agent/promptContext", () => ({ buildWorkspacePromptInputs: () => ({}) }));
 vi.mock("@/lib/agent/buildTools", () => ({ loadAgentConfig: () => ({}) }));
@@ -68,6 +69,8 @@ beforeEach(() => {
   h.createConversation.mockClear();
   h.getMessages.mockClear();
   h.startRun.mockClear();
+  h.getMessages.mockReturnValue([]);
+  h.startRun.mockReturnValue({ alreadyRunning: false });
 });
 
 describe("POST /api/workspaces/[id]/agent — Bearer key auth & per-workspace scoping", () => {
@@ -76,7 +79,7 @@ describe("POST /api/workspaces/[id]/agent — Bearer key auth & per-workspace sc
     expect(res.status).toBe(200);
     expect(reachedAgent(res)).toBe(true);
     expect(res.headers.get("x-conversation-id")).toBe("conv-created");
-    expect(h.createConversation).toHaveBeenCalledWith("ws-a");
+    expect(h.createConversation).toHaveBeenCalledWith("ws-a", { kind: undefined });
     expect(h.startRun).toHaveBeenCalledWith(
       expect.objectContaining({
         conversationId: "conv-created",
@@ -93,6 +96,25 @@ describe("POST /api/workspaces/[id]/agent — Bearer key auth & per-workspace sc
     expect(res.headers.get("x-conversation-id")).toBe("conv-existing");
     expect(h.createConversation).not.toHaveBeenCalled();
     expect(h.startRun).toHaveBeenCalledWith(expect.objectContaining({ conversationId: "conv-existing" }));
+  });
+
+  it("returns the shared not-found envelope for a missing explicit conversation", async () => {
+    h.getMessages.mockReturnValueOnce(null);
+
+    const res = await post("ws-a", { message: "again", conversationId: "conv-gone" }, "key-a");
+
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({ ok: false, code: "NOT_FOUND", error: "Conversation not found" });
+    expect(h.startRun).not.toHaveBeenCalled();
+  });
+
+  it("keeps the plain-text 409 when that conversation already has a run", async () => {
+    h.startRun.mockReturnValueOnce({ alreadyRunning: true });
+
+    const res = await post("ws-a", { message: "again", conversationId: "conv-running" }, "key-a");
+
+    expect(res.status).toBe(409);
+    expect(await res.text()).toBe("A run is already in progress");
   });
 
   it("401s when no Authorization header is present", async () => {

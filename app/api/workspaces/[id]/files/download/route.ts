@@ -1,29 +1,32 @@
-// Accepts a list of file paths and returns them as a single ZIP archive.
+// Accepts a list of workspace-relative file paths and returns them as a single ZIP archive.
 // Paths are validated to stay within the workspace directory before being added to the archive.
 export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
 import { requireWorkspace } from "@/lib/api/guards";
-import path from "path";
 import JSZip from "jszip";
 import { createLogger } from "@/lib/infra/logger";
-import { addSelectedToZip, zipToStreamResponse } from "@/lib/workspace/zipDownload";
+import { errorResponse, readJsonObject } from "@/lib/api/errorResponse";
+import { addSelectedToZip, zipToStreamResponse } from "@/lib/files/zip";
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const ws = requireWorkspace(id);
   if (ws instanceof NextResponse) return ws;
 
-  const body = (await req.json()) as { paths?: string[] };
+  const body = await readJsonObject(req);
+  if (body instanceof NextResponse) return body;
   if (!Array.isArray(body.paths) || body.paths.length === 0) {
-    return NextResponse.json({ error: "paths required" }, { status: 400 });
+    return errorResponse("INVALID_REQUEST", "paths must be a non-empty array of workspace-relative paths", {
+      request: req,
+      details: { field: "paths" },
+    });
   }
 
-  const wsDir = path.resolve(ws.dir);
   const zip = new JSZip();
   await addSelectedToZip(
     zip,
-    wsDir,
+    ws.dir,
     body.paths,
     (filePath, err) =>
       createLogger("api").warn({ workspaceId: id, filePath, err }, "skipping unreadable path in download"),

@@ -14,7 +14,6 @@ import CliAccessModal from "@/components/settings/CliAccessModal";
 import TopBar from "@/components/layout/TopBar";
 import { useWorkspaces } from "@/lib/client/hooks/useWorkspaces";
 import { useWorkspaceDescription } from "@/lib/client/hooks/useWorkspaceDescription";
-import { useWorkspaceFileCount } from "@/lib/client/hooks/useWorkspaceFileCount";
 import { useWorkspaceInternetAccess } from "@/lib/client/hooks/useWorkspaceInternetAccess";
 import { useWorkspaceMeta } from "@/lib/client/hooks/useWorkspaceMeta";
 import { useAppConfig } from "@/lib/client/hooks/useAppConfig";
@@ -34,7 +33,6 @@ export default function HomePage() {
   const { workspaces, isCreating, create, rename, remove } = useWorkspaces();
   const selectedDetails = useWorkspaceMeta(selectedId);
   const { description, save: saveDescription } = useWorkspaceDescription(selectedId);
-  const fileCount = useWorkspaceFileCount(selectedId);
   const { enabled: internetAccess, toggle: toggleInternetAccess } = useWorkspaceInternetAccess(selectedId);
   const { graphEnabled } = useAppConfig();
 
@@ -312,7 +310,6 @@ export default function HomePage() {
 
               <div className="text-text-2 text-sm">
                 Created {selectedDetails ? formatDate(selectedDetails.createdAt) : "—"}
-                {fileCount !== null ? ` · ${fileCount} file${fileCount === 1 ? "" : "s"}` : ""}
               </div>
 
               <div className="flex gap-2.5 mt-7 mb-2">

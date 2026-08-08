@@ -6,7 +6,7 @@
 // extracts primitives off the Node request and calls these functions.
 import type { IncomingMessage } from "http";
 import { timingSafeEqual } from "crypto";
-import { platformPermissionFor } from "./platformAccessPolicy";
+import { isPlatformRouteAllowed } from "./platformAccessPolicy";
 
 // Constant-time string comparison. Used for the Basic-Auth username/password so a byte-by-byte
 // timing difference can't be measured to recover the secret.
@@ -67,9 +67,8 @@ const MUTATING_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 // credential inside the route. Only "ok" may mint a browser session cookie.
 export type AuthResult = "ok" | "platform" | "exempt" | "challenge" | "unauthorized" | "blocked";
 export type AuthCredentials = { user: string; pass: string };
-// Takes only the secret: the platform credential is instance-wide, and what it may reach is decided
-// by platformAccessPolicy.ts below, not by the credential. An earlier version passed the matched
-// permission in here, which advertised per-permission scoping that no validator implemented.
+// Takes only the secret: the platform credential is instance-wide, and the route allowlist decides
+// what it may reach.
 export type PlatformTokenValidator = (plain: string) => boolean;
 
 // The primitives checkAuth/isCsrf need off a request — extracted so the core logic never touches
@@ -132,7 +131,7 @@ export function checkAuth(
     // create a programmatic capability. Counting these would be wrong and actively harmful — the
     // tracker is shared with the UI's Basic auth, so a misconfigured script polling an unshared route
     // would lock its own operator out of the web interface after five requests.
-    if (!platformPermissionFor(req.method, req.pathname)) return "unauthorized";
+    if (!isPlatformRouteAllowed(req.method, req.pathname)) return "unauthorized";
 
     tracker.clear(ip);
     return "platform";

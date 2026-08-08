@@ -26,7 +26,7 @@ import {
 } from "../agentTranscript";
 
 export type { Message };
-export { toolLabel } from "../agentTranscript";
+export { toolLabel } from "@/lib/transcript/toolDisplay";
 
 interface Options {
   onTurnComplete?: () => void;

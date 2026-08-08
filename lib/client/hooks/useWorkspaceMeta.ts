@@ -4,8 +4,8 @@
 // from "loaded" instead of rendering a placeholder date built from undefined. Errors are swallowed:
 // the UI shows nothing rather than breaking.
 //
-// The route returns more than this (run limits, model, internet access); only the display fields are
-// typed here, since the panels that need the rest fetch it themselves.
+// The route returns more than this (run limits, model, internet access, exposed skills, secrets);
+// only the display fields are typed here, since the panels that need the rest fetch it themselves.
 "use client";
 
 import { useEffect, useState } from "react";

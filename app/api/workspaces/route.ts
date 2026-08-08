@@ -1,10 +1,10 @@
 // REST endpoint for the workspace collection.
 // GET returns all workspaces; POST creates a new one with an isolated directory and starter AGENTS.md.
 import { NextRequest, NextResponse } from "next/server";
-import { getStore } from "@/lib/infra/services";
 import { createLogger } from "@/lib/infra/logger";
-import { workspaceNameErrorResponse } from "@/lib/api/guards";
-import { listWorkspaces } from "@/lib/operations/workspaces";
+import { appErrorResponse, errorResponse, readJsonObject } from "@/lib/api/errorResponse";
+import { createWorkspace } from "@/lib/operations/workspace/create";
+import { listWorkspaces } from "@/lib/operations/workspace/read";
 
 export async function GET() {
   return NextResponse.json(listWorkspaces());
@@ -12,23 +12,30 @@ export async function GET() {
 
 export async function POST(req: NextRequest) {
   const log = createLogger("api").child({ route: "workspaces" });
-  const body = (await req.json()) as { name?: string };
-  if (!body.name?.trim()) {
-    return NextResponse.json({ error: "name is required" }, { status: 400 });
+  const parsed = await readJsonObject(req);
+  if (parsed instanceof Response) return parsed;
+  const body = parsed as { name?: unknown };
+  if (typeof body.name !== "string" || !body.name.trim()) {
+    return errorResponse("INVALID_REQUEST", "name is required", {
+      request: req,
+      details: { field: "name" },
+    });
   }
   try {
-    const workspace = await getStore().createWorkspace(body.name.trim());
-    return NextResponse.json(
-      { id: workspace.id, name: workspace.name, description: workspace.description ?? "" },
-      { status: 201 },
-    );
+    return NextResponse.json(await createWorkspace({ name: body.name }), { status: 201 });
   } catch (err) {
-    const nameError = workspaceNameErrorResponse(err);
-    if (nameError) return nameError;
+    const expected = appErrorResponse(err, req);
+    if (expected) return expected;
     log.error(
-      { event: "workspace_create_failed", outcome: "workspace_not_created", err, name: body.name },
+      {
+        event: "workspace_create_failed",
+        outcome: "workspace_not_created",
+        code: "INTERNAL_ERROR",
+        err,
+        name: body.name,
+      },
       "failed to create workspace",
     );
-    return NextResponse.json({ error: "failed to create workspace" }, { status: 500 });
+    return errorResponse("INTERNAL_ERROR", "failed to create workspace", { request: req });
   }
 }

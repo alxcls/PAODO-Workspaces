@@ -8,7 +8,7 @@ import remarkGfm from "remark-gfm";
 import TopBar from "@/components/layout/TopBar";
 import TokenUsageLine from "@/components/usage/TokenUsageLine";
 import { useDragResize } from "@/lib/client/hooks/useDragResize";
-import { toolLabel, toolArgSummary } from "@/lib/client/agentTranscript";
+import { toolLabel, toolArgSummary } from "@/lib/transcript/toolDisplay";
 import { uncachedInputTokens } from "@/lib/client/tokenUsage";
 import {
   groupBySessions,
@@ -18,7 +18,7 @@ import {
   originLabel,
   type LightSession,
 } from "@/lib/client/usageSessions";
-import type { LightTurnRecord, TurnRecord, ToolStatus } from "@/lib/workspace/usageStore";
+import type { LightTurnRecord, TurnRecord, ToolStatus } from "@/lib/usage/types";
 
 // Tool-outcome dot: green success / red failure. From the caller's view a NEEDS_INPUT call
 // didn't return a usable result, so it reads red too (the corrected re-call is the green row).

@@ -10,7 +10,7 @@ import { z } from "zod";
 import { containWorkspacePath } from "../pathUtils";
 import { toolError } from "../toolUtils";
 import { writeContainerFile } from "./containerWrite";
-import { requireFreeSpace } from "../../workspace/diskSpace";
+import { requireFreeSpace } from "@/lib/infra/storage/diskSpace";
 import type { ExecRunner } from "../interfaces";
 
 const schema = z.object({
@@ -33,20 +33,21 @@ export class FileEditTool extends StructuredTool<typeof schema> {
   constructor(
     private runner: ExecRunner,
     private workspaceDir: string,
+    private broadcast: (msg: string) => void,
   ) {
     super();
   }
 
   protected async _call({ file_path, old_string, new_string, replace_all }: z.infer<typeof schema>): Promise<string> {
     // Realpath-contains against a symlink planted inside the workspace, not just a lexical "../"
-    // check (see lib/workspace/pathContainment.ts). Covers both branches below since relpath is
+    // check (see lib/files/containment.ts). Covers both branches below since relpath is
     // resolved once, up front.
     const relpath = await containWorkspacePath(this.workspaceDir, file_path);
     if (relpath === null) return "Error: path is outside the workspace";
 
     if (old_string === "") {
       // Create new file branch — same mkdir + write as file_write.
-      const err = await writeContainerFile(this.runner, this.workspaceDir, relpath, new_string);
+      const err = await writeContainerFile(this.runner, this.workspaceDir, relpath, new_string, this.broadcast);
       return err ?? `Created ${file_path}`;
     }
 
@@ -73,6 +74,7 @@ export class FileEditTool extends StructuredTool<typeof schema> {
 
       const writeR = await this.runner.exec(["tee", `/workspace/${relpath}`], { stdin: updated });
       if (writeR.code !== 0) return `Error: ${writeR.stderr || "write failed"}`;
+      this.broadcast(JSON.stringify({ type: "files_changed", paths: [relpath] }));
       return `Updated ${file_path}`;
     } catch (err: unknown) {
       return toolError(err);

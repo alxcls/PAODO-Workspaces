@@ -10,14 +10,13 @@
 export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
-import path from "path";
 import { getContainers, getVersioning } from "@/lib/infra/services";
 import { requireWorkspace } from "@/lib/api/guards";
 import { snapshotWorkspace } from "@/lib/infra/git/snapshotWorkspace";
-import { getFileContent, putFileContent, deleteFileContent } from "@/lib/workspace/fileContent";
-import { moveFileContent } from "@/lib/workspace/fileMove";
-import type { FileBackend } from "@/lib/workspace/fileBackend";
-import type { Workspace } from "@/lib/workspace/workspaceStore";
+import { getFileContent, putFileContent, deleteFileContent } from "@/lib/api/fileContentRoutes";
+import { moveFileContent } from "@/lib/files/move";
+import type { FileBackend } from "@/lib/files/backend";
+import type { Workspace } from "@/lib/workspace/types";
 
 function backend(ws: Workspace): FileBackend {
   return {
@@ -26,12 +25,13 @@ function backend(ws: Workspace): FileBackend {
     // Fallback for legacy root-owned files (created before the non-root migration, not yet swept):
     // overwrite through the container. The Node snippet deliberately opens with r+ and no create,
     // preserving the shared core's guarantee that a concurrent move cannot recreate an old path.
-    writeFallback: async (resolved, content) => {
-      const relPath = path.relative(ws.dir, resolved);
+    //
+    // relPath is already the container's own path space — /workspace is the same tree as ws.dir.
+    writeFallback: async (relPath, content) => {
       const overwriteExisting = [
         "const fs=require('fs');",
         "const fd=fs.openSync(process.argv[1],'r+');",
-        "try{fs.ftruncateSync(fd,0);fs.writeFileSync(fd,fs.readFileSync(0,'utf8'),'utf8');}",
+        "try{fs.ftruncateSync(fd,0);fs.writeFileSync(fd,fs.readFileSync(0));}",
         "finally{fs.closeSync(fd);}",
       ].join("");
       const r = await getContainers().exec(ws.id, ws.dir, ["node", "-e", overwriteExisting, `/workspace/${relPath}`], {

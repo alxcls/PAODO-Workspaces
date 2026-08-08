@@ -3,7 +3,7 @@
 export const runtime = "nodejs";
 
 import { type NextRequest, NextResponse } from "next/server";
-import { getSessionDetail } from "@/lib/workspace/usageStore";
+import { getSessionDetail } from "@/lib/usage/queries";
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ sessionId: string }> }) {
   const { sessionId } = await params;

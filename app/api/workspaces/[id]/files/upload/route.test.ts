@@ -28,13 +28,13 @@ const { ROOT, WS_DIR, LIMIT } = vi.hoisted(() => {
   return { ROOT: root, WS_DIR: wsDir, LIMIT: 64 };
 });
 
-vi.mock("@/lib/workspace/uploadLimits", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/workspace/uploadLimits")>()),
+vi.mock("@/lib/uploads/limits", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/uploads/limits")>()),
   MAX_UPLOAD_BYTES: LIMIT,
 }));
 
 const checkFreeSpace = vi.hoisted(() => vi.fn().mockResolvedValue({ ok: true, freeBytes: Infinity }));
-vi.mock("@/lib/workspace/diskSpace", () => ({ checkFreeSpace, RESERVED_FREE_BYTES: 1024 * 1024 * 1024 }));
+vi.mock("@/lib/infra/storage/diskSpace", () => ({ checkFreeSpace, RESERVED_FREE_BYTES: 1024 * 1024 * 1024 }));
 
 vi.mock("@/lib/infra/services", () => ({
   getStore: () => ({ getWorkspace: (id: string) => (id === "ws" ? { id: "ws", name: "ws", dir: WS_DIR } : undefined) }),
@@ -69,23 +69,33 @@ describe("files/upload POST — path containment", () => {
     const res = await post(`?path=${encodeURIComponent("../escape.txt")}`, { body: "PWNED" });
 
     expect(res.status).toBe(400);
-    expect((await res.json()).error).toMatch(/invalid path/i);
+    expect((await res.json()).error).toMatch(/escapes the workspace/i);
     expect(fs.existsSync(ESCAPE_TARGET)).toBe(false);
   });
 
+  // Refused for being absolute, not for where it points: an absolute path that happened to land
+  // inside the workspace used to be accepted, which left ?path= speaking two path spaces at once.
   it("rejects an upload whose ?path is absolute", async () => {
     const res = await post(`?path=${encodeURIComponent(ESCAPE_TARGET)}`, { body: "PWNED" });
 
     expect(res.status).toBe(400);
-    expect((await res.json()).error).toMatch(/invalid path/i);
+    expect((await res.json()).error).toMatch(/must be relative/i);
     expect(fs.existsSync(ESCAPE_TARGET)).toBe(false);
+  });
+
+  it("rejects an absolute path that would have landed inside the workspace", async () => {
+    const res = await post(`?path=${encodeURIComponent(path.join(WS_DIR, "sneaky.txt"))}`, { body: "PWNED" });
+
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toMatch(/must be relative/i);
+    expect(fs.existsSync(path.join(WS_DIR, "sneaky.txt"))).toBe(false);
   });
 
   it("requires a path", async () => {
     const res = await post("", { body: "orphan" });
 
     expect(res.status).toBe(400);
-    expect((await res.json()).error).toMatch(/path required/i);
+    expect((await res.json()).error).toMatch(/path is required/i);
   });
 
   it("accepts an upload that stays inside the workspace, including nested dirs", async () => {

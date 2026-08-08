@@ -15,13 +15,10 @@ import { getStore } from "../services";
 import { createLogger } from "../logger";
 import { globalSingleton } from "../globalSingleton";
 import * as broker from "../../agent/runBroker";
-import * as conversations from "../../workspace/conversationStore";
-import { buildSystemPrompt, buildPromptConfig } from "../../agent/systemPrompt";
-import { buildWorkspacePromptInputs } from "../../agent/promptContext";
-import { loadAgentConfig } from "../../agent/buildTools";
-import { setSystemPrompt } from "../../agent/messageSerialization";
-import { listAll, getSchedule, setNextRunAt, recordRun, type ScheduleEntry, type RunStatus } from "./scheduleStore";
-import { computeNextRun } from "./nextRun";
+import { startWorkspaceRun } from "@/lib/operations/agent/run";
+import { listAll, getSchedule, setNextRunAt, recordRun } from "./scheduleStore";
+import { computeNextRun } from "@/lib/schedules/nextRun";
+import type { RunStatus, ScheduleEntry } from "@/lib/schedules/types";
 
 const log = createLogger("scheduler");
 
@@ -67,24 +64,29 @@ function fire(entry: ScheduleEntry, now: Date): void {
 
   let conversationId: string;
   try {
-    // Keep scheduled sessions named the same way as user-created ones (short conversation id),
-    // so each run has an immediately visible, stable identifier in the switcher.
-    const conv = conversations.createConversation(ws.id, { kind: "scheduled" });
-    conversationId = conv.id;
-    const messages = conversations.getMessages(ws.id, conversationId) ?? [];
-    const inputs = buildWorkspacePromptInputs(ws.id, ws.dir);
-    setSystemPrompt(messages, buildSystemPrompt(ws.name, buildPromptConfig(loadAgentConfig(ws.id)), inputs));
-    broker.startRun({
-      workspaceId: ws.id,
-      workspaceName: ws.name,
-      workspaceDir: ws.dir,
-      conversationId,
-      messages,
-      userInput: entry.prompt,
-      maxIterations: ws.maxIterations,
-      maxRunMinutes: ws.maxRunMinutes,
+    const receipt = startWorkspaceRun(entry.workspaceId, {
+      prompt: entry.prompt,
       origin: "scheduled",
+      // Keep scheduled sessions named the same way as user-created ones (short conversation id),
+      // so each run has an immediately visible, stable identifier in the switcher.
+      conversation: { mode: "create", kind: "scheduled" },
     });
+    if (!receipt) {
+      log.warn({ workspaceId: entry.workspaceId }, "schedule fire skipped — workspace not found");
+      inflight.delete(entry.workspaceId);
+      setNextRunAt(entry.workspaceId, nextRunIso(entry, now));
+      return;
+    }
+    conversationId = receipt.conversationId;
+    if (!receipt.started) {
+      log.info(
+        { workspaceId: ws.id, conversationId, scheduleId: entry.id },
+        "schedule fire skipped — run already in progress",
+      );
+      inflight.delete(entry.workspaceId);
+      setNextRunAt(entry.workspaceId, nextRunIso(entry, now));
+      return;
+    }
     log.info({ workspaceId: ws.id, conversationId, scheduleId: entry.id }, "schedule fired");
   } catch (err) {
     log.error(

@@ -3,11 +3,22 @@
 import { useState, useEffect } from "react";
 // DEFAULT_LLM is a plain const in a type-only module (no runtime imports), so it's safe in a client
 // component and keeps the picker's fallback in lockstep with the server's actual default.
-import { DEFAULT_LLM as DEFAULT } from "@/lib/agent/interfaces";
+import { DEFAULT_LLM as DEFAULT, type ReasoningEffort } from "@/lib/models/llmSelection";
+// The model/effort defaulting rules, shared with the server-side update path so the picker and a
+// partial PATCH resolve a gap the same way.
+import { defaultEffortFor, defaultModelFor } from "@/lib/models/selection";
+import { confirmedValues } from "@/lib/client/workspaceReceipt";
 
 // Compact fixed widths so the row of controls stays roughly half the block width. Applied inline
 // because the `.input` base class is `w-full`, which otherwise stretches each field to fill the row.
 const FIELD_WIDTH = { provider: 128, model: 168, effort: 100 };
+
+interface ProviderCatalog {
+  models: string[];
+  reasoningEfforts: ReasoningEffort[];
+}
+
+type ModelCatalog = Record<string, ProviderCatalog>;
 
 // A committed value shown when not editing: a greyed, caret-less read-only field so it clearly
 // reads as a set value rather than an interactive dropdown. Keep this component at module scope so
@@ -24,21 +35,15 @@ function LockedValue({ value, width }: { value: string; width: number }) {
 }
 
 // Per-workspace LLM picker: provider + model + reasoning effort, persisted on the workspace via
-// PATCH /api/workspaces/:id. Provider and model lists come from /api/models (the code-owned model
-// catalog), so the models offered here are the ones the app maintains — to add or retire one, edit
-// lib/workspace/models.ts. The provider list is narrowed to those with an API key set in .env. A
-// provider or model still stored on a workspace after dropping off either list stays selectable.
+// PATCH /api/workspaces/:id. The complete provider → models/efforts hierarchy comes from one
+// /api/models read, so the UI and programmatic callers consume the same code-owned catalog without a
+// request per provider change. The provider list is narrowed to those with an API key set in .env.
 
 export default function ModelBlock({ wsId }: { wsId: string }) {
   const [provider, setProvider] = useState<string>(DEFAULT.provider);
   const [model, setModel] = useState<string>(DEFAULT.model);
   const [effort, setEffort] = useState<string>(DEFAULT.reasoningEffort);
-  const [providers, setProviders] = useState<string[]>([DEFAULT.provider]);
-  const [models, setModels] = useState<string[]>([]);
-  // The effort levels the selected provider accepts (they differ per provider; empty = no effort dial,
-  // e.g. DeepSeek). Sourced from /api/models so the picker offers exactly what the API will accept and
-  // the control is hidden when it wouldn't affect requests.
-  const [efforts, setEfforts] = useState<string[]>([]);
+  const [catalog, setCatalog] = useState<ModelCatalog>({});
 
   const [saved, setSaved] = useState<{ provider: string; model: string; effort: string }>({
     provider: DEFAULT.provider,
@@ -65,36 +70,45 @@ export default function ModelBlock({ wsId }: { wsId: string }) {
       .catch(() => {});
   }, [wsId]);
 
-  // Load the model list whenever the provider changes. When nothing is selected (a fresh provider
-  // switch clears the model), default to the provider's first model.
+  // One catalog read for the component's lifetime. Provider ids own their models and accepted effort
+  // levels, so changing the dropdown is a local lookup rather than another network request.
   useEffect(() => {
-    fetch(`/api/models?provider=${encodeURIComponent(provider)}`)
+    fetch("/api/models")
       .then((r) => r.json())
-      .then((d: { providers?: string[]; models?: string[]; reasoningEfforts?: string[] }) => {
-        if (d.providers?.length) setProviders(d.providers);
-        setModels(d.models ?? []);
-        const list = d.reasoningEfforts ?? [];
-        setEfforts(list);
-        setModel((cur) => cur || (d.models?.[0] ?? ""));
-        // Keep effort valid for the newly selected provider: providers accept different levels, so if
-        // the current value isn't offered here, fall back to "low" (or the quietest level offered).
-        setEffort((cur) => (list.length === 0 || list.includes(cur) ? cur : list.includes("low") ? "low" : list[0]));
-      })
+      .then((d: { providers?: ModelCatalog }) => setCatalog(d.providers ?? {}))
       .catch(() => {});
-  }, [provider]);
+  }, []);
 
-  const dirty = provider !== saved.provider || model !== saved.model || effort !== saved.effort;
+  const providerCatalog = catalog[provider];
+  const providers = Object.keys(catalog);
+  const models = providerCatalog?.models ?? (model ? [model] : []);
+  // Empty means the selected provider has no effort dial (for example DeepSeek), so the control is
+  // absent rather than presenting a setting the agent never sends.
+  const efforts = providerCatalog?.reasoningEfforts ?? [];
+  // Defaults are derived rather than written from an effect. A provider switch keeps compatible
+  // values and otherwise resolves exactly as workspace PATCH does; a provider absent from the usable
+  // catalog retains its stored selection so an old workspace never renders blank.
+  const selectedModel =
+    providerCatalog && !providerCatalog.models.includes(model) ? defaultModelFor(providerCatalog) : model;
+  const selectedEffort =
+    providerCatalog &&
+    providerCatalog.reasoningEfforts.length > 0 &&
+    !providerCatalog.reasoningEfforts.includes(effort as ReasoningEffort)
+      ? defaultEffortFor(providerCatalog)
+      : effort;
 
-  // Keep the current model selectable even if it's no longer in the catalog (e.g. a retired model
-  // still stored on this workspace), so it stays selected until the user picks another.
-  const modelOptions = model && !models.includes(model) ? [model, ...models] : models;
+  const dirty = provider !== saved.provider || selectedModel !== saved.model || selectedEffort !== saved.effort;
 
-  // Same for the provider: /api/models lists only providers with an API key configured, so a workspace
-  // selected before its key was removed from .env would otherwise render a blank dropdown.
+  // PATCH refuses a model the provider does not serve, so configured providers expose their catalog
+  // and swap a retired selection to the default before save.
+  const modelOptions = models;
+
+  // A workspace selected before its provider key was removed remains visible even though it is no
+  // longer offered for new selections.
   const providerOptions = provider && !providers.includes(provider) ? [provider, ...providers] : providers;
 
   const save = async () => {
-    if (!model.trim()) return;
+    if (!selectedModel.trim()) return;
     // Nothing changed — just leave edit mode without a needless PATCH.
     if (!dirty) {
       setEditing(false);
@@ -105,10 +119,21 @@ export default function ModelBlock({ wsId }: { wsId: string }) {
       const res = await fetch(`/api/workspaces/${wsId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ llmProvider: provider, llmModel: model.trim(), reasoningEffort: effort }),
+        body: JSON.stringify({
+          llmProvider: provider,
+          llmModel: selectedModel.trim(),
+          ...(efforts.length > 0 ? { reasoningEffort: selectedEffort } : {}),
+        }),
       });
       if (res.ok) {
-        setSaved({ provider, model: model.trim(), effort });
+        const confirmed = await confirmedValues(res);
+        const savedProvider = confirmed.llmProvider ?? provider;
+        const savedModel = confirmed.llmModel ?? selectedModel.trim();
+        const savedEffort = confirmed.reasoningEffort ?? selectedEffort;
+        setProvider(savedProvider);
+        setModel(savedModel);
+        setEffort(savedEffort);
+        setSaved({ provider: savedProvider, model: savedModel, effort: savedEffort });
         setEditing(false);
       }
     } finally {
@@ -145,7 +170,7 @@ export default function ModelBlock({ wsId }: { wsId: string }) {
             <select
               style={{ width: FIELD_WIDTH.model }}
               className="input input-sm flex-none"
-              value={model}
+              value={selectedModel}
               onChange={(e) => setModel(e.target.value)}
             >
               {modelOptions.map((m) => (
@@ -159,7 +184,7 @@ export default function ModelBlock({ wsId }: { wsId: string }) {
               <select
                 style={{ width: FIELD_WIDTH.effort }}
                 className="input input-sm flex-none"
-                value={effort}
+                value={selectedEffort}
                 onChange={(e) => setEffort(e.target.value)}
               >
                 {efforts.map((eff) => (
@@ -170,15 +195,15 @@ export default function ModelBlock({ wsId }: { wsId: string }) {
               </select>
             )}
 
-            <button className="btn" disabled={saving || !model.trim()} onClick={save}>
+            <button className="btn" disabled={saving || !selectedModel.trim()} onClick={save}>
               {saving ? "Saving…" : "Save"}
             </button>
           </>
         ) : (
           <>
             <LockedValue value={provider} width={FIELD_WIDTH.provider} />
-            <LockedValue value={model} width={FIELD_WIDTH.model} />
-            {efforts.length > 0 && <LockedValue value={effort} width={FIELD_WIDTH.effort} />}
+            <LockedValue value={selectedModel} width={FIELD_WIDTH.model} />
+            {efforts.length > 0 && <LockedValue value={selectedEffort} width={FIELD_WIDTH.effort} />}
             <button className="btn" onClick={() => setEditing(true)}>
               Edit
             </button>

@@ -8,7 +8,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { readErrorMessage, type MutationResult } from "@/lib/client/apiError";
+import { readApiError, type MutationResult } from "@/lib/client/apiError";
 
 export interface WorkspaceItem {
   id: string;
@@ -49,7 +49,7 @@ export function useWorkspaces() {
           headers: JSON_HEADERS,
           body: JSON.stringify({ name }),
         });
-        if (!res.ok) return { ok: false, error: await readErrorMessage(res, "Failed to create workspace.") };
+        if (!res.ok) return readApiError(res, "Failed to create workspace.");
         const workspace = (await res.json()) as WorkspaceItem;
         await refresh();
         return { ok: true, workspace };
@@ -67,7 +67,7 @@ export function useWorkspaces() {
         headers: JSON_HEADERS,
         body: JSON.stringify({ name }),
       });
-      if (!res.ok) return { ok: false, error: await readErrorMessage(res, "Failed to rename workspace.") };
+      if (!res.ok) return readApiError(res, "Failed to rename workspace.");
       await refresh();
       return { ok: true };
     },

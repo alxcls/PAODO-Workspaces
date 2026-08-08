@@ -12,7 +12,7 @@ vi.hoisted(() => {
 });
 
 import { executeSkill, type ExecuteSkillOptions } from "./executeSkill";
-import type { SkillDefinition } from "../../workspace/skillTypes";
+import type { SkillDefinition } from "@/lib/skills/types";
 import type { IWorkspaceStore } from "../../infra/interfaces";
 import type { runAgent, AgentEvent } from "../runner";
 import * as broker from "../runBroker";

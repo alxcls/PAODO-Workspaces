@@ -1,6 +1,9 @@
 // Disk-backed registry of per-workspace agent schedules — one schedule per workspace.
-// A schedule fires the workspace's agent on a fixed interval ("every N minutes/hours/days/weeks")
-// with a configured prompt, in a chosen IANA timezone, optionally bounded by a start/end window.
+//
+// STORAGE ONLY. The record shape is lib/schedules/types.ts and the rules about what may be stored
+// are lib/operations/schedules/schedule.ts; this file knows where the bytes go and nothing about
+// what they mean. It accepts any well-typed entry, so reaching it without going through the
+// operation stores an entry no validator has seen.
 //
 // Stored as a sibling of the other app-level JSON files under WORKSPACES_ROOT (never inside a
 // workspace directory or container, so it survives container recreation). Mirrors the shape and
@@ -10,37 +13,11 @@ import { WORKSPACES_ROOT } from "../paths";
 import { atomicSaveJson, readJson } from "../jsonPersist";
 import { globalSingleton } from "../globalSingleton";
 import { createLogger } from "../logger";
+import type { RunStatus, ScheduleEntry } from "@/lib/schedules/types";
 
 const log = createLogger("schedules");
 
 const FILE = path.join(WORKSPACES_ROOT, ".cron-schedules.json");
-
-export type IntervalUnit = "minute" | "hour" | "day" | "week";
-export type RunStatus = "ok" | "error";
-
-export interface ScheduleEntry {
-  id: string;
-  workspaceId: string;
-  /** The message sent to the agent each run. */
-  prompt: string;
-  /** Recurrence: fire every `intervalValue` `intervalUnit`s (both taken from the start anchor). */
-  intervalValue: number;
-  intervalUnit: IntervalUnit;
-  /** ISO-8601 start anchor. Interpreted in `timezone`; the first run is the first occurrence >= now. */
-  startAt: string;
-  /** Optional ISO-8601 end bound — no runs fire at or after this instant. */
-  endAt?: string;
-  /** IANA timezone (e.g. "Europe/Brussels") the start/recurrence wall-clock is interpreted in. */
-  timezone: string;
-  enabled: boolean;
-  createdAt: string;
-  /** Next scheduled fire instant (ISO), recomputed on create/update, on boot, and after each run. */
-  nextRunAt: string | null;
-  lastRunAt?: string;
-  lastRunStatus?: RunStatus;
-  /** Short snippet of the last run's final response, for at-a-glance status in the UI. */
-  lastRunSnippet?: string;
-}
 
 type Store = Record<string, ScheduleEntry>;
 

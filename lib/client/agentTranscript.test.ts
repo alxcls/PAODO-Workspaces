@@ -15,7 +15,6 @@ import {
   clearDisconnected,
   emptyLoopTokenUsage,
   foldTurnUsageForChat,
-  toolLabel,
 } from "./agentTranscript";
 
 const state = (messages: Message[]): TranscriptState => ({ messages });
@@ -387,13 +386,5 @@ describe("disconnected notice", () => {
   it("is a no-op on a transcript with no notices", () => {
     const messages: Message[] = [{ role: "assistant", content: "answer" }];
     expect(clearDisconnected(messages)).toEqual(messages);
-  });
-});
-
-describe("toolLabel", () => {
-  // Known tools get friendly labels; unknown ones fall back to a humanized name.
-  it("maps known tools and humanizes unknown ones", () => {
-    expect(toolLabel("file_read")).toBe("Reading file");
-    expect(toolLabel("some_new_tool")).toBe("some new tool");
   });
 });

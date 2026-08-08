@@ -5,13 +5,13 @@
 // as the workspace API-key and MCP endpoints, with no subject since the token is instance-wide.
 //
 // PATCH no longer mints on first enable the way the old bespoke handler did. Enabling a channel and
-// creating a secret are separate steps here, exactly as they already were for the API key and MCP
-// secret — one flow for all three instead of a special case for this one.
+// creating a key are separate steps here, exactly as they already were for the API key and the MCP
+// key — one flow for all three instead of a special case for this one.
 export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
 import { credentialHandlers, publicBaseUrl } from "@/lib/api/credentialRoutes";
-import { state } from "@/lib/infra/security/credentialStore";
+import { getCredentialState } from "@/lib/operations/credentials/manage";
 
 const handlers = credentialHandlers<Record<string, never>>("platform", async () => null);
 
@@ -21,7 +21,7 @@ export const PATCH = handlers.PATCH;
 
 export function GET() {
   return NextResponse.json(
-    { ...state("platform"), publicBaseUrl: publicBaseUrl() },
+    { ...getCredentialState("platform"), publicBaseUrl: publicBaseUrl() },
     { headers: { "Cache-Control": "no-store" } },
   );
 }

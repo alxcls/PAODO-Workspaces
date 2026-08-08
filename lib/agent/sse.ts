@@ -1,5 +1,5 @@
 // Shared Server-Sent-Events plumbing for the two streaming endpoints: the UI chat route
-// (app/api/workspaces/[id]/chat) and the public agent route (via makeAgentStream). Both emit one
+// (app/api/workspaces/[id]/chat) and the public agent routes. Both emit one
 // `data: <json>\n\n` frame per event, and both need the same defence against idle disconnects.
 //
 // Why the keepalive: these streams send bytes only when the agent emits an event, and a run can go

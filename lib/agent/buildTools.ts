@@ -28,21 +28,21 @@ import { DriveReadTool } from "./tools/driveRead";
 import { DriveDeleteTool } from "./tools/driveDelete";
 import { DriveDownloadTool } from "./tools/driveDownload";
 import { DriveUploadTool } from "./tools/driveUpload";
-import { getDrivesForWorkspace } from "../workspace/driveStore";
-import { isCaller } from "../workspace/workspaceGraph";
-import { defaultContainerManager } from "../infra/docker/containerManager";
-import { defaultWorkspaceStore } from "../workspace/workspaceStore";
+import { getDrivesForWorkspace } from "@/lib/drives/store";
+import { isCaller } from "@/lib/agent/network/graph";
+import { defaultContainerManager } from "../infra/docker/defaultContainerManager";
+import { defaultWorkspaceStore } from "@/lib/infra/workspace/registry";
 import { getVersioning } from "../infra/services";
 import { broadcastToWorkspace } from "../infra/realtime/wsHub";
 import type {
   IContainerManager,
   IContainerExec,
   IBackgroundTasks,
-  IWorkspaceStore,
-  IWorkspaceVersioning,
+  IAgentWorkspaceVersioning,
+  IWorkspaceLookup,
 } from "../infra/interfaces";
 import type { AgentConfig, PrivilegedRunner, StreamingExecFn, BackgroundExecFn } from "./interfaces";
-import { DEFAULT_LLM } from "./interfaces";
+import { DEFAULT_LLM } from "../models/llmSelection";
 
 function makeContainerRunner(workspaceId: string, workspaceDir: string, containers: IContainerExec): PrivilegedRunner {
   return {
@@ -99,7 +99,7 @@ export function buildTools(
   workspaceId: string,
   workspaceDir: string,
   config: AgentConfig,
-  deps: { containers?: IContainerManager; store?: IWorkspaceStore; versioning?: IWorkspaceVersioning } = {},
+  deps: { containers?: IContainerManager; store?: IWorkspaceLookup; versioning?: IAgentWorkspaceVersioning } = {},
 ) {
   const containers = deps.containers ?? defaultContainerManager;
   const store = deps.store ?? defaultWorkspaceStore;
@@ -118,8 +118,8 @@ export function buildTools(
     // error) so the model can't even attempt them, matching the network-layer boundary.
     ...(config.internetAccess ? [new AptInstallTool(runner)] : []),
     new FileReadTool(runner),
-    new FileEditTool(runner, workspaceDir),
-    new FileWriteTool(runner, workspaceDir),
+    new FileEditTool(runner, workspaceDir, broadcast),
+    new FileWriteTool(runner, workspaceDir, broadcast),
     new TodoWriteTool(workspaceId),
     new CompactContextTool(),
     ...(config.internetAccess ? [new WebFetchTool(runner)] : []),

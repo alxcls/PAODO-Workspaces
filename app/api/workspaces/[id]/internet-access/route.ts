@@ -2,74 +2,55 @@
 // PATCH also stops the running container so its network is torn down and rebuilt with the correct
 // --internal flag on next use (containerManager.ts) — the toggle only becomes a real network-layer
 // boundary once that happens, not merely once the setting is persisted.
+//
+// The wire name is `enabled` because this route is about one setting; the receipt names it
+// `internetAccess`, as every other trigger does. Validation is the shared validator rather than a
+// local typeof, so the rejection message is the same one a workspace PATCH or the CLI would produce.
 export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
-import { requireWorkspace } from "@/lib/api/guards";
-import { setWorkspaceInternetAccess } from "@/lib/workspace/workspaceStore";
-import { setInternetAccessPolicy } from "@/lib/infra/proxy/internetAccessPolicy";
-import { getContainers } from "@/lib/infra/services";
+import { notFound, requireWorkspace } from "@/lib/api/guards";
+import { appErrorResponse, errorResponse, readJsonObject } from "@/lib/api/errorResponse";
+import { receiptResponse } from "@/lib/api/workspaceUpdateReceipt";
 import { createLogger } from "@/lib/infra/logger";
+import { updateWorkspace } from "@/lib/operations/workspace/update";
+import { validateInternetAccess } from "@/lib/operations/workspace/egress";
 
-const log = createLogger("api");
+const log = createLogger("api").child({ route: "internet-access" });
 
-export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
+export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const ws = requireWorkspace(id);
+  const ws = requireWorkspace(id, req);
   if (ws instanceof NextResponse) return ws;
   return NextResponse.json({ enabled: ws.internetAccess });
 }
 
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const ws = requireWorkspace(id);
+  const ws = requireWorkspace(id, req);
   if (ws instanceof NextResponse) return ws;
 
-  const { enabled } = (await req.json()) as { enabled?: boolean };
-  if (typeof enabled !== "boolean") {
-    return NextResponse.json({ error: "enabled must be a boolean" }, { status: 400 });
-  }
-
-  const previous = ws.internetAccess;
-  setWorkspaceInternetAccess(id, enabled);
+  const body = await readJsonObject(req);
+  if (body instanceof Response) return body;
 
   try {
-    setInternetAccessPolicy(id, enabled);
+    const result = await updateWorkspace(id, { internetAccess: validateInternetAccess(body.enabled) });
+    // Past the guard above, a missing workspace means it was deleted mid-request.
+    if (!result) return notFound(req);
+    return receiptResponse(result);
   } catch (err) {
-    // Keep the store and the proxy's policy file from disagreeing — a workspace record saying
-    // "off" while the policy file (still holding the old value) says "on" would silently weaken
-    // the defense-in-depth check in credentialProxy.ts.
-    setWorkspaceInternetAccess(id, previous);
-    log.error(
-      { event: "internet_access_toggle_failed", outcome: "rolled_back", err, workspaceId: id },
-      "failed to persist internet-access policy — rolled back",
-    );
-    return NextResponse.json({ error: "failed to persist internet-access policy" }, { status: 500 });
-  }
-
-  try {
-    await getContainers().stop(id);
-  } catch (err) {
-    // Store + policy already agree on `enabled` at this point; only the currently-running
-    // container (if any) hasn't caught up. containerManager folds internetAccess into the
-    // secrets-hash it checks on every ensure(), so the next wake forces a correct recreate
-    // regardless of whether stop() succeeded here — a delayed cutover, not a lost setting. Don't
-    // roll back the store/policy over a transient docker failure; that would silently revert an
-    // explicit user action.
+    const expected = appErrorResponse(err, req);
+    if (expected) return expected;
     log.error(
       {
-        event: "internet_access_toggle_stop_failed",
-        outcome: "setting_saved_container_pending",
+        event: "internet_access_update_failed",
+        outcome: "internet_access_not_changed",
+        code: "INTERNAL_ERROR",
         err,
         workspaceId: id,
       },
-      "internet-access setting saved but failed to stop the running container",
+      "failed to update internet access",
     );
-    return NextResponse.json(
-      { ok: true, warning: "setting saved but the running container could not be stopped immediately" },
-      { status: 200 },
-    );
+    return errorResponse("INTERNAL_ERROR", "failed to update internet access", { request: req });
   }
-
-  return NextResponse.json({ ok: true });
 }

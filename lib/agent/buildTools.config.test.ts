@@ -4,7 +4,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { loadAgentConfig } from "./buildTools";
 import { buildModel } from "./buildModel";
-import { DEFAULT_LLM } from "./interfaces";
+import { DEFAULT_LLM } from "../models/llmSelection";
 
 // The workspace store singleton is backed by a global map (survives module reloads). loadAgentConfig
 // reads it via getWorkspace, so seeding the map directly is enough to exercise the merge.

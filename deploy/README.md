@@ -132,8 +132,9 @@ docker compose \
 
 Always rebuild the complete stack, never a single service: `app` and `credproxy`
 run the same image, so a scoped rebuild leaves the sidecar on stale code and
-silently breaks per-workspace secret injection. Recreating a gateway-enabled
-stack also reloads changes to its mounted Caddy configuration.
+silently breaks per-workspace secret injection. Changes to the gateway's Caddy
+configuration need the same recreate: the file is bind-mounted individually, so
+reloading Caddy in place keeps serving the version the container started with.
 
 Schema migrations run automatically at startup and cannot be reversed: once they
 apply, the previous release refuses to start against the migrated database.

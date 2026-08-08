@@ -1,7 +1,7 @@
-// Refreshes the vendored model-pricing catalog (lib/workspace/model-pricing.json) from public price
+// Refreshes the vendored model-pricing catalog (lib/models/model-pricing.json) from public price
 // lists. This is the ONLY thing that touches the network for pricing — it runs manually
 // (`npm run update-pricing`), never at request time. New models land in the app the next time this
-// is run. See lib/workspace/modelPricing.ts for how the file is consumed.
+// is run. See lib/models/pricing.ts for how the file is consumed.
 //
 // ONE SOURCE, PLUS A CONDITIONAL FALLBACK:
 //   1. LiteLLM — the bulk source, and the only one fetched on a normal run. Its file carries ~3000
@@ -17,13 +17,13 @@
 // fallback shifts no existing rate — it only fills holes. Each entry records which source it came
 // from so a reviewer can tell at a glance.
 //
-// The run FAILS if any offered model still has no rate, because lib/workspace/models.test.ts asserts
+// The run FAILS if any offered model still has no rate, because lib/models/registry.test.ts asserts
 // every offered model prices — better to find out here than in CI.
 //
-// (The picker's model list is a separate code-owned catalog: lib/workspace/models.ts.)
+// (The picker's model list is a separate code-owned catalog: lib/models/registry.ts.)
 import { writeFileSync } from "fs";
 import path from "path";
-import { AVAILABLE_MODELS } from "../lib/workspace/models";
+import { AVAILABLE_MODELS } from "../lib/models/registry";
 
 const LITELLM_SOURCE = "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json";
 const MODELS_DEV_SOURCE = "https://models.dev/api.json";
@@ -42,7 +42,9 @@ const MODELS_DEV_PROVIDER: Record<string, string> = {
   moonshot: "moonshotai",
 };
 
-const OUT = path.join(__dirname, "..", "lib", "workspace", "model-pricing.json");
+// Must stay in step with the `import catalog from "./model-pricing.json"` in lib/models/pricing.ts:
+// writing anywhere else leaves the app on the old rates while this script reports success.
+const OUT = path.join(__dirname, "..", "lib", "models", "model-pricing.json");
 
 interface LiteLLMEntry {
   litellm_provider?: string;
@@ -75,7 +77,7 @@ async function fetchJson<T>(url: string): Promise<T> {
   return (await res.json()) as T;
 }
 
-// Mirrors lookup() in lib/workspace/modelPricing.ts: the id as given, then its bare tail. Keeping
+// Mirrors lookup() in lib/models/pricing.ts: the id as given, then its bare tail. Keeping
 // these in step is what makes the "does every offered model price?" check below meaningful.
 function resolves(catalog: Record<string, VendoredEntry>, modelId: string): boolean {
   return Boolean(catalog[modelId] ?? catalog[modelId.split("/").pop() ?? modelId]);
@@ -152,7 +154,7 @@ async function main() {
   if (filled.length) console.log(`filled from models.dev (not yet in LiteLLM): ${filled.join(", ")}`);
   if (unpriced.length) {
     console.error(`\nNO RATE for offered model(s): ${unpriced.join(", ")}`);
-    console.error("Neither source prices these. Retire them from lib/workspace/models.ts or add a source.");
+    console.error("Neither source prices these. Retire them from lib/models/registry.ts or add a source.");
     process.exit(1);
   }
 }

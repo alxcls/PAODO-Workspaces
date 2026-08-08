@@ -6,7 +6,7 @@
 import { StructuredTool } from "@langchain/core/tools";
 import { z } from "zod";
 import fs from "fs/promises";
-import { getDrivesForWorkspace, formatDriveLine } from "../../workspace/driveStore";
+import { getDrivesForWorkspace, formatDriveLine } from "@/lib/drives/store";
 import { resolveDrivePath } from "../driveAccess";
 import { toolError } from "../toolUtils";
 

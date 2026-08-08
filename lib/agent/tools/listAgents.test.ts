@@ -3,7 +3,7 @@
 
 import { describe, it, expect } from "vitest";
 import { formatSkill } from "./listAgents";
-import type { SkillDefinition } from "../../workspace/skillTypes";
+import type { SkillDefinition } from "@/lib/skills/types";
 
 // The skill listing is the calling agent's ONLY view of another workspace's contract —
 // if optionality or the return shape renders wrong, the caller fills in wrong args and

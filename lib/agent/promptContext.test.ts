@@ -6,13 +6,13 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import fs from "fs";
 import os from "os";
 import path from "path";
-import type { Drive } from "../workspace/driveStore";
+import type { Drive } from "@/lib/drives/store";
 
 // The drive list is looked up by id; mock it so the test owns the result without touching disk.
 // formatDriveLine is pure presentation — mirror the production rendering so the prompt assertions
 // exercise the real one-line shape (`- <name> (id: <id>)<desc>`).
 const getDrivesForWorkspace = vi.fn<(workspaceId: string) => Drive[]>();
-vi.mock("../workspace/driveStore", () => ({
+vi.mock("@/lib/drives/store", () => ({
   getDrivesForWorkspace: (id: string) => getDrivesForWorkspace(id),
   formatDriveLine: (d: Drive) => `- ${d.name} (id: ${d.id})${d.description ? ` — ${d.description}` : ""}`,
 }));
@@ -78,7 +78,7 @@ describe("buildWorkspacePromptInputs", () => {
     expect(drivesInfo).toContain("- scratch (id: scratch-id)"); // no description → no em dash
     expect(drivesInfo).not.toContain("scratch-id) —");
     expect(drivesInfo).toContain("After uploading a file to a drive, delete your local copy");
-    expect(drivesInfo).toContain("After downloading a file from a drive, delete your local copy");
+    expect(drivesInfo).toContain("downloads/ is disposable");
   });
 
   it("gathers AGENTS.md and drives independently in one call", () => {

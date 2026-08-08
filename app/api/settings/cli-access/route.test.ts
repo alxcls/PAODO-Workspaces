@@ -42,11 +42,22 @@ function patch(body: unknown) {
   );
 }
 
+function post(operation: "generate" | "rotate") {
+  return POST(
+    new Request("http://x/api/settings/cli-access", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ operation }),
+    }),
+    context,
+  );
+}
+
 describe("/api/settings/cli-access", () => {
   it("reports the default state as off with no secret", async () => {
     expect(await GET().json()).toEqual({
       enabled: false,
-      hasSecret: false,
+      hasKey: false,
       createdAt: null,
       lastUsedAt: null,
       publicBaseUrl: "https://api.example.com",
@@ -54,14 +65,15 @@ describe("/api/settings/cli-access", () => {
   });
 
   it("never exposes the stored hash", async () => {
-    await POST(new Request("http://x", { method: "POST" }), context);
+    await post("generate");
     const body = (await GET().json()) as Record<string, unknown>;
     // Assert on the key set: a future field carrying hash material fails here rather than shipping.
-    expect(Object.keys(body).sort()).toEqual(["createdAt", "enabled", "hasSecret", "lastUsedAt", "publicBaseUrl"]);
+    expect(Object.keys(body).sort()).toEqual(["createdAt", "enabled", "hasKey", "lastUsedAt", "publicBaseUrl"]);
   });
 
   it("mints a working token on POST and returns the plaintext once", async () => {
-    const { plain } = (await (await POST(new Request("http://x", { method: "POST" }), context)).json()) as {
+    await patch({ enabled: true });
+    const { plain } = (await (await post("generate")).json()) as {
       plain: string;
     };
     expect(plain.startsWith("cli_")).toBe(true);
@@ -69,10 +81,11 @@ describe("/api/settings/cli-access", () => {
   });
 
   it("rotates on a second POST, invalidating the previous token", async () => {
-    const first = (await (await POST(new Request("http://x", { method: "POST" }), context)).json()) as {
+    await patch({ enabled: true });
+    const first = (await (await post("generate")).json()) as {
       plain: string;
     };
-    const second = (await (await POST(new Request("http://x", { method: "POST" }), context)).json()) as {
+    const second = (await (await post("rotate")).json()) as {
       plain: string;
     };
     expect(validate("platform", null, first.plain)).toBe(false);
@@ -80,7 +93,8 @@ describe("/api/settings/cli-access", () => {
   });
 
   it("PATCH toggles the channel without rotating the token", async () => {
-    const { plain } = (await (await POST(new Request("http://x", { method: "POST" }), context)).json()) as {
+    await patch({ enabled: true });
+    const { plain } = (await (await post("generate")).json()) as {
       plain: string;
     };
 
@@ -94,20 +108,38 @@ describe("/api/settings/cli-access", () => {
 
   it("PATCH can enable the channel before any token exists", async () => {
     await patch({ enabled: true });
-    expect(await GET().json()).toMatchObject({ enabled: true, hasSecret: false });
+    expect(await GET().json()).toMatchObject({ enabled: true, hasKey: false });
+  });
+
+  // The other order, and the one that would be dangerous to get wrong: minting must not open the
+  // channel behind the operator's back. A token issued in advance is inert until they say otherwise.
+  it("POST can mint a token without opening the channel", async () => {
+    const { plain } = (await (await post("generate")).json()) as { plain: string };
+
+    expect(await GET().json()).toMatchObject({ enabled: false, hasKey: true });
+    expect(validate("platform", null, plain)).toBe(false);
+
+    await patch({ enabled: true });
+    expect(validate("platform", null, plain)).toBe(true);
   });
 
   it("DELETE revokes the token immediately — the PRD's revocation requirement", async () => {
     // The old bespoke platform-token store had no revoke at all; it could only be disabled, leaving
     // the hash on disk. This pins that revocation now exists and takes effect at once.
-    const { plain } = (await (await POST(new Request("http://x", { method: "POST" }), context)).json()) as {
+    await patch({ enabled: true });
+    const { plain } = (await (await post("generate")).json()) as {
       plain: string;
     };
     expect(validate("platform", null, plain)).toBe(true);
 
-    expect(await (await DELETE(new Request("http://x", { method: "DELETE" }), context)).json()).toEqual({ ok: true });
+    // The receipt reports both axes: the token is gone, the channel it was issued for is still open.
+    expect(await (await DELETE(new Request("http://x", { method: "DELETE" }), context)).json()).toEqual({
+      ok: true,
+      enabled: true,
+      hasKey: false,
+    });
     expect(validate("platform", null, plain)).toBe(false);
-    expect(await GET().json()).toMatchObject({ hasSecret: false });
+    expect(await GET().json()).toMatchObject({ hasKey: false });
   });
 
   it("rejects a non-boolean toggle", async () => {

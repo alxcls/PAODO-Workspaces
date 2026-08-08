@@ -1,6 +1,6 @@
 # PRD — CLI Access
 
-**Status:** Shipped  
+**Status:** Draft  
 **Author:** alxcls  
 **Related:** [VISION.md](../../VISION.md)
 

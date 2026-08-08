@@ -3,7 +3,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { listDrives, createDrive, DriveNameError } from "@/lib/drives/store";
 import { createLogger } from "@/lib/infra/logger";
-import { errorResponse } from "@/lib/api/errorResponse";
+import { errorResponse, readJsonObject } from "@/lib/api/errorResponse";
 
 export function GET() {
   return NextResponse.json(listDrives());
@@ -11,7 +11,9 @@ export function GET() {
 
 export async function POST(req: NextRequest) {
   const log = createLogger("api").child({ route: "drives" });
-  const body = (await req.json()) as { name?: string; description?: string };
+  const parsed = await readJsonObject(req);
+  if (parsed instanceof Response) return parsed;
+  const body = parsed as { name?: string; description?: string };
   if (!body.name?.trim()) {
     return errorResponse("INVALID_REQUEST", "name is required", { request: req });
   }

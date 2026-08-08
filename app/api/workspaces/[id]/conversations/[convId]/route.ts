@@ -4,6 +4,7 @@
 // re-attaches to the live stream to watch the rest (see chat/route.ts attach mode).
 import type { NextRequest } from "next/server";
 import { notFound } from "@/lib/api/guards";
+import { appErrorResponse } from "@/lib/api/errorResponse";
 import { ConversationNotFoundError } from "@/lib/operations/agent/errors";
 import { getWorkspaceConversation } from "@/lib/operations/conversations/manage";
 
@@ -14,7 +15,9 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
     if (!result) return notFound(_req);
     return Response.json(result);
   } catch (err) {
-    if (err instanceof ConversationNotFoundError) return new Response("Conversation not found", { status: 404 });
+    if (err instanceof ConversationNotFoundError) {
+      return appErrorResponse(err, _req) ?? new Response("Conversation not found", { status: 404 });
+    }
     throw err;
   }
 }

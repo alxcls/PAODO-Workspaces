@@ -9,6 +9,7 @@ import type { AgentEvent } from "@/lib/agent/runner";
 import * as broker from "@/lib/agent/runBroker";
 import { SSE_HEADERS, startKeepalive } from "@/lib/agent/sse";
 import { createLogger } from "@/lib/infra/logger";
+import { appErrorResponse } from "@/lib/api/errorResponse";
 import { ConversationNotFoundError } from "@/lib/operations/agent/errors";
 import { prepareWorkspaceChat } from "@/lib/operations/conversations/manage";
 
@@ -20,7 +21,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   try {
     prepared = prepareWorkspaceChat(id, body);
   } catch (err) {
-    if (err instanceof ConversationNotFoundError) return new Response("Conversation not found", { status: 404 });
+    if (err instanceof ConversationNotFoundError) {
+      return appErrorResponse(err, req) ?? new Response("Conversation not found", { status: 404 });
+    }
     throw err;
   }
   if (!prepared) return new Response("Workspace not found", { status: 404 });

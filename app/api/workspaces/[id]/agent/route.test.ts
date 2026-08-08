@@ -98,13 +98,13 @@ describe("POST /api/workspaces/[id]/agent — Bearer key auth & per-workspace sc
     expect(h.startRun).toHaveBeenCalledWith(expect.objectContaining({ conversationId: "conv-existing" }));
   });
 
-  it("keeps the plain-text 404 for a missing explicit conversation", async () => {
+  it("returns the shared not-found envelope for a missing explicit conversation", async () => {
     h.getMessages.mockReturnValueOnce(null);
 
     const res = await post("ws-a", { message: "again", conversationId: "conv-gone" }, "key-a");
 
     expect(res.status).toBe(404);
-    expect(await res.text()).toBe("Conversation not found");
+    expect(await res.json()).toEqual({ ok: false, code: "NOT_FOUND", error: "Conversation not found" });
     expect(h.startRun).not.toHaveBeenCalled();
   });
 

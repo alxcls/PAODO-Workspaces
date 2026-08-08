@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 import { getGraph, saveGraph } from "@/lib/agent/network/graph";
 import type { GraphEdge } from "@/lib/agent/network/graph";
 import { createLogger } from "@/lib/infra/logger";
-import { errorResponse, appErrorResponse } from "@/lib/api/errorResponse";
+import { errorResponse, appErrorResponse, readJsonObject } from "@/lib/api/errorResponse";
 
 const log = createLogger("api");
 
@@ -18,7 +18,9 @@ export function GET(req: Request) {
 
 export async function PUT(req: Request) {
   if (!graphEnabled()) return errorResponse("NOT_FOUND", "Graph feature is disabled", { request: req });
-  const body = (await req.json()) as {
+  const parsed = await readJsonObject(req);
+  if (parsed instanceof Response) return parsed;
+  const body = parsed as {
     edges: GraphEdge[];
     positions: Record<string, { x: number; y: number }>;
   };

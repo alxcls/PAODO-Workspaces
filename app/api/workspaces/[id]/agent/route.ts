@@ -5,6 +5,7 @@ export const runtime = "nodejs";
 
 import { type NextRequest, NextResponse } from "next/server";
 import { requireWorkspace, rateLimited, subjectRateLimited } from "@/lib/api/guards";
+import { appErrorResponse } from "@/lib/api/errorResponse";
 import { validate } from "@/lib/infra/security/credentialStore";
 import { getClientIp } from "@/lib/infra/realtime/clientIp";
 import { createAuditLogger, createLogger } from "@/lib/infra/logger";
@@ -65,7 +66,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     });
   } catch (err) {
     if (err instanceof ConversationNotFoundError) {
-      return new Response("Conversation not found", { status: 404 });
+      return appErrorResponse(err, req) ?? new Response("Conversation not found", { status: 404 });
     }
     throw err;
   }

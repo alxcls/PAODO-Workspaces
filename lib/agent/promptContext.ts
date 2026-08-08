@@ -55,7 +55,9 @@ Your workspace is your local machine. Drives are shared spaces — pull files to
 ${list}
 When handing work to another agent, pass the drive id and the file path — not the file contents.
 After uploading a file to a drive, delete your local copy so no stale copy is left behind.
-After downloading a file from a drive, delete your local copy once you are done with it so no stale copy is left behind.`;
+privilege drive_read to ground yourself in the file content; if it's truncated/incomplete, go for drive_download and search locally.
+downloads/ is disposable — clean it up before ending your turn.
+Need to keep a file? Move it out of downloads/ into the workspace. Anything left inside downloads/ when you finish must be deleted.`;
 }
 
 function buildSecretsInfo(workspaceId: string): string | undefined {

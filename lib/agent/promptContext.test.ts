@@ -78,7 +78,7 @@ describe("buildWorkspacePromptInputs", () => {
     expect(drivesInfo).toContain("- scratch (id: scratch-id)"); // no description → no em dash
     expect(drivesInfo).not.toContain("scratch-id) —");
     expect(drivesInfo).toContain("After uploading a file to a drive, delete your local copy");
-    expect(drivesInfo).toContain("After downloading a file from a drive, delete your local copy");
+    expect(drivesInfo).toContain("downloads/ is disposable");
   });
 
   it("gathers AGENTS.md and drives independently in one call", () => {

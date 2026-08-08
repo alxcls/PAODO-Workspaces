@@ -40,4 +40,14 @@ describe("buildSystemPrompt", () => {
     expect(out).toContain("# Connected drives");
     expect(out).toContain("# Available Secrets");
   });
+
+  it("adds the local-copy-cleanup bullet only when a drive is connected", () => {
+    const withDrive = text(
+      buildSystemPrompt("ws1", NO_CACHE, { drivesInfo: "# Connected drives\n- shared (id: shared-id)" }),
+    );
+    expect(withDrive).toContain("A task isn't done while a file you pushed to a drive still has a stale local copy");
+
+    const withoutDrive = text(buildSystemPrompt("ws1", NO_CACHE));
+    expect(withoutDrive).not.toContain("stale local copy");
+  });
 });

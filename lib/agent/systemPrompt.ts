@@ -19,7 +19,11 @@ export function buildPromptConfig(config: LLMProviderConfig): PromptConfig {
   };
 }
 
-const STATIC_INSTRUCTIONS = `# Environment
+// hasDrive gates the local-copy-cleanup bullet in "# Doing Tasks" — it only applies to workspaces
+// that actually have a drive to push to, and ties cleanup to the completion check the agent already
+// enforces reliably, instead of leaving it as ambient policy elsewhere in the prompt.
+function buildStaticInstructions(hasDrive: boolean): string {
+  return `# Environment
 - Operating System: Linux (Ubuntu, inside an isolated Docker container)
 - Shell: /bin/bash
 - Runtime: you run as a NON-ROOT user (uid 1000) confined to the workspace container. You cannot read or modify system paths (/root, /etc, /usr) — attempts will fail with "Permission denied". Changes only affect this workspace.
@@ -34,7 +38,7 @@ To verify a local service is up, curl it directly from the shell using the port 
 - At the start of every session, call \`list_directory\` to orient yourself.
 - Use \`workspace_history\` to inspect prior platform-managed snapshots, and \`workspace_restore\` only with an explicit sha chosen from that history. Never use shell \`git\` for this history; restores affect files only, not external actions.
 - Prefer editing existing files over creating new ones.
-- Before reporting a task complete, verify it actually worked.
+- Before reporting a task complete, verify it actually worked.${hasDrive ? "\n- A task isn't done while a file you pushed to a drive still has a stale local copy" : ""}
 
 # Multi-Task Execution
 When asked to do multiple things (e.g. "do these 4 tasks"):
@@ -65,9 +69,10 @@ Call independent tools IN PARALLEL. Call dependent tools sequentially.
 Always format responses using Markdown.
 
 # Instruction Precedence
-The workspace-specific instructions that follow below (the AGENTS.md section) are AUTHORITATIVE. When they conflict with any general guidance in this system prompt, follow the workspace instructions exactly as written — they override.
+The AGENTS.md section below adds workspace-specific instructions on top of this system prompt — it does not replace any part of it. Apply both together. Only when a specific AGENTS.md instruction directly contradicts a specific rule above should you follow the AGENTS.md instruction instead; for every topic AGENTS.md doesn't address, the rules above still apply in full.
 
 `;
+}
 // Structured-responder block injected per skill call by executeSkill — carries the target
 // skill's output schema so the callee knows the exact response contract. Appended to the
 // runner's userInput (not the system prompt) because it is call-specific, and direct user
@@ -97,18 +102,17 @@ export function buildSystemPrompt(
 
   const agentsSection = agentsContent?.trim() ?? "";
   const agentsBlock = agentsSection
-    ? `# Workspace instructions (AGENTS.md) — AUTHORITATIVE
-These workspace-specific instructions take precedence over the general guidance in the system prompt above. When they conflict, follow these.
+    ? `# Workspace instructions (AGENTS.md)
+These are workspace-specific instructions that supplement the system prompt above — they do not replace it. Follow one of these over a rule above only where the two directly conflict.
 
 ${agentsSection}
 
 `
     : "";
 
-  // Platform guidance (network, drives, secrets) leads; the user's AGENTS.md follows and is
-  // authoritative. Network status goes first — it's foundational capability info (whether http_get/
-  // apt_install even exist, whether npm/pip/curl can succeed at all) that should shape every other
-  // decision the agent makes this run.
+  // Platform guidance (network, drives, secrets) leads; the user's AGENTS.md follows. Network status
+  // goes first — it's foundational capability info (whether http_get/apt_install even exist, whether
+  // npm/pip/curl can succeed at all) that should shape every other decision the agent makes this run.
   const dynamicContext = `${networkInfo ? networkInfo + "\n\n" : ""}${drivesInfo ? drivesInfo + "\n\n" : ""}${secretsInfo ? secretsInfo + "\n\n" : ""}${backgroundTasksInfo ? backgroundTasksInfo + "\n\n" : ""}${agentsBlock}Workspace name: ${workspaceName} — your working directory inside the container is /workspace
 Today's date: ${date}`;
 
@@ -116,14 +120,14 @@ Today's date: ${date}`;
     content: [
       {
         type: "text",
-        text: STATIC_INSTRUCTIONS,
+        text: buildStaticInstructions(Boolean(drivesInfo)),
       },
       {
         type: "text",
         text: dynamicContext,
         // cache_control goes on the LAST block so the entire system message (both blocks combined)
-        // is the cached prefix. STATIC_INSTRUCTIONS alone is below Anthropic's 1024-token minimum;
-        // the full prompt (with AGENTS.md) comfortably exceeds it.
+        // is the cached prefix. The static instructions block alone is below Anthropic's 1024-token
+        // minimum; the full prompt (with AGENTS.md) comfortably exceeds it.
         // ANTHROPIC_CACHE_TTL_1H=true extends the TTL to 1h (requires prompt-caching-scope-2026-01-05 beta).
         ...(promptConfig.supportsPromptCaching
           ? {

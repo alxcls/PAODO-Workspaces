@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Background, BackgroundVariant, ConnectionMode, Controls, ReactFlow, type Node } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { useRouter } from "next/navigation";
@@ -17,6 +17,7 @@ export default function GraphEditor() {
   const edgeTypes = useMemo(() => ({ floating: FloatingEdge }), []);
   const [error, showError] = useTransientMessage(3000);
   const [showUnsavedModal, setShowUnsavedModal] = useState(false);
+  const [pendingDestination, setPendingDestination] = useState<string | null>(null);
   const [showDriveForm, setShowDriveForm] = useState(false);
   const [driveName, setDriveName] = useState("");
   const [driveDescription, setDriveDescription] = useState("");
@@ -38,11 +39,23 @@ export default function GraphEditor() {
     save,
   } = useGraphDocument({ onGraphDisabled, showError });
 
+  const guardedNavigate = useCallback(
+    (destination: string) => {
+      if (isDirty) {
+        setPendingDestination(destination);
+        setShowUnsavedModal(true);
+      } else {
+        router.push(destination);
+      }
+    },
+    [isDirty, router],
+  );
+
   const onNodeDoubleClick = useCallback(
     (_: React.MouseEvent, node: Node) => {
-      router.push(node.data?.kind === "drive" ? `/drive/${node.id}` : `/workspace/${node.id}`);
+      guardedNavigate(node.data?.kind === "drive" ? `/drive/${node.id}` : `/workspace/${node.id}`);
     },
-    [router],
+    [guardedNavigate],
   );
 
   const handleCreateDrive = useCallback(async () => {
@@ -52,14 +65,26 @@ export default function GraphEditor() {
     setShowDriveForm(false);
   }, [createDrive, driveDescription, driveName]);
 
-  const handleBack = useCallback(() => {
-    if (isDirty) setShowUnsavedModal(true);
-    else router.push("/");
-  }, [isDirty, router]);
+  const handleBack = useCallback(() => guardedNavigate("/"), [guardedNavigate]);
 
   const handleSaveAndLeave = useCallback(async () => {
-    if (await save()) router.push("/");
-  }, [router, save]);
+    if (await save()) router.push(pendingDestination ?? "/");
+  }, [pendingDestination, router, save]);
+
+  // Browsers won't let JS cancel a popstate, so while dirty we keep re-planting a history
+  // entry on top of the stack: Back always lands back on this same entry, which pops the
+  // unsaved-changes modal instead of letting the navigation through.
+  useEffect(() => {
+    if (!isDirty) return;
+    window.history.pushState(null, "", window.location.href);
+    const handlePopState = () => {
+      window.history.pushState(null, "", window.location.href);
+      setPendingDestination(null);
+      setShowUnsavedModal(true);
+    };
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, [isDirty]);
 
   return (
     <div className="h-screen flex flex-col bg-bg-tint">
@@ -191,7 +216,7 @@ export default function GraphEditor() {
               <button className="btn btn-primary" onClick={() => void handleSaveAndLeave()}>
                 Save &amp; leave
               </button>
-              <button className="btn" onClick={() => router.push("/")}>
+              <button className="btn" onClick={() => router.push(pendingDestination ?? "/")}>
                 Leave without saving
               </button>
               <button className="linkbtn" onClick={() => setShowUnsavedModal(false)}>

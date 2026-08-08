@@ -1,6 +1,6 @@
 // Registry of all workspaces. Each workspace has an isolated directory on disk. Exposed two ways:
 //   - the `WorkspaceStore` class (injectable map + persistence) for tests / isolated use
-//   - a default singleton + thin free-function exports (back-compat) used in production
+//   - `defaultWorkspaceStore`, the production singleton, reached through getStore()
 //
 // NOTE — conversation history lives in lib/conversations/store.ts, persisted in SQLite per workspace and
 // surviving across restarts/disconnects. A workspace no longer carries any message history.
@@ -17,8 +17,7 @@ import { setInternetAccessPolicy } from "../proxy/internetAccessPolicy";
 import { DEFAULT_MAX_RUN_MINUTES, normalizeMaxRunMinutes } from "../../workspace/limits";
 import type { Workspace } from "../../workspace/types";
 import { assertWorkspaceRegistryRecords } from "../startupChecks";
-export { WORKSPACES_ROOT };
-export type { Workspace, WorkspaceMetadata } from "../../workspace/types";
+export type { Workspace } from "../../workspace/types";
 
 const log = createLogger("store");
 const audit = createAuditLogger("store");
@@ -358,23 +357,3 @@ export const defaultWorkspaceStore = new WorkspaceStore({
   initRepo: (id, dir) => defaultWorkspaceVersioning.initRepo(id, dir),
 });
 
-// Back-compat free-function exports — thin delegations to the default singleton so call sites
-// not yet migrated to getStore() keep working unchanged.
-export const createWorkspace = (name: string) => defaultWorkspaceStore.createWorkspace(name);
-export const getWorkspace = (id: string) => defaultWorkspaceStore.getWorkspace(id);
-export const getWorkspaceByName = (name: string) => defaultWorkspaceStore.getWorkspaceByName(name);
-export const listWorkspaces = () => defaultWorkspaceStore.listWorkspaces();
-export const renameWorkspace = (id: string, name: string) => defaultWorkspaceStore.renameWorkspace(id, name);
-export const deleteWorkspace = (id: string) => defaultWorkspaceStore.deleteWorkspace(id);
-export const setWorkspaceMaxIterations = (id: string, n: number) =>
-  defaultWorkspaceStore.setWorkspaceMaxIterations(id, n);
-export const setWorkspaceMaxRunMinutes = (id: string, minutes: number) =>
-  defaultWorkspaceStore.setWorkspaceMaxRunMinutes(id, minutes);
-export const setWorkspaceDescription = (id: string, description: string) =>
-  defaultWorkspaceStore.setWorkspaceDescription(id, description);
-export const setWorkspaceLlm = (
-  id: string,
-  sel: { provider: string; model: string; reasoningEffort: ReasoningEffort },
-) => defaultWorkspaceStore.setWorkspaceLlm(id, sel);
-export const setWorkspaceInternetAccess = (id: string, enabled: boolean) =>
-  defaultWorkspaceStore.setWorkspaceInternetAccess(id, enabled);

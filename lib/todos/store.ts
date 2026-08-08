@@ -14,10 +14,6 @@ export interface Todo {
 
 const store = new Map<string, Todo[]>();
 
-export function getTodos(workspaceId: string): Todo[] {
-  return store.get(workspaceId) ?? [];
-}
-
 export function setTodos(workspaceId: string, todos: Todo[]): { old: Todo[]; updated: Todo[] } {
   const old = store.get(workspaceId) ?? [];
   store.set(workspaceId, todos);

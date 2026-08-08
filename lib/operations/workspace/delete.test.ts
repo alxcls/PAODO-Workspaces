@@ -12,6 +12,7 @@ function deps(overrides: Partial<WorkspaceDeleteDeps> = {}): WorkspaceDeleteDeps
     cleanupGroups: [],
     log: { debug: vi.fn(), error: vi.fn() },
     audit: { info: vi.fn() },
+    deriveWorkspaceDir: (id) => `/private/${id}`,
     ...overrides,
   };
 }
@@ -58,16 +59,64 @@ describe("workspace deletion policy", () => {
     expect(calls).toEqual(["first", "parallel-a:start", "parallel-b", "parallel-a:end", "last", "registry"]);
   });
 
-  it("returns null without running cleanup for an unknown workspace", async () => {
+  it("still runs the full cleanup sweep for an unknown workspace, then returns null", async () => {
     const cleanup = vi.fn();
+    const deleteRegistry = vi.fn(async () => false);
     const d = deps({
-      registry: { getWorkspace: () => undefined, deleteWorkspace: vi.fn() },
-      cleanupGroups: [[{ name: "must-not-run", run: cleanup }]],
+      registry: { getWorkspace: () => undefined, deleteWorkspace: deleteRegistry },
+      cleanupGroups: [[{ name: "must-run", run: cleanup }]],
     });
 
     await expect(deleteWorkspace("missing", d)).resolves.toBeNull();
-    expect(cleanup).not.toHaveBeenCalled();
-    expect(d.registry.deleteWorkspace).not.toHaveBeenCalled();
+    expect(cleanup).toHaveBeenCalledTimes(1);
+    expect(deleteRegistry).toHaveBeenCalledWith("missing");
+  });
+
+  it("derives a synthetic target from the id and passes it to every cleanup stage when the registry entry is missing", async () => {
+    const run = vi.fn();
+    const d = deps({
+      registry: { getWorkspace: () => undefined, deleteWorkspace: vi.fn(async () => false) },
+      cleanupGroups: [[{ name: "stage", run }]],
+      deriveWorkspaceDir: () => "/private/missing",
+    });
+
+    await deleteWorkspace("missing", d);
+
+    expect(run).toHaveBeenCalledWith({ id: "missing", name: "missing", dir: "/private/missing" });
+  });
+
+  it("logs the started event with resuming: true and a distinct swept event, never workspace_deleted, when the registry entry is missing", async () => {
+    const d = deps({
+      registry: { getWorkspace: () => undefined, deleteWorkspace: vi.fn(async () => false) },
+      cleanupGroups: [],
+    });
+
+    await deleteWorkspace("missing", d);
+
+    expect(d.audit.info).toHaveBeenCalledWith(
+      expect.objectContaining({ event: "workspace_delete_started", resuming: true }),
+      expect.any(String),
+    );
+    expect(d.audit.info).toHaveBeenCalledWith(
+      expect.objectContaining({ event: "workspace_delete_swept_missing_registry" }),
+      expect.any(String),
+    );
+    expect(d.audit.info).not.toHaveBeenCalledWith(
+      expect.objectContaining({ event: "workspace_deleted" }),
+      expect.any(String),
+    );
+  });
+
+  it("stops before registry deletion when a cleanup stage fails while resuming", async () => {
+    const deleteRegistry = vi.fn();
+    const failure = new Error("cleanup failed");
+    const d = deps({
+      registry: { getWorkspace: () => undefined, deleteWorkspace: deleteRegistry },
+      cleanupGroups: [[{ name: "broken", run: () => Promise.reject(failure) }]],
+    });
+
+    await expect(deleteWorkspace("missing", d)).rejects.toBe(failure);
+    expect(deleteRegistry).not.toHaveBeenCalled();
   });
 
   it("stops before registry deletion when a cleanup stage fails", async () => {

@@ -29,6 +29,7 @@ export function workspaceDeleteDeps(): WorkspaceDeleteDeps {
     registry: getStore(),
     log,
     audit,
+    deriveWorkspaceDir: (id) => path.join(WORKSPACES_ROOT, id),
     cleanupGroups: [
       [stage("drive_connections", ({ id }) => disconnectWorkspace(id))],
       [stage("agent_graph", ({ id }) => removeWorkspaceFromGraph(id))],

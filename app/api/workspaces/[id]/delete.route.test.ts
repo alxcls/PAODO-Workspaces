@@ -2,8 +2,11 @@
 //   1. The registry entry is removed LAST. Anything that fails before it leaves the workspace
 //      listed, so the user can delete again — rather than orphaning a directory, git history, or a
 //      running container behind a registry entry that no longer exists (nothing else sweeps them).
-//   2. A missing registry entry is NOT a successful deletion. It returns not found and no cleanup
-//      runs, so the app and every thin client agree that deleting an already-deleted workspace fails.
+//   2. A missing registry entry is NOT a successful deletion, and it does not mean nothing needs
+//      cleaning up: it may be a previous deletion that was interrupted after some resources were
+//      removed but before the registry write. The full cleanup sweep still runs; only the response
+//      (not found) reflects that no registry entry existed, so the app and every thin client agree
+//      that deleting an already-deleted workspace fails.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const h = vi.hoisted(() => ({
@@ -126,13 +129,19 @@ describe("DELETE /api/workspaces/[id]", () => {
     expect(h.deleteWorkspace).not.toHaveBeenCalled();
   });
 
-  it("returns not found without cleanup when the workspace is already absent", async () => {
+  it("still sweeps cleanup and reports not found when the workspace is already absent", async () => {
     h.workspace = null;
 
     const res = await DELETE(request(), ctx());
 
     expect(res.status).toBe(404);
     expect(await res.json()).toEqual({ ok: false, code: "NOT_FOUND", error: "not found" });
-    expect(h.calls).toEqual([]);
+    // Cleanup still runs to sweep whatever an interrupted prior deletion left behind — only the
+    // response is driven by the missing registry entry, not the presence/absence of cleanup.
+    expect(h.calls).toContain("directory");
+    expect(h.calls).toContain("container");
+    expect(h.calls).toContain("version_history");
+    expect(h.calls.at(-1)).toBe("registry");
+    expect(h.deleteWorkspace).toHaveBeenCalledWith(WORKSPACE_ID);
   });
 });

@@ -40,6 +40,12 @@ export interface WorkspaceDeleteDeps {
   cleanupGroups: readonly (readonly WorkspaceDeleteStage[])[];
   log: DeleteLogger;
   audit: DeleteAuditLogger;
+  /**
+   * Derives the on-disk directory for an id whose registry entry is already missing, so a resumed
+   * or duplicate deletion can still target orphaned resources. Only consulted when
+   * `registry.getWorkspace` returns undefined.
+   */
+  deriveWorkspaceDir(id: string): string;
 }
 
 async function runDeleteCleanup(
@@ -73,12 +79,16 @@ async function runDeleteCleanup(
 /**
  * Permanently removes an existing workspace and every resource it owns. The registry is finalized
  * last, so a cleanup failure leaves the workspace addressable and the caller can retry the same
- * deletion. A missing registry record is not evidence of an interrupted deletion and is reported
- * as not found without touching unrelated id-keyed stores.
+ * deletion. A missing registry record is treated as a possibly-interrupted prior deletion, not
+ * proof that nothing remains: every cleanup stage still runs against a target reconstructed from
+ * the id alone, and only the registry write (a no-op here) is skipped by the store itself. The
+ * result is still reported as not found — this sweeps orphaned resources without ever turning a
+ * missing workspace into a successful deletion.
  */
 export async function deleteWorkspace(id: string, deps: WorkspaceDeleteDeps): Promise<DeleteWorkspaceResult | null> {
-  const workspace = deps.registry.getWorkspace(id);
-  if (!workspace) return null;
+  const registered = deps.registry.getWorkspace(id);
+  const resuming = !registered;
+  const workspace: WorkspaceDeletionTarget = registered ?? { id, name: id, dir: deps.deriveWorkspaceDir(id) };
 
   deps.audit.info(
     {
@@ -86,8 +96,9 @@ export async function deleteWorkspace(id: string, deps: WorkspaceDeleteDeps): Pr
       outcome: "workspace_deletion_started",
       workspaceId: id,
       workspaceName: workspace.name,
+      resuming,
     },
-    "workspace deletion started",
+    resuming ? "workspace deletion resumed for a missing registry entry" : "workspace deletion started",
   );
 
   for (const group of deps.cleanupGroups) {
@@ -99,6 +110,14 @@ export async function deleteWorkspace(id: string, deps: WorkspaceDeleteDeps): Pr
     workspace,
     deps.log,
   );
+
+  if (resuming) {
+    deps.audit.info(
+      { event: "workspace_delete_swept_missing_registry", outcome: "orphaned_resources_swept", workspaceId: id },
+      "workspace cleanup swept orphaned resources for a missing registry entry",
+    );
+    return null;
+  }
 
   deps.audit.info(
     {

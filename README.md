@@ -1,12 +1,43 @@
-# PAODO Workspace
+<div align="center">
 
-**PAODO turns coding agents into controlled, callable AI services.**
+<img src="public/paodo-logo.svg" alt="PAODO" width="80" height="80">
 
-Each _workspace_ is an isolated Docker container running its own ReAct loop coding agent. Make it write scripts to run and instructions to follow, then call it through the workspace chat interface or an external API / MCP. Workspaces can be wired into a graph, so agents discover each other and delegate tasks. Think of it as multiple instances of VS Code + Claude Code, each in its own sandbox environment that can be wired together for collaboration.
+# PAODO Workspaces
+
+**The open platform for building your agentic org chart.**
+
+[Website](https://paodo-solution.com/workspaces) ·
+[Demo video](https://www.youtube.com/watch?v=fxoLx7u8wSE) ·
+[Quick start](#quick-start) ·
+[Docs](doc/) ·
+[Deploy](deploy/README.md)
+
+</div>
+
+---
+
+Every agent gets a real machine: a filesystem, a terminal, and the tools for the job to carry a unit
+of work from start to finish.
+
+Each _workspace_ is an isolated Docker container running its own ReAct loop coding agent. Give it
+scripts to run and instructions to follow, then call it through the workspace chat interface or an
+external API / MCP. Workspaces can be wired into a graph, so agents discover each other and delegate
+tasks. Think of it as multiple instances of VS Code + Claude Code, each in its own sandbox
+environment, wired together for collaboration.
 
 _Demo video of PAODO in action_ :
 
 [![PAODO Workspace demo video](https://img.youtube.com/vi/fxoLx7u8wSE/maxresdefault.jpg)](https://www.youtube.com/watch?v=fxoLx7u8wSE)
+
+## Two ways to run it
+
+|                    |                                                                                     |
+| ------------------ | ----------------------------------------------------------------------------------- |
+| **Self-hosted**    | This repository. Free, MIT-licensed, runs on your own machine or VPS — [quick start](#quick-start) below. |
+| **Managed cloud**  | Hosted for you, no Docker to run. Coming soon — [paodo-solution.com/workspaces](https://paodo-solution.com/workspaces) |
+
+Feature walkthroughs, screenshots, and the advisory offering all live on
+[paodo-solution.com/workspaces](https://paodo-solution.com/workspaces).
 
 ## Features
 
@@ -32,14 +63,13 @@ _Demo video of PAODO in action_ :
 
 - **CLI access** — Access the app directly through console, optimized for coding agents. (still in progress)
 
-
 ## Quick start
 
 **Requirements:** Node.js 20+, [Docker](https://docs.docker.com/get-docker/) (running), and an OpenAI, Anthropic, or DeepSeek API key.
 
 ```bash
-git clone https://github.com/alxcls/PAODO_WS.git
-cd PAODO_WS
+git clone https://github.com/alxcls/PAODO-Workspaces.git
+cd PAODO-Workspaces
 npm install
 cp .env.example .env          # set the API key for your provider
 npm run dev
@@ -150,3 +180,11 @@ Discord: **alex_24589**
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+---
+
+<div align="center">
+
+**[paodo-solution.com/workspaces](https://paodo-solution.com/workspaces)** · Built by [PAODO](https://paodo-solution.com)
+
+</div>

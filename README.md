@@ -1,4 +1,4 @@
-# PAODO Workspace
+# PAODO Workspaces
 
 **PAODO turns coding agents into controlled, callable AI services.**
 
@@ -6,7 +6,7 @@ Each _workspace_ is an isolated Docker container running its own ReAct loop codi
 
 _Demo video of PAODO in action_ :
 
-[![PAODO Workspace demo video](https://img.youtube.com/vi/fxoLx7u8wSE/maxresdefault.jpg)](https://www.youtube.com/watch?v=fxoLx7u8wSE)
+[![PAODO Workspaces demo video](https://img.youtube.com/vi/fxoLx7u8wSE/maxresdefault.jpg)](https://www.youtube.com/watch?v=fxoLx7u8wSE)
 
 ## Features
 

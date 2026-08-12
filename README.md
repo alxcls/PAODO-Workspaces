@@ -29,16 +29,6 @@ _Demo video of PAODO in action_ :
 
 [![PAODO Workspaces demo video](https://img.youtube.com/vi/fxoLx7u8wSE/maxresdefault.jpg)](https://www.youtube.com/watch?v=fxoLx7u8wSE)
 
-## Two ways to run it
-
-|                    |                                                                                     |
-| ------------------ | ----------------------------------------------------------------------------------- |
-| **Self-hosted**    | This repository. Free, MIT-licensed, runs on your own machine or VPS — [quick start](#quick-start) below. |
-| **Managed cloud**  | Hosted for you, no Docker to run. Coming soon — [paodo-solution.com/workspaces](https://paodo-solution.com/workspaces) |
-
-Feature walkthroughs, screenshots, and the advisory offering all live on
-[paodo-solution.com/workspaces](https://paodo-solution.com/workspaces).
-
 ## Features
 
 - **Isolated workspaces** — one Docker container per workspace, with its own agent and `AGENTS.md` instructions, running as a restricted non-root user

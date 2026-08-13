@@ -15,7 +15,7 @@ import type {
   IWorkspaceLookup,
   IWorkspaceSnapshotWriter,
 } from "../infra/interfaces";
-import { getWsForWorkspace } from "../infra/realtime/wsHub";
+import { sendToWorkspace } from "../infra/realtime/wsHub";
 import { createLogger } from "../infra/logger";
 import type { ToolStatus } from "@/lib/usage/types";
 import type { CallAgentMeta } from "./tools/agentCall";
@@ -58,7 +58,7 @@ export type AgentEvent =
 export type RunAgentOptions = {
   signal?: AbortSignal;
   maxIterations?: number;
-  /** Override WebSocket notification sender — defaults to getWsForWorkspace. Inject for testing. */
+  /** Override WebSocket notification sender — defaults to sendToWorkspace. Inject for testing. */
   notify?: (msg: object) => void;
   /** Override container warm-up — defaults to ensureContainer. Inject for testing. */
   warmContainer?: () => void;
@@ -152,7 +152,9 @@ export async function* runAgent(
   const signalHandlers: Record<string, PostDispatchFn> = injectedHandlers ?? builtHandlers ?? {};
   const typedToolMap = toolMap as Record<string, RunnerTool>;
 
-  const resolvedNotify = notify ?? ((msg: object) => getWsForWorkspace(workspaceId)?.send(JSON.stringify(msg)));
+  // Through the hub rather than straight at the socket: notify carries every tool_call and
+  // tool_result_log of a run, so it needs the same backpressure bound as the console stream.
+  const resolvedNotify = notify ?? ((msg: object) => void sendToWorkspace(workspaceId, JSON.stringify(msg)));
   const resolvedWarmContainer =
     warmContainer ??
     (() =>

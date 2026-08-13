@@ -83,9 +83,12 @@ Dot-files and dot-directories are excluded automatically.`;
         .filter((relpath) => matchGlob(pattern, relpath))
         .sort();
 
-      if (matched.length === 0) return "No files matched.";
+      // A listing cut by the capture ceiling looks exactly like a complete one — "no match" and
+      // "we stopped looking" are different answers, and the agent cannot tell them apart unsaid.
+      const cut = r.truncated ? "\n[listing truncated — the workspace has more files than could be read at once]" : "";
+      if (matched.length === 0) return `No files matched.${cut}`;
 
-      return matched.join("\n");
+      return matched.join("\n") + cut;
     } catch (err: unknown) {
       return toolError(err);
     }

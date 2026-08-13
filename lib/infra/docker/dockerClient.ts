@@ -1,8 +1,16 @@
 // Low-level Docker CLI wrapper: spawns docker subprocesses and captures stdout/stderr/exit code.
 // Defines IDockerClient so ContainerManager can swap in a fake for tests without spawning real Docker.
 import { spawn } from "child_process";
+import { SpawnCapture } from "../spawnCapture";
 
-export type DockerResult = { stdout: string; stderr: string; code: number };
+export type DockerResult = {
+  stdout: string;
+  stderr: string;
+  code: number;
+  /** True when output hit the capture ceiling and stdout holds only the leading part. */
+  truncated?: boolean;
+};
+
 export type DockerStdin = string | Uint8Array;
 
 export interface IDockerClient {
@@ -29,8 +37,10 @@ export class DockerClient implements IDockerClient {
   // trimStdout=false preserves exact content (trailing newlines matter for file reads).
   private _spawn(args: string[], opts: { stdin?: DockerStdin; trimStdout?: boolean } = {}): Promise<DockerResult> {
     return new Promise((resolve) => {
-      let stdout = "";
-      let stderr = "";
+      // Bounded, and bounded in ONE shared place rather than per spawner: these handlers are invoked
+      // directly by Node, so a throw in one does not reach the promise this returns — it reaches the
+      // uncaughtException guard in server.ts, which exits. See lib/infra/spawnCapture.ts.
+      const captured = new SpawnCapture();
       let proc: ReturnType<typeof spawn>;
       try {
         proc = spawn("docker", args);
@@ -40,15 +50,13 @@ export class DockerClient implements IDockerClient {
         resolve({ stdout: "", stderr: (err as Error).message, code: 1 });
         return;
       }
-      proc.stdout!.on("data", (d: Buffer) => (stdout += d.toString()));
-      proc.stderr!.on("data", (d: Buffer) => (stderr += d.toString()));
-      proc.stdout!.on("error", () => {});
-      proc.stderr!.on("error", () => {});
+      captured.attach(proc);
       proc.on("close", (code) =>
         resolve({
-          stdout: opts.trimStdout ? stdout.trim() : stdout,
-          stderr: stderr.trim(),
+          stdout: opts.trimStdout ? captured.stdout.trim() : captured.stdout,
+          stderr: captured.stderr.trim(),
           code: code ?? 1,
+          truncated: captured.truncated,
         }),
       );
       proc.on("error", (err) => resolve({ stdout: "", stderr: err.message, code: 1 }));

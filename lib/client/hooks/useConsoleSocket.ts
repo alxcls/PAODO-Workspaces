@@ -15,7 +15,15 @@ export interface ConsoleLine {
 
 const MAX_LINES = 500;
 
-type WsMsg = { type: string; data?: string; exitCode?: number | null; name?: string; args?: unknown; result?: string };
+type WsMsg = {
+  type: string;
+  data?: string;
+  exitCode?: number | null;
+  name?: string;
+  args?: unknown;
+  result?: string;
+  dropped?: number;
+};
 type MsgHandler = (m: WsMsg) => ConsoleLine | null;
 
 // Extend this map to handle new server message types without touching dispatch logic (OCP).
@@ -25,6 +33,13 @@ const MSG_HANDLERS: Record<string, MsgHandler> = {
   exec_done: (m) => ({ type: "info", text: `--- process exited (code ${m.exitCode ?? "?"}) ---` }),
   tool_call: (m) => (m.name ? { type: "tool", text: `▶ ${m.name}(${m.args ? JSON.stringify(m.args) : "{}"})` } : null),
   tool_result_log: (m) => (m.name ? { type: "info", text: `← ${m.name}: ${m.result ?? ""}` } : null),
+  // The server stopped queueing for us because this tab had fallen too far behind to keep up (a
+  // backgrounded or throttled tab). Shown as a visible break so the output either side of it is not
+  // mistaken for one continuous stretch.
+  console_dropped: (m) => ({
+    type: "info",
+    text: `--- ${m.dropped ?? 0} messages dropped (this tab fell behind) ---`,
+  }),
 };
 
 export function useConsoleSocket(workspaceId: string) {

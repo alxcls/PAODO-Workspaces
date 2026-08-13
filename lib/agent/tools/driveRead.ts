@@ -6,9 +6,8 @@
 
 import { StructuredTool } from "@langchain/core/tools";
 import { z } from "zod";
-import fs from "fs/promises";
-import { resolveDrivePath } from "../driveAccess";
-import { toolError } from "../toolUtils";
+import { resolveDrivePath, readFileBounded } from "../driveAccess";
+import { MAX_FILE_READ_BYTES } from "@/lib/infra/limits";
 
 const schema = z.object({
   drive_name: z.string().describe("Drive to read from, by name or id"),
@@ -30,17 +29,19 @@ Use this for a quick look. To get an editable copy in your workspace, use drive_
     if (typeof resolved === "string") return resolved;
     if (!resolved.relPath) return "Error: a file path within the drive is required";
 
-    try {
-      const buf = await fs.readFile(resolved.absPath);
-      if (buf.subarray(0, 8000).includes(0)) {
-        return `Error: "${filePath}" looks like a binary file and can't be read as text. Use drive_download to copy it into your workspace instead.`;
-      }
-      return buf.toString("utf-8");
-    } catch (err: unknown) {
-      const e = err as NodeJS.ErrnoException;
-      if (e.code === "ENOENT") return `Error: file not found in drive "${drive_name}"`;
-      if (e.code === "EISDIR") return `Error: "${filePath}" is a directory, not a file`;
-      return toolError(e);
+    // The ceiling is the same one file_read uses, because this is the same act: bytes into the
+    // context. It refuses rather than truncating — this tool has no offset/limit to resume from, so
+    // a truncated read would leave nowhere to go, while drive_download does.
+    const buf = await readFileBounded(resolved.absPath, MAX_FILE_READ_BYTES, {
+      missing: `Error: file not found in drive "${drive_name}"`,
+      isDirectory: `Error: "${filePath}" is a directory, not a file`,
+      advice: `Use drive_download to copy it into your workspace, then file_read with offset/limit to page through it.`,
+    });
+    if (typeof buf === "string") return buf;
+
+    if (buf.subarray(0, 8000).includes(0)) {
+      return `Error: "${filePath}" looks like a binary file and can't be read as text. Use drive_download to copy it into your workspace instead.`;
     }
+    return buf.toString("utf-8");
   }
 }

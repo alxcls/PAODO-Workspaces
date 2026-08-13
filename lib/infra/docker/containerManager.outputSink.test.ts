@@ -103,6 +103,9 @@ describe("openOutputSink", () => {
     // destroying the container reclaims. 5 × 20MB.
     expect(script).toContain("tail -n +5");
     expect(script).toContain("rm -f");
+    // ...but never a file still being written: the prune runs while other commands may be mid-spill,
+    // and unlinking one of those takes away a path the agent was just told to go read.
+    expect(script).toContain("-mmin +1");
     expect(script).toContain("head -c 20971520");
     expect(script).toContain("> /tmp/paodo-exec/run-abc.output");
   });

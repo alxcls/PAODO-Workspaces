@@ -47,10 +47,16 @@ Use this instead of cat, head, or tail.
 
   // Truncation has to name the way forward, not just report a stop — the agent already has the right
   // tool for this (offset/limit), and without the pointer it tends to retry the identical read.
-  private moreToRead(lastLine: number): string {
+  //
+  // resumeOffset is the 0-based index of the LAST line shown, not the one after it: the byte ceiling
+  // cuts mid-line, so that last line is a fragment and the agent has to re-read it to get its
+  // remainder. Pointing past it would hand back a notice that exists to stop truncation being silent
+  // while itself losing the tail of a line silently.
+  private moreToRead(resumeOffset: number): string {
     return (
       `\n\n[file truncated at ${MAX_FILE_READ_BYTES} bytes — this is not the whole file]\n` +
-      `Continue with file_read using offset: ${lastLine} (and a limit) to read on from here.`
+      `Continue with file_read using offset: ${resumeOffset} (and a limit) to read on from here. ` +
+      `That line is re-read because the cut landed in the middle of it.`
     );
   }
 
@@ -69,7 +75,7 @@ Use this instead of cat, head, or tail.
         const truncated = Buffer.byteLength(r.stdout, "utf8") > MAX_FILE_READ_BYTES;
         const lines = r.stdout.split("\n");
         const numbered = header + lines.map((line, i) => `${i + 1}\t${line}`).join("\n");
-        return truncated ? numbered + this.moreToRead(lines.length) : numbered;
+        return truncated ? numbered + this.moreToRead(lines.length - 1) : numbered;
       } else {
         const startLine = (offset ?? 0) + 1;
         const endLine = limit !== undefined ? (offset ?? 0) + limit : "$";
@@ -80,7 +86,7 @@ Use this instead of cat, head, or tail.
         const numbered = header + lines.map((line, i) => `${start + i + 1}\t${line}`).join("\n");
         // A range can still be unbounded (limit omitted, or a huge limit over very long lines), in
         // which case the docker-client ceiling is what stopped it rather than a line count.
-        return r.truncated ? numbered + this.moreToRead(start + lines.length) : numbered;
+        return r.truncated ? numbered + this.moreToRead(start + lines.length - 1) : numbered;
       }
     } catch (err: unknown) {
       return toolError(err);

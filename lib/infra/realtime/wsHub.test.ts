@@ -111,6 +111,20 @@ describe("sendToWorkspace", () => {
     expect(sendToWorkspace("ws_absent", "tool_call")).toBe(false);
   });
 
+  it("picks the tab that is keeping up over the one that is behind", () => {
+    // Set iteration order is insertion order, so the backgrounded tab can easily come first. Taking
+    // the first OPEN socket then meant every tool_call and tool_result_log of the run was dropped
+    // while a foreground tab sat right there draining fine. Only one socket gets the message, so
+    // which one is chosen IS the delivery.
+    const [stuck, live] = withSockets("ws_two_tabs", fakeSocket(), fakeSocket());
+    (stuck as { bufferedAmount: number }).bufferedAmount = 4 * 1024 * 1024;
+
+    expect(sendToWorkspace("ws_two_tabs", "tool_call")).toBe(true);
+
+    expect(live.send).toHaveBeenCalledWith("tool_call");
+    expect(stuck.send).not.toHaveBeenCalled();
+  });
+
   it("is bounded too — the runner's notify is not a side door around the ceiling", () => {
     const [slow] = withSockets("ws_notify_slow", fakeSocket());
     (slow as { bufferedAmount: number }).bufferedAmount = 4 * 1024 * 1024;

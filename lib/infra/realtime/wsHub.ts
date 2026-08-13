@@ -40,6 +40,11 @@ const lagging = new WeakMap<WebSocket, { dropped: number; overSince: number }>()
  * queueing it. Every write to a client goes through here — a bound that some paths skip is not a
  * bound, since one unbounded caller is all it takes.
  */
+/** Whether this socket is currently draining fast enough to be given more. */
+function keepingUp(ws: WebSocket): boolean {
+  return ws.readyState === 1 /* OPEN */ && ws.bufferedAmount <= WS_MAX_BUFFERED_BYTES;
+}
+
 function sendBounded(ws: WebSocket, data: string): void {
   const state = lagging.get(ws);
 
@@ -91,17 +96,28 @@ export function broadcastToWorkspace(workspaceId: string, data: string): void {
 }
 
 /**
- * Send to one connection for this workspace (the agent runner's notify seam).
- * Returns false when there is nobody to send to — a run continues with no one watching.
+ * Send to ONE connection for this workspace (the agent runner's notify seam).
+ * Returns false when there is nobody connected — a run continues with no one watching.
+ *
+ * Prefers a socket that is keeping up rather than the first open one in iteration order. With two
+ * tabs open, that order could put a backgrounded tab first, and the ceiling then turned every
+ * tool_call and tool_result_log of the run into a drop while a foreground tab sat there draining
+ * fine. The bound has to cost the tab that is behind, not the one that is watching.
  */
 export function sendToWorkspace(workspaceId: string, data: string): boolean {
   const sockets = connections.get(workspaceId);
   if (!sockets) return false;
+  let behind: WebSocket | null = null;
   for (const ws of sockets) {
-    if (ws.readyState === 1) {
+    if (keepingUp(ws)) {
       sendBounded(ws, data);
       return true;
     }
+    if (ws.readyState === 1 && !behind) behind = ws;
   }
-  return false;
+  // Everyone connected is over the ceiling. Still go through sendBounded: it drops rather than
+  // queues, and it is what accrues the stall bookkeeping that eventually lets a dead socket go.
+  if (!behind) return false;
+  sendBounded(behind, data);
+  return true;
 }

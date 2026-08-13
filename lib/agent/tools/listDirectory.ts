@@ -151,6 +151,10 @@ Use this instead of ls. For recursive or pattern-based search use glob instead.`
         (r) => `${r.type}  ${r.name.padEnd(nameWidth)}  ${r.detail.padEnd(detailWidth)}  ${r.age}`,
       );
 
+      // A listing cut by the capture ceiling reads as a complete one, so say when it was cut —
+      // otherwise "this directory contains X" is an assertion we did not actually check.
+      if (r.truncated) lines.push("[listing truncated — this directory holds more than could be read at once]");
+
       // Lead with a newline so the first row starts at column 0 rather than being
       // appended to the tool-call label, which would offset it from the rest.
       return `\n${lines.join("\n")}`;

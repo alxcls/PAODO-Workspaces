@@ -43,6 +43,30 @@ gateway separate. Remaining threats:
 - `pids_limit` on the app and credential-proxy containers as well
 - Containers auto-stop after idle timeout (`CONTAINER_IDLE_MS`, default 10 min)
 
+**App-side output ceilings**
+
+The container limits above bound the workspace. They do nothing for memory held in the app, and that
+is where the exhaustion crashes actually lived: a command's output was accumulated into one string,
+and past V8's ~536M character limit the append throws `RangeError` from inside a stream handler —
+a callback Node invokes directly, so no `.catch()` sees it. It reaches the process-level
+`uncaughtException` guard, which exits, taking every workspace, socket and in-flight run with it.
+`file_read` was worse: it copied the result three more times while numbering lines, so it could
+exhaust the heap outright, which no `try/catch` can intercept at all. Both were reachable from
+ordinary agent tool calls, so each path now has a ceiling.
+
+- Command output (`execute_command`): 30KB inline; the rest streams to a file in the container that
+  the agent is given the path to (`EXEC_OUTPUT_MAX_BYTES`, 5 files kept per container)
+- File reads: `MAX_FILE_READ_BYTES` (default 400KB), enforced in-container by `head -c` so an
+  oversized file is never transferred; `offset`/`limit` pages past it
+- Every docker and git subprocess: `SPAWN_MAX_CAPTURE_BYTES` (default 8MB), one shared ceiling in
+  `lib/infra/spawnCapture.ts` — a per-spawner copy is how the git path kept the bug after the docker
+  path was fixed
+- Live console sockets: `WS_MAX_BUFFERED_BYTES` / `WS_STALL_MS` — `ws.send()` never blocks, so a tab
+  that stopped reading queues its bytes in the app's heap, once per tab; past the ceiling messages
+  are dropped (and reported to that tab) rather than queued
+- Every one of these reports when it cut something. A silently truncated result is the failure mode
+  these ceilings introduce, and it is the one that makes an agent act on a false picture
+
 **Filesystem**
 
 - File tools enforce path boundaries via `fs.realpath` + prefix checks — agents cannot escape their workspace directory

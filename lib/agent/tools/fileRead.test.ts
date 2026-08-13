@@ -53,6 +53,26 @@ describe("FileReadTool capture limits", () => {
     expect(out).toContain("offset:");
   });
 
+  it("resumes ON the cut line, not past it", async () => {
+    // Three lines where the third was cut mid-way by the byte ceiling. It is displayed as line 3,
+    // whose 0-based offset is 2 — pointing at 3 would resume on line 4 and lose the rest of line 3
+    // without a word, which is the exact silence this notice exists to prevent.
+    const body = `alpha\nbeta\n${"g".repeat(400_000)}`;
+    const { runner } = runnerReturning({ stdout: body });
+    const out = await read(new FileReadTool(runner), { file_path: "huge.log" });
+
+    expect(out).toContain("offset: 2 ");
+    expect(out).toContain("re-read");
+  });
+
+  it("resumes on the cut line for a range read too", async () => {
+    const { runner } = runnerReturning({ stdout: "line11\nline12\nline13", truncated: true });
+    const out = await read(new FileReadTool(runner), { file_path: "huge.log", offset: 10, limit: 5 });
+
+    // Rows shown are 0-based offsets 10, 11, 12; the cut one is 12.
+    expect(out).toContain("offset: 12 ");
+  });
+
   it("does not cry truncation for a file sitting exactly on the limit", async () => {
     const { runner } = runnerReturning({ stdout: "x".repeat(400_000) });
     const out = await read(new FileReadTool(runner), { file_path: "exact.log" });

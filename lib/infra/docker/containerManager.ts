@@ -563,9 +563,15 @@ export class ContainerManager implements IContainerManager {
     // `head -c` stops reading at the ceiling and exits, which closes our stdin — the EPIPE that
     // follows is the expected signal that the file is full, not an error. The prune keeps this
     // directory from growing for the container's whole lifetime.
+    //
+    // The `-mmin +1` is the part that is not obvious: the prune runs while OTHER commands may be
+    // mid-spill, and deleting one of those unlinks a file the agent was just told to go read (the
+    // writer keeps filling the now-nameless inode, so the loss is silent). Age excludes any file
+    // still being written to; the count is what actually bounds the directory.
     const script =
       `mkdir -p ${EXEC_OUTPUT_DIR}; ` +
-      `ls -1t ${EXEC_OUTPUT_DIR}/*.output 2>/dev/null | tail -n +${EXEC_OUTPUT_KEEP} | xargs -r rm -f; ` +
+      `ls -1t ${EXEC_OUTPUT_DIR}/*.output 2>/dev/null | tail -n +${EXEC_OUTPUT_KEEP} | ` +
+      `xargs -r find -mmin +1 2>/dev/null | xargs -r rm -f; ` +
       `head -c ${EXEC_OUTPUT_MAX_BYTES} > ${file}`;
 
     let alive = true;
@@ -585,7 +591,11 @@ export class ContainerManager implements IContainerManager {
     };
 
     try {
-      proc = spawn("docker", ["exec", "-i", containerName(workspaceId), "/bin/bash", "-c", script]);
+      // stdin only. The sink's whole job is to take bytes; nothing reads what the drain prints, and
+      // a piped stream no one reads is a buffer no one empties.
+      proc = spawn("docker", ["exec", "-i", containerName(workspaceId), "/bin/bash", "-c", script], {
+        stdio: ["pipe", "ignore", "ignore"],
+      });
     } catch (err) {
       log.warn({ err, workspaceId }, "failed to open command output sink — over-cap output will not be saved");
       alive = false;

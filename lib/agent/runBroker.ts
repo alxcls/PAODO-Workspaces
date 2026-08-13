@@ -11,6 +11,7 @@
 import type { BaseMessage } from "@langchain/core/messages";
 import { runAgent, type AgentEvent } from "./runner";
 import type { RunAgentOptions } from "./runner";
+import { noteRunError } from "./messageSerialization";
 import { getStore, getContainers, getVersioning } from "../infra/services";
 import { recordRunError, recordTurnUsage } from "@/lib/usage/record";
 import type { RunErrorRecord, SessionOrigin } from "@/lib/usage/types";
@@ -204,6 +205,9 @@ export function startRun(params: StartRunParams): {
       if (event.type === "error" && !recordedError) {
         recordedError = true;
         recordError(sessionId, { code: event.code, message: event.message });
+        // Also onto the history persisted below, so the reason is still there when the conversation
+        // is re-opened — or opened for the first time, for a run started through the API.
+        noteRunError(params.messages, event.message);
       }
       if (event.type === "done") sentDone = true;
     };
@@ -244,6 +248,19 @@ export function startRun(params: StartRunParams): {
       publish({ type: "error", code: "CANCELLED", message: USER_STOPPED_CONVERSATION_MESSAGE });
       publish({ type: "done" });
     };
+    // Last resort for a run that died without saying so. runAgent turns everything raised inside
+    // its loop into an error event, but whatever throws *before* that loop — loading the workspace
+    // config, building the model for a selection the provider no longer accepts — escapes to the
+    // catch below. That used to log and stop there: no error event, no `done`, so the stream hung
+    // open and the conversation showed a prompt that was apparently ignored.
+    const publishFailure = (message: string, status: AgentRunStatus = "failed") => {
+      if (sentDone) return;
+      publish({ type: "error", message });
+      publish({ type: "done" });
+      // After the publishes: an uncoded error event would otherwise mark every one of these "failed".
+      terminalStatus = status;
+    };
+
     try {
       for await (const event of run(
         params.messages,
@@ -274,7 +291,6 @@ export function startRun(params: StartRunParams): {
       } else if (session.abort.signal.aborted) {
         terminalStatus = "cancelled";
       } else {
-        terminalStatus = "failed";
         log.error(
           {
             event: "detached_agent_run_failed",
@@ -285,10 +301,27 @@ export function startRun(params: StartRunParams): {
           },
           "detached run failed",
         );
+        publishFailure(
+          `This run stopped on an unexpected error and could not continue: ${err instanceof Error ? err.message : String(err)}`,
+        );
       }
     } finally {
       if (runTimeout.didTimeout() && !sentDone) publishTimeout();
       else if (session.abort.signal.aborted && !sentDone) publishUserStop();
+      // A run that returned without `done` and without an error: nothing above claimed it, so it
+      // would otherwise be recorded as `incomplete` and shown as nothing at all.
+      else if (!sentDone) {
+        log.error(
+          {
+            event: "agent_run_ended_incomplete",
+            outcome: "run_ended",
+            workspaceId: params.workspaceId,
+            conversationId: params.conversationId,
+          },
+          "run ended without finishing",
+        );
+        publishFailure("This run ended without finishing and without reporting why.", "incomplete");
+      }
       runTimeout.dispose();
       session.status = "done";
       executionSlot.release();
@@ -307,7 +340,6 @@ export function startRun(params: StartRunParams): {
           "persist on run end failed",
         );
       }
-      if (!sentDone && terminalStatus === "success") terminalStatus = "incomplete";
       log.info(
         {
           event: "agent_run_completed",

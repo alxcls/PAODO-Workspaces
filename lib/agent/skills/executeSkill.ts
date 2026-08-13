@@ -29,6 +29,7 @@ import {
 } from "@/lib/skills/types";
 import type { IWorkspaceLookup, IContainerManager } from "../../infra/interfaces";
 import { buildStructuredResponderBlock } from "../systemPrompt";
+import { noteRunError } from "../messageSerialization";
 import { createLogger } from "../../infra/logger";
 import type { runAgent, AgentEvent } from "../runner";
 import { createWorkspaceRunTimeout, USER_STOPPED_CONVERSATION_MESSAGE, WorkspaceRunTimeoutError } from "../runTimeout";
@@ -114,6 +115,16 @@ function parseOutput(text: string): { ok: true; value: Record<string, unknown> }
   return { ok: true, value: parsed as Record<string, unknown> };
 }
 
+// Run-ending causes worth naming to the caller rather than flattening into EXECUTION_ERROR: both
+// are conditions a correction retry cannot repair, and both are already SkillErrorCodes, so they
+// pass straight through `fail()`.
+const CALLEE_TERMINAL_CODES = ["INFRASTRUCTURE_UNAVAILABLE", "PROVIDER_CREDIT_EXHAUSTED"] as const;
+type CalleeTerminalCode = (typeof CALLEE_TERMINAL_CODES)[number];
+type CalleeTurnFailure = { error: string; code?: CalleeTerminalCode };
+
+const isCalleeTerminal = (code: string | undefined): code is CalleeTerminalCode =>
+  CALLEE_TERMINAL_CODES.some((terminal) => terminal === code);
+
 // Runs the callee's loop once on the given (persisted) message history and collects the
 // final text. Output-correction retries call this again on the same array — just another
 // turn on the same conversation.
@@ -130,7 +141,7 @@ async function runCalleeTurn(
   opts: ExecuteSkillOptions,
   signal: AbortSignal | undefined,
   onEvent?: (event: AgentEvent) => void,
-): Promise<{ text: string } | { error: string; code?: "INFRASTRUCTURE_UNAVAILABLE" }> {
+): Promise<{ text: string } | CalleeTurnFailure> {
   const recordUsage = opts.appendUsageFn ?? appendUsage;
   let text = "";
   for await (const event of run(messages, input, callee.dir, callee.id, {
@@ -144,7 +155,7 @@ async function runCalleeTurn(
     if (event.type === "error") {
       return {
         error: event.message,
-        ...(event.code === "INFRASTRUCTURE_UNAVAILABLE" ? { code: event.code } : {}),
+        ...(isCalleeTerminal(event.code) ? { code: event.code } : {}),
       };
     }
     if (event.type === "turn_usage") {
@@ -284,6 +295,9 @@ ${buildStructuredResponderBlock(skill)}`;
       firstInput,
       opts.appendUsageFn ?? appendUsage,
     );
+    // The callee's own conversation is persisted in the finally below and is deep-linked from the
+    // caller's transcript. Without this it opens on a prompt with no reply and no reason.
+    noteRunError(messages, message);
     return { state: "failed", code, message, conversationId: conv.id };
   };
 
@@ -340,7 +354,7 @@ ${buildStructuredResponderBlock(skill)}`;
     opts.onConversationStart?.(conv.id);
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
       elog.debug({ attempt }, "skill call running callee");
-      let turn: { text: string } | { error: string; code?: "INFRASTRUCTURE_UNAVAILABLE" };
+      let turn: { text: string } | CalleeTurnFailure;
       try {
         turn = await runCalleeTurn(run, messages, input, callee, sessionId, conv.id, opts, calleeSignal, publish);
       } catch (err) {

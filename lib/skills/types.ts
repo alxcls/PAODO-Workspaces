@@ -51,6 +51,9 @@ export type SkillErrorCode =
   | "CANCELLED"
   | "CAPACITY_REACHED"
   | "INFRASTRUCTURE_UNAVAILABLE"
+  // The callee's LLM provider account has no credit left. Distinct from EXECUTION_ERROR because
+  // nothing the caller does — different args, a retry, another skill on the same callee — changes it.
+  | "PROVIDER_CREDIT_EXHAUSTED"
   | "EXECUTION_ERROR";
 
 /**

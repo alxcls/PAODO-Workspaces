@@ -126,6 +126,17 @@ A workspace with no declared skills is not callable. If the workspace is not con
         meta,
       };
     }
+    if (code === "PROVIDER_CREDIT_EXHAUSTED") {
+      // Scoped to the callee: it may run on a different provider than this workspace, so this is
+      // "stop calling that agent", not "stop working". Whether this workspace can keep going is
+      // answered by its own next model turn.
+      return {
+        result:
+          `Error (PROVIDER_CREDIT_EXHAUSTED): ${message} Do not re-call "${workspace}" — no retry ` +
+          `can succeed until its provider account is topped up. Report this to the user.`,
+        meta,
+      };
+    }
     if (code === "CAPACITY_REACHED") {
       return {
         result: `Error (CAPACITY_REACHED): ${message} Do not retry immediately; continue other work or inform the user.`,

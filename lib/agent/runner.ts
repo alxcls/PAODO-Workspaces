@@ -21,8 +21,24 @@ import type { ToolStatus } from "@/lib/usage/types";
 import type { CallAgentMeta } from "./tools/agentCall";
 import { streamModelTurn, synthesizeLimit, usageTokens, type ResolvedToolCall } from "./modelTurn";
 import { dispatchTools, type RunnerTool } from "./toolDispatch";
+import {
+  PROVIDER_CREDIT_EXHAUSTED_CODE,
+  providerCreditExhaustedMessage,
+  reportProviderCreditExhaustion,
+} from "./providerCreditFailure";
 
 const log = createLogger("agent");
+
+/**
+ * Why a run ended without an answer. Every code names a cause the model cannot work around, so
+ * consumers (chat, API stream, skill callers, the usage dashboard) can explain the stop instead of
+ * showing a raw provider string — or, worse, an empty conversation.
+ */
+export type AgentErrorCode =
+  | "TIMEOUT"
+  | "CANCELLED"
+  | "INFRASTRUCTURE_UNAVAILABLE"
+  | typeof PROVIDER_CREDIT_EXHAUSTED_CODE;
 
 export type AgentEvent =
   | { type: "token"; content: string }
@@ -36,7 +52,7 @@ export type AgentEvent =
   | { type: "tool_link"; name: string; id?: string; meta: CallAgentMeta }
   // `meta` is set only for call_agent: a deep-link to the callee's persisted session.
   | { type: "tool_result"; name: string; id?: string; result: string; meta?: CallAgentMeta }
-  | { type: "error"; message: string; code?: "TIMEOUT" | "CANCELLED" | "INFRASTRUCTURE_UNAVAILABLE" }
+  | { type: "error"; message: string; code?: AgentErrorCode }
   | { type: "limit_reached" }
   | { type: "done" }
   | {
@@ -360,8 +376,33 @@ export async function* runAgent(
     // A thrown error (e.g. the model stream aborting mid-turn) lands here before any
     // assistant tool-call turn is committed, so history is left consistent — see the
     // atomic commit above. Just surface the error and close the stream.
-    wlog.error({ event: "agent_run_failed", outcome: "error_event_emitted", err }, "agent run failed");
-    yield { type: "error", message: String(err) };
+    //
+    // An out-of-credit provider is the one cause worth naming: `String(err)` reduces it to
+    // "Error: 402 Insufficient Balance", which says nothing about whose account, or that no retry
+    // and no other model on that key can get past it.
+    const creditExhausted = reportProviderCreditExhaustion(wlog, err, {
+      workspaceId,
+      provider: config.provider,
+      model: modelId,
+      stage: "model_turn",
+    });
+    // One line per failed run, whatever the cause. The account-level report above is collapsed per
+    // provider so a dry key cannot flood the log — routing credit failures through it *instead* of
+    // here would take the per-run record down with it, silencing this event during the one outage it
+    // exists to catch. The classification rides along so both are queryable by the same fields.
+    wlog.error(
+      { event: "agent_run_failed", outcome: "error_event_emitted", err, ...creditExhausted },
+      "agent run failed",
+    );
+    if (creditExhausted) {
+      yield {
+        type: "error",
+        code: PROVIDER_CREDIT_EXHAUSTED_CODE,
+        message: providerCreditExhaustedMessage(creditExhausted, { provider: config.provider, model: modelId }),
+      };
+    } else {
+      yield { type: "error", message: String(err) };
+    }
     yield { type: "done" };
   } finally {
     // Single result commit for the run, on EVERY exit path — normal completion, iteration limit,

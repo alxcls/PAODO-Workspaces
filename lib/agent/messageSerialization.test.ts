@@ -1,6 +1,12 @@
 import { describe, it, expect } from "vitest";
 import { HumanMessage, AIMessage, ToolMessage, SystemMessage } from "@langchain/core/messages";
-import { serializeMessages, deserializeMessages, setSystemPrompt, messagesToTranscript } from "./messageSerialization";
+import {
+  serializeMessages,
+  deserializeMessages,
+  setSystemPrompt,
+  messagesToTranscript,
+  noteRunError,
+} from "./messageSerialization";
 
 describe("message serialization round-trip", () => {
   it("preserves message classes, tool_calls and tool_call_id, dropping the system prompt", () => {
@@ -131,5 +137,36 @@ describe("messagesToTranscript", () => {
     const t = messagesToTranscript(messages);
     expect(t[0]).toMatchObject({ role: "tool_start", toolName: "call_agent", toolDone: true });
     expect(t[0].calleeConversationId).toBeUndefined();
+  });
+});
+
+describe("run errors on the persisted history", () => {
+  it("shows why the run stopped when the conversation is re-opened", () => {
+    // The failing run's own history: the prompt landed, one tool turn ran, then the provider
+    // refused. Live, the reason exists only as a stream event — this is what a reload has to work
+    // from, and before it was recorded the conversation re-opened as a prompt with no reply.
+    const messages = [
+      new HumanMessage("audit the data"),
+      new AIMessage({ content: "", tool_calls: [{ id: "t1", name: "file_read", args: { file_path: "a.json" } }] }),
+      new ToolMessage({ tool_call_id: "t1", content: "{}" }),
+    ];
+    noteRunError(messages, "The deepseek account has run out of credit, so deepseek-chat refused the request.");
+
+    const t = messagesToTranscript(deserializeMessages(serializeMessages(messages)));
+
+    // Last, after the work that did happen — not floated up next to the prompt.
+    expect(t.at(-1)).toEqual({
+      role: "error",
+      content: "The deepseek account has run out of credit, so deepseek-chat refused the request.",
+    });
+    expect(t.filter((m) => m.role === "error")).toHaveLength(1);
+  });
+
+  it("leaves a clean history untouched and ignores an empty note", () => {
+    expect(messagesToTranscript([new HumanMessage("hi"), new AIMessage("hello")]).some((m) => m.role === "error")).toBe(
+      false,
+    );
+    // Nothing to attach to: a run that failed before any message was committed.
+    expect(() => noteRunError([], "boom")).not.toThrow();
   });
 });

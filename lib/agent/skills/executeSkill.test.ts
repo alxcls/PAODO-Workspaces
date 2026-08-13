@@ -438,6 +438,25 @@ describe("executeSkill — callee run and output contract", () => {
     });
   });
 
+  it("tells the caller a callee stopped for want of credit rather than reporting a generic failure", async () => {
+    // A correction retry cannot repair an empty account, so the code has to survive the hop —
+    // EXECUTION_ERROR would invite the caller to try the same skill again.
+    const run = async function* (): AsyncGenerator<AgentEvent> {
+      yield {
+        type: "error",
+        code: "PROVIDER_CREDIT_EXHAUSTED",
+        message: "The deepseek account has run out of credit, so deepseek-chat refused the request.",
+      };
+    } as unknown as typeof runAgent;
+    const res = await executeSkill(CALLEE.id, CALLER.id, "check-stock", { sku: "A1" }, opts({ run }));
+    expect(res).toEqual({
+      state: "failed",
+      code: "PROVIDER_CREDIT_EXHAUSTED",
+      message: "The deepseek account has run out of credit, so deepseek-chat refused the request.",
+      conversationId: FAKE_CONV_ID,
+    });
+  });
+
   it("persists the callee run as a skill-call conversation in the callee workspace and returns its id", async () => {
     const createConversationFn = vi.fn(
       (_wsId: string, o?: { title?: string; kind?: "user" | "skill-call" | "scheduled" }) => ({

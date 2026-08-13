@@ -8,16 +8,17 @@ import { z } from "zod";
 import { normalizeRelpath } from "../pathUtils";
 import { toolError } from "../toolUtils";
 import type { ExecRunner } from "../interfaces";
+import { MAX_FILE_READ_BYTES } from "../../infra/limits";
 
-// How much of a file one call may pull into the process. Enforced INSIDE the container by `head -c`,
-// so an oversized file is never transferred at all — the alternative (read it all, then trim) is the
-// bug, not the fix: a plain `cat` of a large file blew the heap here, and the split/map/join below
-// multiplies whatever arrives by another three copies before anything gets a chance to trim it.
+// The ceiling (in lib/infra/limits.ts, shared with drive_read) is enforced INSIDE the container by
+// `head -c`, so an oversized file is never transferred at all. The alternative — read it all, then
+// trim — is the bug, not the fix: a plain `cat` of a large file blew the heap here, and the
+// split/map/join below multiplies whatever arrives by another three copies before anything gets a
+// chance to trim it.
 //
 // This tool sets skipResultCap, deliberately, so that a legitimately large file still reads in one
-// call. That makes this constant the only thing bounding it, hence a generous value rather than the
-// 50k dispatch cap — and offset/limit remains the way to page past it.
-const MAX_FILE_READ_BYTES = 400_000;
+// call. That makes the ceiling the only thing bounding it, rather than the 50k dispatch cap — and
+// offset/limit remains the way to page past it.
 
 const schema = z.object({
   file_path: z.string().describe("File path relative to workspace root"),

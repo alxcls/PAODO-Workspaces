@@ -8,9 +8,9 @@
 import { StructuredTool } from "@langchain/core/tools";
 import { z } from "zod";
 import path from "path";
-import fs from "fs/promises";
-import { resolveDrivePath } from "../driveAccess";
+import { resolveDrivePath, readFileBounded } from "../driveAccess";
 import { toolError } from "../toolUtils";
+import { MAX_DRIVE_TRANSFER_BYTES } from "@/lib/infra/limits";
 import type { ExecRunner } from "../interfaces";
 
 const schema = z.object({
@@ -36,15 +36,14 @@ Use this when you need an editable local copy. For a quick read without a copy, 
     if (typeof resolved === "string") return resolved;
     if (!resolved.relPath) return "Error: a file path within the drive is required";
 
-    let content: Buffer;
-    try {
-      content = await fs.readFile(resolved.absPath);
-    } catch (err: unknown) {
-      const e = err as NodeJS.ErrnoException;
-      if (e.code === "ENOENT") return `Error: file not found in drive "${drive_name}"`;
-      if (e.code === "EISDIR") return `Error: "${filePath}" is a directory, not a file`;
-      return toolError(e);
-    }
+    // Bounded because this is the most expensive transfer in the app: the raw bytes, their base64
+    // copy, and the copy the runner writes to the child are all live at once (~3.7× the file).
+    const content = await readFileBounded(resolved.absPath, MAX_DRIVE_TRANSFER_BYTES, {
+      missing: `Error: file not found in drive "${drive_name}"`,
+      isDirectory: `Error: "${filePath}" is a directory, not a file`,
+      advice: `Split it on the drive first (e.g. split -b 40m), or work with it where it is rather than copying it in.`,
+    });
+    if (typeof content === "string") return content;
 
     const dest = path.posix.join("downloads", resolved.drive.name, resolved.relPath);
     const destDir = path.posix.dirname(dest);

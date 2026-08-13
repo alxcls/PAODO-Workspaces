@@ -13,35 +13,7 @@
 // can grep or tail it — the same place background task logs already live.
 
 import type { OutputSink } from "../../infra/interfaces";
-
-/** Output at or under this stays inline in the tool result, whole. Matches Claude Code's threshold. */
-export const MAX_INLINE_BYTES = 30_000;
-
-/** How much of an over-cap output is shown inline, as a head preview. Claude Code shows 2KB. */
-export const PREVIEW_BYTES = 2_048;
-
-/**
- * How much stderr survives the spill, at each end.
- *
- * The spill drops the separated streams, which also dropped the only input diagnoseStderr has — so a
- * command that failed because the container cannot resolve its runtime user, and happened to print
- * more than the cap, got the "output too large" notice instead of the explanation of WHY it failed.
- * Head and tail because a failure announces itself at one end or the other: setup faults come first,
- * and a build that dies after 40KB of progress says why on its last line.
- */
-export const STDERR_SAMPLE_BYTES = 2_048;
-
-/** Byte size for the truncation notice — "29.4KB", "1.2MB". Mirrors Claude Code's KiB/MiB rendering. */
-export function formatOutputBytes(bytes: number): string {
-  const units = ["B", "KB", "MB", "GB"];
-  let value = bytes;
-  let unit = 0;
-  while (value >= 1024 && unit < units.length - 1) {
-    value /= 1024;
-    unit += 1;
-  }
-  return unit === 0 ? `${value}B` : `${(Math.round(value * 10) / 10).toFixed(1)}${units[unit]}`;
-}
+import { MAX_INLINE_BYTES, PREVIEW_BYTES, STDERR_SAMPLE_BYTES, formatOutputBytes } from "../../infra/limits";
 
 /**
  * Accumulator for one command's output, shared by its stdout and stderr streams.

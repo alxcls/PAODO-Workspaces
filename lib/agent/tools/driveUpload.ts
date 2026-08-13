@@ -9,8 +9,9 @@ import { z } from "zod";
 import path from "path";
 import fs from "fs/promises";
 import { normalizeRelpath } from "../pathUtils";
-import { resolveDrivePath } from "../driveAccess";
+import { resolveDrivePath, readFileBounded } from "../driveAccess";
 import { toolError } from "../toolUtils";
+import { MAX_DRIVE_TRANSFER_BYTES } from "@/lib/infra/limits";
 
 const schema = z.object({
   source_path: z.string().describe("Path of the workspace file to upload (relative to workspace root)"),
@@ -43,15 +44,15 @@ If a file already exists at the destination it is overwritten (newest wins) and 
     if (typeof resolved === "string") return resolved;
     if (!resolved.relPath) return "Error: a destination file path within the drive is required";
 
-    let content: Buffer;
-    try {
-      content = await fs.readFile(path.join(this.workspaceDir, srcRel));
-    } catch (err: unknown) {
-      const e = err as NodeJS.ErrnoException;
-      if (e.code === "ENOENT") return `Error: workspace file not found: ${source_path}`;
-      if (e.code === "EISDIR") return `Error: "${source_path}" is a directory, not a file`;
-      return toolError(e);
-    }
+    // Same ceiling as drive_download, applied to the workspace side. The workspace directory is a
+    // host volume, so this read lands in the app's heap exactly as a drive read does — the container
+    // is not in the path and none of its limits apply.
+    const content = await readFileBounded(path.join(this.workspaceDir, srcRel), MAX_DRIVE_TRANSFER_BYTES, {
+      missing: `Error: workspace file not found: ${source_path}`,
+      isDirectory: `Error: "${source_path}" is a directory, not a file`,
+      advice: `Split it first (e.g. split -b 40m) and upload the parts.`,
+    });
+    if (typeof content === "string") return content;
 
     const existed = await fs
       .access(resolved.absPath)

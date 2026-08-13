@@ -43,7 +43,7 @@ gateway separate. Remaining threats:
 - `pids_limit` on the app and credential-proxy containers as well
 - Containers auto-stop after idle timeout (`CONTAINER_IDLE_MS`, default 10 min)
 
-**App-side output ceilings**
+**App-side memory ceilings**
 
 The container limits above bound the workspace. They do nothing for memory held in the app, and that
 is where the exhaustion crashes actually lived: a command's output was accumulated into one string,
@@ -54,11 +54,27 @@ a callback Node invokes directly, so no `.catch()` sees it. It reaches the proce
 exhaust the heap outright, which no `try/catch` can intercept at all. Both were reachable from
 ordinary agent tool calls, so each path now has a ceiling.
 
+The `drive_*` tools were a third case, and a distinct one: drives are read **host-side**, never
+mounted into a container, so they sit above every ceiling built around the container transport and
+were bounded by nothing at all. An agent asking to read a large file on a shared drive was enough
+to take the instance down. They are bounded now too, and by refusal rather than truncation — both
+transfer tools copy bytes, and half a database written to a destination is corruption that reports
+success.
+
+Note what is *not* underneath any of this: the app container declares no memory limit of its own.
+These ceilings are the limit, and passing one costs the whole instance rather than one workspace.
+
 None of these is an env knob, deliberately. Unlike `CONTAINER_MEMORY`, none depends on the host:
 every PAODO instance runs the same kinds of workloads, so each of these has one right answer and an
 operator asked to pick would have nothing to base the choice on. A knob nobody has cause to turn is
-surface area, not flexibility — one bad value breaks things quietly. Each number is stated with its
-reasoning at the definition, where anyone changing it is already reading.
+surface area, not flexibility — one bad value breaks things quietly.
+
+Every one of these numbers lives in `lib/infra/limits.ts`, with the reasoning for the value beside
+it; the mechanism that enforces it stays at the call site. They are together because the question
+that matters is a whole-system one — *does every accumulating path have a bound?* — and it was
+answered wrong twice while each ceiling owned its own copy of its number: `gitClient` kept the
+unbounded append after `dockerClient` was fixed, and the host-side drive reads were missed entirely.
+Neither miss was visible from any one file.
 
 - Command output (`execute_command`): 30KB inline; the rest streams to a file in the container that
   the agent is given the path to — 20MB per file, 5 kept per container (`containerManager.ts`)
@@ -69,6 +85,13 @@ reasoning at the definition, where anyone changing it is already reading.
 - Live console sockets: 2MB buffered, 30s pinned (`wsHub.ts`) — `ws.send()` never blocks, so a tab
   that stopped reading queues its bytes in the app's heap, once per tab; past the ceiling messages
   are dropped (and reported to that tab) rather than queued
+- Drive reads (`drive_read`): the same 400KB, since it is the same act — bytes into the context.
+  Refused rather than truncated: the tool has no `offset`/`limit` to resume from, so the way through
+  is `drive_download` followed by a paged `file_read`
+- Drive transfers (`drive_download`, `drive_upload`): 50MB per file. Judged by peak, not file size —
+  a download holds the bytes, their base64 copy, and the runner's copy of that at once, ~3.7×
+- Drive listings (`drive_ls`): 1,000 entries, streamed with `opendir` so the ceiling bounds the
+  directory scan and not merely the text it prints
 - Every one of these reports when it cut something. A silently truncated result is the failure mode
   these ceilings introduce, and it is the one that makes an agent act on a false picture
 

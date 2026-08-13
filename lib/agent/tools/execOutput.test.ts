@@ -2,7 +2,8 @@
 // matter most here are not the formatting ones — they are the two that guarantee the ceiling is real
 // (memory stops growing) and that reaching it costs nothing (every byte still lands in the sink).
 import { describe, it, expect } from "vitest";
-import { ExecOutput, MAX_INLINE_BYTES, PREVIEW_BYTES, STDERR_SAMPLE_BYTES, formatOutputBytes } from "./execOutput";
+import { ExecOutput } from "./execOutput";
+import { MAX_INLINE_BYTES, PREVIEW_BYTES, STDERR_SAMPLE_BYTES, formatOutputBytes } from "@/lib/infra/limits";
 import type { OutputSink } from "../../infra/interfaces";
 
 function recordingSink(overrides: Partial<OutputSink> = {}) {

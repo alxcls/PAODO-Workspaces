@@ -9,6 +9,7 @@ import fs from "fs/promises";
 import { getDrivesForWorkspace, formatDriveLine } from "@/lib/drives/store";
 import { resolveDrivePath } from "../driveAccess";
 import { toolError } from "../toolUtils";
+import { MAX_DRIVE_LISTING_ENTRIES } from "@/lib/infra/limits";
 
 const schema = z.object({
   drive_name: z
@@ -40,15 +41,39 @@ Call with drive_name (and optional path) to list a directory inside that drive.`
     if (typeof resolved === "string") return resolved;
 
     try {
-      const entries = await fs.readdir(resolved.absPath, { withFileTypes: true });
+      // opendir + stop at the ceiling, rather than readdir. readdir materializes a Dirent for every
+      // name in the directory before this code sees any of them, so a drive holding a million files
+      // is an unbounded allocation in the app's heap that no container limit sits above — drives are
+      // read host-side. Streaming the entries means the ceiling bounds the scan, not just the output.
+      const entries: { name: string; isDirectory: boolean }[] = [];
+      let truncated = false;
+      for await (const entry of await fs.opendir(resolved.absPath)) {
+        if (entries.length === MAX_DRIVE_LISTING_ENTRIES) {
+          truncated = true;
+          break;
+        }
+        entries.push({ name: entry.name, isDirectory: entry.isDirectory() });
+      }
       if (!entries.length) return "(empty directory)";
-      return entries
+
+      const lines = entries
         .sort((a, b) => {
-          if (a.isDirectory() !== b.isDirectory()) return a.isDirectory() ? -1 : 1;
+          if (a.isDirectory !== b.isDirectory) return a.isDirectory ? -1 : 1;
           return a.name.localeCompare(b.name);
         })
-        .map((e) => (e.isDirectory() ? `${e.name}/` : e.name))
-        .join("\n");
+        .map((e) => (e.isDirectory ? `${e.name}/` : e.name));
+
+      // Say that the set is partial AND that it is arbitrary: the sort runs after the cut, so these
+      // are the first entries the filesystem happened to return, not the alphabetically first ones.
+      // An agent told only "truncated" will reasonably assume it saw everything up to some letter.
+      if (truncated) {
+        lines.push(
+          `[listing truncated at ${MAX_DRIVE_LISTING_ENTRIES} entries — this directory holds more. ` +
+            `These are the first ${MAX_DRIVE_LISTING_ENTRIES} the filesystem returned, in no particular order. ` +
+            `Narrow the path to see the rest.]`,
+        );
+      }
+      return lines.join("\n");
     } catch (err: unknown) {
       const e = err as NodeJS.ErrnoException;
       if (e.code === "ENOENT") return `Error: path not found in drive "${drive_name}"`;

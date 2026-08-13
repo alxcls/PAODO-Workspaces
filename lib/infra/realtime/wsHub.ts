@@ -6,30 +6,22 @@
 // state off `global` survives hot-reloads because the Node.js global object is never reset
 // between reloads. The guard `if (!g._wsConnections)` ensures only one Map is ever created.
 import type { WebSocket } from "ws";
+import { WS_MAX_BUFFERED_BYTES, WS_STALL_MS } from "../limits";
 
 const g = global as typeof global & { _wsConnections?: Map<string, Set<WebSocket>> };
 if (!g._wsConnections) g._wsConnections = new Map();
 
 const connections = g._wsConnections;
 
-// How far behind a single socket may fall before we stop handing it more.
+// WHY the sends below are bounded at all: `ws.send()` never blocks. When the client cannot read as
+// fast as we write — a backgrounded tab, a throttled phone, a laptop that went to sleep — the bytes
+// do not wait in the kernel, they queue on OUR heap, and execute_command broadcasts every chunk of a
+// command's output. A `find /` or a verbose build therefore parks its entire output in this process,
+// once per connected tab, with nothing to stop it. That is the same unbounded-accumulation defect as
+// execOutput.ts and dockerClient.ts, just reached through a socket instead of a string.
 //
-// WHY this exists: `ws.send()` never blocks. When the client cannot read as fast as we write — a
-// backgrounded tab, a throttled phone, a laptop that went to sleep — the bytes do not wait in the
-// kernel, they queue on OUR heap, and execute_command broadcasts every chunk of a command's output.
-// A `find /` or a verbose build therefore parks its entire output in this process, once per connected
-// tab, with nothing to stop it. That is the same unbounded-accumulation defect as execOutput.ts and
-// dockerClient.ts, just reached through a socket instead of a string.
-//
-// 2MB is far past useful: the console panel keeps only the last 500 lines, so anything queued behind
-// that much backlog is already scrolled out of existence before it can be rendered. Dropping it costs
-// the viewer nothing real — and the drop is reported (console_dropped) rather than hidden.
-const WS_MAX_BUFFERED_BYTES = 2 * 1024 * 1024;
-
-// A socket pinned at the ceiling this long is not a slow viewer, it is a dead one that has not
-// finished dying (a closed laptop, a dropped network with no FIN). Terminating reclaims its buffer
-// and its slot; the browser hook reconnects 2s later and resyncs, so a live viewer loses nothing.
-const WS_STALL_MS = 30_000;
+// The two numbers — how far behind a socket may fall, and how long it may stay there before it counts
+// as dead rather than slow — are in lib/infra/limits.ts, with every other ceiling.
 
 // Per-socket drop bookkeeping. WeakMap so an entry cannot outlive the socket it describes — this map
 // is never cleaned up on disconnect, and must not be a reason a closed connection stays reachable.

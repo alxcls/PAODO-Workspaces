@@ -6,8 +6,7 @@
 // Shared rather than copied because a copy is how gitClient kept the bug after dockerClient was
 // capped. A safety floor, not a product limit: tools needing a meaningful bound set their own.
 import type { ChildProcess } from "child_process";
-
-export const MAX_CAPTURE_BYTES = 8 * 1024 * 1024;
+import { MAX_CAPTURE_BYTES } from "./limits";
 
 export class SpawnCapture {
   private text = { stdout: "", stderr: "" };

@@ -8,7 +8,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { ExecCommandTool } from "./execCommand";
 import type { StreamingExecFn, BackgroundExecFn, OutputSinkFn } from "../interfaces";
-import { MAX_INLINE_BYTES, PREVIEW_BYTES } from "./execOutput";
+import { MAX_INLINE_BYTES, PREVIEW_BYTES } from "@/lib/infra/limits";
 
 const checkFreeSpace = vi.hoisted(() => vi.fn());
 vi.mock("@/lib/infra/storage/diskSpace", () => ({ checkFreeSpace, RESERVED_FREE_BYTES: 1024 * 1024 * 1024 }));

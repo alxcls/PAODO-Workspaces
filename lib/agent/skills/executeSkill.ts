@@ -130,7 +130,7 @@ async function runCalleeTurn(
   opts: ExecuteSkillOptions,
   signal: AbortSignal | undefined,
   onEvent?: (event: AgentEvent) => void,
-): Promise<{ text: string } | { error: string }> {
+): Promise<{ text: string } | { error: string; code?: "INFRASTRUCTURE_UNAVAILABLE" }> {
   const recordUsage = opts.appendUsageFn ?? appendUsage;
   let text = "";
   for await (const event of run(messages, input, callee.dir, callee.id, {
@@ -141,7 +141,12 @@ async function runCalleeTurn(
   })) {
     onEvent?.(event);
     if (event.type === "token") text += event.content;
-    if (event.type === "error") return { error: event.message };
+    if (event.type === "error") {
+      return {
+        error: event.message,
+        ...(event.code === "INFRASTRUCTURE_UNAVAILABLE" ? { code: event.code } : {}),
+      };
+    }
     if (event.type === "turn_usage") {
       recordTurnUsage(
         {
@@ -335,7 +340,7 @@ ${buildStructuredResponderBlock(skill)}`;
     opts.onConversationStart?.(conv.id);
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
       elog.debug({ attempt }, "skill call running callee");
-      let turn: { text: string } | { error: string };
+      let turn: { text: string } | { error: string; code?: "INFRASTRUCTURE_UNAVAILABLE" };
       try {
         turn = await runCalleeTurn(run, messages, input, callee, sessionId, conv.id, opts, calleeSignal, publish);
       } catch (err) {
@@ -365,7 +370,7 @@ ${buildStructuredResponderBlock(skill)}`;
           { event: "skill_call_execution_failed", outcome: "skill_call_failed", attempt, agentError: turn.error },
           "skill call execution error",
         );
-        return fail("EXECUTION_ERROR", turn.error);
+        return fail(turn.code ?? "EXECUTION_ERROR", turn.error);
       }
 
       const parsed = parseOutput(turn.text);

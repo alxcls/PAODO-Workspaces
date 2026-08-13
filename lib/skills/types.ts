@@ -50,6 +50,7 @@ export type SkillErrorCode =
   | "TIMEOUT"
   | "CANCELLED"
   | "CAPACITY_REACHED"
+  | "INFRASTRUCTURE_UNAVAILABLE"
   | "EXECUTION_ERROR";
 
 /**

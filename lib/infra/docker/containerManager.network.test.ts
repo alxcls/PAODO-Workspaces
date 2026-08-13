@@ -40,6 +40,8 @@ describe("ContainerManager.ensureNetwork — creation", () => {
     const create = calls.find((c) => c[0] === "network" && c[1] === "create")!;
     expect(create).toBeDefined();
     expect(create).not.toContain("--internal");
+    expect(create).toContain("com.paodo.managed=workspace");
+    expect(create).toContain("com.paodo.workspace-id=ws1");
   });
 
   it("creates an --internal network when internet access is off", async () => {

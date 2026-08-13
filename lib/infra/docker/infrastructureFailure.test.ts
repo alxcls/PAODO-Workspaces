@@ -1,7 +1,10 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { resetLogThrottle } from "../logThrottle";
 import {
+  asDockerNetworkPoolExhaustedError,
   classifyInfrastructureResourceExhaustion,
+  DOCKER_NETWORK_POOL_EXHAUSTED_MESSAGE,
+  infrastructureFailureFromToolResult,
   reportInfrastructureResourceExhaustion,
 } from "./infrastructureFailure";
 
@@ -29,6 +32,18 @@ describe("infrastructure resource exhaustion", () => {
       )?.failureCode,
     ).toBe("DOCKER_NETWORK_POOL_EXHAUSTED");
     expect(classifyInfrastructureResourceExhaustion(new Error("Cannot connect to the Docker daemon"))).toBeNull();
+  });
+
+  it("wraps the Docker wording with a stable marker that survives tool stringification", () => {
+    const wrapped = asDockerNetworkPoolExhaustedError(
+      new Error("all predefined address pools have been fully subnetted"),
+    );
+    expect(wrapped?.retryable).toBe(false);
+    expect(infrastructureFailureFromToolResult(`Error: ${String(wrapped)}`)).toEqual({
+      code: "INFRASTRUCTURE_UNAVAILABLE",
+      message: DOCKER_NETWORK_POOL_EXHAUSTED_MESSAGE,
+    });
+    expect(infrastructureFailureFromToolResult("Error: command exited with code 1")).toBeNull();
   });
 
   it("emits stable fields and reports suppressed retries on the next window", () => {

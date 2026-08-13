@@ -421,6 +421,23 @@ describe("executeSkill — callee run and output contract", () => {
     });
   });
 
+  it("preserves infrastructure-unavailable feedback for agent and MCP callers", async () => {
+    const run = async function* (): AsyncGenerator<AgentEvent> {
+      yield {
+        type: "error",
+        code: "INFRASTRUCTURE_UNAVAILABLE",
+        message: "Workspace tools are unavailable because host networking capacity is exhausted.",
+      };
+    } as unknown as typeof runAgent;
+    const res = await executeSkill(CALLEE.id, CALLER.id, "check-stock", { sku: "A1" }, opts({ run }));
+    expect(res).toEqual({
+      state: "failed",
+      code: "INFRASTRUCTURE_UNAVAILABLE",
+      message: "Workspace tools are unavailable because host networking capacity is exhausted.",
+      conversationId: FAKE_CONV_ID,
+    });
+  });
+
   it("persists the callee run as a skill-call conversation in the callee workspace and returns its id", async () => {
     const createConversationFn = vi.fn(
       (_wsId: string, o?: { title?: string; kind?: "user" | "skill-call" | "scheduled" }) => ({

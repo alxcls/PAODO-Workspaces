@@ -20,7 +20,7 @@ import { containerName, networkName } from "./naming";
 import { BackgroundTaskManager, type BackgroundTask } from "./backgroundTaskManager";
 import { ProxyNetworkManager } from "./proxyNetworkManager";
 import { capacityProfile } from "../capacityProfile";
-import { reportInfrastructureResourceExhaustion } from "./infrastructureFailure";
+import { asDockerNetworkPoolExhaustedError, reportInfrastructureResourceExhaustion } from "./infrastructureFailure";
 
 // Re-exported for back-compat with external consumers.
 export type { BackgroundTask } from "./backgroundTaskManager";
@@ -136,7 +136,16 @@ export class ContainerManager implements IContainerManager {
       const rm = await this.docker.cmd("network", "rm", name);
       if (rm.code !== 0) throw new Error(`docker network rm failed while recreating with new policy: ${rm.stderr}`);
     }
-    const args = ["network", "create", "--driver", "bridge"];
+    const args = [
+      "network",
+      "create",
+      "--driver",
+      "bridge",
+      "--label",
+      "com.paodo.managed=workspace",
+      "--label",
+      `com.paodo.workspace-id=${workspaceId}`,
+    ];
     if (!internetAccess) args.push("--internal");
     args.push(name);
     const r = await this.docker.cmd(...args);
@@ -355,7 +364,8 @@ export class ContainerManager implements IContainerManager {
       stage = "install_proxy_ca";
       await this.workspaceDeps.installProxyCA(this.docker, containerName(workspaceId), workspaceId);
     } catch (err) {
-      if (!reportInfrastructureResourceExhaustion(log, err, { workspaceId, stage })) {
+      const exhaustion = asDockerNetworkPoolExhaustedError(err);
+      if (!reportInfrastructureResourceExhaustion(log, exhaustion ?? err, { workspaceId, stage })) {
         log.error(
           {
             event: "workspace_container_start_failed",
@@ -367,7 +377,7 @@ export class ContainerManager implements IContainerManager {
           "workspace container failed to start",
         );
       }
-      throw err;
+      throw exhaustion ?? err;
     }
   }
 
@@ -397,8 +407,9 @@ export class ContainerManager implements IContainerManager {
         try {
           await this.proxy.verify(workspaceId);
         } catch (err) {
+          const exhaustion = asDockerNetworkPoolExhaustedError(err);
           if (
-            !reportInfrastructureResourceExhaustion(log, err, {
+            !reportInfrastructureResourceExhaustion(log, exhaustion ?? err, {
               workspaceId,
               stage: "verify_proxy_network",
             })
@@ -414,7 +425,7 @@ export class ContainerManager implements IContainerManager {
               "workspace container failed to start",
             );
           }
-          throw err;
+          throw exhaustion ?? err;
         }
       }
     })().finally(() => {

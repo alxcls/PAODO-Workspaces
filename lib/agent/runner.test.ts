@@ -183,6 +183,27 @@ describe("runAgent — history stays consistent across aborts", () => {
     expect(usage?.toolCalls).toEqual([expect.objectContaining({ name: "execute_command", status: "error" })]);
   });
 
+  it("ends the run after a non-retryable Docker network-capacity tool failure", async () => {
+    const buildAgentTools = makeBuildTools(
+      [
+        [toolCallsChunk({ id: "call_1", args: '{"cmd":"ls"}' })],
+        [new AIMessageChunk({ content: "must not be reached" })],
+      ],
+      "Error: [DOCKER_NETWORK_POOL_EXHAUSTED] workspace network unavailable",
+    );
+    const events: AgentEvent[] = [];
+
+    for await (const event of runAgent([], "list files", "/tmp/ws", "ws-1", { ...noopDeps, buildAgentTools })) {
+      events.push(event);
+    }
+
+    expect(events.filter((event) => event.type === "error")).toEqual([
+      expect.objectContaining({ type: "error", code: "INFRASTRUCTURE_UNAVAILABLE" }),
+    ]);
+    expect(events.at(-1)).toEqual({ type: "done" });
+    expect(events.filter((event) => event.type === "turn_usage")).toHaveLength(1);
+  });
+
   it("persists a reasoning-model tool turn as coalesced text, not raw streamed blocks", async () => {
     const messages: BaseMessage[] = [];
     // A Claude/OpenAI extended-thinking chunk: content is an array of provider blocks (a signed

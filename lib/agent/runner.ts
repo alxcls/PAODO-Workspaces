@@ -36,7 +36,7 @@ export type AgentEvent =
   | { type: "tool_link"; name: string; id?: string; meta: CallAgentMeta }
   // `meta` is set only for call_agent: a deep-link to the callee's persisted session.
   | { type: "tool_result"; name: string; id?: string; result: string; meta?: CallAgentMeta }
-  | { type: "error"; message: string; code?: "TIMEOUT" | "CANCELLED" }
+  | { type: "error"; message: string; code?: "TIMEOUT" | "CANCELLED" | "INFRASTRUCTURE_UNAVAILABLE" }
   | { type: "limit_reached" }
   | { type: "done" }
   | {
@@ -327,6 +327,16 @@ export async function* runAgent(
           status,
         })),
       };
+
+      // A host-wide, explicitly non-retryable failure cannot be repaired by another model turn.
+      // End after persisting the complete tool turn so chat/API/schedules/MCP/A2A all receive one
+      // terminal error instead of spending the rest of the run repeating doomed workspace tools.
+      const terminalFailure = settled.find(({ terminalFailure }) => terminalFailure)?.terminalFailure;
+      if (terminalFailure) {
+        yield { type: "error", ...terminalFailure };
+        yield { type: "done" };
+        break;
+      }
 
       // User pressed escape: the tools above have already been killed and their results committed
       // (atomic block, so history stays valid for a later resume). Stop here instead of looping

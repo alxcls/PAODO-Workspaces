@@ -1,7 +1,9 @@
 import { describe, it, expect, vi } from "vitest";
-import type { BaseMessage } from "@langchain/core/messages";
+import { HumanMessage, type BaseMessage } from "@langchain/core/messages";
+import { messagesToTranscript } from "./messageSerialization";
 import type { AgentEvent, RunAgentOptions } from "./runner";
 import * as broker from "./runBroker";
+import { ExecutionCapacity, ExecutionCapacityReachedError } from "./executionCapacity";
 
 const tick = () => new Promise((r) => setTimeout(r, 0));
 
@@ -147,6 +149,28 @@ describe("runBroker", () => {
     expect(broker.isRunning("nope", "nope")).toBe(false);
   });
 
+  it("rejects the next top-level run at capacity and releases the slot when a run ends", async () => {
+    const capacity = new ExecutionCapacity(1);
+    const gate = deferred();
+    const run = async function* () {
+      await gate.promise;
+      yield { type: "done" } as AgentEvent;
+    } as unknown as typeof import("./runner").runAgent;
+    const first = params(run, { capacity });
+    const rejected = params(run, { capacity });
+
+    expect(broker.startRun(first)).toEqual({ alreadyRunning: false });
+    expect(broker.startRun(rejected)).toEqual({
+      alreadyRunning: false,
+      capacityReached: { active: 1, limit: 1, available: 0, atCapacity: true },
+    });
+
+    gate.resolve();
+    await tick();
+    expect(broker.startRun(rejected)).toEqual({ alreadyRunning: false });
+    await tick();
+  });
+
   describe("startExternalRun", () => {
     it("buffers + fans out producer-published events, and marks the conversation running", () => {
       const ext = broker.startExternalRun("ws-ext", "conv-ext", "hello");
@@ -186,6 +210,108 @@ describe("runBroker", () => {
       expect(broker.stop("ws-ext3", "conv-ext3")).toBe(true);
       expect(ext!.signal.aborted).toBe(true);
       ext!.finish();
+    });
+
+    it("returns a capacity error to an external agent caller and recovers after finish", () => {
+      const capacity = new ExecutionCapacity(1);
+      const first = broker.startExternalRun("ws-cap", "conv-cap-1", "x", { capacity });
+
+      expect(() => broker.startExternalRun("ws-cap", "conv-cap-2", "x", { capacity })).toThrow(
+        ExecutionCapacityReachedError,
+      );
+      first!.finish();
+      const next = broker.startExternalRun("ws-cap", "conv-cap-2", "x", { capacity });
+      expect(next).not.toBeNull();
+      next!.finish();
+    });
+  });
+});
+
+describe("runBroker — the reason a run stopped survives on the history", () => {
+  it("records the failure onto the history it persists, so a reload can still show it", async () => {
+    // The runner mutates the conversation's live array in place and the broker persists that same
+    // array at run end. Without the note, a failed run persists as a prompt with no reply.
+    const messages = [new HumanMessage("audit the data")] as BaseMessage[];
+    const run = async function* () {
+      yield {
+        type: "error",
+        code: "PROVIDER_CREDIT_EXHAUSTED",
+        message: "The deepseek account has run out of credit.",
+      } as AgentEvent;
+      yield { type: "done" } as AgentEvent;
+    } as unknown as typeof import("./runner").runAgent;
+
+    const p = params(run, { messages });
+    broker.startRun(p);
+    await tick();
+
+    expect(messagesToTranscript(messages).at(-1)).toEqual({
+      role: "error",
+      content: "The deepseek account has run out of credit.",
+    });
+    // Stamped before the persist that writes it to disk, not after.
+    expect(p.onPersist).toHaveBeenCalled();
+  });
+
+  it("keeps only the first reason when a run emits several errors", async () => {
+    const messages = [new HumanMessage("go")] as BaseMessage[];
+    const run = async function* () {
+      yield { type: "error", message: "first" } as AgentEvent;
+      yield { type: "error", message: "second" } as AgentEvent;
+      yield { type: "done" } as AgentEvent;
+    } as unknown as typeof import("./runner").runAgent;
+
+    broker.startRun(params(run, { messages }));
+    await tick();
+
+    expect(messagesToTranscript(messages).filter((m) => m.role === "error")).toEqual([
+      { role: "error", content: "first" },
+    ]);
+  });
+});
+
+describe("runBroker — a run that dies before the loop still reports itself", () => {
+  it("turns a throw from outside the agent loop into a visible error and closes the stream", async () => {
+    // What buildModel raises for a stored model the provider no longer accepts. It escapes runAgent
+    // entirely — before the loop that would have converted it into an error event — so the broker
+    // is the only layer left that can say anything.
+    const messages = [new HumanMessage("go")] as BaseMessage[];
+    const run = (() => {
+      throw new Error('no model selected for provider "deepseek"');
+    }) as unknown as typeof import("./runner").runAgent;
+
+    const p = params(run, { messages });
+    broker.startRun(p);
+    await tick();
+
+    const received: AgentEvent[] = [];
+    broker.subscribe(p.workspaceId, p.conversationId, (e) => received.push(e))?.replay.forEach((e) => received.push(e));
+    expect(received).toContainEqual(
+      expect.objectContaining({
+        type: "error",
+        message: expect.stringContaining('no model selected for provider "deepseek"'),
+      }),
+    );
+    // The stream has to be closed too: without `done` a subscriber waits on a run that is over.
+    expect(received.at(-1)).toEqual({ type: "done" });
+    expect(messagesToTranscript(messages).at(-1)?.role).toBe("error");
+    expect(p.onRunError).toHaveBeenCalled();
+  });
+
+  it("reports a run that returns without ever finishing, keeping it distinct from a failure", async () => {
+    const messages = [new HumanMessage("go")] as BaseMessage[];
+    // Ends without `done` and without an error — nothing else in the broker claims this run.
+    const run = async function* () {
+      yield { type: "token", content: "half an answer" } as AgentEvent;
+    } as unknown as typeof import("./runner").runAgent;
+
+    const p = params(run, { messages });
+    broker.startRun(p);
+    await tick();
+
+    expect(messagesToTranscript(messages).at(-1)).toEqual({
+      role: "error",
+      content: "This run ended without finishing and without reporting why.",
     });
   });
 });

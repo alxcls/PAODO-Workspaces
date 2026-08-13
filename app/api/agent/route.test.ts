@@ -49,6 +49,7 @@ vi.mock("@/lib/api/workspaceRunStream", () => ({
 }));
 
 import { POST } from "./route";
+import { ExecutionCapacityReachedError } from "@/lib/agent/executionCapacity";
 
 function post(body: unknown, key?: string): Promise<Response> {
   return POST(
@@ -83,6 +84,17 @@ describe("POST /api/agent — Bearer key auth & per-workspace scoping", () => {
       origin: "api",
       conversation: { mode: "create" },
     });
+  });
+
+  it("returns the shared capacity error from the legacy public API", async () => {
+    h.startWorkspaceRun.mockImplementationOnce(() => {
+      throw new ExecutionCapacityReachedError({ active: 10, limit: 10, available: 0, atCapacity: true });
+    });
+
+    const res = await post({ workspace: "alpha", message: "hi" }, "key-a");
+
+    expect(res.status).toBe(503);
+    expect(await res.json()).toMatchObject({ ok: false, code: "CAPACITY_REACHED" });
   });
 
   it("401s when no Authorization header is present", async () => {

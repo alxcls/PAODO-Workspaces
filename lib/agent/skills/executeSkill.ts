@@ -13,7 +13,7 @@
 // Both agents live in the same Node.js process — this is an ordinary function call,
 // no HTTP, no serialization.
 import Ajv, { type ErrorObject, type ValidateFunction } from "ajv";
-import type { BaseMessage } from "@langchain/core/messages";
+import { AIMessage, HumanMessage, type BaseMessage } from "@langchain/core/messages";
 import { canCall } from "@/lib/agent/network/graph";
 import { loadSkills } from "@/lib/skills/store";
 import { createConversation, getMessages, persist } from "@/lib/conversations/store";
@@ -29,9 +29,11 @@ import {
 } from "@/lib/skills/types";
 import type { IWorkspaceLookup, IContainerManager } from "../../infra/interfaces";
 import { buildStructuredResponderBlock } from "../systemPrompt";
+import { noteRunError } from "../messageSerialization";
 import { createLogger } from "../../infra/logger";
 import type { runAgent, AgentEvent } from "../runner";
 import { createWorkspaceRunTimeout, USER_STOPPED_CONVERSATION_MESSAGE, WorkspaceRunTimeoutError } from "../runTimeout";
+import { ExecutionCapacityReachedError, type ExecutionCapacityGate } from "../executionCapacity";
 // runner (and runBroker, which pulls in runner) are imported dynamically inside executeSkill to
 // avoid the circular:
 // tools/index → AgentCallTool → executeSkill → runner → buildTools → tools/index
@@ -54,6 +56,8 @@ export interface ExecuteSkillOptions {
   createConversationFn?: typeof createConversation;
   getMessagesFn?: typeof getMessages;
   persistFn?: typeof persist;
+  /** Test seam; production uses the process-wide execution ceiling. */
+  capacity?: ExecutionCapacityGate;
   /** Fired the instant the callee's conversation is created (before the run finishes), so the
    *  caller's UI can show the session deep-link mid-call. createConversation already writes the
    *  conversation to SQLite, so the link resolves immediately. */
@@ -111,6 +115,16 @@ function parseOutput(text: string): { ok: true; value: Record<string, unknown> }
   return { ok: true, value: parsed as Record<string, unknown> };
 }
 
+// Run-ending causes worth naming to the caller rather than flattening into EXECUTION_ERROR: both
+// are conditions a correction retry cannot repair, and both are already SkillErrorCodes, so they
+// pass straight through `fail()`.
+const CALLEE_TERMINAL_CODES = ["INFRASTRUCTURE_UNAVAILABLE", "PROVIDER_CREDIT_EXHAUSTED"] as const;
+type CalleeTerminalCode = (typeof CALLEE_TERMINAL_CODES)[number];
+type CalleeTurnFailure = { error: string; code?: CalleeTerminalCode };
+
+const isCalleeTerminal = (code: string | undefined): code is CalleeTerminalCode =>
+  CALLEE_TERMINAL_CODES.some((terminal) => terminal === code);
+
 // Runs the callee's loop once on the given (persisted) message history and collects the
 // final text. Output-correction retries call this again on the same array — just another
 // turn on the same conversation.
@@ -127,7 +141,7 @@ async function runCalleeTurn(
   opts: ExecuteSkillOptions,
   signal: AbortSignal | undefined,
   onEvent?: (event: AgentEvent) => void,
-): Promise<{ text: string } | { error: string }> {
+): Promise<{ text: string } | CalleeTurnFailure> {
   const recordUsage = opts.appendUsageFn ?? appendUsage;
   let text = "";
   for await (const event of run(messages, input, callee.dir, callee.id, {
@@ -138,7 +152,12 @@ async function runCalleeTurn(
   })) {
     onEvent?.(event);
     if (event.type === "token") text += event.content;
-    if (event.type === "error") return { error: event.message };
+    if (event.type === "error") {
+      return {
+        error: event.message,
+        ...(isCalleeTerminal(event.code) ? { code: event.code } : {}),
+      };
+    }
     if (event.type === "turn_usage") {
       recordTurnUsage(
         {
@@ -276,6 +295,9 @@ ${buildStructuredResponderBlock(skill)}`;
       firstInput,
       opts.appendUsageFn ?? appendUsage,
     );
+    // The callee's own conversation is persisted in the finally below and is deep-linked from the
+    // caller's transcript. Without this it opens on a prompt with no reply and no reason.
+    noteRunError(messages, message);
     return { state: "failed", code, message, conversationId: conv.id };
   };
 
@@ -286,10 +308,20 @@ ${buildStructuredResponderBlock(skill)}`;
   // The per-turn `done` events runAgent emits are suppressed; a single `done` is published in the
   // finally below, after persist, so a correction retry never prematurely closes a subscriber.
   const { startExternalRun } = await import("../runBroker");
-  const liveRun = startExternalRun(callee.id, conv.id, firstInput, {
-    sessionId,
-    origin: opts.origin ?? "agent",
-  });
+  let liveRun;
+  try {
+    liveRun = startExternalRun(callee.id, conv.id, firstInput, {
+      sessionId,
+      origin: opts.origin ?? "agent",
+      capacity: opts.capacity,
+    });
+  } catch (err) {
+    if (!(err instanceof ExecutionCapacityReachedError)) throw err;
+    messages.push(new HumanMessage(firstInput), new AIMessage(err.message));
+    (opts.persistFn ?? persist)(callee.id, conv.id);
+    opts.onConversationStart?.(conv.id);
+    return fail("CAPACITY_REACHED", err.message);
+  }
 
   // The signal the callee actually runs under: whichever of these fires first halts it.
   //   - opts.signal      — the caller's remaining deadline or explicit Stop (cascades recursively)
@@ -322,7 +354,7 @@ ${buildStructuredResponderBlock(skill)}`;
     opts.onConversationStart?.(conv.id);
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
       elog.debug({ attempt }, "skill call running callee");
-      let turn: { text: string } | { error: string };
+      let turn: { text: string } | CalleeTurnFailure;
       try {
         turn = await runCalleeTurn(run, messages, input, callee, sessionId, conv.id, opts, calleeSignal, publish);
       } catch (err) {
@@ -352,7 +384,7 @@ ${buildStructuredResponderBlock(skill)}`;
           { event: "skill_call_execution_failed", outcome: "skill_call_failed", attempt, agentError: turn.error },
           "skill call execution error",
         );
-        return fail("EXECUTION_ERROR", turn.error);
+        return fail(turn.code ?? "EXECUTION_ERROR", turn.error);
       }
 
       const parsed = parseOutput(turn.text);

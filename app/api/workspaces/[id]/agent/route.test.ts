@@ -9,7 +9,13 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const h = vi.hoisted(() => ({
   createConversation: vi.fn(() => ({ id: "conv-created" })),
   getMessages: vi.fn((): never[] | null => []),
-  startRun: vi.fn(() => ({ alreadyRunning: false })),
+  startRun: vi.fn(
+    (): {
+      alreadyRunning: boolean;
+      capacityReached?: { active: number; limit: number; available: number; atCapacity: boolean };
+    } => ({ alreadyRunning: false }),
+  ),
+  persist: vi.fn(),
 }));
 
 const KEYS: Record<string, string> = { "ws-a": "key-a", "ws-b": "key-b", "ws-orphan": "key-orphan" };
@@ -38,6 +44,7 @@ vi.mock("@/lib/infra/security/rateLimit", () => ({
 vi.mock("@/lib/conversations/store", () => ({
   createConversation: h.createConversation,
   getMessages: h.getMessages,
+  persist: h.persist,
 }));
 vi.mock("@/lib/agent/runBroker", () => ({
   startRun: h.startRun,
@@ -69,6 +76,7 @@ beforeEach(() => {
   h.createConversation.mockClear();
   h.getMessages.mockClear();
   h.startRun.mockClear();
+  h.persist.mockClear();
   h.getMessages.mockReturnValue([]);
   h.startRun.mockReturnValue({ alreadyRunning: false });
 });
@@ -115,6 +123,25 @@ describe("POST /api/workspaces/[id]/agent — Bearer key auth & per-workspace sc
 
     expect(res.status).toBe(409);
     expect(await res.text()).toBe("A run is already in progress");
+  });
+
+  it("returns a machine-readable 503 when the instance execution ceiling is full", async () => {
+    h.startRun.mockReturnValueOnce({
+      alreadyRunning: false,
+      capacityReached: { active: 10, limit: 10, available: 0, atCapacity: true },
+    });
+
+    const res = await post("ws-a", { message: "hi" }, "key-a");
+
+    expect(res.status).toBe(503);
+    expect(res.headers.get("Retry-After")).toBe("1");
+    expect(await res.json()).toMatchObject({
+      ok: false,
+      code: "CAPACITY_REACHED",
+      error: "Execution capacity reached: 10/10 agent runs are active. This request was not started. Try again when another run finishes.",
+      details: { active: 10, limit: 10, conversationId: "conv-created", origin: "api" },
+    });
+    expect(h.persist).toHaveBeenCalledWith("ws-a", "conv-created");
   });
 
   it("401s when no Authorization header is present", async () => {

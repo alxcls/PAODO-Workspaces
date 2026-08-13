@@ -9,6 +9,7 @@ import { createAuditLogger, createLogger } from "@/lib/infra/logger";
 import { rateLimited, subjectRateLimited } from "@/lib/api/guards";
 import { startWorkspaceRun } from "@/lib/operations/agent/run";
 import { apiConversationStream } from "@/lib/api/workspaceRunStream";
+import { appErrorResponse } from "@/lib/api/errorResponse";
 
 export async function POST(req: NextRequest) {
   const log = createLogger("api").child({ route: "agent" });
@@ -44,11 +45,18 @@ export async function POST(req: NextRequest) {
   });
   if (workspaceLimited) return workspaceLimited;
 
-  const receipt = startWorkspaceRun(ws.id, {
-    prompt: body.message,
-    origin: "api",
-    conversation: { mode: "create" },
-  });
+  let receipt;
+  try {
+    receipt = startWorkspaceRun(ws.id, {
+      prompt: body.message,
+      origin: "api",
+      conversation: { mode: "create" },
+    });
+  } catch (err) {
+    const expected = appErrorResponse(err, req);
+    if (expected) return expected;
+    throw err;
+  }
   if (!receipt) return new Response("Workspace not found", { status: 404 });
   if (!receipt.started) return new Response("A run is already in progress", { status: 409 });
 

@@ -11,12 +11,19 @@
 import type { BaseMessage } from "@langchain/core/messages";
 import { runAgent, type AgentEvent } from "./runner";
 import type { RunAgentOptions } from "./runner";
+import { noteRunError } from "./messageSerialization";
 import { getStore, getContainers, getVersioning } from "../infra/services";
 import { recordRunError, recordTurnUsage } from "@/lib/usage/record";
 import type { RunErrorRecord, SessionOrigin } from "@/lib/usage/types";
 import * as conversations from "@/lib/conversations/store";
 import { createLogger } from "../infra/logger";
 import { createWorkspaceRunTimeout, USER_STOPPED_CONVERSATION_MESSAGE } from "./runTimeout";
+import {
+  executionCapacity,
+  ExecutionCapacityReachedError,
+  type ExecutionCapacityGate,
+  type ExecutionCapacitySnapshot,
+} from "./executionCapacity";
 
 const log = createLogger("runBroker");
 
@@ -70,13 +77,18 @@ export interface StartRunParams {
   onTurnUsage?: (sessionId: string, event: Extract<AgentEvent, { type: "turn_usage" }>) => void;
   onRunError?: (sessionId: string, error: RunErrorRecord) => void;
   onPersist?: () => void;
+  /** Test seam; production uses the process-wide execution ceiling. */
+  capacity?: ExecutionCapacityGate;
 }
 
 /**
  * Start a run for a conversation, or report that one is already running. The actual run proceeds
  * in the background regardless of who (if anyone) is subscribed.
  */
-export function startRun(params: StartRunParams): { alreadyRunning: boolean } {
+export function startRun(params: StartRunParams): {
+  alreadyRunning: boolean;
+  capacityReached?: ExecutionCapacitySnapshot;
+} {
   const k = key(params.workspaceId, params.conversationId);
   const existing = sessions.get(k);
   if (existing && existing.status === "running") return { alreadyRunning: true };
@@ -90,8 +102,6 @@ export function startRun(params: StartRunParams): { alreadyRunning: boolean } {
     abort: new AbortController(),
     status: "running",
   };
-  sessions.set(k, session);
-
   const run = params.run ?? runAgent;
   const sessionId = crypto.randomUUID();
   const origin =
@@ -138,6 +148,27 @@ export function startRun(params: StartRunParams): { alreadyRunning: boolean } {
     ...params.runOptions,
     signal: runTimeout.signal,
   };
+  const capacity = params.capacity ?? executionCapacity;
+  const executionSlot = capacity.tryAcquire();
+  if (!executionSlot) {
+    runTimeout.dispose();
+    const snapshot = capacity.snapshot();
+    log.warn(
+      {
+        event: "agent_execution_capacity_reached",
+        outcome: "run_not_started",
+        workspaceId: params.workspaceId,
+        conversationId: params.conversationId,
+        origin: params.origin,
+        activeAgentRuns: snapshot.active,
+        maxAgentRuns: snapshot.limit,
+      },
+      "agent run rejected at execution capacity",
+    );
+    return { alreadyRunning: false, capacityReached: snapshot };
+  }
+  const capacityAtStart = capacity.snapshot();
+  sessions.set(k, session);
   const startedAt = Date.now();
   log.info(
     {
@@ -149,6 +180,8 @@ export function startRun(params: StartRunParams): { alreadyRunning: boolean } {
       origin,
       maxIterations: params.maxIterations,
       maxRunMinutes: params.maxRunMinutes,
+      activeAgentRuns: capacityAtStart.active,
+      maxAgentRuns: capacityAtStart.limit,
     },
     "agent run started",
   );
@@ -172,6 +205,9 @@ export function startRun(params: StartRunParams): { alreadyRunning: boolean } {
       if (event.type === "error" && !recordedError) {
         recordedError = true;
         recordError(sessionId, { code: event.code, message: event.message });
+        // Also onto the history persisted below, so the reason is still there when the conversation
+        // is re-opened — or opened for the first time, for a run started through the API.
+        noteRunError(params.messages, event.message);
       }
       if (event.type === "done") sentDone = true;
     };
@@ -212,6 +248,19 @@ export function startRun(params: StartRunParams): { alreadyRunning: boolean } {
       publish({ type: "error", code: "CANCELLED", message: USER_STOPPED_CONVERSATION_MESSAGE });
       publish({ type: "done" });
     };
+    // Last resort for a run that died without saying so. runAgent turns everything raised inside
+    // its loop into an error event, but whatever throws *before* that loop — loading the workspace
+    // config, building the model for a selection the provider no longer accepts — escapes to the
+    // catch below. That used to log and stop there: no error event, no `done`, so the stream hung
+    // open and the conversation showed a prompt that was apparently ignored.
+    const publishFailure = (message: string, status: AgentRunStatus = "failed") => {
+      if (sentDone) return;
+      publish({ type: "error", message });
+      publish({ type: "done" });
+      // After the publishes: an uncoded error event would otherwise mark every one of these "failed".
+      terminalStatus = status;
+    };
+
     try {
       for await (const event of run(
         params.messages,
@@ -242,7 +291,6 @@ export function startRun(params: StartRunParams): { alreadyRunning: boolean } {
       } else if (session.abort.signal.aborted) {
         terminalStatus = "cancelled";
       } else {
-        terminalStatus = "failed";
         log.error(
           {
             event: "detached_agent_run_failed",
@@ -253,12 +301,31 @@ export function startRun(params: StartRunParams): { alreadyRunning: boolean } {
           },
           "detached run failed",
         );
+        publishFailure(
+          `This run stopped on an unexpected error and could not continue: ${err instanceof Error ? err.message : String(err)}`,
+        );
       }
     } finally {
       if (runTimeout.didTimeout() && !sentDone) publishTimeout();
       else if (session.abort.signal.aborted && !sentDone) publishUserStop();
+      // A run that returned without `done` and without an error: nothing above claimed it, so it
+      // would otherwise be recorded as `incomplete` and shown as nothing at all.
+      else if (!sentDone) {
+        log.error(
+          {
+            event: "agent_run_ended_incomplete",
+            outcome: "run_ended",
+            workspaceId: params.workspaceId,
+            conversationId: params.conversationId,
+          },
+          "run ended without finishing",
+        );
+        publishFailure("This run ended without finishing and without reporting why.", "incomplete");
+      }
       runTimeout.dispose();
       session.status = "done";
+      executionSlot.release();
+      const capacityAtEnd = capacity.snapshot();
       try {
         persist();
       } catch (err) {
@@ -273,7 +340,6 @@ export function startRun(params: StartRunParams): { alreadyRunning: boolean } {
           "persist on run end failed",
         );
       }
-      if (!sentDone && terminalStatus === "success") terminalStatus = "incomplete";
       log.info(
         {
           event: "agent_run_completed",
@@ -284,6 +350,8 @@ export function startRun(params: StartRunParams): { alreadyRunning: boolean } {
           origin,
           status: terminalStatus,
           durationMs: Date.now() - startedAt,
+          activeAgentRuns: capacityAtEnd.active,
+          maxAgentRuns: capacityAtEnd.limit,
         },
         "agent run completed",
       );
@@ -326,7 +394,7 @@ export function startExternalRun(
   workspaceId: string,
   conversationId: string,
   userInput: string,
-  opts: { sessionId?: string; origin?: SessionOrigin } = {},
+  opts: { sessionId?: string; origin?: SessionOrigin; capacity?: ExecutionCapacityGate } = {},
 ): ExternalRun | null {
   const k = key(workspaceId, conversationId);
   const existing = sessions.get(k);
@@ -341,9 +409,29 @@ export function startExternalRun(
     abort: new AbortController(),
     status: "running",
   };
-  sessions.set(k, session);
   const sessionId = opts.sessionId ?? crypto.randomUUID();
   const origin = opts.origin ?? "agent";
+  const capacity = opts.capacity ?? executionCapacity;
+  const executionSlot = capacity.tryAcquire();
+  if (!executionSlot) {
+    const snapshot = capacity.snapshot();
+    log.warn(
+      {
+        event: "agent_execution_capacity_reached",
+        outcome: "run_not_started",
+        workspaceId,
+        conversationId,
+        origin,
+        activeAgentRuns: snapshot.active,
+        maxAgentRuns: snapshot.limit,
+      },
+      "external agent run rejected at execution capacity",
+    );
+    throw new ExecutionCapacityReachedError(snapshot, { workspaceId, conversationId, origin });
+  }
+  const capacityAtStart = capacity.snapshot();
+
+  sessions.set(k, session);
   const startedAt = Date.now();
   let terminalStatus: AgentRunStatus = "success";
   log.info(
@@ -354,6 +442,8 @@ export function startExternalRun(
       conversationId,
       workspaceId,
       origin,
+      activeAgentRuns: capacityAtStart.active,
+      maxAgentRuns: capacityAtStart.limit,
     },
     "agent run started",
   );
@@ -373,6 +463,8 @@ export function startExternalRun(
     finish: (status) => {
       if (session.status === "done") return;
       session.status = "done";
+      executionSlot.release();
+      const capacityAtEnd = capacity.snapshot();
       if (status) terminalStatus = status;
       if (!session.buffer.some((event) => event.type === "done") && terminalStatus === "success") {
         terminalStatus = "incomplete";
@@ -387,6 +479,8 @@ export function startExternalRun(
           origin,
           status: terminalStatus,
           durationMs: Date.now() - startedAt,
+          activeAgentRuns: capacityAtEnd.active,
+          maxAgentRuns: capacityAtEnd.limit,
         },
         "agent run completed",
       );

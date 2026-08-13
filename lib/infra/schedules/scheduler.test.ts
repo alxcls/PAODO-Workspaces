@@ -20,6 +20,9 @@ const h = vi.hoisted(() => ({
   alreadyRunning: false,
   workspaceLookups: 0,
   workspaceDisappears: false,
+  capacityReached: false,
+  messages: [] as Array<{ content?: unknown }>,
+  persist: vi.fn(),
 }));
 
 vi.mock("../services", () => ({
@@ -35,7 +38,12 @@ vi.mock("../services", () => ({
 vi.mock("../../agent/runBroker", () => ({
   startRun: (p: unknown) => {
     h.startRun(p);
-    return { alreadyRunning: h.alreadyRunning };
+    return {
+      alreadyRunning: h.alreadyRunning,
+      ...(h.capacityReached
+        ? { capacityReached: { active: 10, limit: 10, available: 0, atCapacity: true } }
+        : {}),
+    };
   },
   subscribe: (_w: string, _c: string, cb: (e: { type: string }) => void) => {
     h.subCb = cb;
@@ -47,7 +55,8 @@ vi.mock("@/lib/conversations/store", () => ({
     h.createConversation(workspaceId, opts);
     return { id: "conv-1" };
   },
-  getMessages: () => [],
+  getMessages: () => h.messages,
+  persist: h.persist,
 }));
 // These prompt mocks intercept the shared workspacePrompt helper one layer below the operation.
 vi.mock("../../agent/systemPrompt", () => ({ buildSystemPrompt: () => ({}), buildPromptConfig: () => ({}) }));
@@ -96,6 +105,9 @@ beforeEach(async () => {
   h.alreadyRunning = false;
   h.workspaceLookups = 0;
   h.workspaceDisappears = false;
+  h.capacityReached = false;
+  h.messages = [];
+  h.persist.mockClear();
   clearSingletons();
   vi.resetModules();
   store = await import("./scheduleStore");
@@ -143,6 +155,20 @@ describe("scheduler tick", () => {
     h.subCb?.({ type: "done" });
     expect(store.getSchedule("w1")?.lastRunStatus).toBe("error");
     expect(store.getSchedule("w1")?.lastRunSnippet).toBe("boom");
+  });
+
+  it("records a capacity refusal and leaves the explanation in the scheduled conversation", () => {
+    seed();
+    h.capacityReached = true;
+
+    scheduler._tick();
+
+    const saved = store.getSchedule("w1");
+    expect(saved?.lastRunStatus).toBe("error");
+    expect(saved?.lastRunSnippet).toContain("Execution capacity reached: 10/10 agent runs are active");
+    expect(h.persist).toHaveBeenCalledWith("w1", "conv-1");
+    expect(h.messages.at(-1)?.content).toContain("Execution capacity reached");
+    expect(h.subCb).toBeNull();
   });
 
   it("does not fire a disabled schedule", () => {

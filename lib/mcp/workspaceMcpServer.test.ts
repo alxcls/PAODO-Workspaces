@@ -147,6 +147,31 @@ describe("callWorkspaceMcpTool", () => {
     });
   });
 
+  it("surfaces execution capacity as a clear MCP tool error", async () => {
+    const executeSkillFn = vi.fn(async () => ({
+      state: "failed" as const,
+      code: "CAPACITY_REACHED" as const,
+      message: "Execution capacity reached: 10/10 agent runs are active. This request was not started.",
+    }));
+
+    const res = await callWorkspaceMcpTool(
+      "ws1",
+      "check_stock",
+      { sku: "x" },
+      deps({ executeSkillFn: executeSkillFn as never }),
+    );
+
+    expect(res).toEqual({
+      isError: true,
+      content: [
+        {
+          type: "text",
+          text: "[CAPACITY_REACHED] Execution capacity reached: 10/10 agent runs are active. This request was not started.",
+        },
+      ],
+    });
+  });
+
   it("returns a tool error when skill execution throws instead of dropping the MCP response", async () => {
     const executeSkillFn = vi.fn(async () => {
       throw new Error("directory lookup failed");

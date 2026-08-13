@@ -8,6 +8,8 @@ export const ERROR_CODES = {
   UNAUTHORIZED: "UNAUTHORIZED",
   FORBIDDEN: "FORBIDDEN",
   RATE_LIMITED: "RATE_LIMITED",
+  /** The instance-wide active-agent fuse is full. The request is safe to retry after a run ends. */
+  CAPACITY_REACHED: "CAPACITY_REACHED",
   /**
    * The filesystem refused the write. Deliberately not FORBIDDEN: 403 already means CSRF rejection in
    * this app (server.ts), so a read-only file answering 403 would be indistinguishable from "this

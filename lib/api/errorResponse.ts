@@ -18,6 +18,7 @@ const STATUS_BY_CODE: Record<AppErrorCode, number> = {
   UNAUTHORIZED: 401,
   FORBIDDEN: 403,
   RATE_LIMITED: 429,
+  CAPACITY_REACHED: 503,
   FILE_NOT_WRITABLE: 409,
   FILE_TOO_LARGE: 413,
   TRANSFER_TOO_LARGE: 413,
@@ -73,7 +74,11 @@ export function errorResponse(
 /** Returns null for an unexpected exception so the route can log it once before returning a 500. */
 export function appErrorResponse(error: unknown, request?: Request): NextResponse<ApiErrorBody> | null {
   if (!(error instanceof AppError)) return null;
-  return errorResponse(error.code, error.message, { request, details: error.details });
+  return errorResponse(error.code, error.message, {
+    request,
+    details: error.details,
+    ...(error.code === "CAPACITY_REACHED" ? { headers: { "Retry-After": "1" } } : {}),
+  });
 }
 
 // A route's unexpected-failure branch is deliberately NOT factored out to sit alongside this. It

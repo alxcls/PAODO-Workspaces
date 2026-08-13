@@ -183,6 +183,58 @@ describe("runAgent — history stays consistent across aborts", () => {
     expect(usage?.toolCalls).toEqual([expect.objectContaining({ name: "execute_command", status: "error" })]);
   });
 
+  it("ends the run after a non-retryable Docker network-capacity tool failure", async () => {
+    const buildAgentTools = makeBuildTools(
+      [
+        [toolCallsChunk({ id: "call_1", args: '{"cmd":"ls"}' })],
+        [new AIMessageChunk({ content: "must not be reached" })],
+      ],
+      "Error: [DOCKER_NETWORK_POOL_EXHAUSTED] workspace network unavailable",
+    );
+    const events: AgentEvent[] = [];
+
+    for await (const event of runAgent([], "list files", "/tmp/ws", "ws-1", { ...noopDeps, buildAgentTools })) {
+      events.push(event);
+    }
+
+    expect(events.filter((event) => event.type === "error")).toEqual([
+      expect.objectContaining({ type: "error", code: "INFRASTRUCTURE_UNAVAILABLE" }),
+    ]);
+    expect(events.at(-1)).toEqual({ type: "done" });
+    expect(events.filter((event) => event.type === "turn_usage")).toHaveLength(1);
+  });
+
+  it("names the empty provider account when the model refuses, instead of leaking the raw error", async () => {
+    // What 20 workspaces on one dry DeepSeek key produced: the run ends on the first turn, and
+    // `String(err)` alone ("Error: 402 Insufficient Balance") never says whose account, or that no
+    // retry can get past it.
+    const buildAgentTools = () =>
+      ({
+        modelWithTools: {
+          stream: async () => {
+            throw Object.assign(new Error("402 Insufficient Balance"), { status: 402 });
+          },
+        },
+        model: {},
+        toolMap: {},
+        signalHandlers: {},
+      }) as never;
+    const events: AgentEvent[] = [];
+
+    for await (const event of runAgent([], "do work", "/tmp/ws", "ws-1", {
+      ...noopDeps,
+      loadConfig: () => ({ provider: "deepseek", model: "deepseek-chat" }) as never,
+      buildAgentTools,
+    })) {
+      events.push(event);
+    }
+
+    const failure = events.find((event) => event.type === "error");
+    expect(failure).toMatchObject({ code: "PROVIDER_CREDIT_EXHAUSTED" });
+    expect(failure && "message" in failure ? failure.message : "").toContain("deepseek account has run out of credit");
+    expect(events.at(-1)).toEqual({ type: "done" });
+  });
+
   it("persists a reasoning-model tool turn as coalesced text, not raw streamed blocks", async () => {
     const messages: BaseMessage[] = [];
     // A Claude/OpenAI extended-thinking chunk: content is an array of provider blocks (a signed

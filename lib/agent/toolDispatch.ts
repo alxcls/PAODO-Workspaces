@@ -5,6 +5,7 @@ import type { ToolStatus } from "@/lib/usage/types";
 import type { CallAgentMeta } from "./tools/agentCall";
 import { classifyToolStatus } from "./toolUtils";
 import type { ResolvedToolCall } from "./modelTurn";
+import { infrastructureFailureFromToolResult } from "../infra/docker/infrastructureFailure";
 
 type AgentCallWithMeta = (
   args: Record<string, unknown>,
@@ -25,6 +26,7 @@ export type SettledToolCall = {
   resultStr: string;
   meta?: CallAgentMeta;
   status: ToolStatus;
+  terminalFailure?: { code: "INFRASTRUCTURE_UNAVAILABLE"; message: string };
 };
 
 export type QueuedToolLink = { name: string; id?: string; meta: CallAgentMeta };
@@ -108,7 +110,8 @@ export function dispatchTools(
       } else {
         log.debug({ name: tc.name, toolMs, status }, "tool timing");
       }
-      return { tc, resultStr, meta, status };
+      const terminalFailure = infrastructureFailureFromToolResult(resultStr) ?? undefined;
+      return { tc, resultStr, meta, status, terminalFailure };
     }),
   ).then((results) => {
     linkQueue.settle();

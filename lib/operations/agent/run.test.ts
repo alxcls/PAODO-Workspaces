@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { Workspace } from "@/lib/workspace/types";
 import type { StartRunParams } from "@/lib/agent/runBroker";
 import { ConversationNotFoundError, RunInputInvalidError } from "./errors";
+import { ExecutionCapacityReachedError } from "@/lib/agent/executionCapacity";
 import { startWorkspaceRun, type StartWorkspaceRunDeps } from "./run";
 
 const WORKSPACE: Workspace = {
@@ -15,7 +16,14 @@ const WORKSPACE: Workspace = {
   internetAccess: true,
 };
 
-function harness(options: { workspace?: Workspace; messages?: BaseMessage[] | null; alreadyRunning?: boolean } = {}) {
+function harness(
+  options: {
+    workspace?: Workspace;
+    messages?: BaseMessage[] | null;
+    alreadyRunning?: boolean;
+    capacityReached?: { active: number; limit: number; available: number; atCapacity: boolean };
+  } = {},
+) {
   const calls: string[] = [];
   const messages = options.messages === undefined ? ([] as BaseMessage[]) : options.messages;
   const createConversation = vi.fn((_workspaceId: string, opts?: { kind?: "user" | "skill-call" | "scheduled" }) => {
@@ -39,17 +47,18 @@ function harness(options: { workspace?: Workspace; messages?: BaseMessage[] | nu
   });
   const startRun = vi.fn((_params: StartRunParams) => {
     calls.push("startRun");
-    return { alreadyRunning: options.alreadyRunning ?? false };
+    return { alreadyRunning: options.alreadyRunning ?? false, capacityReached: options.capacityReached };
   });
+  const persist = vi.fn(() => calls.push("persist"));
   const getWorkspace = vi.fn(() => options.workspace);
 
   const deps: StartWorkspaceRunDeps = {
     workspaces: { getWorkspace },
-    conversations: { createConversation, getMessages },
+    conversations: { createConversation, getMessages, persist },
     broker: { startRun },
     refreshPrompt,
   };
-  return { calls, messages, createConversation, getMessages, refreshPrompt, startRun, getWorkspace, deps };
+  return { calls, messages, createConversation, getMessages, persist, refreshPrompt, startRun, getWorkspace, deps };
 }
 
 describe("startWorkspaceRun", () => {
@@ -169,6 +178,27 @@ describe("startWorkspaceRun", () => {
       origin: "chat",
       started: false,
     });
+  });
+
+  it("persists a clear refusal in the attempted conversation when the instance is full", () => {
+    const messages: BaseMessage[] = [];
+    const h = harness({
+      workspace: WORKSPACE,
+      messages,
+      capacityReached: { active: 10, limit: 10, available: 0, atCapacity: true },
+    });
+
+    expect(() =>
+      startWorkspaceRun(
+        WORKSPACE.id,
+        { prompt: "scheduled work", origin: "scheduled", conversation: { mode: "create", kind: "scheduled" } },
+        h.deps,
+      ),
+    ).toThrow(ExecutionCapacityReachedError);
+
+    expect(h.persist).toHaveBeenCalledWith(WORKSPACE.id, "conv-created");
+    expect(messages.at(-2)?.content).toBe("scheduled work");
+    expect(messages.at(-1)?.content).toContain("Execution capacity reached: 10/10 agent runs are active");
   });
 
   it.each(["chat", "api", "scheduled"] as const)("passes the %s origin through verbatim", (origin) => {

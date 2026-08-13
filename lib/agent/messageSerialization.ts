@@ -41,6 +41,33 @@ export function setSystemPrompt(messages: BaseMessage[], system: BaseMessage): v
   else messages.unshift(system);
 }
 
+// Stashed on the last message of the run rather than appended as a message of its own: an extra
+// AIMessage would be replayed to the provider as something the assistant said, and an empty one is
+// rejected outright by some of them. `additional_kwargs` is carried through serialization and
+// ignored by every provider adapter — the same seam the call_agent deep-link already rides on.
+const RUN_ERROR_KEY = "runError";
+
+/**
+ * Record on the conversation history why this run stopped.
+ *
+ * Without this a failed run persists as a user message with nothing after it: the live error event
+ * exists only in the stream, so re-opening the conversation — or opening it for the first time,
+ * when the run was started through the API — shows a prompt that was apparently ignored.
+ *
+ * The explanation is all that is kept: the machine code is already recorded per run in the usage
+ * ledger, and the transcript renders an error as text either way.
+ */
+export function noteRunError(messages: BaseMessage[], message: string): void {
+  const last = messages.at(-1);
+  if (!last) return;
+  (last.additional_kwargs as Record<string, unknown>)[RUN_ERROR_KEY] = message;
+}
+
+function readRunError(message: BaseMessage): string | null {
+  const note = (message.additional_kwargs as Record<string, unknown> | undefined)?.[RUN_ERROR_KEY];
+  return typeof note === "string" && note ? note : null;
+}
+
 /**
  * Project saved replay state into the client transcript. The execution ledger aggregates a
  * session's model turns onto its final visible output and keys that total by the stable id on the
@@ -120,6 +147,8 @@ export function messagesToTranscript(
       }
       // system messages are not rendered
     }
+    const runError = readRunError(m);
+    if (runError) out.push({ role: "error", content: runError });
   }
   return out;
 }

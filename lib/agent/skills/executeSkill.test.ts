@@ -2,6 +2,7 @@
 // with injected fakes so it never touches disk or real workspaces.
 
 import { describe, it, expect, vi } from "vitest";
+import type { BaseMessage } from "@langchain/core/messages";
 
 // Redirect WORKSPACES_ROOT before any infra module reads it at import time
 // (executeSkill dynamically imports ../tools, which pulls in the store singletons).
@@ -17,6 +18,7 @@ import type { IWorkspaceStore } from "../../infra/interfaces";
 import type { runAgent, AgentEvent } from "../runner";
 import * as broker from "../runBroker";
 import { createWorkspaceRunTimeout } from "../runTimeout";
+import { ExecutionCapacity } from "../executionCapacity";
 
 // executeSkill is the single enforcement point of the skill contract — every guarantee
 // the PRD makes (authz, both-sides validation, bounded correction retries) lives here.
@@ -101,6 +103,34 @@ describe("executeSkill — pre-run rejections (callee must never run)", () => {
 
     expect(res.state).toBe("completed");
     expect(loadSkillsFn).not.toHaveBeenCalled();
+  });
+
+  it("returns a capacity error to the calling agent and persists the refused callee session", async () => {
+    const runner = fakeRunner([GOOD_OUTPUT]);
+    const capacity = new ExecutionCapacity(1);
+    const occupied = capacity.tryAcquire();
+    const messages: BaseMessage[] = [];
+    const persistFn = vi.fn();
+
+    const res = await executeSkill(
+      CALLEE.id,
+      CALLER.id,
+      "check-stock",
+      { sku: "A1" },
+      opts(runner, {
+        capacity,
+        getMessagesFn: () => messages,
+        persistFn,
+        appendUsageFn: vi.fn(),
+      }),
+    );
+
+    expect(res).toMatchObject({ state: "failed", code: "CAPACITY_REACHED", conversationId: FAKE_CONV_ID });
+    expect(res.state === "failed" ? res.message : "").toContain("1/1 agent runs are active");
+    expect(runner.inputs).toEqual([]);
+    expect(persistFn).toHaveBeenCalledWith(CALLEE.id, FAKE_CONV_ID);
+    expect(messages.at(-1)?.content).toContain("Execution capacity reached");
+    occupied!.release();
   });
 
   it("rejects an unauthorized caller with NOT_CONNECTED", async () => {
@@ -387,6 +417,42 @@ describe("executeSkill — callee run and output contract", () => {
       state: "failed",
       code: "EXECUTION_ERROR",
       message: "model exploded",
+      conversationId: FAKE_CONV_ID,
+    });
+  });
+
+  it("preserves infrastructure-unavailable feedback for agent and MCP callers", async () => {
+    const run = async function* (): AsyncGenerator<AgentEvent> {
+      yield {
+        type: "error",
+        code: "INFRASTRUCTURE_UNAVAILABLE",
+        message: "Workspace tools are unavailable because host networking capacity is exhausted.",
+      };
+    } as unknown as typeof runAgent;
+    const res = await executeSkill(CALLEE.id, CALLER.id, "check-stock", { sku: "A1" }, opts({ run }));
+    expect(res).toEqual({
+      state: "failed",
+      code: "INFRASTRUCTURE_UNAVAILABLE",
+      message: "Workspace tools are unavailable because host networking capacity is exhausted.",
+      conversationId: FAKE_CONV_ID,
+    });
+  });
+
+  it("tells the caller a callee stopped for want of credit rather than reporting a generic failure", async () => {
+    // A correction retry cannot repair an empty account, so the code has to survive the hop —
+    // EXECUTION_ERROR would invite the caller to try the same skill again.
+    const run = async function* (): AsyncGenerator<AgentEvent> {
+      yield {
+        type: "error",
+        code: "PROVIDER_CREDIT_EXHAUSTED",
+        message: "The deepseek account has run out of credit, so deepseek-chat refused the request.",
+      };
+    } as unknown as typeof runAgent;
+    const res = await executeSkill(CALLEE.id, CALLER.id, "check-stock", { sku: "A1" }, opts({ run }));
+    expect(res).toEqual({
+      state: "failed",
+      code: "PROVIDER_CREDIT_EXHAUSTED",
+      message: "The deepseek account has run out of credit, so deepseek-chat refused the request.",
       conversationId: FAKE_CONV_ID,
     });
   });

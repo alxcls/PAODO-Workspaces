@@ -1,7 +1,7 @@
 // Pure, view-agnostic logic behind the usage dashboard: fold the light per-turn usage records into
 // one row per run (session), and format the scalar cells. Kept out of the page component so it's unit
 // testable and the component stays presentational.
-import type { LightTurnRecord, SessionOrigin } from "@/lib/usage/types";
+import type { LightTurnRecord, RunErrorRecord, SessionOrigin } from "@/lib/usage/types";
 
 // One user message ("turn line") = one run = one sessionId, aggregated from the light per-turn
 // records. The row shows both IDs: the session id (the per-run identifier) and the conversation
@@ -22,10 +22,19 @@ export interface LightSession {
   toolTotal: number;
   // undefined until a priced turn contributes; stays undefined if no turn's model is in the catalog.
   cost: number | undefined;
+  // The run's terminal error, if any — the last one recorded across the run's turns, which is what
+  // stopped it. undefined means the run finished without an error (a failed tool call the agent
+  // recovered from is not a failed run; those stay visible as red dots inside the drawer).
+  error?: RunErrorRecord;
 }
 
 export function groupBySessions(records: LightTurnRecord[]): LightSession[] {
   const map = new Map<string, LightSession>();
+  // Timestamp of the turn each session's kept error came from, so the latest one wins regardless of
+  // the order the records arrive in. A tie keeps the first one seen: recordRunError writes the
+  // terminal error as its own row, which can land in the same millisecond as the turn error that
+  // caused it, and the newest-first list puts the terminal one first.
+  const errorAt = new Map<string, string>();
   for (const r of records) {
     let s = map.get(r.sessionId);
     if (!s) {
@@ -45,6 +54,10 @@ export function groupBySessions(records: LightTurnRecord[]): LightSession[] {
       };
       map.set(r.sessionId, s);
     }
+    if (r.error && r.timestamp > (errorAt.get(r.sessionId) ?? "")) {
+      s.error = r.error;
+      errorAt.set(r.sessionId, r.timestamp);
+    }
     if (r.model && !s.models.includes(r.model)) s.models.push(r.model);
     s.inputTokensTotal += r.inputTokensTotal;
     s.inputTokensCacheRead += r.inputTokensCacheRead;
@@ -58,6 +71,11 @@ export function groupBySessions(records: LightTurnRecord[]): LightSession[] {
   // Order by when each session STARTED (newest first) — see the agent-to-agent note: a caller's
   // final relay turn is its last record, so sorting by latest turn would float it above its callee.
   return Array.from(map.values()).sort((a, b) => b.timestamp.localeCompare(a.timestamp));
+}
+
+/** One-line rendering of a run error: the code, when there is one, then the message. */
+export function formatRunError(error: RunErrorRecord): string {
+  return error.code ? `[${error.code}] ${error.message}` : error.message;
 }
 
 export function formatTokens(n: number): string {

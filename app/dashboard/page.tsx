@@ -15,10 +15,11 @@ import {
   formatTokens,
   formatCost,
   formatDateTime,
+  formatRunError,
   originLabel,
   type LightSession,
 } from "@/lib/client/usageSessions";
-import type { LightTurnRecord, TurnRecord, ToolStatus } from "@/lib/usage/types";
+import type { LightTurnRecord, RunErrorRecord, TurnRecord, ToolStatus } from "@/lib/usage/types";
 
 // Tool-outcome dot: green success / red failure. From the caller's view a NEEDS_INPUT call
 // didn't return a usable result, so it reads red too (the corrected re-call is the green row).
@@ -39,6 +40,20 @@ function StatusDot({ status }: { status: ToolStatus }) {
       title={STATUS_TITLE[status]}
       className={`inline-block w-2 h-2 rounded-full flex-none ${STATUS_COLOR[status]}`}
     />
+  );
+}
+
+// Whole-run outcome, one glyph per session row: a red cross when the run ended on an error, a green
+// tick otherwise. Deliberately coarser than the per-tool dots above — a tool call that failed and was
+// retried successfully leaves the run itself green; the drawer is where the individual calls show.
+function RunOutcomeIcon({ error }: { error?: RunErrorRecord }) {
+  return (
+    <span
+      title={error ? formatRunError(error) : "Completed without error"}
+      className={`text-sm leading-none font-semibold ${error ? "text-danger" : "text-select"}`}
+    >
+      {error ? "✕" : "✓"}
+    </span>
   );
 }
 
@@ -192,8 +207,7 @@ function DetailDrawer({ session, onClose, width }: { session: LightSession; onCl
           {runError && (
             <Section title="Error">
               <p className="text-xs font-mono text-danger whitespace-pre-wrap break-words">
-                {runError.code ? `[${runError.code}] ` : ""}
-                {runError.message}
+                {formatRunError(runError)}
               </p>
             </Section>
           )}
@@ -359,6 +373,7 @@ export default function DashboardPage() {
           ) : (
             <table className="w-full text-ms border-separate border-spacing-0 whitespace-nowrap">
               <colgroup>
+                <col className="w-[70px]" />
                 <col className="w-[140px]" />
                 <col className="w-[140px]" />
                 <col />
@@ -373,6 +388,7 @@ export default function DashboardPage() {
               </colgroup>
               <thead>
                 <tr className="border-b border-border text-2xs font-semibold text-text-3 tracking-[.06em] uppercase h-[45px]">
+                  <th className="text-center px-4 font-semibold align-middle">Run</th>
                   <th className="text-left px-6 font-semibold align-middle">Conversation</th>
                   <th className="text-left px-6 font-semibold align-middle">Session</th>
                   <th className="text-left px-6 font-semibold align-middle">Workspace</th>
@@ -393,10 +409,14 @@ export default function DashboardPage() {
                     onClick={() => setOpenSession(s)}
                     className={`border-b border-border cursor-pointer transition-colors hover:bg-bg-deep ${openSession?.sessionId === s.sessionId ? "bg-bg-tint" : ""}`}
                   >
+                    <td className="px-4 py-2.5 text-center align-middle">
+                      <RunOutcomeIcon error={s.error} />
+                    </td>
                     {/* Conversation id deep-links to its conversation tab in the callee/UI workspace,
                         matching the call_agent "View conversation" link. The visible id is the
                         conversation id so it matches the link target. stopPropagation so the link
-                        navigates instead of opening the detail drawer (the row's click). */}
+                        navigates instead of opening the detail drawer (the row's click). The reader
+                        drops the id of a deleted conversation, so a link here always resolves. */}
                     <td className="px-6 py-2.5 font-mono">
                       {s.conversationId ? (
                         <a
@@ -408,7 +428,7 @@ export default function DashboardPage() {
                           {s.conversationId.slice(0, 8)} ↗
                         </a>
                       ) : (
-                        <span className="text-text-3" title="No conversation (external agent run)">
+                        <span className="text-text-3" title="No conversation to open">
                           —
                         </span>
                       )}

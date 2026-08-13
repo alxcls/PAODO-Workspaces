@@ -70,6 +70,7 @@ export interface UsageContext {
 export interface LightTurnRecord {
   id: string;
   sessionId: string;
+  /** Set only while the conversation still exists — see listUsageLight. */
   conversationId?: string;
   workspaceId: string;
   workspaceName: string;

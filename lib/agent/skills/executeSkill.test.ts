@@ -2,6 +2,7 @@
 // with injected fakes so it never touches disk or real workspaces.
 
 import { describe, it, expect, vi } from "vitest";
+import type { BaseMessage } from "@langchain/core/messages";
 
 // Redirect WORKSPACES_ROOT before any infra module reads it at import time
 // (executeSkill dynamically imports ../tools, which pulls in the store singletons).
@@ -17,6 +18,7 @@ import type { IWorkspaceStore } from "../../infra/interfaces";
 import type { runAgent, AgentEvent } from "../runner";
 import * as broker from "../runBroker";
 import { createWorkspaceRunTimeout } from "../runTimeout";
+import { ExecutionCapacity } from "../executionCapacity";
 
 // executeSkill is the single enforcement point of the skill contract — every guarantee
 // the PRD makes (authz, both-sides validation, bounded correction retries) lives here.
@@ -101,6 +103,34 @@ describe("executeSkill — pre-run rejections (callee must never run)", () => {
 
     expect(res.state).toBe("completed");
     expect(loadSkillsFn).not.toHaveBeenCalled();
+  });
+
+  it("returns a capacity error to the calling agent and persists the refused callee session", async () => {
+    const runner = fakeRunner([GOOD_OUTPUT]);
+    const capacity = new ExecutionCapacity(1);
+    const occupied = capacity.tryAcquire();
+    const messages: BaseMessage[] = [];
+    const persistFn = vi.fn();
+
+    const res = await executeSkill(
+      CALLEE.id,
+      CALLER.id,
+      "check-stock",
+      { sku: "A1" },
+      opts(runner, {
+        capacity,
+        getMessagesFn: () => messages,
+        persistFn,
+        appendUsageFn: vi.fn(),
+      }),
+    );
+
+    expect(res).toMatchObject({ state: "failed", code: "CAPACITY_REACHED", conversationId: FAKE_CONV_ID });
+    expect(res.state === "failed" ? res.message : "").toContain("1/1 agent runs are active");
+    expect(runner.inputs).toEqual([]);
+    expect(persistFn).toHaveBeenCalledWith(CALLEE.id, FAKE_CONV_ID);
+    expect(messages.at(-1)?.content).toContain("Execution capacity reached");
+    occupied!.release();
   });
 
   it("rejects an unauthorized caller with NOT_CONNECTED", async () => {

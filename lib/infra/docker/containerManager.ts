@@ -19,6 +19,7 @@ import { EXEC_OUTPUT_MAX_BYTES, EXEC_OUTPUT_KEEP, EXEC_OUTPUT_MAX_BACKLOG } from
 import { containerName, networkName } from "./naming";
 import { BackgroundTaskManager, type BackgroundTask } from "./backgroundTaskManager";
 import { ProxyNetworkManager } from "./proxyNetworkManager";
+import { capacityProfile } from "../capacityProfile";
 
 // Re-exported for back-compat with external consumers.
 export type { BackgroundTask } from "./backgroundTaskManager";
@@ -39,15 +40,15 @@ function safeEmit(emit: () => void, workspaceId: string): void {
 }
 
 const CONTAINER_IMAGE = process.env.CONTAINER_IMAGE ?? "paodo-workspace";
-const CONTAINER_MEMORY = process.env.CONTAINER_MEMORY ?? "1g";
-const CONTAINER_CPUS = process.env.CONTAINER_CPUS ?? "1.0";
+const CONTAINER_MEMORY = capacityProfile.workspaceMemoryLimit;
+const CONTAINER_CPUS = capacityProfile.workspaceCpus;
 // Max processes+threads in the container's pid cgroup. Docker's default is unlimited, which lets a
 // fork bomb (or a runaway spawn loop) in ANY workspace exhaust the host's global pid_max — at which
 // point nothing on the host can fork, including the `docker exec` this app spawns per command. The
 // memory cap is not a backstop: a forking cgroup under memory pressure thrashes the OOM killer
 // rather than stopping. Threads count too, so anything thread-heavy (JVM, browser grids, `make -j`)
 // needs this raised. Hitting the cap surfaces as "Resource temporarily unavailable" on fork.
-const CONTAINER_PIDS = process.env.CONTAINER_PIDS_LIMIT ?? "512";
+const CONTAINER_PIDS = capacityProfile.workspacePidsLimit;
 const IDLE_TIMEOUT_MS = parseInt(process.env.CONTAINER_IDLE_MS ?? "", 10) || 10 * 60 * 1000;
 // Where a command's over-cap output is parked so the agent can still read it (see ExecOutput).
 // Deliberately alongside /tmp/paodo-tasks: the agent is already taught to tail paths of that shape,
@@ -315,6 +316,17 @@ export class ContainerManager implements IContainerManager {
         "infinity",
       );
       if (r.code !== 0) throw new Error(`docker run failed: ${r.stderr}`);
+      log.info(
+        {
+          event: "workspace_container_capacity_applied",
+          outcome: "workspace_container_created",
+          workspaceId,
+          containerMemoryLimit: CONTAINER_MEMORY,
+          containerCpus: CONTAINER_CPUS,
+          containerPidsLimit: CONTAINER_PIDS,
+        },
+        "workspace container created with capacity guardrails",
+      );
 
       // One-time ownership sweep: legacy workspaces created when the agent ran as root hold root-owned
       // files the uid-1000 agent/app can no longer manage. Chown the tree to 1000:1000 so both can.

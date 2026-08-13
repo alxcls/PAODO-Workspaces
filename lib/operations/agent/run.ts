@@ -1,10 +1,12 @@
 import type { IWorkspaceStore } from "@/lib/infra/interfaces";
+import { AIMessage, HumanMessage } from "@langchain/core/messages";
 import { getStore } from "@/lib/infra/services";
 import * as conversations from "@/lib/conversations/store";
 import type { ConversationMeta } from "@/lib/conversations/store";
 import * as broker from "@/lib/agent/runBroker";
 import { refreshWorkspaceSystemPrompt } from "@/lib/agent/workspacePrompt";
 import type { SessionOrigin } from "@/lib/usage/types";
+import { ExecutionCapacityReachedError } from "@/lib/agent/executionCapacity";
 import { ConversationNotFoundError, RunInputInvalidError } from "./errors";
 
 export type RunConversationTarget =
@@ -27,7 +29,7 @@ export interface WorkspaceRunReceipt {
 
 export interface StartWorkspaceRunDeps {
   workspaces?: Pick<IWorkspaceStore, "getWorkspace">;
-  conversations?: Pick<typeof conversations, "createConversation" | "getMessages">;
+  conversations?: Pick<typeof conversations, "createConversation" | "getMessages" | "persist">;
   broker?: Pick<typeof broker, "startRun">;
   /** Injected so a test can assert the prompt was refreshed on the array the broker receives. */
   refreshPrompt?: typeof refreshWorkspaceSystemPrompt;
@@ -55,7 +57,7 @@ export function startWorkspaceRun(
   if (!messages) throw new ConversationNotFoundError();
 
   (deps.refreshPrompt ?? refreshWorkspaceSystemPrompt)(ws, messages);
-  const { alreadyRunning } = (deps.broker ?? broker).startRun({
+  const { alreadyRunning, capacityReached } = (deps.broker ?? broker).startRun({
     workspaceId: ws.id,
     workspaceName: ws.name,
     workspaceDir: ws.dir,
@@ -66,6 +68,18 @@ export function startWorkspaceRun(
     maxRunMinutes: ws.maxRunMinutes,
     origin: input.origin,
   });
+
+  if (capacityReached) {
+    const error = new ExecutionCapacityReachedError(capacityReached, {
+      workspaceId: ws.id,
+      conversationId,
+      origin: input.origin,
+    });
+    // A refused attempt remains visible after the pressure has passed, including scheduled fires.
+    messages.push(new HumanMessage(prompt), new AIMessage(error.message));
+    conversationStore.persist(ws.id, conversationId);
+    throw error;
+  }
 
   return {
     workspaceId: ws.id,

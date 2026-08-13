@@ -139,8 +139,34 @@ export function useAgentStream(workspaceId: string, conversationId: string | nul
 
         if (!res.ok || !res.body) {
           // 409 means a run is already in progress for this conversation — not an error worth
-          // showing. Anything else means the request never landed, so there is nothing to resume.
-          outcome = res.status === 409 ? "ok" : "failed";
+          // showing. Capacity is an expected refusal: show its precise message in the chatbot.
+          if (res.status === 409) {
+            outcome = "ok";
+          } else if (res.status === 503) {
+            let message: string | null = null;
+            try {
+              const body = (await res.json()) as { code?: string; error?: string };
+              if (body.code === "CAPACITY_REACHED") {
+                message =
+                  body.error ??
+                  "Execution capacity reached. This request was not started; try again when another run finishes.";
+              }
+            } catch {
+              // An intermediary may have replaced the JSON response; treat that as unreachable.
+            }
+            if (message) {
+              commit({
+                ...transcriptRef.current,
+                messages: [...transcriptRef.current.messages, { role: "error", content: message }],
+              });
+              outcome = "ok";
+            } else {
+              outcome = "failed";
+            }
+          } else {
+            // The request never landed, so there is nothing to resume.
+            outcome = "failed";
+          }
           return outcome;
         }
 

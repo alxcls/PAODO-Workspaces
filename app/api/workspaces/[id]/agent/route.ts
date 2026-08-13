@@ -65,9 +65,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       conversation: body.conversationId ? { mode: "existing", id: body.conversationId } : { mode: "create" },
     });
   } catch (err) {
-    if (err instanceof ConversationNotFoundError) {
-      return appErrorResponse(err, req) ?? new Response("Conversation not found", { status: 404 });
-    }
+    if (err instanceof ConversationNotFoundError) return appErrorResponse(err, req)!;
+    const expected = appErrorResponse(err, req);
+    if (expected) return expected;
     throw err;
   }
   if (!receipt) return new Response("Workspace not found", { status: 404 });

@@ -32,6 +32,11 @@ const TIMED_OUT: SkillCallResult = {
   code: "TIMEOUT",
   message: 'Workspace "stock-agent" exceeded its 5-minute execution limit.',
 };
+const AT_CAPACITY: SkillCallResult = {
+  state: "failed",
+  code: "CAPACITY_REACHED",
+  message: "Execution capacity reached: 10/10 agent runs are active. This request was not started.",
+};
 
 const skillConfig = { skillInputMaxRetries: 2, skillOutputMaxRetries: 2, skillNeedsInputMaxRounds: 2 };
 
@@ -189,5 +194,17 @@ describe("AgentCallTool — workspace timeout", () => {
     const result = await call(makeTool());
 
     expect(result).toBe('Error (TIMEOUT): Workspace "stock-agent" exceeded its 5-minute execution limit.');
+  });
+});
+
+describe("AgentCallTool — execution capacity", () => {
+  it("tells the calling agent the callee was denied and not to retry immediately", async () => {
+    mockedExecute.mockResolvedValue(AT_CAPACITY);
+
+    const result = await call(makeTool());
+
+    expect(result).toContain("Error (CAPACITY_REACHED)");
+    expect(result).toContain("10/10 agent runs are active");
+    expect(result).toContain("Do not retry immediately");
   });
 });

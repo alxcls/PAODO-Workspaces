@@ -19,6 +19,7 @@ import { startWorkspaceRun } from "@/lib/operations/agent/run";
 import { listAll, getSchedule, setNextRunAt, recordRun } from "./scheduleStore";
 import { computeNextRun } from "@/lib/schedules/nextRun";
 import type { RunStatus, ScheduleEntry } from "@/lib/schedules/types";
+import { AppError } from "@/lib/errors/appError";
 
 const log = createLogger("scheduler");
 
@@ -103,7 +104,7 @@ function fire(entry: ScheduleEntry, now: Date): void {
     recordRunSafely(entry.workspaceId, {
       at: now.toISOString(),
       status: "error",
-      snippet: String(err).slice(0, SNIPPET_MAX),
+      snippet: (err instanceof AppError ? err.message : String(err)).slice(0, SNIPPET_MAX),
       nextRunAt: nextRunIso(entry, new Date()),
     });
     return;

@@ -49,6 +49,7 @@ export type SkillErrorCode =
   | "NEEDS_INPUT"
   | "TIMEOUT"
   | "CANCELLED"
+  | "CAPACITY_REACHED"
   | "EXECUTION_ERROR";
 
 /**

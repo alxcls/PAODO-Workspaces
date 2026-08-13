@@ -31,7 +31,43 @@ Set:
 
 - at least one supported LLM provider key;
 - `USERNAME` and `PASSWORD`;
-- optional resource limits and timeouts.
+- `MAX_CONCURRENT_AGENT_RUNS` to the instance-wide emergency ceiling (start with `10`);
+- optional container resource limits and timeouts.
+
+The ceiling counts chat, API, scheduled, MCP, and nested agent-to-agent runs together. A request
+above it is rejected immediately with `CAPACITY_REACHED`; PAODO does not queue it yet.
+
+### Capacity test profile
+
+Keep VPS experiments to these five adjustable walls:
+
+```env
+MAX_CONCURRENT_AGENT_RUNS=10
+APP_MEMORY_LIMIT=2g
+APP_CPUS=2.0
+CONTAINER_MEMORY=1g
+CONTAINER_CPUS=1.0
+```
+
+`CONTAINER_PIDS_LIMIT=512` is a safety wall rather than a performance target; change it only when a
+legitimate thread-heavy workload reaches it. Apply app and concurrency changes with
+`docker compose up -d`. Workspace limits are stamped onto each workspace container when it is first
+created. Existing workspace containers preserve their installed state and current limits; resize one
+explicitly when testing a new profile:
+
+```bash
+docker update --memory 1g --cpus 1.0 --pids-limit 512 ws_<workspace-id>
+```
+
+The structured application log provides the capacity trail needed to compare experiments:
+
+- `capacity_guardrails_configured` records the profile read at application startup;
+- `workspace_container_capacity_applied` records the limits stamped onto a new workspace container;
+- `agent_run_started` and `agent_run_completed` record active and maximum agent-run counts;
+- `agent_execution_capacity_reached` records a run refused by the emergency ceiling.
+
+These are guardrails, not a capacity claim. Hold the VPS size and workload constant, change one
+profile at a time, and use the resulting host metrics and events to find a safe operating point.
 
 ## 3. Start PAODO
 

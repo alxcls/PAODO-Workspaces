@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import type { BaseMessage } from "@langchain/core/messages";
 import type { AgentEvent, RunAgentOptions } from "./runner";
 import * as broker from "./runBroker";
+import { ExecutionCapacity, ExecutionCapacityReachedError } from "./executionCapacity";
 
 const tick = () => new Promise((r) => setTimeout(r, 0));
 
@@ -147,6 +148,28 @@ describe("runBroker", () => {
     expect(broker.isRunning("nope", "nope")).toBe(false);
   });
 
+  it("rejects the next top-level run at capacity and releases the slot when a run ends", async () => {
+    const capacity = new ExecutionCapacity(1);
+    const gate = deferred();
+    const run = async function* () {
+      await gate.promise;
+      yield { type: "done" } as AgentEvent;
+    } as unknown as typeof import("./runner").runAgent;
+    const first = params(run, { capacity });
+    const rejected = params(run, { capacity });
+
+    expect(broker.startRun(first)).toEqual({ alreadyRunning: false });
+    expect(broker.startRun(rejected)).toEqual({
+      alreadyRunning: false,
+      capacityReached: { active: 1, limit: 1, available: 0, atCapacity: true },
+    });
+
+    gate.resolve();
+    await tick();
+    expect(broker.startRun(rejected)).toEqual({ alreadyRunning: false });
+    await tick();
+  });
+
   describe("startExternalRun", () => {
     it("buffers + fans out producer-published events, and marks the conversation running", () => {
       const ext = broker.startExternalRun("ws-ext", "conv-ext", "hello");
@@ -186,6 +209,19 @@ describe("runBroker", () => {
       expect(broker.stop("ws-ext3", "conv-ext3")).toBe(true);
       expect(ext!.signal.aborted).toBe(true);
       ext!.finish();
+    });
+
+    it("returns a capacity error to an external agent caller and recovers after finish", () => {
+      const capacity = new ExecutionCapacity(1);
+      const first = broker.startExternalRun("ws-cap", "conv-cap-1", "x", { capacity });
+
+      expect(() => broker.startExternalRun("ws-cap", "conv-cap-2", "x", { capacity })).toThrow(
+        ExecutionCapacityReachedError,
+      );
+      first!.finish();
+      const next = broker.startExternalRun("ws-cap", "conv-cap-2", "x", { capacity });
+      expect(next).not.toBeNull();
+      next!.finish();
     });
   });
 });

@@ -38,10 +38,20 @@ gateway separate. Remaining threats:
 
 **Container limits**
 
+- Memory/CPU caps on the PAODO app container (`APP_MEMORY_LIMIT`, `APP_CPUS`)
 - Memory/CPU caps per workspace container (`CONTAINER_MEMORY`, `CONTAINER_CPUS`)
 - Process/thread cap per workspace container (`CONTAINER_PIDS_LIMIT`, default 512) — a fork bomb exhausts only its own container, never the host's PIDs
 - `pids_limit` on the app and credential-proxy containers as well
 - Containers auto-stop after idle timeout (`CONTAINER_IDLE_MS`, default 10 min)
+
+**Execution capacity**
+
+- One instance-wide emergency ceiling (`MAX_CONCURRENT_AGENT_RUNS`, default 10) covers chat, API,
+  scheduled, MCP, and nested agent-to-agent runs
+- A run above the ceiling is refused with `CAPACITY_REACHED`; it is not queued and consumes no
+  workspace execution slot
+- Structured start, completion, refusal, and applied-limit events make the active load and selected
+  guardrail profile visible in the existing Docker log stream
 
 **App-side memory ceilings**
 
@@ -61,8 +71,10 @@ to take the instance down. They are bounded now too, and by refusal rather than 
 transfer tools copy bytes, and half a database written to a destination is corruption that reports
 success.
 
-Note what is *not* underneath any of this: the app container declares no memory limit of its own.
-These ceilings are the limit, and passing one costs the whole instance rather than one workspace.
+The app container also has a Docker memory wall (`APP_MEMORY_LIMIT`). The path-specific ceilings are
+still required: they refuse or truncate one operation cleanly, while reaching the Docker wall can
+kill and restart the entire control plane. The wall limits the blast radius to the PAODO deployment;
+it is not the normal flow-control mechanism.
 
 None of these is an env knob, deliberately. Unlike `CONTAINER_MEMORY`, none depends on the host:
 every PAODO instance runs the same kinds of workloads, so each of these has one right answer and an
@@ -71,7 +83,7 @@ surface area, not flexibility — one bad value breaks things quietly.
 
 Every one of these numbers lives in `lib/infra/limits.ts`, with the reasoning for the value beside
 it; the mechanism that enforces it stays at the call site. They are together because the question
-that matters is a whole-system one — *does every accumulating path have a bound?* — and it was
+that matters is a whole-system one — _does every accumulating path have a bound?_ — and it was
 answered wrong twice while each ceiling owned its own copy of its number: `gitClient` kept the
 unbounded append after `dockerClient` was fixed, and the host-side drive reads were missed entirely.
 Neither miss was visible from any one file.

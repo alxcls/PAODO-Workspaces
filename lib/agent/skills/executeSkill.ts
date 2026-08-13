@@ -13,7 +13,7 @@
 // Both agents live in the same Node.js process — this is an ordinary function call,
 // no HTTP, no serialization.
 import Ajv, { type ErrorObject, type ValidateFunction } from "ajv";
-import type { BaseMessage } from "@langchain/core/messages";
+import { AIMessage, HumanMessage, type BaseMessage } from "@langchain/core/messages";
 import { canCall } from "@/lib/agent/network/graph";
 import { loadSkills } from "@/lib/skills/store";
 import { createConversation, getMessages, persist } from "@/lib/conversations/store";
@@ -32,6 +32,7 @@ import { buildStructuredResponderBlock } from "../systemPrompt";
 import { createLogger } from "../../infra/logger";
 import type { runAgent, AgentEvent } from "../runner";
 import { createWorkspaceRunTimeout, USER_STOPPED_CONVERSATION_MESSAGE, WorkspaceRunTimeoutError } from "../runTimeout";
+import { ExecutionCapacityReachedError, type ExecutionCapacityGate } from "../executionCapacity";
 // runner (and runBroker, which pulls in runner) are imported dynamically inside executeSkill to
 // avoid the circular:
 // tools/index → AgentCallTool → executeSkill → runner → buildTools → tools/index
@@ -54,6 +55,8 @@ export interface ExecuteSkillOptions {
   createConversationFn?: typeof createConversation;
   getMessagesFn?: typeof getMessages;
   persistFn?: typeof persist;
+  /** Test seam; production uses the process-wide execution ceiling. */
+  capacity?: ExecutionCapacityGate;
   /** Fired the instant the callee's conversation is created (before the run finishes), so the
    *  caller's UI can show the session deep-link mid-call. createConversation already writes the
    *  conversation to SQLite, so the link resolves immediately. */
@@ -286,10 +289,20 @@ ${buildStructuredResponderBlock(skill)}`;
   // The per-turn `done` events runAgent emits are suppressed; a single `done` is published in the
   // finally below, after persist, so a correction retry never prematurely closes a subscriber.
   const { startExternalRun } = await import("../runBroker");
-  const liveRun = startExternalRun(callee.id, conv.id, firstInput, {
-    sessionId,
-    origin: opts.origin ?? "agent",
-  });
+  let liveRun;
+  try {
+    liveRun = startExternalRun(callee.id, conv.id, firstInput, {
+      sessionId,
+      origin: opts.origin ?? "agent",
+      capacity: opts.capacity,
+    });
+  } catch (err) {
+    if (!(err instanceof ExecutionCapacityReachedError)) throw err;
+    messages.push(new HumanMessage(firstInput), new AIMessage(err.message));
+    (opts.persistFn ?? persist)(callee.id, conv.id);
+    opts.onConversationStart?.(conv.id);
+    return fail("CAPACITY_REACHED", err.message);
+  }
 
   // The signal the callee actually runs under: whichever of these fires first halts it.
   //   - opts.signal      — the caller's remaining deadline or explicit Stop (cascades recursively)

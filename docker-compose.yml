@@ -45,6 +45,10 @@ services:
       socket-proxy:
         condition: service_started
     restart: unless-stopped
+    # Host-level wall for PAODO's control-plane process. Change these together with the agent and
+    # workspace limits to create a repeatable VPS test profile; `docker compose up -d` reapplies it.
+    mem_limit: ${APP_MEMORY_LIMIT:-2g}
+    cpus: ${APP_CPUS:-2.0}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     cap_drop:

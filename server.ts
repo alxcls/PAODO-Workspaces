@@ -51,6 +51,8 @@ import { hasConfiguredProviderApiKey } from "./lib/agent/buildModel";
 import { assertDataRootAvailable, assertWorkspaceRegistryAvailable } from "./lib/infra/startupChecks";
 import { appDataDb, PAODO_DB_FILE } from "./lib/data/database";
 import { validate as validateCredential } from "./lib/infra/security/credentialStore";
+import { capacityProfile } from "./lib/infra/capacityProfile";
+import { executionCapacity } from "./lib/agent/executionCapacity";
 
 const dev = process.env.NODE_ENV !== "production";
 const rawPort = process.env.PORT ?? "3000";
@@ -59,6 +61,21 @@ const port = Number(rawPort);
 const UI_USER = process.env.USERNAME ?? "";
 const UI_PASS = process.env.PASSWORD ?? "";
 const credentials = { user: UI_USER, pass: UI_PASS };
+
+log.info(
+  {
+    event: "capacity_guardrails_configured",
+    outcome: "capacity_profile_loaded",
+    maxConcurrentAgentRuns: executionCapacity.snapshot().limit,
+    appMemoryLimit: capacityProfile.appMemoryLimit,
+    appCpus: capacityProfile.appCpus,
+    appPidsLimit: capacityProfile.appPidsLimit,
+    workspaceMemoryLimitForNewContainers: capacityProfile.workspaceMemoryLimit,
+    workspaceCpusForNewContainers: capacityProfile.workspaceCpus,
+    workspacePidsLimitForNewContainers: capacityProfile.workspacePidsLimit,
+  },
+  "capacity guardrails configured",
+);
 
 if (!Number.isInteger(port) || port < 1 || port > 65_535) {
   log.fatal(

@@ -126,6 +126,12 @@ A workspace with no declared skills is not callable. If the workspace is not con
         meta,
       };
     }
+    if (code === "CAPACITY_REACHED") {
+      return {
+        result: `Error (CAPACITY_REACHED): ${message} Do not retry immediately; continue other work or inform the user.`,
+        meta,
+      };
+    }
     return { result: `Error (${code}): ${message}`, meta };
   }
 

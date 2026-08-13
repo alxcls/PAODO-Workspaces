@@ -21,9 +21,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   try {
     prepared = prepareWorkspaceChat(id, body);
   } catch (err) {
-    if (err instanceof ConversationNotFoundError) {
-      return appErrorResponse(err, req) ?? new Response("Conversation not found", { status: 404 });
-    }
+    if (err instanceof ConversationNotFoundError) return appErrorResponse(err, req)!;
+    const expected = appErrorResponse(err, req);
+    if (expected) return expected;
     throw err;
   }
   if (!prepared) return new Response("Workspace not found", { status: 404 });

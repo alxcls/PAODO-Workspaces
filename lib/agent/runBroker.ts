@@ -17,6 +17,12 @@ import type { RunErrorRecord, SessionOrigin } from "@/lib/usage/types";
 import * as conversations from "@/lib/conversations/store";
 import { createLogger } from "../infra/logger";
 import { createWorkspaceRunTimeout, USER_STOPPED_CONVERSATION_MESSAGE } from "./runTimeout";
+import {
+  executionCapacity,
+  ExecutionCapacityReachedError,
+  type ExecutionCapacityGate,
+  type ExecutionCapacitySnapshot,
+} from "./executionCapacity";
 
 const log = createLogger("runBroker");
 
@@ -70,13 +76,18 @@ export interface StartRunParams {
   onTurnUsage?: (sessionId: string, event: Extract<AgentEvent, { type: "turn_usage" }>) => void;
   onRunError?: (sessionId: string, error: RunErrorRecord) => void;
   onPersist?: () => void;
+  /** Test seam; production uses the process-wide execution ceiling. */
+  capacity?: ExecutionCapacityGate;
 }
 
 /**
  * Start a run for a conversation, or report that one is already running. The actual run proceeds
  * in the background regardless of who (if anyone) is subscribed.
  */
-export function startRun(params: StartRunParams): { alreadyRunning: boolean } {
+export function startRun(params: StartRunParams): {
+  alreadyRunning: boolean;
+  capacityReached?: ExecutionCapacitySnapshot;
+} {
   const k = key(params.workspaceId, params.conversationId);
   const existing = sessions.get(k);
   if (existing && existing.status === "running") return { alreadyRunning: true };
@@ -90,8 +101,6 @@ export function startRun(params: StartRunParams): { alreadyRunning: boolean } {
     abort: new AbortController(),
     status: "running",
   };
-  sessions.set(k, session);
-
   const run = params.run ?? runAgent;
   const sessionId = crypto.randomUUID();
   const origin =
@@ -138,6 +147,27 @@ export function startRun(params: StartRunParams): { alreadyRunning: boolean } {
     ...params.runOptions,
     signal: runTimeout.signal,
   };
+  const capacity = params.capacity ?? executionCapacity;
+  const executionSlot = capacity.tryAcquire();
+  if (!executionSlot) {
+    runTimeout.dispose();
+    const snapshot = capacity.snapshot();
+    log.warn(
+      {
+        event: "agent_execution_capacity_reached",
+        outcome: "run_not_started",
+        workspaceId: params.workspaceId,
+        conversationId: params.conversationId,
+        origin: params.origin,
+        activeAgentRuns: snapshot.active,
+        maxAgentRuns: snapshot.limit,
+      },
+      "agent run rejected at execution capacity",
+    );
+    return { alreadyRunning: false, capacityReached: snapshot };
+  }
+  const capacityAtStart = capacity.snapshot();
+  sessions.set(k, session);
   const startedAt = Date.now();
   log.info(
     {
@@ -149,6 +179,8 @@ export function startRun(params: StartRunParams): { alreadyRunning: boolean } {
       origin,
       maxIterations: params.maxIterations,
       maxRunMinutes: params.maxRunMinutes,
+      activeAgentRuns: capacityAtStart.active,
+      maxAgentRuns: capacityAtStart.limit,
     },
     "agent run started",
   );
@@ -259,6 +291,8 @@ export function startRun(params: StartRunParams): { alreadyRunning: boolean } {
       else if (session.abort.signal.aborted && !sentDone) publishUserStop();
       runTimeout.dispose();
       session.status = "done";
+      executionSlot.release();
+      const capacityAtEnd = capacity.snapshot();
       try {
         persist();
       } catch (err) {
@@ -284,6 +318,8 @@ export function startRun(params: StartRunParams): { alreadyRunning: boolean } {
           origin,
           status: terminalStatus,
           durationMs: Date.now() - startedAt,
+          activeAgentRuns: capacityAtEnd.active,
+          maxAgentRuns: capacityAtEnd.limit,
         },
         "agent run completed",
       );
@@ -326,7 +362,7 @@ export function startExternalRun(
   workspaceId: string,
   conversationId: string,
   userInput: string,
-  opts: { sessionId?: string; origin?: SessionOrigin } = {},
+  opts: { sessionId?: string; origin?: SessionOrigin; capacity?: ExecutionCapacityGate } = {},
 ): ExternalRun | null {
   const k = key(workspaceId, conversationId);
   const existing = sessions.get(k);
@@ -341,9 +377,29 @@ export function startExternalRun(
     abort: new AbortController(),
     status: "running",
   };
-  sessions.set(k, session);
   const sessionId = opts.sessionId ?? crypto.randomUUID();
   const origin = opts.origin ?? "agent";
+  const capacity = opts.capacity ?? executionCapacity;
+  const executionSlot = capacity.tryAcquire();
+  if (!executionSlot) {
+    const snapshot = capacity.snapshot();
+    log.warn(
+      {
+        event: "agent_execution_capacity_reached",
+        outcome: "run_not_started",
+        workspaceId,
+        conversationId,
+        origin,
+        activeAgentRuns: snapshot.active,
+        maxAgentRuns: snapshot.limit,
+      },
+      "external agent run rejected at execution capacity",
+    );
+    throw new ExecutionCapacityReachedError(snapshot, { workspaceId, conversationId, origin });
+  }
+  const capacityAtStart = capacity.snapshot();
+
+  sessions.set(k, session);
   const startedAt = Date.now();
   let terminalStatus: AgentRunStatus = "success";
   log.info(
@@ -354,6 +410,8 @@ export function startExternalRun(
       conversationId,
       workspaceId,
       origin,
+      activeAgentRuns: capacityAtStart.active,
+      maxAgentRuns: capacityAtStart.limit,
     },
     "agent run started",
   );
@@ -373,6 +431,8 @@ export function startExternalRun(
     finish: (status) => {
       if (session.status === "done") return;
       session.status = "done";
+      executionSlot.release();
+      const capacityAtEnd = capacity.snapshot();
       if (status) terminalStatus = status;
       if (!session.buffer.some((event) => event.type === "done") && terminalStatus === "success") {
         terminalStatus = "incomplete";
@@ -387,6 +447,8 @@ export function startExternalRun(
           origin,
           status: terminalStatus,
           durationMs: Date.now() - startedAt,
+          activeAgentRuns: capacityAtEnd.active,
+          maxAgentRuns: capacityAtEnd.limit,
         },
         "agent run completed",
       );

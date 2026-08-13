@@ -51,6 +51,9 @@ services:
       - ALL
     security_opt:
       - no-new-privileges:true
+    # The app forks a host-side `docker` client per exec and per streaming command, so an unbounded
+    # burst of concurrent commands is a fork multiplier. Well clear of normal load; a wall, not a quota.
+    pids_limit: 1024
     networks:
       - socket_proxy_net
       - app_net
@@ -86,6 +89,7 @@ services:
       - ALL
     security_opt:
       - no-new-privileges:true
+    pids_limit: 512
     networks:
       - credproxy_net
     logging: *default-logging

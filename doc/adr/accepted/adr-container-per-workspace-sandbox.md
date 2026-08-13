@@ -8,7 +8,7 @@ Agents run arbitrary shell commands and need filesystem and runtime isolation to
 Decision
 Run each workspace inside its own Docker container. All agent operations — both shell commands (`execute_command`) and file operations (`file_read`, `file_write`, `file_edit`, `list_directory`, `glob`) — are executed inside the container via `docker exec`. The workspace directory is mounted into the container using Docker 25+ volume subpath mounting (`--mount type=volume,source=<WORKSPACES_VOLUME_NAME>,target=/workspace,volume-subpath=<name>`), so the container's filesystem boundary is the workspace boundary at the OS level.
 
-Containers are started eagerly when an agent session begins and stopped after an idle timeout (`CONTAINER_IDLE_MS`, default 10 min), restarting automatically on the next session. Each container has its own isolated bridge network. CPU and memory are capped per container (`CONTAINER_CPUS`, `CONTAINER_MEMORY`).
+Containers are started eagerly when an agent session begins and stopped after an idle timeout (`CONTAINER_IDLE_MS`, default 10 min), restarting automatically on the next session. Each container has its own isolated bridge network. CPU, memory, and process count are capped per container (`CONTAINER_CPUS`, `CONTAINER_MEMORY`, `CONTAINER_PIDS_LIMIT`).
 
 The `WORKSPACES_VOLUME_NAME` env var must be set to the runtime Docker volume name (compose project prefix + `_workspaces`). Run `docker volume ls | grep workspaces` to find the exact name. Requires Docker Engine ≥ 25.
 
@@ -20,6 +20,10 @@ Consequences
   - **File tools** (`file_read`, `file_write`, `file_edit`, `list_directory`, `glob`): the workspace volume is remounted with `MS_RDONLY` (`:ro` / `,readonly`) when locked, blocking all writes regardless of user or UID mapping. This is necessary because VirtioFS bind mounts on macOS ignore container user permissions.
   - **Shell commands** (`execute_command`): additionally drops to `-u agent` (UID 999) in `docker exec` so the restricted user cannot write to other locations in the container (e.g. installing packages system-wide).
 - Higher resource overhead per active workspace (container memory/CPU).
+- The `CONTAINER_MEMORY`/`CONTAINER_CPUS`/`CONTAINER_PIDS_LIMIT` env vars are read once, at `docker run`, so editing them affects only workspaces created afterwards. The caps themselves are not frozen: all three are live-tunable per container with `docker update`, which rewrites the running cgroup with no restart, no recreation, and no loss of installed state. This is the supported path for scaling an individual workspace up or down.
+  - Raising memory also requires raising swap in the same command (`docker update -m 4g --memory-swap 8g`) — `docker run --memory=1g` implies a 2g memory+swap ceiling, and a memory limit above the existing swap limit is rejected.
+  - Lowering memory below what the container is currently using will OOM-kill processes inside it. Scale down only on an idle workspace.
+- What genuinely cannot change without recreating the container: environment variables (see `containerCredentials.ts` — why secrets are injected per-exec instead), capabilities, mounts, and `--init`. Resource caps are not in this category.
 - Need container lifecycle management, image build/versioning, and operational guidance for host capacity.
 - The platform accesses the host Docker daemon via a socket proxy, limiting blast radius to the 7 whitelisted API groups — see [`docker-socket-proxy.md`](docker-socket-proxy.md).
 

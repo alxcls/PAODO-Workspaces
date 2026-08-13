@@ -5,7 +5,8 @@
 // Container naming: ws_<workspaceId>
 // Network naming:   wsnet_<workspaceId>  (isolated per-workspace bridge — no inter-container traffic)
 // Bind mount:       <workspaceDir> → /workspace  (host files, shared with file tools)
-// Resource limits:  CONTAINER_MEMORY / CONTAINER_CPUS env vars (defaults: 1g / 1.0)
+// Resource limits:  CONTAINER_MEMORY / CONTAINER_CPUS / CONTAINER_PIDS_LIMIT env vars
+//                   (defaults: 1g / 1.0 / 512)
 import { rm } from "fs/promises";
 import { spawn } from "child_process";
 import { randomUUID } from "crypto";
@@ -26,6 +27,13 @@ const log = createLogger("container");
 const CONTAINER_IMAGE = process.env.CONTAINER_IMAGE ?? "paodo-workspace";
 const CONTAINER_MEMORY = process.env.CONTAINER_MEMORY ?? "1g";
 const CONTAINER_CPUS = process.env.CONTAINER_CPUS ?? "1.0";
+// Max processes+threads in the container's pid cgroup. Docker's default is unlimited, which lets a
+// fork bomb (or a runaway spawn loop) in ANY workspace exhaust the host's global pid_max — at which
+// point nothing on the host can fork, including the `docker exec` this app spawns per command. The
+// memory cap is not a backstop: a forking cgroup under memory pressure thrashes the OOM killer
+// rather than stopping. Threads count too, so anything thread-heavy (JVM, browser grids, `make -j`)
+// needs this raised. Hitting the cap surfaces as "Resource temporarily unavailable" on fork.
+const CONTAINER_PIDS = process.env.CONTAINER_PIDS_LIMIT ?? "512";
 const IDLE_TIMEOUT_MS = parseInt(process.env.CONTAINER_IDLE_MS ?? "", 10) || 10 * 60 * 1000;
 // Docker volume name is deterministic: compose project name (fixed in docker-compose.yml as
 // "paodo_ws") + "_" + volume key ("workspaces"). Falls back to a plain bind mount when unset
@@ -256,6 +264,7 @@ export class ContainerManager implements IContainerManager {
         networkName(workspaceId),
         `--memory=${CONTAINER_MEMORY}`,
         `--cpus=${CONTAINER_CPUS}`,
+        `--pids-limit=${CONTAINER_PIDS}`,
         ...this.buildVolumeArg(workspaceDir),
         // Recorded for diagnostics only — which base image this container was born from. Nothing
         // acts on it: a newer image never triggers a rebuild, because that would discard everything

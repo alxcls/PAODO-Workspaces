@@ -39,6 +39,8 @@ gateway separate. Remaining threats:
 **Container limits**
 
 - Memory/CPU caps per workspace container (`CONTAINER_MEMORY`, `CONTAINER_CPUS`)
+- Process/thread cap per workspace container (`CONTAINER_PIDS_LIMIT`, default 512) — a fork bomb exhausts only its own container, never the host's PIDs
+- `pids_limit` on the app and credential-proxy containers as well
 - Containers auto-stop after idle timeout (`CONTAINER_IDLE_MS`, default 10 min)
 
 **Filesystem**

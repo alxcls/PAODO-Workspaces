@@ -2,7 +2,7 @@
 // matter most here are not the formatting ones — they are the two that guarantee the ceiling is real
 // (memory stops growing) and that reaching it costs nothing (every byte still lands in the sink).
 import { describe, it, expect } from "vitest";
-import { ExecOutput, MAX_INLINE_BYTES, PREVIEW_BYTES, formatOutputBytes } from "./execOutput";
+import { ExecOutput, MAX_INLINE_BYTES, PREVIEW_BYTES, STDERR_SAMPLE_BYTES, formatOutputBytes } from "./execOutput";
 import type { OutputSink } from "../../infra/interfaces";
 
 function recordingSink(overrides: Partial<OutputSink> = {}) {
@@ -101,6 +101,44 @@ describe("ExecOutput", () => {
     output.append("stdout", "y".repeat(MAX_INLINE_BYTES * 2));
 
     expect(output.overflowNotice()).toContain("saved file itself was capped");
+  });
+
+  it("keeps stderr diagnosable after the spill", () => {
+    const { output } = makeOutput();
+    // The shape that exposed this: the command fails for a reason we have guidance for, and is also
+    // noisy enough to blow the cap. The spill drops the separated streams, so before the sample
+    // existed the tool result was the "output too large" notice with no trace of why it failed.
+    output.append("stderr", "exec: no matching entries in passwd file\n");
+    output.append("stdout", "q".repeat(MAX_INLINE_BYTES * 2));
+
+    expect(output.overflowed).toBe(true);
+    expect(output.stderrText()).toContain("no matching entries in passwd file");
+  });
+
+  it("holds stderr to a fixed window however much of it there is", () => {
+    const { output } = makeOutput();
+    output.append("stderr", "FIRST-LINE\n");
+    for (let i = 0; i < 40; i++) output.append("stderr", "e".repeat(MAX_INLINE_BYTES));
+    output.append("stderr", "\nLAST-LINE: build failed");
+
+    const sample = output.stderrText();
+    // Both ends survive — a setup fault announces itself first, a build failure announces itself
+    // last — and the gap between them is quantified rather than spliced over.
+    expect(sample).toContain("FIRST-LINE");
+    expect(sample).toContain("LAST-LINE: build failed");
+    expect(sample).toContain("of stderr omitted");
+    // The point of the window: ~1.2MB of stderr, and what we still hold is measured in KB.
+    expect(Buffer.byteLength(sample)).toBeLessThan(STDERR_SAMPLE_BYTES * 2 + 200);
+  });
+
+  it("does not print the overlap twice when stderr nearly fits the window", () => {
+    const { output } = makeOutput();
+    // Just over the head, well under head+tail: the two ends cover the whole of stderr between them.
+    const stderr = "S".repeat(STDERR_SAMPLE_BYTES + 100);
+    output.append("stderr", stderr);
+    output.append("stdout", "q".repeat(MAX_INLINE_BYTES * 2));
+
+    expect(output.stderrText()).toBe(stderr);
   });
 
   it("closes the sink only when one was opened", () => {

@@ -33,6 +33,15 @@ function truncateSubject(s: string): string {
   return s.replace(/\s+/g, " ").trim().slice(0, MAX_SUBJECT);
 }
 
+// A diff is the one git output whose size the agent controls directly: it writes a large file, the
+// post-run snapshot commits it, and the next diff is proportional to what it wrote. gitClient now
+// caps that instead of growing without bound, so this says so rather than handing back a prefix that
+// looks like a complete diff — a silently-cut diff reads as "nothing else changed".
+function noteIfTruncated(diff: string, truncated: boolean | undefined): string {
+  if (!truncated) return diff;
+  return `${diff}\n[diff truncated — this snapshot is too large to show in full; narrow it with path]`;
+}
+
 export interface WorkspaceVersioningOptions {
   /** Root under which the `.versioning/<id>` git-dirs live. Defaults to WORKSPACES_ROOT. */
   rootDir?: string;
@@ -188,7 +197,7 @@ export class WorkspaceVersioning implements IWorkspaceVersioning {
 
   async diff(workspaceId: string, workspaceDir: string, from: string, to: string): Promise<string> {
     const r = await this.git.run([...this.base(workspaceId, workspaceDir), "diff", from, to], { trimStdout: false });
-    return r.stdout;
+    return noteIfTruncated(r.stdout, r.truncated);
   }
 
   // Snapshots (across all refs, like history()) with each commit's per-file numstat vs its
@@ -251,7 +260,7 @@ export class WorkspaceVersioning implements IWorkspaceVersioning {
     args.push("show", "--no-renames", sha);
     if (opts.path) args.push("--", opts.path);
     const r = await this.git.run(args, { trimStdout: false });
-    return r.stdout;
+    return noteIfTruncated(r.stdout, r.truncated);
   }
 
   // Destroy the workspace's entire version history. Called on workspace deletion so versioning

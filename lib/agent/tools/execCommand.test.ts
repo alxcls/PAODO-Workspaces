@@ -374,6 +374,29 @@ describe("ExecCommandTool output limits", () => {
     expect(result).toContain("Output too large");
   });
 
+  it("still explains WHY a command failed when its output overflowed", async () => {
+    const sink = fakeSink();
+    const tool = makeTool(
+      fakeExec({
+        stdout: "N".repeat(MAX_INLINE_BYTES * 2),
+        stderr: "exec: no matching entries in passwd file",
+        code: 1,
+      }),
+      fakeBackground().fn,
+      sink.fn,
+    );
+
+    const result = await tool.invoke({ command: "npm run build" });
+
+    // The saved file holds the command's own output — but this guidance is OURS, generated from the
+    // stderr signature, so if overflow drops it the agent cannot recover it by reading the file. It
+    // would instead be told to go read a 600KB log to find out why the container is broken.
+    expect(result).toContain("Output too large");
+    expect(result).toContain("no matching entries in passwd file");
+    expect(result).toContain("[setup]");
+    expect(result).toContain("Do NOT suggest deleting or recreating the container");
+  });
+
   it("saves what a killed command produced before the kill", async () => {
     vi.useFakeTimers();
     try {

@@ -56,10 +56,15 @@ const EXEC_OUTPUT_DIR = "/tmp/paodo-exec";
 // A ceiling on the file itself. Without it the "keep everything" promise would let one command fill
 // the container's writable layer — which the mid-run disk check cannot see, since that watches the
 // workspace mount, not the container layer.
-const EXEC_OUTPUT_MAX_BYTES = parseInt(process.env.EXEC_OUTPUT_MAX_BYTES ?? "", 10) || 50 * 1024 * 1024;
+const EXEC_OUTPUT_MAX_BYTES = parseInt(process.env.EXEC_OUTPUT_MAX_BYTES ?? "", 10) || 20 * 1024 * 1024;
 // How many spill files survive in a container. These containers are never auto-recreated, so this
 // directory would otherwise grow for the workspace's entire lifetime with nothing to clear it.
-const EXEC_OUTPUT_KEEP = 20;
+//
+// KEEP × MAX_BYTES is the real number to judge these by: it is what this feature can occupy in a
+// container's writable layer, the one space with no recovery path short of destroying the container.
+// 5 × 20MB = 100MB is the deliberate budget. Spill files are scratch — the agent greps the one it was
+// just handed — so a deeper history buys nothing worth that space.
+const EXEC_OUTPUT_KEEP = 5;
 // Ceiling on bytes queued for the sink but not yet drained into the container. Reached only when the
 // sink writes slower than the command produces; past it the file stops at a prefix. Without this the
 // backlog would sit in the app's heap, which is the exact failure this whole mechanism exists to stop.

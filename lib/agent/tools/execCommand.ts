@@ -227,8 +227,10 @@ You run as a NON-ROOT user, confined to the workspace. apt-get/sudo are NOT avai
           const errorLine = failed ? `Error: command exited with code ${code}` : "";
           // Over the cap the streams are no longer held separately, so the result becomes the
           // preview block plus the path — the exit-status line still leads it, as it does below.
+          // The stderr diagnosis runs on BOTH paths: why a command failed is the one thing the agent
+          // cannot recover by reading the saved file, since the guidance is ours, not the command's.
           const body = output.overflowed
-            ? [output.overflowNotice()]
+            ? [output.overflowNotice(), diagnoseStderr(output.stderrText())]
             : [output.stdoutText().trim(), diagnoseStderr(output.stderrText())];
           const parts = [errorLine, ...body].filter(Boolean);
           finish(parts.join("\n") || "Command executed successfully with no output.");

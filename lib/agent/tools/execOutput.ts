@@ -20,6 +20,17 @@ export const MAX_INLINE_BYTES = 30_000;
 /** How much of an over-cap output is shown inline, as a head preview. Claude Code shows 2KB. */
 export const PREVIEW_BYTES = 2_048;
 
+/**
+ * How much stderr survives the spill, at each end.
+ *
+ * The spill drops the separated streams, which also dropped the only input diagnoseStderr has — so a
+ * command that failed because the container cannot resolve its runtime user, and happened to print
+ * more than the cap, got the "output too large" notice instead of the explanation of WHY it failed.
+ * Head and tail because a failure announces itself at one end or the other: setup faults come first,
+ * and a build that dies after 40KB of progress says why on its last line.
+ */
+export const STDERR_SAMPLE_BYTES = 2_048;
+
 /** Byte size for the truncation notice — "29.4KB", "1.2MB". Mirrors Claude Code's KiB/MiB rendering. */
 export function formatOutputBytes(bytes: number): string {
   const units = ["B", "KB", "MB", "GB"];
@@ -49,6 +60,12 @@ export class ExecOutput {
   private totalBytes = 0;
   private sink: OutputSink | null = null;
   private preview: Buffer | null = null;
+  // Bounded stderr sample, kept alongside the streams above and — unlike them — NOT dropped at spill
+  // time. Costs at most 2 × STDERR_SAMPLE_BYTES regardless of how much stderr the command produces.
+  private stderrHead = Buffer.alloc(0);
+  private stderrTail: Buffer[] = [];
+  private stderrTailBytes = 0;
+  private stderrSeen = 0;
 
   /** openSink is called at most once, lazily — a command that stays under the cap never spawns one. */
   constructor(
@@ -59,6 +76,7 @@ export class ExecOutput {
   append(stream: "stdout" | "stderr", text: string): void {
     const buf = Buffer.from(text, "utf8");
     this.totalBytes += buf.length;
+    if (stream === "stderr") this.sampleStderr(buf);
 
     if (this.sink) {
       this.sink.write(buf);
@@ -72,6 +90,40 @@ export class ExecOutput {
     (stream === "stdout" ? this.stdoutKept : this.stderrKept).push(buf);
     this.inlineBytes += buf.length;
     if (this.inlineBytes > this.limit) this.spill();
+  }
+
+  // Fixed-size window over stderr: fill the head once, then keep a rolling tail. A single chunk
+  // larger than the window contributes only its own tail, so neither buffer tracks stderr's size.
+  private sampleStderr(buf: Buffer): void {
+    this.stderrSeen += buf.length;
+
+    const headRoom = STDERR_SAMPLE_BYTES - this.stderrHead.length;
+    if (headRoom > 0) this.stderrHead = Buffer.concat([this.stderrHead, buf.subarray(0, headRoom)]);
+
+    const piece = buf.length > STDERR_SAMPLE_BYTES ? buf.subarray(buf.length - STDERR_SAMPLE_BYTES) : buf;
+    this.stderrTail.push(piece);
+    this.stderrTailBytes += piece.length;
+    while (this.stderrTail.length > 1 && this.stderrTailBytes - this.stderrTail[0].length >= STDERR_SAMPLE_BYTES) {
+      this.stderrTailBytes -= this.stderrTail.shift()!.length;
+    }
+  }
+
+  // head + tail, with the gap between them quantified rather than spliced over.
+  private stderrSample(): string {
+    const head = this.stderrHead;
+    if (this.stderrSeen <= head.length) return head.toString("utf8");
+
+    const joined = Buffer.concat(this.stderrTail);
+    const tail = joined.length > STDERR_SAMPLE_BYTES ? joined.subarray(joined.length - STDERR_SAMPLE_BYTES) : joined;
+    const hidden = this.stderrSeen - head.length - tail.length;
+    // Non-positive means the two ends overlap and between them hold all of stderr — drop the
+    // duplicated bytes rather than printing them twice.
+    if (hidden <= 0) return head.toString("utf8") + tail.subarray(-hidden).toString("utf8");
+    return [
+      head.toString("utf8"),
+      `… ${formatOutputBytes(hidden)} of stderr omitted (full output is in the saved file) …`,
+      tail.toString("utf8"),
+    ].join("\n");
   }
 
   private spill(): void {
@@ -99,8 +151,9 @@ export class ExecOutput {
     return Buffer.concat(this.stdoutKept).toString("utf8");
   }
 
+  /** Whole stderr under the cap; the bounded head+tail sample once the streams have been spilled. */
   stderrText(): string {
-    return Buffer.concat(this.stderrKept).toString("utf8");
+    return this.overflowed ? this.stderrSample() : Buffer.concat(this.stderrKept).toString("utf8");
   }
 
   /**

@@ -98,8 +98,12 @@ describe("openOutputSink", () => {
     const script = args[args.length - 1];
 
     // These containers are never auto-recreated, so nothing else would ever clear this directory.
+    // Per-file cap × files kept is the number that matters: it is the most this feature can occupy
+    // in a container's writable layer, which the workspace disk check cannot see and nothing but
+    // destroying the container reclaims. 5 × 20MB.
+    expect(script).toContain("tail -n +5");
     expect(script).toContain("rm -f");
-    expect(script).toContain("head -c 52428800");
+    expect(script).toContain("head -c 20971520");
     expect(script).toContain("> /tmp/paodo-exec/run-abc.output");
   });
 

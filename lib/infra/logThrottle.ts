@@ -6,8 +6,9 @@
 // is the problem: a flood rotates real history out of the window in minutes, which is exactly when
 // you want to look at it.
 //
-// Deliberately *not* a hook on the logger. Every other log line in this app is emitted by code the
-// caller cannot drive, and silently collapsing those would cost more than it saves.
+// Deliberately *not* a hook on the logger. Call sites opt in only when repetitions add no evidence:
+// unauthenticated rejection floods and a known host-wide infrastructure failure retried by many
+// agent tools. Silently collapsing arbitrary application records would cost more than it saves.
 
 type Window = { openedAt: number; suppressed: number; sources: Set<string> };
 

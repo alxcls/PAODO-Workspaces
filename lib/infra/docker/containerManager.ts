@@ -20,6 +20,7 @@ import { containerName, networkName } from "./naming";
 import { BackgroundTaskManager, type BackgroundTask } from "./backgroundTaskManager";
 import { ProxyNetworkManager } from "./proxyNetworkManager";
 import { capacityProfile } from "../capacityProfile";
+import { reportInfrastructureResourceExhaustion } from "./infrastructureFailure";
 
 // Re-exported for back-compat with external consumers.
 export type { BackgroundTask } from "./backgroundTaskManager";
@@ -354,16 +355,18 @@ export class ContainerManager implements IContainerManager {
       stage = "install_proxy_ca";
       await this.workspaceDeps.installProxyCA(this.docker, containerName(workspaceId), workspaceId);
     } catch (err) {
-      log.error(
-        {
-          event: "workspace_container_start_failed",
-          outcome: "workspace_container_unavailable",
-          err,
-          workspaceId,
-          stage,
-        },
-        "workspace container failed to start",
-      );
+      if (!reportInfrastructureResourceExhaustion(log, err, { workspaceId, stage })) {
+        log.error(
+          {
+            event: "workspace_container_start_failed",
+            outcome: "workspace_container_unavailable",
+            err,
+            workspaceId,
+            stage,
+          },
+          "workspace container failed to start",
+        );
+      }
       throw err;
     }
   }
@@ -394,16 +397,23 @@ export class ContainerManager implements IContainerManager {
         try {
           await this.proxy.verify(workspaceId);
         } catch (err) {
-          log.error(
-            {
-              event: "workspace_container_start_failed",
-              outcome: "workspace_container_unavailable",
-              err,
+          if (
+            !reportInfrastructureResourceExhaustion(log, err, {
               workspaceId,
               stage: "verify_proxy_network",
-            },
-            "workspace container failed to start",
-          );
+            })
+          ) {
+            log.error(
+              {
+                event: "workspace_container_start_failed",
+                outcome: "workspace_container_unavailable",
+                err,
+                workspaceId,
+                stage: "verify_proxy_network",
+              },
+              "workspace container failed to start",
+            );
+          }
           throw err;
         }
       }

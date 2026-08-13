@@ -1,0 +1,64 @@
+import { throttleLog } from "../logThrottle";
+
+export type InfrastructureResourceExhaustion = {
+  failureClass: "resource_exhaustion";
+  failureCode: "DOCKER_NETWORK_POOL_EXHAUSTED";
+  resource: "docker_network_address_pool";
+  resourceScope: "docker_host";
+  retryable: false;
+};
+
+type ErrorLogger = {
+  error(bindings: Record<string, unknown>, message: string): void;
+};
+
+const DOCKER_NETWORK_POOL_PATTERNS = [
+  /all predefined address pools have been fully subnetted/i,
+  /could not find an available, non-overlapping IPv4 address pool among the defaults/i,
+];
+
+/** Turn stable infrastructure error signatures into fields operators can alert on. */
+export function classifyInfrastructureResourceExhaustion(error: unknown): InfrastructureResourceExhaustion | null {
+  const message = error instanceof Error ? error.message : String(error);
+  if (!DOCKER_NETWORK_POOL_PATTERNS.some((pattern) => pattern.test(message))) return null;
+  return {
+    failureClass: "resource_exhaustion",
+    failureCode: "DOCKER_NETWORK_POOL_EXHAUSTED",
+    resource: "docker_network_address_pool",
+    resourceScope: "docker_host",
+    retryable: false,
+  };
+}
+
+/**
+ * Emit one queryable critical record for a recognized exhaustion failure.
+ *
+ * A blocked agent can retry tools hundreds of times. Collapse identical host-wide failures into
+ * one record per window so they remain visible without rotating the surrounding evidence away.
+ * Returns true whenever the error was recognized, including when this occurrence was suppressed.
+ */
+export function reportInfrastructureResourceExhaustion(
+  logger: ErrorLogger,
+  error: unknown,
+  context: { workspaceId: string; stage: string },
+  now = Date.now(),
+): boolean {
+  const failure = classifyInfrastructureResourceExhaustion(error);
+  if (!failure) return false;
+
+  const suppressed = throttleLog(`infrastructure_resource_exhausted:${failure.failureCode}`, now);
+  if (suppressed !== null) {
+    logger.error(
+      {
+        event: "infrastructure_resource_exhausted",
+        outcome: "workspace_container_unavailable",
+        err: error,
+        ...context,
+        ...failure,
+        suppressed,
+      },
+      "Docker network address pool exhausted",
+    );
+  }
+  return true;
+}

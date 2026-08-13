@@ -92,13 +92,23 @@ RUN git clone --depth=1 https://github.com/pyenv/pyenv.git $PYENV_ROOT && \
 # `nvm alias default <v>` writes $NVM_DIR/alias/default, which lives in the container's writable
 # layer — so the choice survives for the life of the workspace, like everything else installed in it.
 #
-# The guard is exported so nested bash (a build script, a Makefile recipe) inherits it and skips the
-# ~150ms re-source; --no-use keeps nvm.sh from picking a version before we ask for the default one.
+# The loaded-guard is exported so nested bash (a build script, a Makefile recipe) inherits it and
+# skips the ~150ms re-source; --no-use keeps nvm.sh from picking a version before we ask for the
+# default one.
+#
+# The uid guard is a safety interlock, not an optimisation. This file is world-readable and
+# root-owned, but it SOURCES $NVM_DIR/nvm.sh, which lives in dev's home and is writable by dev. Since
+# BASH_ENV is a container-wide setting, any future root exec written as `/bin/bash -c` would read
+# this file and run dev-controlled code as root. No root path does that today — the ownership sweep
+# and apt-get are exec'd directly, and installProxyCA uses `sh -c`, which is dash and ignores
+# BASH_ENV — but the trap would be invisible to whoever writes the first one. Returning unless we
+# are uid 1000 removes it permanently, and costs nothing: $EUID is a bash builtin, no subprocess.
 #
 # Kept near the end deliberately: it is the cheapest layer in the file, so a change to it rebuilds
 # almost nothing. The image build runs at server startup and is fatal if it fails, so layers that
 # take minutes (pyenv's clone and make, above) must not sit downstream of a layer likely to churn.
 RUN printf '%s\n' \
+    '[ "$EUID" != 1000 ] && return' \
     '[ -n "$WS_PROFILE_LOADED" ] && return' \
     'export WS_PROFILE_LOADED=1' \
     '[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh" --no-use && nvm use default >/dev/null 2>&1' \

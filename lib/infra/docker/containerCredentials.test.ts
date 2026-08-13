@@ -23,11 +23,15 @@ const existsSync = vi.fn();
 // Typed with the real readFileSync's parameters so the fs mock below can forward both of them.
 const readFileSync = vi.fn((_path: string, _encoding?: string) => "CA-PEM-CONTENT");
 
-vi.mock("../security/workspaceSecretStore", () => ({
+vi.mock("../security/workspaceSecretStore", async (importOriginal) => ({
   listSecretMeta: (ws: string) => listSecretMeta(ws),
   // Deterministic, reversible token so tests can assert the exact env value.
   proxyToken: (ws: string, name: string) => `__pxy_${ws}_${name}__`,
   selectGithubTokenSecret: (metas: unknown) => selectGithubTokenSecret(metas),
+  // The real set rather than a stand-in: a hand-written copy here could drift from the names the
+  // container actually uses, and this is the boundary that refuses to inject them.
+  RESERVED_SECRET_NAMES: (await importOriginal<typeof import("../security/workspaceSecretStore")>())
+    .RESERVED_SECRET_NAMES,
 }));
 vi.mock("../proxy/proxyCA", () => ({
   deriveProxySecret: (ws: string) => `derived-${ws}`,
@@ -186,6 +190,37 @@ describe("buildExecEnv — internetAccess off", () => {
     listSecretMeta.mockReturnValue([meta("VERCEL_TOKEN")]);
     expect(buildExecEnv("ws1", false)).toEqual({});
     expect(buildExecEnv("ws1", true)).toEqual({ VERCEL_TOKEN: "__pxy_ws1_VERCEL_TOKEN__" });
+  });
+});
+
+/**
+ * An exec-level `-e` outranks the container's own environment, so a secret named after the proxy
+ * address or a CA-trust path would replace that wiring with an opaque token on EVERY command — and
+ * the resulting TLS failures name nothing that would lead anyone back to a secret's name.
+ *
+ * validateSecret refuses these names when a secret is stored, but that only covers what was written
+ * after the rule existed. This is the boundary that also covers what was already in the store.
+ */
+describe("buildExecEnv — names the container itself uses", () => {
+  it("refuses to inject a secret that would shadow the container's wiring", () => {
+    listSecretMeta.mockReturnValue([meta("HTTPS_PROXY"), meta("SSL_CERT_FILE"), meta("VERCEL_TOKEN")]);
+    expect(buildExecEnv("ws1", true)).toEqual({ VERCEL_TOKEN: "__pxy_ws1_VERCEL_TOKEN__" });
+  });
+
+  it("still injects everything else, so one bad name cannot disarm a workspace's other secrets", () => {
+    listSecretMeta.mockReturnValue([meta("PATH"), meta("OPENAI_API_KEY"), meta("STRIPE_KEY")]);
+    expect(buildExecEnv("ws1", true)).toEqual({
+      OPENAI_API_KEY: "__pxy_ws1_OPENAI_API_KEY__",
+      STRIPE_KEY: "__pxy_ws1_STRIPE_KEY__",
+    });
+  });
+
+  // GH_TOKEN is what the github.com-scoped secret is aliased to, so reserving it would reject the
+  // most obvious name a user could pick for exactly the secret this feature is built around.
+  it("does not treat GH_TOKEN as reserved", () => {
+    listSecretMeta.mockReturnValue([meta("GH_TOKEN", ["github.com"])]);
+    selectGithubTokenSecret.mockReturnValue("GH_TOKEN");
+    expect(buildExecEnv("ws1", true)).toEqual({ GH_TOKEN: "__pxy_ws1_GH_TOKEN__" });
   });
 });
 

@@ -537,18 +537,13 @@ export class ContainerManager implements IContainerManager {
     }
 
     const p = (async () => {
+      // Only a RUNNING container has live networking to correct. A workspace that has never started
+      // has no network yet, and stop() removes the network of one that has — in both cases the next
+      // bring-up creates it with the flag this setting has already been persisted as, so building
+      // one here would only leave a network nothing is attached to, lingering until the workspace is
+      // next woken (and Docker's address pool is finite).
       const status = await this.getContainerStatus(workspaceId);
-      // Never started: the setting is already persisted, and the network is created with the right
-      // flag the first time a container is made. Nothing to reconcile.
-      if (status === "missing") return;
-
-      // A stopped container is left disconnected (stop() detaches it), so only the network itself
-      // needs the new flag here — the restart path in _ensureContainer is what rejoins the
-      // container. A running one is rejoined now, by the same reconcile every wake runs.
-      if (status !== "running") {
-        await this.ensureNetwork(workspaceId, enabled);
-        return;
-      }
+      if (status !== "running") return;
 
       await this.reconcileNetwork(workspaceId, enabled);
     })();
@@ -559,7 +554,9 @@ export class ContainerManager implements IContainerManager {
     try {
       await p;
     } finally {
-      this.startLocks.delete(workspaceId);
+      // Identity-checked like ensure() and stop(): only ever clear our own entry, never one a
+      // later operation has since claimed.
+      if (this.startLocks.get(workspaceId)?.promise === p) this.startLocks.delete(workspaceId);
     }
   }
 

@@ -280,11 +280,23 @@ describe("applyInternetAccess rebuilds the network around a live container", () 
     expect(issued(calls, "run")).toHaveLength(0);
   });
 
-  it("does nothing when the workspace has never been started", async () => {
+  // Only a running container has live networking to correct. For the other two states the setting
+  // is already persisted and the next bring-up builds the network with the right flag — creating
+  // one here would leave a network nothing is attached to, lingering until the workspace is next
+  // woken, and Docker's address pool is finite.
+  it.each([
+    ["never been started", "no such object"],
+    ["stopped", "exited"],
+  ])("touches no network when the workspace is %s", async (_case, statusStdout) => {
     const calls: string[][] = [];
     const docker: IDockerClient = {
       cmd: async (...args: string[]): Promise<DockerResult> => {
         calls.push(args);
+        if (args.includes("{{.State.Status}}")) {
+          return statusStdout === "no such object"
+            ? { stdout: "", stderr: statusStdout, code: 1 }
+            : { stdout: statusStdout, stderr: "", code: 0 };
+        }
         return { stdout: "", stderr: "no such object", code: 1 };
       },
       build: async () => {},
@@ -292,7 +304,6 @@ describe("applyInternetAccess rebuilds the network around a live container", () 
     };
     await new ContainerManager(docker, workspaceDeps).applyInternetAccess("ws1", false);
 
-    // Only the status probe. The network is built with the right flag at first create.
     expect(calls.filter((c) => c[0] === "network")).toHaveLength(0);
   });
 });

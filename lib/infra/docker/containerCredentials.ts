@@ -10,7 +10,12 @@
 //   - buildExecEnv  → secrets, which change, so they are supplied fresh on every `docker exec`
 import path from "path";
 import { existsSync, readFileSync } from "fs";
-import { listSecretMeta, proxyToken, selectGithubTokenSecret } from "../security/workspaceSecretStore";
+import {
+  listSecretMeta,
+  proxyToken,
+  selectGithubTokenSecret,
+  RESERVED_SECRET_NAMES,
+} from "../security/workspaceSecretStore";
 import { deriveProxySecret } from "../proxy/proxyCA";
 import { WORKSPACES_ROOT } from "../paths";
 import type { IDockerClient } from "./dockerClient";
@@ -63,7 +68,21 @@ export interface CredentialEnv {
 export function buildExecEnv(workspaceId: string, internetAccess: boolean): Record<string, string> {
   const secrets = internetAccess ? listSecretMeta(workspaceId) : [];
   const env: Record<string, string> = {};
-  for (const s of secrets) env[s.name] = proxyToken(workspaceId, s.name);
+  for (const s of secrets) {
+    // Never let a secret shadow the container's own wiring. validateSecret rejects these names when
+    // a secret is stored, but that gate only covers what is written after the rule existed — a
+    // secret already in the store would otherwise override the proxy address or a CA-trust path on
+    // every single command, and the resulting TLS failures name nothing that would lead anyone
+    // here. Dropping it at the injection point is what actually holds the line.
+    if (RESERVED_SECRET_NAMES.has(s.name)) {
+      log.warn(
+        { event: "workspace_secret_name_reserved", outcome: "secret_not_injected", workspaceId, name: s.name },
+        "workspace secret shadows the container's own environment — not injected",
+      );
+      continue;
+    }
+    env[s.name] = proxyToken(workspaceId, s.name);
+  }
   // Alias the github.com-scoped secret to GH_TOKEN so git (via the static credential helper in the
   // image) and gh both authenticate transparently, regardless of what the user named the secret.
   // Only the opaque token is exposed; the proxy swaps it for the real value on github.com traffic.

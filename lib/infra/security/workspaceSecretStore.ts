@@ -185,6 +185,45 @@ export function proxyToken(wsId: string, name: string): string {
   return `p${digest}`;
 }
 
+/**
+ * Names a secret may not be injected under, because the container already uses them for something
+ * the secret would silently replace.
+ *
+ * Secrets reach the container as `docker exec -e NAME=<token>`, and an exec-level `-e` outranks the
+ * container's own environment. A secret named after the credential proxy's address or one of the
+ * CA-trust variables (containerCredentials.ts) would therefore swap that wiring for an opaque token
+ * and break the workspace's HTTPS in a way that looks like anything except a naming collision. The
+ * rest are the shell's own footing — PATH, HOME, BASH_ENV and the loader vars — which decide what a
+ * command resolves to before it runs.
+ *
+ * Lives here, next to the token derivation, because BOTH ends need it: validateSecret rejects these
+ * names at the write boundary so a user gets a real error message, and buildExecEnv drops them at
+ * the injection point so a secret stored before this rule existed can't still shadow the wiring on
+ * every command. The write gate is the message; this is the boundary.
+ *
+ * GH_TOKEN is deliberately NOT reserved — buildExecEnv sets it from whichever secret is scoped to
+ * github.com, so a user naming their token that outright is the expected case, not a collision.
+ */
+export const RESERVED_SECRET_NAMES: ReadonlySet<string> = new Set([
+  // Credential-proxy routing and trust (buildRunEnv).
+  "HTTP_PROXY",
+  "HTTPS_PROXY",
+  "NO_PROXY",
+  "NODE_EXTRA_CA_CERTS",
+  "REQUESTS_CA_BUNDLE",
+  "CURL_CA_BUNDLE",
+  "SSL_CERT_FILE",
+  "GIT_SSL_CAINFO",
+  // Shell and loader footing (Dockerfile.workspace).
+  "PATH",
+  "HOME",
+  "BASH_ENV",
+  "LD_PRELOAD",
+  "LD_LIBRARY_PATH",
+  "NVM_DIR",
+  "PYENV_ROOT",
+]);
+
 export function setSecret(wsId: string, name: string, value: string, domains: string[]): void {
   if (!store[wsId]) store[wsId] = {};
   const sanitized = sanitizeDomains(domains);

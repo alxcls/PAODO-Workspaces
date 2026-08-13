@@ -70,8 +70,13 @@ export interface UsageContext {
 export interface LightTurnRecord {
   id: string;
   sessionId: string;
-  /** Set only while the conversation still exists — see listUsageLight. */
   conversationId?: string;
+  /**
+   * Whether that conversation still exists. Usage records outlive conversations (deleting a
+   * workspace drops its replay state but keeps its execution records), so the dashboard keeps
+   * showing the id either way but only links one it can actually open.
+   */
+  conversationLive?: boolean;
   workspaceId: string;
   workspaceName: string;
   origin?: SessionOrigin;

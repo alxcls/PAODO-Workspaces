@@ -45,6 +45,8 @@ export interface LightJoinedRow
   extends Omit<TurnRow, "user_input" | "reasoning_text" | "output_text" | "error_code" | "error_message"> {
   error_code: string | null;
   error_message: string | null;
+  /** 1/0 from the EXISTS check on `conversations` — not a stored column. */
+  conversation_live: number;
   tool_position: number | null;
   tool_name: string | null;
   tool_status: string | null;

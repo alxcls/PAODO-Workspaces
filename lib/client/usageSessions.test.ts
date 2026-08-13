@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import type { LightTurnRecord } from "@/lib/usage/types";
-import { groupBySessions, formatTokens, formatCost, originLabel } from "./usageSessions";
+import { groupBySessions, formatTokens, formatCost, formatRunError, originLabel } from "./usageSessions";
 
 function rec(over: Partial<LightTurnRecord> = {}): LightTurnRecord {
   return {
@@ -89,6 +89,35 @@ describe("groupBySessions", () => {
     const [s] = groupBySessions([rec({ model: "not-a-real-model", cost: 0.123 })]);
     expect(s.cost).toBe(0.123);
   });
+
+  it("leaves a run that recorded no error unmarked, failed tool calls included", () => {
+    const [s] = groupBySessions([rec({ toolCalls: [{ name: "exec", status: "error" }] })]);
+    expect(s.error).toBeUndefined();
+  });
+
+  it("keeps the last error of the run — the one it stopped on", () => {
+    const [s] = groupBySessions([
+      rec({ id: "b", timestamp: "2026-01-01T00:02:00.000Z", error: { message: "gave up" } }),
+      rec({ id: "a", timestamp: "2026-01-01T00:01:00.000Z", error: { code: "RETRY", message: "first failure" } }),
+    ]);
+    expect(s.error).toEqual({ message: "gave up" });
+  });
+
+  it("prefers the terminal error when it shares a millisecond with the turn error it followed", () => {
+    // recordRunError appends its own row, so both can carry the same timestamp; the newest-first
+    // list decides which of the two is terminal.
+    const [s] = groupBySessions([
+      rec({ id: "terminal", error: { code: "TIMEOUT", message: "run aborted" } }),
+      rec({ id: "turn", error: { message: "tool blew up" } }),
+    ]);
+    expect(s.error).toEqual({ code: "TIMEOUT", message: "run aborted" });
+  });
+});
+
+describe("formatRunError", () => {
+  it("prefixes the code when there is one", () =>
+    expect(formatRunError({ code: "TIMEOUT", message: "too slow" })).toBe("[TIMEOUT] too slow"));
+  it("shows the bare message otherwise", () => expect(formatRunError({ message: "too slow" })).toBe("too slow"));
 });
 
 describe("formatTokens", () => {

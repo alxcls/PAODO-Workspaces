@@ -101,9 +101,18 @@ export function listUsageLight(workspaceId?: string): LightTurnRecord[] {
           tools.status AS tool_status
         FROM (
           SELECT
-            seq, id, session_id, conversation_id, workspace_id, workspace_name, origin, timestamp,
+            seq, id, session_id, workspace_id, workspace_name, origin, timestamp,
             model, input_tokens_total, input_tokens_cache_read, input_tokens_cache_write,
-            output_tokens_total, output_tokens_reasoning, cost_usd, error_code, error_message
+            output_tokens_total, output_tokens_reasoning, cost_usd, error_code, error_message,
+            -- Usage records outlive the conversations that produced them (deleting a workspace drops
+            -- its conversation rows but keeps its execution records), so a conversation that is no
+            -- longer in the registry reads as no conversation at all — the dashboard has nothing to
+            -- link and renders the same dash as an external run.
+            CASE WHEN EXISTS (
+              SELECT 1 FROM conversations
+              WHERE conversations.workspace_id = usage_turns.workspace_id
+                AND conversations.id = usage_turns.conversation_id
+            ) THEN conversation_id END AS conversation_id
           FROM usage_turns
           ${where}
           ORDER BY seq DESC

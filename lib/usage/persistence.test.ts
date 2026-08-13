@@ -167,6 +167,23 @@ describe("usageStore", () => {
     expect(light[0].toolCalls).toEqual([{ name: "execute_command", status: "error" }]);
   });
 
+  it("reports a conversation the dashboard can still open, and none once it is deleted", async () => {
+    const store = await freshStore();
+    const conversations = await import("../conversations/store");
+    const live = conversations.createConversation("w1");
+    store.appendUsage(baseTurn({ sessionId: "kept", conversationId: live.id }));
+    store.appendUsage(baseTurn({ sessionId: "orphan", conversationId: "deleted-conversation" }));
+
+    const bySession = new Map(store.listUsageLight().map((r) => [r.sessionId, r.conversationId]));
+    expect(bySession.get("kept")).toBe(live.id);
+    expect(bySession.get("orphan")).toBeUndefined();
+
+    // Deleting the workspace's conversations leaves its execution records, now unlinked.
+    conversations.deleteWorkspaceConversations("w1");
+    expect(store.listUsageLight().every((r) => r.conversationId === undefined)).toBe(true);
+    expect(store.listUsageLight()).toHaveLength(2);
+  });
+
   it("returns session detail oldest-first and tool calls in execution order", async () => {
     const store = await freshStore();
     store.appendUsage(

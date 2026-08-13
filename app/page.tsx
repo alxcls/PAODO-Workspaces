@@ -260,7 +260,8 @@ export default function HomePage() {
         </aside>
 
         {/* Main panel */}
-        <main className="flex-1 p-[48px_56px_64px] max-w-[760px] overflow-auto">
+        <main className="flex-1 min-w-0 overflow-auto">
+          <div className="max-w-[760px] p-[48px_56px_64px]">
           {selected ? (
             <div className="flex flex-col">
               <div className="uppercase text-2xs tracking-[.12em] text-text-3 font-semibold">Workspace</div>
@@ -367,6 +368,7 @@ export default function HomePage() {
               <p className="m-0">Pick a workspace on the left, or create a new one to get started.</p>
             </div>
           )}
+          </div>
         </main>
       </div>
     </div>

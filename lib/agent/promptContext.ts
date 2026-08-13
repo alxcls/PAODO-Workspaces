@@ -43,7 +43,7 @@ function buildNetworkInfo(workspaceId: string): string {
     ? `# Internet access
 This workspace has internet access. \`http_get\` fetches public URLs; \`apt_install\` installs system packages; \`npm\`/\`pip3\`/\`git\` work normally from execute_command.`
     : `# Internet access — DISABLED
-This workspace has NO internet access. Its container has no network route out. \`http_get\` and \`apt_install\` are not available as tools. Any \`curl\`/\`wget\`/\`npm install\`/\`pip install\`/\`git clone\` against an external host from execute_command will fail immediately — do not retry them, they cannot succeed until the workspace owner re-enables internet access in the UI. Work only with what's already in the workspace.`;
+This workspace has NO internet access. Its container has no network route out. \`http_get\` and \`apt_install\` are not available as tools. Any \`curl\`/\`wget\`/\`npm install\`/\`pip install\`/\`git clone\` against an external host from execute_command will fail immediately — do not retry them, they cannot succeed until the workspace owner re-enables internet access in the UI. Work only with what's already installed in the workspace — anything installed while internet access was on is still there, since the workspace is persistent.`;
 }
 
 function buildDrivesInfo(workspaceId: string): string | undefined {

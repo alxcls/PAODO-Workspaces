@@ -10,9 +10,18 @@ export interface IDockerClient {
   exec(
     containerName: string,
     cmdArgs: string[],
-    opts?: { stdin?: DockerStdin; asRoot?: boolean; cwd?: string; trimStdout?: boolean },
+    opts?: { stdin?: DockerStdin; asRoot?: boolean; cwd?: string; trimStdout?: boolean; env?: Record<string, string> },
   ): Promise<DockerResult>;
   build(buildArgs: string[], dockerfile: Buffer): Promise<void>;
+}
+
+/**
+ * Expand an env map into `-e NAME=value` argv pairs for `docker exec`.
+ * Exported because execStreaming builds its own argv rather than going through exec().
+ */
+export function envArgs(env: Record<string, string> | undefined): string[] {
+  if (!env) return [];
+  return Object.entries(env).flatMap(([name, value]) => ["-e", `${name}=${value}`]);
 }
 
 export class DockerClient implements IDockerClient {
@@ -62,16 +71,24 @@ export class DockerClient implements IDockerClient {
    * - cwd          → -w flag (default /workspace)
    * - trimStdout   → default false so file reads preserve trailing newlines;
    *                  pass true for commands where stdout is a short scalar (e.g. apt-get).
+   * - env          → -e pairs; this is how workspace secrets reach the container, since the
+   *                  container itself is long-lived and its creation-time env cannot be amended.
    */
   exec(
     containerName: string,
     cmdArgs: string[],
-    opts: { stdin?: DockerStdin; asRoot?: boolean; cwd?: string; trimStdout?: boolean } = {},
+    opts: {
+      stdin?: DockerStdin;
+      asRoot?: boolean;
+      cwd?: string;
+      trimStdout?: boolean;
+      env?: Record<string, string>;
+    } = {},
   ): Promise<DockerResult> {
-    const { stdin, asRoot = false, cwd = "/workspace", trimStdout = false } = opts;
+    const { stdin, asRoot = false, cwd = "/workspace", trimStdout = false, env } = opts;
     const args = ["exec", "-i"];
     if (asRoot) args.push("-u", "0");
-    args.push("-w", cwd, containerName, ...cmdArgs);
+    args.push(...envArgs(env), "-w", cwd, containerName, ...cmdArgs);
     return this._spawn(args, { stdin, trimStdout });
   }
 

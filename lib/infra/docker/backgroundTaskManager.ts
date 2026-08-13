@@ -43,7 +43,14 @@ export class BackgroundTaskManager {
   // therefore immune to the foreground exec timeout and lives until stop(), a new run, or container
   // stop/idle. The user command enters only as an argv positional ($1), never string-interpolated —
   // no injection. Assumes the container is already running (the caller ensures it).
-  async start(workspaceId: string, command: string): Promise<{ taskId: string; logFile: string }> {
+  // `env` carries the workspace's secret tokens, which are supplied per exec rather than baked into
+  // the container. The launched process keeps this env for its lifetime — the caller decides what
+  // that should contain.
+  async start(
+    workspaceId: string,
+    command: string,
+    env: Record<string, string> = {},
+  ): Promise<{ taskId: string; logFile: string }> {
     const name = containerName(workspaceId);
     const taskId = randomUUID();
     const logFile = `${TASK_DIR}/${taskId}.output`;
@@ -63,7 +70,7 @@ export class BackgroundTaskManager {
         `printf '%s' "$1" > ${cmdFile}; ` +
         `setsid /bin/bash -c 'echo $$ > ${pidFile}; exec "$0" "$@"' ` +
         `/bin/bash -c "$1" > ${logFile} 2>&1 & `;
-      const launch = await this.docker.exec(name, ["/bin/bash", "-c", launcher, "bash", command]);
+      const launch = await this.docker.exec(name, ["/bin/bash", "-c", launcher, "bash", command], { env });
       if (launch.code !== 0) throw new Error(`background launch failed: ${launch.stderr}`);
 
       // Poll (in-container) up to ~2s for the self-reported pgid so a command that crashes on the

@@ -1,6 +1,14 @@
-// buildCredentialEnv assembles the `docker run` env that exposes a workspace's secrets as opaque
-// tokens and routes it through the credential proxy. The security-critical invariants pinned here:
-//   - real secret values NEVER appear in the args (only proxyToken() placeholders)
+// The workspace container's env, split by what can change during the container's life:
+//   - buildRunEnv  → proxy routing + CA trust, frozen at `docker run`
+//   - buildExecEnv → secret tokens, supplied fresh on every `docker exec`
+// The split exists because a workspace container is created once and kept indefinitely (its
+// writable layer is the workspace's real content), and Docker cannot amend a container's env after
+// creation — so secrets baked in at run time would be frozen at whatever the workspace had on its
+// very first command.
+//
+// Security-critical invariants pinned here:
+//   - real secret values NEVER appear (only proxyToken() placeholders)
+//   - secrets NEVER appear in the run env, so they cannot be frozen into a long-lived container
 //   - with no proxy CA present, NO proxy/CA env is emitted (fail safe — a token in the env with no
 //     proxy to swap it is useless, but we must never wire trust to a CA that isn't there)
 //   - the github-scoped secret is aliased to GH_TOKEN exactly once
@@ -29,7 +37,7 @@ vi.mock("fs", () => ({
   readFileSync: (p: string, enc?: string) => readFileSync(p, enc),
 }));
 
-import { buildCredentialEnv, hasProxyCA, installProxyCA } from "./containerCredentials";
+import { buildExecEnv, buildRunEnv, hasProxyCA, installProxyCA } from "./containerCredentials";
 
 const meta = (name: string, domains: string[] = []) => ({ name, createdAt: "2026-01-01", domains });
 
@@ -49,61 +57,82 @@ function envValue(args: string[], name: string): string | undefined {
   return undefined;
 }
 
-describe("buildCredentialEnv — secret tokens", () => {
-  it("emits one -e NAME=token per secret, never the real value", () => {
+describe("buildExecEnv — secret tokens", () => {
+  it("emits one NAME=token entry per secret, never the real value", () => {
     listSecretMeta.mockReturnValue([meta("OPENAI_API_KEY"), meta("STRIPE_KEY")]);
-    const { envArgs } = buildCredentialEnv("ws1", true);
-    expect(envValue(envArgs, "OPENAI_API_KEY")).toBe("__pxy_ws1_OPENAI_API_KEY__");
-    expect(envValue(envArgs, "STRIPE_KEY")).toBe("__pxy_ws1_STRIPE_KEY__");
+    expect(buildExecEnv("ws1", true)).toEqual({
+      OPENAI_API_KEY: "__pxy_ws1_OPENAI_API_KEY__",
+      STRIPE_KEY: "__pxy_ws1_STRIPE_KEY__",
+    });
   });
 
-  it("emits no secret env when the workspace has no secrets", () => {
-    const { envArgs } = buildCredentialEnv("ws1", true);
-    expect(envArgs.filter((a) => a === "-e")).toHaveLength(0);
+  it("emits nothing when the workspace has no secrets", () => {
+    expect(buildExecEnv("ws1", true)).toEqual({});
+  });
+
+  it("reflects a newly added secret immediately — this is what replaces recreating the container", () => {
+    listSecretMeta.mockReturnValue([]);
+    expect(buildExecEnv("ws1", true)).toEqual({});
+    listSecretMeta.mockReturnValue([meta("NEW_TOKEN")]);
+    expect(buildExecEnv("ws1", true)).toEqual({ NEW_TOKEN: "__pxy_ws1_NEW_TOKEN__" });
   });
 });
 
-describe("buildCredentialEnv — GH_TOKEN aliasing", () => {
+describe("buildExecEnv — GH_TOKEN aliasing", () => {
   it("aliases the github-scoped secret to GH_TOKEN when it has a different name", () => {
     listSecretMeta.mockReturnValue([meta("MY_GH", ["github.com"])]);
     selectGithubTokenSecret.mockReturnValue("MY_GH");
-    const { envArgs } = buildCredentialEnv("ws1", true);
-    expect(envValue(envArgs, "GH_TOKEN")).toBe("__pxy_ws1_MY_GH__");
-    expect(envValue(envArgs, "MY_GH")).toBe("__pxy_ws1_MY_GH__");
+    const env = buildExecEnv("ws1", true);
+    expect(env.GH_TOKEN).toBe("__pxy_ws1_MY_GH__");
+    expect(env.MY_GH).toBe("__pxy_ws1_MY_GH__");
   });
 
-  it("does NOT emit a duplicate GH_TOKEN when the secret is already named GH_TOKEN", () => {
+  it("keeps a single GH_TOKEN entry when the secret is already named GH_TOKEN", () => {
     listSecretMeta.mockReturnValue([meta("GH_TOKEN", ["github.com"])]);
     selectGithubTokenSecret.mockReturnValue("GH_TOKEN");
-    const { envArgs } = buildCredentialEnv("ws1", true);
-    const ghCount = envArgs.filter((a) => a.startsWith("GH_TOKEN=")).length;
-    expect(ghCount).toBe(1);
+    expect(buildExecEnv("ws1", true)).toEqual({ GH_TOKEN: "__pxy_ws1_GH_TOKEN__" });
   });
 
   it("emits no GH_TOKEN when no secret is github-scoped", () => {
     listSecretMeta.mockReturnValue([meta("OPENAI_API_KEY")]);
     selectGithubTokenSecret.mockReturnValue(null);
-    const { envArgs } = buildCredentialEnv("ws1", true);
-    expect(envValue(envArgs, "GH_TOKEN")).toBeUndefined();
+    expect(buildExecEnv("ws1", true).GH_TOKEN).toBeUndefined();
   });
 });
 
-describe("buildCredentialEnv — proxy wiring gated on the CA", () => {
+describe("buildRunEnv — carries no secrets", () => {
+  it("omits secret tokens entirely, so nothing secret is frozen into a long-lived container", () => {
+    existsSync.mockReturnValue(true);
+    listSecretMeta.mockReturnValue([meta("OPENAI_API_KEY"), meta("MY_GH", ["github.com"])]);
+    const { envArgs } = buildRunEnv("ws1");
+    expect(envValue(envArgs, "OPENAI_API_KEY")).toBeUndefined();
+    expect(envValue(envArgs, "MY_GH")).toBeUndefined();
+    expect(envValue(envArgs, "GH_TOKEN")).toBeUndefined();
+    expect(envArgs.join(" ")).not.toContain("__pxy_");
+  });
+
+  it("is identical regardless of the workspace's secrets, so it never needs to be refreshed", () => {
+    existsSync.mockReturnValue(true);
+    listSecretMeta.mockReturnValue([]);
+    const before = buildRunEnv("ws1").envArgs;
+    listSecretMeta.mockReturnValue([meta("ADDED_LATER", ["github.com"])]);
+    expect(buildRunEnv("ws1").envArgs).toEqual(before);
+  });
+});
+
+describe("buildRunEnv — proxy wiring gated on the CA", () => {
   it("without a proxy CA: hasProxyCA=false and NO proxy/CA env is emitted", () => {
     existsSync.mockReturnValue(false);
-    listSecretMeta.mockReturnValue([meta("OPENAI_API_KEY")]);
-    const { envArgs, hasProxyCA: ready } = buildCredentialEnv("ws1", true);
+    const { envArgs, hasProxyCA: ready } = buildRunEnv("ws1");
     expect(ready).toBe(false);
     expect(envValue(envArgs, "HTTP_PROXY")).toBeUndefined();
     expect(envValue(envArgs, "NODE_EXTRA_CA_CERTS")).toBeUndefined();
     expect(envArgs).not.toContain("--add-host=host.docker.internal:host-gateway");
-    // secret token still exposed — the proxy simply isn't wired yet
-    expect(envValue(envArgs, "OPENAI_API_KEY")).toBe("__pxy_ws1_OPENAI_API_KEY__");
   });
 
   it("with a proxy CA: hasProxyCA=true and the proxy URL carries the workspace's derived secret", () => {
     existsSync.mockReturnValue(true);
-    const { envArgs, hasProxyCA: ready } = buildCredentialEnv("ws1", true);
+    const { envArgs, hasProxyCA: ready } = buildRunEnv("ws1");
     expect(ready).toBe(true);
     // Local-dev host (no WORKSPACES_VOLUME_NAME in the test env) — the auth carries id:derived-secret.
     expect(envValue(envArgs, "HTTP_PROXY")).toBe("http://ws1:derived-ws1@host.docker.internal:9998");
@@ -113,7 +142,7 @@ describe("buildCredentialEnv — proxy wiring gated on the CA", () => {
 
   it("exempts ONLY loopback from the proxy (own-server curls bypass it; real hosts still proxied)", () => {
     existsSync.mockReturnValue(true);
-    const { envArgs } = buildCredentialEnv("ws1", true);
+    const { envArgs } = buildRunEnv("ws1");
     const loopbacks = "localhost,127.0.0.1,0.0.0.0,::1";
     // Both cases set, matching the http_proxy/HTTP_PROXY pattern (tools vary on which they honor).
     expect(envValue(envArgs, "no_proxy")).toBe(loopbacks);
@@ -127,7 +156,7 @@ describe("buildCredentialEnv — proxy wiring gated on the CA", () => {
 
   it("with a proxy CA: points the replacement-style trust vars at the combined bundle", () => {
     existsSync.mockReturnValue(true);
-    const { envArgs } = buildCredentialEnv("ws1", true);
+    const { envArgs } = buildRunEnv("ws1");
     expect(envValue(envArgs, "NODE_EXTRA_CA_CERTS")).toBe("/etc/proxy-ca.crt");
     for (const v of ["REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE", "SSL_CERT_FILE", "GIT_SSL_CAINFO"]) {
       expect(envValue(envArgs, v)).toBe("/etc/proxy-ca-bundle.crt");
@@ -135,22 +164,28 @@ describe("buildCredentialEnv — proxy wiring gated on the CA", () => {
   });
 });
 
-describe("buildCredentialEnv — internetAccess off", () => {
+// Now a per-command decision rather than one frozen at container creation, so switching internet
+// off takes effect on the very next command without touching the container.
+describe("buildExecEnv — internetAccess off", () => {
   it("emits no secret token env, even with secrets configured", () => {
     listSecretMeta.mockReturnValue([meta("VERCEL_TOKEN"), meta("MY_GH", ["github.com"])]);
-    const { envArgs } = buildCredentialEnv("ws1", false);
-    expect(envValue(envArgs, "VERCEL_TOKEN")).toBeUndefined();
-    expect(envValue(envArgs, "MY_GH")).toBeUndefined();
+    expect(buildExecEnv("ws1", false)).toEqual({});
   });
 
   it("never calls listSecretMeta — an off workspace's secrets aren't even read", () => {
-    buildCredentialEnv("ws1", false);
+    buildExecEnv("ws1", false);
     expect(listSecretMeta).not.toHaveBeenCalled();
   });
 
   it("passes an empty secret list into GH_TOKEN selection, so it never aliases a secret that isn't in the env", () => {
-    buildCredentialEnv("ws1", false);
+    buildExecEnv("ws1", false);
     expect(selectGithubTokenSecret).toHaveBeenCalledWith([]);
+  });
+
+  it("restores the tokens when internet comes back, with no container involvement", () => {
+    listSecretMeta.mockReturnValue([meta("VERCEL_TOKEN")]);
+    expect(buildExecEnv("ws1", false)).toEqual({});
+    expect(buildExecEnv("ws1", true)).toEqual({ VERCEL_TOKEN: "__pxy_ws1_VERCEL_TOKEN__" });
   });
 });
 

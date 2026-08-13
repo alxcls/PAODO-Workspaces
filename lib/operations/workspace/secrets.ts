@@ -24,6 +24,43 @@ export const SECRET_NAME_RE = /^[A-Z_][A-Z0-9_]*$/;
 const SECRET_DOMAIN_RE = /^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$/;
 
 /**
+ * Names a secret may not take, because the container already uses them for something the secret
+ * would silently replace.
+ *
+ * Secrets are injected per command as `docker exec -e NAME=<token>`, and an exec-level `-e` beats
+ * the container's own environment. So a secret named after the proxy address or one of the CA-trust
+ * variables (containerCredentials.ts) would swap that wiring for an opaque token and break the
+ * workspace's HTTPS in a way that looks like anything but a naming collision. The rest are the
+ * shell's own footing — PATH, HOME, BASH_ENV and the loader vars — which decide what a command even
+ * resolves to before it runs.
+ *
+ * Exported for the same reason as SECRET_NAME_RE above: a caller that publishes this input contract
+ * should state the same rule, not a copy that drifts from it.
+ *
+ * GH_TOKEN is deliberately NOT reserved — buildExecEnv sets it from whichever secret is scoped to
+ * github.com, so a user naming their token that outright is the expected case, not a collision.
+ */
+export const RESERVED_SECRET_NAMES = new Set([
+  // Credential-proxy routing and trust (buildRunEnv).
+  "HTTP_PROXY",
+  "HTTPS_PROXY",
+  "NO_PROXY",
+  "NODE_EXTRA_CA_CERTS",
+  "REQUESTS_CA_BUNDLE",
+  "CURL_CA_BUNDLE",
+  "SSL_CERT_FILE",
+  "GIT_SSL_CAINFO",
+  // Shell and loader footing (Dockerfile.workspace).
+  "PATH",
+  "HOME",
+  "BASH_ENV",
+  "LD_PRELOAD",
+  "LD_LIBRARY_PATH",
+  "NVM_DIR",
+  "PYENV_ROOT",
+]);
+
+/**
  * One third-party secret held for a workspace: its name, when it was stored, and the hosts it may be
  * spent on. The secret VALUE is never part of this shape — it stays in workspaceSecretStore and is
  * injected by the credential proxy, so no caller of this operation can read it back.
@@ -123,6 +160,9 @@ export function validateSecret(input: unknown): WorkspaceSecretInput {
   // one they need either way.
   if (typeof name !== "string" || !SECRET_NAME_RE.test(name)) {
     throw new WorkspaceUpdateError("name must be uppercase letters, digits, and underscores (e.g. OPENAI_KEY)");
+  }
+  if (RESERVED_SECRET_NAMES.has(name)) {
+    throw new WorkspaceUpdateError(`${name} is used by the workspace container itself — choose another name`);
   }
   if (typeof value !== "string" || !value.trim()) throw new WorkspaceUpdateError("value required");
   if (!Array.isArray(domains) || domains.length === 0) {

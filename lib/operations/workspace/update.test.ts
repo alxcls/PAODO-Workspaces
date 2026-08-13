@@ -41,7 +41,7 @@ const credentialStub = (overrides: Partial<ChannelCredentials> = {}): ChannelCre
 
 const egressStub = (overrides: Partial<EgressServices> = {}): EgressServices => ({
   setPolicy: () => {},
-  stopContainer: async () => {},
+  applyToContainer: async () => {},
   ...overrides,
 });
 
@@ -223,7 +223,7 @@ describe("the update contract", () => {
 
   it("fails rather than reporting success when container teardown fails", async () => {
     const egress = egressStub({
-      stopContainer: async () => {
+      applyToContainer: async () => {
         throw new Error("docker daemon unavailable");
       },
     });

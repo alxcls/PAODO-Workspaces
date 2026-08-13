@@ -116,6 +116,8 @@ export interface IContainerLifecycle {
   ensure(workspaceId: string, workspaceDir: string): Promise<void>;
   stop(workspaceId: string): Promise<void>;
   remove(workspaceId: string): Promise<void>;
+  /** Rebuild the workspace's network for a new egress policy, leaving the container running. */
+  applyInternetAccess(workspaceId: string, enabled: boolean): Promise<void>;
   reattachProxyNetworks(): Promise<void>;
   deleteWorkspaceDir(workspaceDir: string): Promise<void>;
   assertDockerAvailable(): Promise<void>;

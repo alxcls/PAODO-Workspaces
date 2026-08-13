@@ -1,8 +1,13 @@
 // Credential-proxy + secret wiring for workspace containers.
 // Split out of containerManager.ts so how a container reaches the credential proxy and trusts its
-// MITM CA can change independently of the Docker lifecycle (create/start/stop/remove). Everything
-// here is about turning a workspace's secrets + the proxy CA into `docker run` env args and the
-// one-time CA-bundle bootstrap exec — no container-lifecycle knowledge lives here.
+// MITM CA can change independently of the Docker lifecycle — no container-lifecycle knowledge lives
+// here.
+//
+// The env is deliberately split in two, along the line of what can change during a container's
+// life. A workspace container is created once and then kept indefinitely (its writable layer is the
+// workspace's real content), and Docker cannot amend a container's env after creation:
+//   - buildRunEnv   → constant for the workspace, so it is safe to freeze at `docker run`
+//   - buildExecEnv  → secrets, which change, so they are supplied fresh on every `docker exec`
 import path from "path";
 import { existsSync, readFileSync } from "fs";
 import { listSecretMeta, proxyToken, selectGithubTokenSecret } from "../security/workspaceSecretStore";
@@ -41,25 +46,40 @@ export interface CredentialEnv {
   hasProxyCA: boolean;
 }
 
-// Build the `docker run` env args that expose a workspace's secrets and route it through the
-// credential proxy. Secret values NEVER leave the proxy — only opaque tokens are placed in the env;
-// the proxy swaps each token for its real value on scoped HTTPS traffic.
-// When internetAccess is false, secret env vars are omitted entirely — the workspace's network has
-// no route out anyway (see ensureNetwork's --internal), but the agent should never be able to see or
-// report a token (e.g. by running `env`) for an integration the user has switched off.
-export function buildCredentialEnv(workspaceId: string, internetAccess: boolean): CredentialEnv {
-  // Per-workspace secret token env vars (tokens only — real values stay in the proxy).
+/**
+ * The workspace's secrets, as env vars to inject on EVERY `docker exec` — never at `docker run`.
+ *
+ * A workspace container is created once and then lives indefinitely, because its writable layer
+ * holds everything the agent has installed. Docker cannot amend a container's env after creation,
+ * so anything baked in at run time is frozen for the container's whole life: a secret added later
+ * would never reach the agent. Supplying secrets per command keeps them current with zero container
+ * churn, and makes the internetAccess decision a live one rather than one frozen at creation.
+ *
+ * Secret values NEVER leave the proxy — only opaque tokens are placed in the env; the proxy swaps
+ * each token for its real value on scoped HTTPS traffic. When internetAccess is false no tokens are
+ * emitted at all: the workspace's network has no route out anyway (see ensureNetwork's --internal),
+ * but the agent should never even see a token for an integration the user has switched off.
+ */
+export function buildExecEnv(workspaceId: string, internetAccess: boolean): Record<string, string> {
   const secrets = internetAccess ? listSecretMeta(workspaceId) : [];
-  const secretEnvArgs = secrets.flatMap((s) => ["-e", `${s.name}=${proxyToken(workspaceId, s.name)}`]);
+  const env: Record<string, string> = {};
+  for (const s of secrets) env[s.name] = proxyToken(workspaceId, s.name);
   // Alias the github.com-scoped secret to GH_TOKEN so git (via the static credential helper in the
   // image) and gh both authenticate transparently, regardless of what the user named the secret.
   // Only the opaque token is exposed; the proxy swaps it for the real value on github.com traffic.
-  // Skip when the secret is already named GH_TOKEN — secretEnvArgs above already emitted it, and a
-  // second identical -e would just be a duplicate arg.
   const ghSecretName = selectGithubTokenSecret(secrets);
-  const ghEnvArgs =
-    ghSecretName && ghSecretName !== "GH_TOKEN" ? ["-e", `GH_TOKEN=${proxyToken(workspaceId, ghSecretName)}`] : [];
+  if (ghSecretName) env.GH_TOKEN = proxyToken(workspaceId, ghSecretName);
+  return env;
+}
 
+/**
+ * The env baked in at `docker run`: proxy routing and CA trust, nothing else.
+ *
+ * Everything here derives from the workspace id and whether the proxy CA exists, so it is constant
+ * for the life of the workspace — which is precisely why it can safely live on a container that is
+ * never recreated. `--add-host` is also a run-only flag with no `docker exec` equivalent.
+ */
+export function buildRunEnv(workspaceId: string): CredentialEnv {
   const proxyReady = hasProxyCA();
   // Prod (containerized app): reach the proxy sidecar by its network alias. Local dev (app on the
   // host): the proxy runs in-process, reachable via the host gateway.
@@ -121,7 +141,7 @@ export function buildCredentialEnv(workspaceId: string, internetAccess: boolean)
       ]
     : [];
 
-  return { envArgs: [...proxyEnvArgs, ...secretEnvArgs, ...ghEnvArgs], hasProxyCA: proxyReady };
+  return { envArgs: proxyEnvArgs, hasProxyCA: proxyReady };
 }
 
 // One-time, post-create: write the proxy CA into the container over stdin (it cannot be

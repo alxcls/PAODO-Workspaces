@@ -11,7 +11,7 @@ import { spawn } from "child_process";
 import { randomUUID } from "crypto";
 import path from "path";
 import { createLogger, exitAfterLogs } from "../logger";
-import type { IDockerClient } from "./dockerClient";
+import { envArgs, type IDockerClient } from "./dockerClient";
 import { ImageManager, HASH_LABEL } from "./imageManager";
 import type { IContainerManager } from "../interfaces";
 import { containerName, networkName } from "./naming";
@@ -22,15 +22,6 @@ import { ProxyNetworkManager } from "./proxyNetworkManager";
 export type { BackgroundTask } from "./backgroundTaskManager";
 
 const log = createLogger("container");
-
-// Label recording which secrets were baked into the container's env at creation time (as a
-// hash of their sorted names, the proxy-token format, and the internetAccess flag — token values
-// are derived from name+workspaceId alone, so this detects additions/removals and forces a safe
-// recreation when the opaque token format changes; domain-only changes don't affect env args).
-// internetAccess is folded in too: buildCredentialEnv omits secret env entirely when it's off, so a
-// toggle must force a recreate — otherwise a running/stopped container would just be reattached or
-// restarted with the same (stale) env Docker can't amend in place.
-const SECRETS_LABEL = "paodo.workspace-secrets-hash";
 
 const CONTAINER_IMAGE = process.env.CONTAINER_IMAGE ?? "paodo-workspace";
 const CONTAINER_MEMORY = process.env.CONTAINER_MEMORY ?? "1g";
@@ -45,8 +36,18 @@ const WORKSPACES_VOLUME_NAME = process.env.WORKSPACES_VOLUME_NAME ?? "";
  * workspace/secret stores are wired only by defaultContainerManager.ts. */
 export interface ContainerWorkspaceDependencies {
   internetAccessFor(workspaceId: string): boolean;
-  credentialFingerprint(workspaceId: string, internetAccess: boolean): string;
-  credentialEnvironment(workspaceId: string, internetAccess: boolean): { envArgs: string[]; hasProxyCA: boolean };
+  /**
+   * Env baked in at `docker run`: proxy routing and CA trust. Depends only on the workspace id and
+   * whether the proxy CA exists, so it never changes for a given workspace — which is what lets the
+   * container live indefinitely without its env going stale.
+   */
+  runEnvironment(workspaceId: string): { envArgs: string[]; hasProxyCA: boolean };
+  /**
+   * Secret tokens supplied fresh on every `docker exec`. Kept out of `docker run` because Docker
+   * cannot amend a container's env after creation, and this container is never recreated — so
+   * baking secrets in would freeze them at whatever the workspace had on its first ever command.
+   */
+  execEnvironment(workspaceId: string, internetAccess: boolean): Record<string, string>;
   installProxyCA(docker: IDockerClient, containerName: string, workspaceId: string): Promise<void>;
 }
 
@@ -54,8 +55,8 @@ export interface ContainerWorkspaceDependencies {
 // always supplies the real adapter from defaultContainerManager.ts.
 const isolatedWorkspaceDependencies: ContainerWorkspaceDependencies = {
   internetAccessFor: () => false,
-  credentialFingerprint: () => "isolated-no-credentials",
-  credentialEnvironment: () => ({ envArgs: [], hasProxyCA: false }),
+  runEnvironment: () => ({ envArgs: [], hasProxyCA: false }),
+  execEnvironment: () => ({}),
   installProxyCA: async () => {},
 };
 
@@ -113,6 +114,30 @@ export class ContainerManager implements IContainerManager {
     if (r.code !== 0) throw new Error(`docker network create failed: ${r.stderr}`);
   }
 
+  // Bring the workspace's network, and the container's membership of it, in line with the current
+  // policy. Run on every wake rather than only at create/start, because the container now outlives
+  // every network operation performed around it and can be left behind by one:
+  //   - applyInternetAccess rebuilds the network under a running container. If the rebuild fails
+  //     partway (create or connect), the container is left holding no network at all and nothing
+  //     else would ever rejoin it — the workspace would be silently offline until it idled out.
+  //   - a rolled-back toggle can leave the network's --internal flag disagreeing with the policy
+  //     the registry ended up persisting.
+  // ensureNetwork already no-ops when the flag matches, so the healthy case costs one inspect.
+  private async reconcileNetwork(workspaceId: string, internetAccess: boolean): Promise<void> {
+    await this.ensureNetwork(workspaceId, internetAccess);
+    const connect = await this.docker.cmd("network", "connect", networkName(workspaceId), containerName(workspaceId));
+    // Already attached is success, not failure — this runs on every wake, so a healthy container is
+    // the common case, not a fresh attachment.
+    if (connect.code !== 0 && !/already (exists|connected)/i.test(connect.stderr)) {
+      throw new Error(`docker network connect failed: ${connect.stderr}`);
+    }
+    // A redeploy can recreate the credproxy sidecar and drop its attachment to a still-running
+    // workspace's network, black-holing egress. Reattach idempotently — but only when this
+    // workspace should have egress at all; an off workspace's network was never internet-reachable
+    // in the first place, so there is nothing to reattach.
+    if (internetAccess) await this.proxy.attach(workspaceId);
+  }
+
   private resetIdleTimer(workspaceId: string): void {
     const existing = this.idleTimers.get(workspaceId);
     if (existing) clearTimeout(existing);
@@ -125,22 +150,18 @@ export class ContainerManager implements IContainerManager {
     this.idleTimers.set(workspaceId, t);
   }
 
+  // Secret env for a single command. Recomputed per exec rather than cached, so adding or revoking
+  // a secret takes effect on the very next command with no container churn. Cheap: the secret store
+  // is in memory and the tokens are derived, so this never touches disk.
+  private execEnv(workspaceId: string): Record<string, string> {
+    return this.workspaceDeps.execEnvironment(workspaceId, this.workspaceDeps.internetAccessFor(workspaceId));
+  }
+
   private async getContainerStatus(workspaceId: string): Promise<"running" | "stopped" | "missing"> {
     const r = await this.docker.cmd("inspect", "--format", "{{.State.Status}}", containerName(workspaceId));
     if (r.code !== 0) return "missing";
     if (r.stdout === "running") return "running";
     return "stopped";
-  }
-
-  // Returns the secrets-hash label from an existing container, or null if not present.
-  private async getContainerSecretsHash(containerName: string): Promise<string | null> {
-    const r = await this.docker.cmd(
-      "inspect",
-      "--format",
-      `{{index .Config.Labels "${SECRETS_LABEL}"}}`,
-      containerName,
-    );
-    return r.code === 0 ? r.stdout : null;
   }
 
   // Builds the volume args for docker run.
@@ -169,79 +190,49 @@ export class ContainerManager implements IContainerManager {
     const internetAccess = this.workspaceDeps.internetAccessFor(workspaceId);
     try {
       const status = await this.getContainerStatus(workspaceId);
-      stage = "hash_workspace_image";
-      const hash = await this.imageManager.getCurrentHash("Dockerfile.workspace");
-      stage = "read_workspace_secrets";
-      const secretsHash = this.workspaceDeps.credentialFingerprint(workspaceId, internetAccess);
 
-      if (status === "running" || status === "stopped") {
-        stage = "inspect_container_image";
-        const containerHash = await this.imageManager.getContainerImageHash(containerName(workspaceId));
-        stage = "inspect_container_secrets";
-        const containerSecretsHash = await this.getContainerSecretsHash(containerName(workspaceId));
-        const imageMatches = !hash || containerHash === hash;
-        const secretsMatch = containerSecretsHash === secretsHash;
-        if (imageMatches && secretsMatch) {
-          if (status === "running") {
-            // Reattaching to a still-running container (e.g. after an app restart wiped our
-            // in-memory task map). Rebuild it from the container's pidfiles so a survivor
-            // background process is surfaced and stoppable rather than colliding invisibly.
-            stage = "rehydrate_background_tasks";
-            await this.background.rehydrate(workspaceId);
-            // A redeploy can recreate the credproxy sidecar and drop its attachment to this
-            // still-running workspace's network, black-holing egress. Reattach idempotently — but
-            // only when this workspace should have egress at all; an off workspace's network was
-            // never internet-reachable in the first place, so there's nothing to reattach.
-            if (internetAccess) {
-              stage = "attach_credential_proxy";
-              await this.proxy.attach(workspaceId);
-            }
-            return;
-          }
-          // Stopped, image unchanged, secrets unchanged — just restart it.
-          log.debug({ workspaceId }, "starting stopped container");
-          stage = "ensure_network";
-          await this.ensureNetwork(workspaceId, internetAccess);
-          stage = "connect_container_network";
-          const connect = await this.docker.cmd(
-            "network",
-            "connect",
-            networkName(workspaceId),
-            containerName(workspaceId),
-          );
-          if (connect.code !== 0) throw new Error(`docker network connect failed: ${connect.stderr}`);
-          stage = "start_container";
-          const r = await this.docker.cmd("start", containerName(workspaceId));
-          if (r.code !== 0) throw new Error(`docker start failed: ${r.stderr}`);
-          if (internetAccess) {
-            stage = "attach_credential_proxy";
-            await this.proxy.attach(workspaceId);
-          }
-          return;
-        } else if (!secretsMatch) {
-          // Workspace secrets were added/removed since this container was created (or it
-          // predates the secrets-hash label) — recreate so env vars reflect the current set.
-          log.debug({ workspaceId }, "workspace secrets changed — recreating container");
-        } else {
-          // Image changed — remove so we recreate from the current image below.
-          log.debug({ workspaceId }, "workspace image changed — recreating container");
-        }
-        stage = "remove_stale_container";
-        await this.remove(workspaceId);
+      // An existing container is ALWAYS reused as-is — never torn down and rebuilt. Its writable
+      // layer holds everything the agent installed (apt packages, pip/npm modules, nvm/pyenv
+      // runtimes), which is the workspace's real content; the image is only where it started. A
+      // container that drifts from the image is therefore working as intended, not stale.
+      if (status === "running") {
+        // Reattaching to a still-running container (e.g. after an app restart wiped our
+        // in-memory task map). Rebuild it from the container's pidfiles so a survivor
+        // background process is surfaced and stoppable rather than colliding invisibly.
+        stage = "rehydrate_background_tasks";
+        await this.background.rehydrate(workspaceId);
+        stage = "reconcile_network";
+        await this.reconcileNetwork(workspaceId, internetAccess);
+        return;
       }
 
-      // missing (or just removed) — create and start
+      if (status === "stopped") {
+        // Restart in place. `docker start` preserves the writable layer, so everything installed
+        // in a previous session is still there — only `docker rm` would lose it.
+        log.debug({ workspaceId }, "starting stopped container");
+        stage = "reconcile_network";
+        await this.reconcileNetwork(workspaceId, internetAccess);
+        stage = "start_container";
+        const r = await this.docker.cmd("start", containerName(workspaceId));
+        if (r.code !== 0) throw new Error(`docker start failed: ${r.stderr}`);
+        return;
+      }
+
+      // missing — first run for this workspace, so create and start
       log.debug({ workspaceId }, "creating container");
       stage = "ensure_network";
       await this.ensureNetwork(workspaceId, internetAccess);
+      stage = "hash_workspace_image";
+      // Only the create path uses this — it is recorded as a label on the new container. Computed
+      // here rather than before the branches above so a reused container never pays to read and
+      // hash the Dockerfile on every single command.
+      const hash = await this.imageManager.getCurrentHash("Dockerfile.workspace");
 
-      // Build the credential-proxy + secret env args (tokens only — real values stay in the proxy).
-      // See containerCredentials.ts for how tokens, the proxy URL, and the CA-trust vars are derived.
+      // Build the credential-proxy routing + CA-trust env. Secrets are NOT here — they are injected
+      // per exec (see execEnvironment), because this container is never recreated and Docker cannot
+      // amend a container's env after creation. See containerCredentials.ts.
       stage = "build_credential_environment";
-      const { envArgs: credentialEnvArgs, hasProxyCA } = this.workspaceDeps.credentialEnvironment(
-        workspaceId,
-        internetAccess,
-      );
+      const { envArgs: runEnvArgs, hasProxyCA } = this.workspaceDeps.runEnvironment(workspaceId);
       // Attach the sidecar to this workspace's network so the proxy alias resolves inside the
       // container. Only when this workspace actually has a proxy CA (attach() itself no-ops in
       // local dev — no sidecar, proxy is in-process) AND internet access is on — an off workspace's
@@ -266,10 +257,11 @@ export class ContainerManager implements IContainerManager {
         `--memory=${CONTAINER_MEMORY}`,
         `--cpus=${CONTAINER_CPUS}`,
         ...this.buildVolumeArg(workspaceDir),
+        // Recorded for diagnostics only — which base image this container was born from. Nothing
+        // acts on it: a newer image never triggers a rebuild, because that would discard everything
+        // the agent has installed since. New images apply to newly created workspaces.
         ...(hash ? ["--label", `${HASH_LABEL}=${hash}`] : []),
-        "--label",
-        `${SECRETS_LABEL}=${secretsHash}`,
-        ...credentialEnvArgs,
+        ...runEnvArgs,
         // Drop all Linux capabilities, then add back only the minimal set dpkg/apt and the chown sweep
         // need when run as root via `docker exec -u 0` (apt_install tool, ownership sweep). The agent's
         // shell is non-root with no setuid path, so it cannot use these caps — they are reachable only
@@ -396,7 +388,10 @@ export class ContainerManager implements IContainerManager {
     opts: { stdin?: import("./dockerClient").DockerStdin } = {},
   ) {
     await this.ensure(workspaceId, workspaceDir);
-    return this.docker.exec(containerName(workspaceId), cmdArgs, { stdin: opts.stdin });
+    return this.docker.exec(containerName(workspaceId), cmdArgs, {
+      stdin: opts.stdin,
+      env: this.execEnv(workspaceId),
+    });
   }
 
   async execStreaming(
@@ -425,6 +420,7 @@ export class ContainerManager implements IContainerManager {
         proc = spawn("docker", [
           "exec",
           "-i",
+          ...envArgs(this.execEnv(workspaceId)),
           "-w",
           "/workspace",
           name,
@@ -491,6 +487,10 @@ export class ContainerManager implements IContainerManager {
     return this.docker.exec(containerName(workspaceId), cmdArgs, {
       asRoot: true,
       trimStdout: true,
+      // Deliberately no secret env. apt still reaches the credential proxy, because the proxy URL
+      // and CA-trust vars are container-level (buildRunEnv) and every exec inherits them; the
+      // per-command env carries only the workspace's secret tokens, which apt has no use for. This
+      // is the one exec that runs as root, so it gets the least it can work with.
     });
   }
 
@@ -502,7 +502,10 @@ export class ContainerManager implements IContainerManager {
     command: string,
   ): Promise<{ taskId: string; logFile: string }> {
     await this.ensure(workspaceId, workspaceDir);
-    return this.background.start(workspaceId, command);
+    // A background process keeps whatever env it launched with — it is a running process, not a
+    // container. That is not a way to outlive a revoked secret: the token is opaque and inert once
+    // the proxy drops its rule, which happens the moment the secret is deleted.
+    return this.background.start(workspaceId, command, this.execEnv(workspaceId));
   }
 
   async stopBackground(workspaceId: string, taskId: string): Promise<boolean> {
@@ -511,6 +514,53 @@ export class ContainerManager implements IContainerManager {
 
   listBackground(workspaceId: string): BackgroundTask[] {
     return this.background.list(workspaceId);
+  }
+
+  /**
+   * Apply a workspace's internet-access setting to its live network, leaving the container alone.
+   *
+   * Docker cannot flip `--internal` on an existing network, so the network itself is rebuilt — but
+   * `network disconnect` / `network connect` both work on a RUNNING container, so the container
+   * keeps its identity and, crucially, everything the agent installed in it. Connections open at
+   * the moment egress is switched off are dropped along with the interface, which is the intent.
+   *
+   * Confirmable by design: throws if the new network could not be put in place, so the caller can
+   * roll the persisted setting back rather than reporting a boundary it never actually applied.
+   */
+  async applyInternetAccess(workspaceId: string, enabled: boolean): Promise<void> {
+    // Wait out any in-flight ensure()/stop() before claiming the slot, so this can't interleave
+    // with a bring-up that is halfway through wiring the old network. Mirrors stop().
+    for (;;) {
+      const inflight = this.startLocks.get(workspaceId);
+      if (!inflight) break;
+      await inflight.promise.catch(() => {});
+    }
+
+    const p = (async () => {
+      const status = await this.getContainerStatus(workspaceId);
+      // Never started: the setting is already persisted, and the network is created with the right
+      // flag the first time a container is made. Nothing to reconcile.
+      if (status === "missing") return;
+
+      // A stopped container is left disconnected (stop() detaches it), so only the network itself
+      // needs the new flag here — the restart path in _ensureContainer is what rejoins the
+      // container. A running one is rejoined now, by the same reconcile every wake runs.
+      if (status !== "running") {
+        await this.ensureNetwork(workspaceId, enabled);
+        return;
+      }
+
+      await this.reconcileNetwork(workspaceId, enabled);
+    })();
+
+    // Tagged "stop" so a concurrent ensure() waits it out instead of piggybacking — this promise
+    // resolves to "network reconciled", not "container ready".
+    this.startLocks.set(workspaceId, { kind: "stop", promise: p });
+    try {
+      await p;
+    } finally {
+      this.startLocks.delete(workspaceId);
+    }
   }
 
   // On boot, reconnect the credproxy sidecar to every running workspace network that should have

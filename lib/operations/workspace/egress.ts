@@ -1,8 +1,12 @@
 // The workspace's outbound network access. A registry field on the surface, but three systems have to
 // agree for the toggle to mean anything: the registry records it, the credential proxy enforces it, and
-// the running container has to be torn down so its network is rebuilt with the correct --internal flag
-// (containerManager.ts). Its own file because that agreement is a security boundary with a rollback
-// rule, not a setter.
+// the workspace's network has to be rebuilt with the correct --internal flag (containerManager.ts).
+// Its own file because that agreement is a security boundary with a rollback rule, not a setter.
+//
+// The network is rebuilt around a container that keeps running. Earlier this stopped the container so
+// the network would be rebuilt on next use, which cascaded into a full recreate and silently destroyed
+// everything the agent had installed — the container's writable layer is the workspace's real content,
+// so a toggle must never cost it.
 import type { IWorkspaceStore } from "@/lib/infra/interfaces";
 import { getContainers } from "@/lib/infra/services";
 import { setInternetAccessPolicy } from "@/lib/infra/proxy/internetAccessPolicy";
@@ -13,7 +17,7 @@ export type EgressWriter = Pick<IWorkspaceStore, "setWorkspaceInternetAccess">;
 
 export interface EgressServices {
   setPolicy(id: string, enabled: boolean): void;
-  stopContainer(id: string): Promise<void>;
+  applyToContainer(id: string, enabled: boolean): Promise<void>;
 }
 
 export interface EgressResult {
@@ -26,7 +30,7 @@ const log = createLogger("workspaceOperations");
 function defaultEgressServices(): EgressServices {
   return {
     setPolicy: setInternetAccessPolicy,
-    stopContainer: (id) => getContainers().stop(id),
+    applyToContainer: (id, enabled) => getContainers().applyInternetAccess(id, enabled),
   };
 }
 
@@ -40,7 +44,7 @@ export function validateInternetAccess(value: unknown): boolean {
  *
  * `previous` is the value to restore if the proxy rejects the change: the registry and the proxy policy
  * are one security boundary and must never be left disagreeing, so a failure there rolls the registry
- * back and raises rather than reporting success on a half-applied boundary. Container teardown is
+ * back and raises rather than reporting success on a half-applied boundary. The network rebuild is
  * part of that same success contract: if it cannot be confirmed, restore the previous policy and
  * store value and report failure.
  */
@@ -65,7 +69,7 @@ export async function setInternetAccess(
   }
 
   try {
-    await services.stopContainer(id);
+    await services.applyToContainer(id, enabled);
   } catch (err) {
     let rollbackError: unknown;
     try {
@@ -89,12 +93,12 @@ export async function setInternetAccess(
           rollbackError,
           workspaceId: id,
         },
-        "failed to stop the workspace container while changing internet access",
+        "failed to rebuild the workspace network while changing internet access",
       );
     } else {
       log.error(
         { event: "internet_access_toggle_stop_failed", outcome: "rolled_back", err, workspaceId: id },
-        "failed to stop the workspace container while changing internet access",
+        "failed to rebuild the workspace network while changing internet access",
       );
     }
     throw new WorkspaceUpdateFailure("failed to apply internet-access setting");

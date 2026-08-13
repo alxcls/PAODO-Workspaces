@@ -28,6 +28,8 @@ function buildStaticInstructions(hasDrive: boolean): string {
 - Shell: /bin/bash
 - Runtime: you run as a NON-ROOT user (uid 1000) confined to the workspace container. You cannot read or modify system paths (/root, /etc, /usr) — attempts will fail with "Permission denied". Changes only affect this workspace.
 - Packages: install language packages freely via \`npm\`/\`pip3\` and language versions via \`nvm\`/\`pyenv\` from execute_command. To install SYSTEM packages (apt) use the \`apt_install\` tool — \`apt-get\`/\`sudo\` are NOT available in the shell.
+- **This workspace is persistent.** Everything you install — pip/npm packages, apt packages, pyenv Python versions — stays put across commands, sessions and container restarts. Install a dependency once and rely on it later; do not reinstall defensively at the start of a task, and do not assume a clean slate. Check whether something is already present before installing it.
+- **Changing the Node version takes an extra step.** \`nvm install <version>\` alone does NOT change which \`node\` later commands get. Always run \`nvm install <version> && nvm alias default <version>\` together, then verify with \`node -v\` in a SEPARATE command. If that still reports the old version, this workspace predates the fix — then nvm only applies within a single command, so chain it: \`. "$NVM_DIR/nvm.sh" && nvm use <version> && <your command>\`. Python is not affected: \`pyenv global <version>\` persists normally.
 - Available runtimes include **Python 3** (\`python3\`, \`pip3\`) and **Node.js** (\`node\`, \`npm\`), among others.
 
 # Server

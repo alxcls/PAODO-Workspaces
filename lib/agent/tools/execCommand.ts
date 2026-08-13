@@ -4,10 +4,12 @@
 
 import { StructuredTool } from "@langchain/core/tools";
 import type { RunnableConfig } from "@langchain/core/runnables";
+import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { createLogger } from "../../infra/logger";
 import { checkFreeSpace, RESERVED_FREE_BYTES } from "@/lib/infra/storage/diskSpace";
-import type { StreamingExecFn, BackgroundExecFn, ExecConfig } from "../interfaces";
+import type { StreamingExecFn, BackgroundExecFn, ExecConfig, OutputSinkFn } from "../interfaces";
+import { ExecOutput } from "./execOutput";
 
 const schema = z.object({
   command: z.string().describe("The bash command to execute"),
@@ -70,6 +72,7 @@ You run as a NON-ROOT user, confined to the workspace. apt-get/sudo are NOT avai
     private readonly broadcast: (msg: string) => void,
     private readonly execConfig: ExecConfig,
     private readonly workspaceDir: string,
+    private readonly openOutputSink: OutputSinkFn,
   ) {
     super();
   }
@@ -114,8 +117,9 @@ You run as a NON-ROOT user, confined to the workspace. apt-get/sudo are NOT avai
     // kill inside streamExec — there is no longer any "discard output but keep running" path.
     const userSignal = config?.signal;
     return new Promise<string>((resolve) => {
-      let stdout = "";
-      let stderr = "";
+      // Bounded, unlike the raw `stdout += text` this replaces — see execOutput.ts for what that
+      // cost. Output past the cap streams into a file in the container instead of into this heap.
+      const output = new ExecOutput(() => this.openOutputSink(randomUUID()));
       const startedAt = Date.now();
       let lastOutputAt = Date.now();
       let settled = false;
@@ -128,6 +132,10 @@ You run as a NON-ROOT user, confined to the workspace. apt-get/sudo are NOT avai
         settled = true;
         clearInterval(heartbeat);
         userSignal?.removeEventListener("abort", onUserAbort);
+        // Every exit lands here — normal completion, both timeout kills, the user's stop, and the
+        // failure path — so this is the one place that reliably closes the sink. A killed command
+        // would otherwise leave its `docker exec` drain running with nothing left to feed it.
+        output.close();
         resolve(msg);
       };
 
@@ -199,27 +207,30 @@ You run as a NON-ROOT user, confined to the workspace. apt-get/sudo are NOT avai
         onStdout: (text) => {
           if (settled) return;
           lastOutputAt = Date.now();
-          stdout += text;
+          output.append("stdout", text);
           this.broadcast(JSON.stringify({ type: "stdout", data: text }));
         },
         onStderr: (text) => {
           if (settled) return;
           lastOutputAt = Date.now();
-          stderr += text;
+          output.append("stderr", text);
           this.broadcast(JSON.stringify({ type: "stderr", data: text }));
         },
       })
         .then(({ code }) => {
           if (settled) return;
           this.broadcast(JSON.stringify({ type: "exec_done", exitCode: code }));
-          const stderrOut = diagnoseStderr(stderr);
           // Lead a non-zero exit with an explicit Error line so both the agent and the usage
           // dashboard can tell the command failed — the combined output alone hides exit status.
           // (code 0 and null/unknown exits are left as plain output, as before.)
           const failed = typeof code === "number" && code !== 0;
-          const parts = [failed ? `Error: command exited with code ${code}` : "", stdout.trim(), stderrOut].filter(
-            Boolean,
-          );
+          const errorLine = failed ? `Error: command exited with code ${code}` : "";
+          // Over the cap the streams are no longer held separately, so the result becomes the
+          // preview block plus the path — the exit-status line still leads it, as it does below.
+          const body = output.overflowed
+            ? [output.overflowNotice()]
+            : [output.stdoutText().trim(), diagnoseStderr(output.stderrText())];
+          const parts = [errorLine, ...body].filter(Boolean);
           finish(parts.join("\n") || "Command executed successfully with no output.");
         })
         .catch((err) => {

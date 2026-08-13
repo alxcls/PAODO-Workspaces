@@ -14,7 +14,7 @@ import path from "path";
 import { createLogger, exitAfterLogs } from "../logger";
 import { envArgs, type IDockerClient } from "./dockerClient";
 import { ImageManager, HASH_LABEL } from "./imageManager";
-import type { IContainerManager } from "../interfaces";
+import type { IContainerManager, OutputSink } from "../interfaces";
 import { containerName, networkName } from "./naming";
 import { BackgroundTaskManager, type BackgroundTask } from "./backgroundTaskManager";
 import { ProxyNetworkManager } from "./proxyNetworkManager";
@@ -23,6 +23,19 @@ import { ProxyNetworkManager } from "./proxyNetworkManager";
 export type { BackgroundTask } from "./backgroundTaskManager";
 
 const log = createLogger("container");
+
+// Runs an output-stream callback so a throw inside it degrades this one command instead of killing
+// the process. See the call sites in execStreaming for why an uncaught throw there is fatal.
+function safeEmit(emit: () => void, workspaceId: string): void {
+  try {
+    emit();
+  } catch (err) {
+    log.error(
+      { event: "docker_output_handler_failed", outcome: "output_chunk_dropped", err, workspaceId },
+      "output handler threw — dropping this chunk",
+    );
+  }
+}
 
 const CONTAINER_IMAGE = process.env.CONTAINER_IMAGE ?? "paodo-workspace";
 const CONTAINER_MEMORY = process.env.CONTAINER_MEMORY ?? "1g";
@@ -35,6 +48,22 @@ const CONTAINER_CPUS = process.env.CONTAINER_CPUS ?? "1.0";
 // needs this raised. Hitting the cap surfaces as "Resource temporarily unavailable" on fork.
 const CONTAINER_PIDS = process.env.CONTAINER_PIDS_LIMIT ?? "512";
 const IDLE_TIMEOUT_MS = parseInt(process.env.CONTAINER_IDLE_MS ?? "", 10) || 10 * 60 * 1000;
+// Where a command's over-cap output is parked so the agent can still read it (see ExecOutput).
+// Deliberately alongside /tmp/paodo-tasks: the agent is already taught to tail paths of that shape,
+// and neither is visible to the file tree, to git, or to workspace snapshots — which matters here,
+// because snapshots stage with `add --all --force` and would otherwise commit every spill file.
+const EXEC_OUTPUT_DIR = "/tmp/paodo-exec";
+// A ceiling on the file itself. Without it the "keep everything" promise would let one command fill
+// the container's writable layer — which the mid-run disk check cannot see, since that watches the
+// workspace mount, not the container layer.
+const EXEC_OUTPUT_MAX_BYTES = parseInt(process.env.EXEC_OUTPUT_MAX_BYTES ?? "", 10) || 50 * 1024 * 1024;
+// How many spill files survive in a container. These containers are never auto-recreated, so this
+// directory would otherwise grow for the workspace's entire lifetime with nothing to clear it.
+const EXEC_OUTPUT_KEEP = 20;
+// Ceiling on bytes queued for the sink but not yet drained into the container. Reached only when the
+// sink writes slower than the command produces; past it the file stops at a prefix. Without this the
+// backlog would sit in the app's heap, which is the exact failure this whole mechanism exists to stop.
+const EXEC_OUTPUT_MAX_BACKLOG = 8 * 1024 * 1024;
 // Docker volume name is deterministic: compose project name (fixed in docker-compose.yml as
 // "paodo_ws") + "_" + volume key ("workspaces"). Falls back to a plain bind mount when unset
 // so local dev (app running directly on host) still works without Docker Compose.
@@ -450,8 +479,14 @@ export class ContainerManager implements IContainerManager {
         return;
       }
       proc.stdin!.end();
-      proc.stdout!.on("data", (chunk: Buffer) => opts.onStdout(chunk.toString()));
-      proc.stderr!.on("data", (chunk: Buffer) => opts.onStderr(chunk.toString()));
+      // Both handlers are wrapped because Node invokes them directly, off any promise chain: an
+      // exception thrown in here does NOT reach the .catch() around execStreaming, it reaches
+      // process.on("uncaughtException") in server.ts, which fatal()s the whole instance. That is
+      // precisely how an unbounded `stdout += chunk` used to take down every workspace at once.
+      // ExecOutput now caps the accumulation, so this is the backstop, not the fix — it exists so no
+      // future bug in an output handler can ever be an instance-wide outage again.
+      proc.stdout!.on("data", (chunk: Buffer) => safeEmit(() => opts.onStdout(chunk.toString()), workspaceId));
+      proc.stderr!.on("data", (chunk: Buffer) => safeEmit(() => opts.onStderr(chunk.toString()), workspaceId));
 
       let killed = false;
       const kill = () => {
@@ -501,6 +536,86 @@ export class ContainerManager implements IContainerManager {
       // per-command env carries only the workspace's secret tokens, which apt has no use for. This
       // is the one exec that runs as root, so it gets the least it can work with.
     });
+  }
+
+  /**
+   * Opens a drain inside the container for output the app will not hold in memory.
+   *
+   * Deliberately a SEPARATE `docker exec` rather than a tee bolted onto execStreaming's launcher:
+   * that launcher records the pid the process-group kill depends on, and adding redirections to it
+   * to serve a logging feature would put the one reliable way of stopping a runaway command at risk.
+   * This costs an extra process, but only for commands that already blew the cap.
+   *
+   * The container is necessarily running by the time this is called — a command is mid-flight — so
+   * there is no ensure() here.
+   */
+  openOutputSink(workspaceId: string, runId: string): OutputSink {
+    // runId reaches a shell command below. Today's only caller passes randomUUID(), so this cannot
+    // currently carry anything hostile — it is here so that stays true if a caller ever passes
+    // something derived from a command, a filename, or anything else the agent can influence.
+    const safeId = runId.replace(/[^a-zA-Z0-9-]/g, "") || "run";
+    const file = `${EXEC_OUTPUT_DIR}/${safeId}.output`;
+    // `head -c` stops reading at the ceiling and exits, which closes our stdin — the EPIPE that
+    // follows is the expected signal that the file is full, not an error. The prune keeps this
+    // directory from growing for the container's whole lifetime.
+    const script =
+      `mkdir -p ${EXEC_OUTPUT_DIR}; ` +
+      `ls -1t ${EXEC_OUTPUT_DIR}/*.output 2>/dev/null | tail -n +${EXEC_OUTPUT_KEEP} | xargs -r rm -f; ` +
+      `head -c ${EXEC_OUTPUT_MAX_BYTES} > ${file}`;
+
+    let alive = true;
+    let truncated = false;
+    let written = 0;
+    let proc: ReturnType<typeof spawn> | null = null;
+
+    const stop = (wasTruncated: boolean) => {
+      if (!alive) return;
+      alive = false;
+      truncated = truncated || wasTruncated;
+      try {
+        proc?.stdin?.end();
+      } catch {
+        // Already torn down — nothing left to close.
+      }
+    };
+
+    try {
+      proc = spawn("docker", ["exec", "-i", containerName(workspaceId), "/bin/bash", "-c", script]);
+    } catch (err) {
+      log.warn({ err, workspaceId }, "failed to open command output sink — over-cap output will not be saved");
+      alive = false;
+    }
+    // EPIPE here is the normal end of a capped file, so this is a warn-free path; the error is only
+    // interesting as the reason writing stopped.
+    proc?.stdin?.on("error", () => stop(true));
+    proc?.on("error", (err) => {
+      log.warn({ err, workspaceId }, "command output sink failed — saved output may be incomplete");
+      stop(true);
+    });
+
+    return {
+      path: file,
+      limit: EXEC_OUTPUT_MAX_BYTES,
+      get truncated() {
+        return truncated;
+      },
+      write(chunk: Buffer) {
+        if (!alive || !proc?.stdin) return;
+        // Backpressure, not byte count, is the real memory risk: an undrained pipe queues in this
+        // process's heap. Past the backlog ceiling the file is left as a prefix rather than letting
+        // that queue grow — the file is a convenience, staying alive is not.
+        if (proc.stdin.writableLength > EXEC_OUTPUT_MAX_BACKLOG) {
+          stop(true);
+          return;
+        }
+        written += chunk.length;
+        if (written > EXEC_OUTPUT_MAX_BYTES) truncated = true;
+        proc.stdin.write(chunk);
+      },
+      close() {
+        stop(false);
+      },
+    };
   }
 
   // Detached, long-lived background processes (dev servers etc.) — delegated to BackgroundTaskManager.

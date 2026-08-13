@@ -2,13 +2,15 @@
 // config, and the combined AgentConfig consumed by buildTools and the runner.
 import type { BaseMessage } from "@langchain/core/messages";
 import type { BaseChatModel } from "@langchain/core/language_models/chat_models";
-import type { IWorkspaceVersionRestorer } from "../infra/interfaces";
+import type { IWorkspaceVersionRestorer, OutputSink } from "../infra/interfaces";
 import type { ReasoningEffort } from "../models/llmSelection";
 
 export interface ExecResult {
   code: number;
   stdout: string;
   stderr: string;
+  /** True when the docker client's capture ceiling cut the output — stdout is only the leading part. */
+  truncated?: boolean;
 }
 
 export interface ExecRunner {
@@ -34,6 +36,10 @@ export type StreamingExecFn = (
 // with a taskId + the in-container log path. Used by execute_command's run_in_background branch.
 // Kept separate from StreamingExecFn so the streaming/timeout machinery never touches this path.
 export type BackgroundExecFn = (command: string) => Promise<{ taskId: string; logFile: string }>;
+
+// Opens a sink for one command's over-cap output. Called lazily — only once a command has already
+// blown the inline cap, so the common case never spawns the extra process this needs.
+export type OutputSinkFn = (runId: string) => OutputSink;
 
 // The resolved LLM config for one run: the single provider that was selected, plus the model and key
 // that belong to it. Deliberately provider-agnostic — adding a provider adds an entry to the PROVIDERS

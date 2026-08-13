@@ -35,6 +35,13 @@ const fakeContainers: IContainerManager = {
   },
   execStreaming: async () => ({ code: 0 }),
   execAsRoot: async () => ok(""),
+  openOutputSink: (_id, runId) => ({
+    path: `/tmp/paodo-exec/${runId}.output`,
+    limit: 50 * 1024 * 1024,
+    truncated: false,
+    write: () => {},
+    close: () => {},
+  }),
   startBackground: async () => ({ taskId: "fake-task", logFile: "/tmp/paodo-tasks/fake-task.output" }),
   stopBackground: async () => false,
   listBackground: () => [],

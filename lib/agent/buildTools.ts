@@ -109,9 +109,10 @@ export function buildTools(
   const streamExec = makeStreamingExecFn(workspaceId, workspaceDir, containers);
   const backgroundExec = makeBackgroundExecFn(workspaceId, workspaceDir, containers);
   const broadcast = (msg: string) => broadcastToWorkspace(workspaceId, msg);
+  const openOutputSink = (runId: string) => containers.openOutputSink(workspaceId, runId);
 
   const tools = [
-    new ExecCommandTool(streamExec, backgroundExec, broadcast, config, workspaceDir),
+    new ExecCommandTool(streamExec, backgroundExec, broadcast, config, workspaceDir, openOutputSink),
     new StopTaskTool(workspaceId, containers),
     // apt_install and http_get are both entirely internet-dependent and non-functional when this
     // workspace's network has no route out — dropped from the bound tool list (not just left to

@@ -123,6 +123,23 @@ export interface IContainerLifecycle {
   assertDockerAvailable(): Promise<void>;
 }
 
+/**
+ * A write-only drain for command output the app refuses to hold in memory (see ExecOutput).
+ *
+ * It writes INSIDE the container for one reason: the agent's shell runs in there, so that is the only
+ * kind of path it can go and read afterwards. A host-side file would hand it a path it cannot open.
+ */
+export interface OutputSink {
+  /** In-container path, handed to the agent so it can grep/tail whatever was not shown inline. */
+  readonly path: string;
+  /** Ceiling on the file itself, so a runaway command cannot fill the container's writable layer. */
+  readonly limit: number;
+  /** True once the file stopped growing — the ceiling was hit, or writing failed partway. */
+  readonly truncated: boolean;
+  write(chunk: Buffer): void;
+  close(): void;
+}
+
 /** Foreground command execution inside a workspace container. */
 export interface IContainerExec {
   exec(workspaceId: string, workspaceDir: string, cmdArgs: string[], opts?: { stdin?: DockerStdin }): Promise<DockerResult>;
@@ -133,6 +150,8 @@ export interface IContainerExec {
     opts: { onStdout: (chunk: string) => void; onStderr: (chunk: string) => void; signal?: AbortSignal },
   ): Promise<{ code: number | null }>;
   execAsRoot(workspaceId: string, workspaceDir: string, cmdArgs: string[]): Promise<DockerResult>;
+  /** Opens a sink for one command's over-cap output. Called only after the inline cap is blown. */
+  openOutputSink(workspaceId: string, runId: string): OutputSink;
 }
 
 /** Detached, long-lived background processes (dev servers etc.) tracked across turns. */

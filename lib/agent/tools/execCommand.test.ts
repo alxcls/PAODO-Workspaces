@@ -7,7 +7,8 @@
 // dedicated disk-space-guard tests flip it to simulate a full disk.
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { ExecCommandTool } from "./execCommand";
-import type { StreamingExecFn, BackgroundExecFn } from "../interfaces";
+import type { StreamingExecFn, BackgroundExecFn, OutputSinkFn } from "../interfaces";
+import { MAX_INLINE_BYTES, PREVIEW_BYTES } from "./execOutput";
 
 const checkFreeSpace = vi.hoisted(() => vi.fn());
 vi.mock("@/lib/infra/storage/diskSpace", () => ({ checkFreeSpace, RESERVED_FREE_BYTES: 1024 * 1024 * 1024 }));
@@ -49,13 +50,36 @@ function fakeBackground(): { fn: BackgroundExecFn; calls: string[] } {
   return { fn, calls };
 }
 
-function makeTool(exec: StreamingExecFn, background: BackgroundExecFn = fakeBackground().fn) {
+// A sink stub that records what the over-cap path would have written into the container, so tests can
+// assert the full output survives without needing Docker.
+function fakeSink(limit = 50 * 1024 * 1024): { fn: OutputSinkFn; saved: () => string; opened: () => number } {
+  const chunks: Buffer[] = [];
+  let opened = 0;
+  const fn: OutputSinkFn = (runId) => {
+    opened += 1;
+    return {
+      path: `/tmp/paodo-exec/${runId}.output`,
+      limit,
+      truncated: false,
+      write: (chunk: Buffer) => void chunks.push(chunk),
+      close: () => {},
+    };
+  };
+  return { fn, saved: () => Buffer.concat(chunks).toString("utf8"), opened: () => opened };
+}
+
+function makeTool(
+  exec: StreamingExecFn,
+  background: BackgroundExecFn = fakeBackground().fn,
+  openSink: OutputSinkFn = fakeSink().fn,
+) {
   return new ExecCommandTool(
     exec,
     background,
     () => {},
     { silenceTimeoutMs: 60_000, maxTimeoutMs: 60_000 },
     "/workspace/test",
+    openSink,
   );
 }
 
@@ -190,6 +214,7 @@ describe("ExecCommandTool silence heartbeat", () => {
         },
         { silenceTimeoutMs: 5 * 60_000, maxTimeoutMs: 30 * 60_000 },
         "/workspace/test",
+        fakeSink().fn,
       );
 
       void tool.invoke({ command: "npm install" });
@@ -228,6 +253,7 @@ describe("ExecCommandTool silence heartbeat", () => {
         },
         { silenceTimeoutMs: 5 * 60_000, maxTimeoutMs: 30 * 60_000 },
         "/workspace/test",
+        fakeSink().fn,
       );
 
       void tool.invoke({ command: "npm install" });
@@ -293,6 +319,84 @@ describe("ExecCommandTool disk-space guard", () => {
       const result = await resultP;
       expect(sawAbort()).toBe(true);
       expect(result).toContain("ran out of disk space");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+// Output volume used to be an unbounded liability: `stdout += chunk` had no ceiling, and past V8's
+// max string length the += threw from inside a stream handler — off any promise chain, so it reached
+// server.ts's uncaughtException guard and exited the process, taking every workspace with it. These
+// tests pin the two properties that replaced it: the tool result stays small no matter what a command
+// prints, and nothing is lost when it does.
+describe("ExecCommandTool output limits", () => {
+  it("returns modest output whole, with no file involved", async () => {
+    const sink = fakeSink();
+    const tool = makeTool(fakeExec({ stdout: "build succeeded\n", code: 0 }), fakeBackground().fn, sink.fn);
+
+    const result = await tool.invoke({ command: "npm run build" });
+
+    expect(result).toBe("build succeeded");
+    expect(result).not.toContain("Output too large");
+    expect(sink.opened()).toBe(0);
+  });
+
+  it("caps a huge result and hands the agent the path instead", async () => {
+    const huge = "L".repeat(MAX_INLINE_BYTES * 20);
+    const sink = fakeSink();
+    const tool = makeTool(fakeExec({ stdout: huge, code: 0 }), fakeBackground().fn, sink.fn);
+
+    const result = await tool.invoke({ command: "cat big.bin" });
+
+    // The whole point: what reaches the agent (and the model's context) is bounded, whatever the
+    // command printed. Before this, a result this size was either a crash or an unusable context.
+    expect(result.length).toBeLessThan(PREVIEW_BYTES * 2);
+    expect(result).toContain("Output too large");
+    expect(result).toContain("/tmp/paodo-exec/");
+    expect(sink.opened()).toBe(1);
+    // ...and it is bounded without losing anything — the file holds every byte.
+    expect(sink.saved()).toBe(huge);
+  });
+
+  it("still leads a failed command with its exit code when the output overflowed", async () => {
+    const sink = fakeSink();
+    const tool = makeTool(
+      fakeExec({ stdout: "T".repeat(MAX_INLINE_BYTES * 2), code: 1 }),
+      fakeBackground().fn,
+      sink.fn,
+    );
+
+    const result = await tool.invoke({ command: "npm run build" });
+
+    // classifyToolStatus keys off this line, so overflow must not swallow the failure signal.
+    expect(result.startsWith("Error: command exited with code 1")).toBe(true);
+    expect(result).toContain("Output too large");
+  });
+
+  it("saves what a killed command produced before the kill", async () => {
+    vi.useFakeTimers();
+    try {
+      const sink = fakeSink();
+      let emit: ((text: string) => void) | undefined;
+      const exec: StreamingExecFn = (_cmd, { onStdout, signal }) =>
+        new Promise((resolve) => {
+          emit = onStdout;
+          signal?.addEventListener("abort", () => resolve({ code: null }));
+        });
+      const tool = makeTool(exec, fakeBackground().fn, sink.fn);
+
+      const resultP = tool.invoke({ command: "yes" });
+      await vi.advanceTimersByTimeAsync(0);
+      emit!("R".repeat(MAX_INLINE_BYTES * 2));
+
+      // Run past the max-runtime guard so the command is killed mid-stream.
+      await vi.advanceTimersByTimeAsync(60_000);
+      const result = await resultP;
+
+      expect(result).toContain("[killed]");
+      // A killed runaway is exactly the case where the operator most wants the output kept.
+      expect(sink.saved().length).toBe(MAX_INLINE_BYTES * 2);
     } finally {
       vi.useRealTimers();
     }

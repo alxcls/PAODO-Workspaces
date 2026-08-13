@@ -73,6 +73,28 @@ describe("third-party secret validation", () => {
     }
   });
 
+  /**
+   * Secrets are injected as `docker exec -e NAME=<token>`, which outranks the container's own
+   * environment — so one named after the credential proxy's address, a CA-trust variable, or the
+   * shell's own footing would quietly replace that wiring with an opaque token and break the
+   * workspace's HTTPS in a way that looks like anything except a naming collision.
+   */
+  it("refuses names the container itself already uses", () => {
+    for (const name of ["HTTPS_PROXY", "SSL_CERT_FILE", "NODE_EXTRA_CA_CERTS", "PATH", "BASH_ENV", "LD_PRELOAD"]) {
+      expect(() => validateSecret({ name, value: "v", domains: ["api.example.com"] })).toThrow(WorkspaceUpdateError);
+      expect(() => validateSecret({ name, value: "v", domains: ["api.example.com"] })).toThrow(
+        "used by the workspace container itself",
+      );
+    }
+  });
+
+  // GH_TOKEN is what buildExecEnv aliases the github.com-scoped secret to, so a user naming their
+  // token that outright is the expected case — reserving it would reject the obvious spelling.
+  it("still accepts GH_TOKEN", () => {
+    const input = { name: "GH_TOKEN", value: "ghp_x", domains: ["github.com"] };
+    expect(validateSecret(input)).toEqual(input);
+  });
+
   it("requires a non-blank value", () => {
     expect(() => validateSecret({ name: "TOKEN", value: "   ", domains: ["api.example.com"] })).toThrow(
       "value required",

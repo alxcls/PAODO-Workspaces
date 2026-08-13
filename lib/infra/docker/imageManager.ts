@@ -45,13 +45,10 @@ export class ImageManager {
     log.info({ image: imageName }, "workspace image ready");
   }
 
-  // Returns the hash label from an existing container, or null if not present.
-  async getContainerImageHash(containerName: string): Promise<string | null> {
-    const r = await this.docker.cmd("inspect", "--format", `{{index .Config.Labels "${HASH_LABEL}"}}`, containerName);
-    return r.code === 0 ? r.stdout : null;
-  }
-
-  // Returns the current Dockerfile hash without building anything.
+  // Returns the current Dockerfile hash without building anything. Read only when a container is
+  // being created, to label it with the image it was born from — a container that already exists is
+  // never compared against the current image, because drift from it is the whole point (see
+  // containerManager.persistence.test.ts).
   async getCurrentHash(dockerfilePath: string): Promise<string | null> {
     return hashDockerfile(dockerfilePath);
   }

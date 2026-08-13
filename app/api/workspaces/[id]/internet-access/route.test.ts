@@ -1,14 +1,17 @@
-// Route-level coverage for the internet-access toggle's failure-handling: a policy-file write
-// failure must roll back the store field (they can never disagree), while a container-stop failure
-// must not (the setting is already correctly saved — only the running container hasn't caught up,
-// and containerManager's secrets-hash mismatch check self-heals that on the next ensure()).
+// Route-level coverage for the internet-access toggle's failure-handling. The registry, the proxy
+// policy and the workspace's network are one security boundary, so any step that cannot be
+// confirmed rolls the whole change back rather than reporting a half-applied boundary.
+//
+// The network is rebuilt around a container that keeps running — see applyInternetAccess. This used
+// to stop the container instead, which cascaded into a full recreate and destroyed everything the
+// agent had installed, so the toggle must never touch the container itself.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const h = vi.hoisted(() => ({
   workspace: { id: "ws-1", name: "Alpha", internetAccess: false },
   setWorkspaceInternetAccess: vi.fn(),
   setInternetAccessPolicy: vi.fn(),
-  stop: vi.fn(async () => {}),
+  applyInternetAccess: vi.fn(async () => {}),
 }));
 
 vi.mock("@/lib/api/guards", () => ({
@@ -25,7 +28,7 @@ vi.mock("@/lib/infra/services", () => ({
     getWorkspace: () => h.workspace,
     setWorkspaceInternetAccess: h.setWorkspaceInternetAccess,
   }),
-  getContainers: () => ({ stop: h.stop }),
+  getContainers: () => ({ applyInternetAccess: h.applyInternetAccess }),
 }));
 
 import { PATCH } from "./route";
@@ -45,7 +48,7 @@ beforeEach(() => {
     return true;
   });
   h.setInternetAccessPolicy.mockReset();
-  h.stop.mockReset().mockImplementation(async () => {});
+  h.applyInternetAccess.mockReset().mockImplementation(async () => {});
 });
 
 describe("PATCH /api/workspaces/[id]/internet-access", () => {
@@ -74,7 +77,7 @@ describe("PATCH /api/workspaces/[id]/internet-access", () => {
     expect(h.setWorkspaceInternetAccess).not.toHaveBeenCalled();
   });
 
-  it("toggles the store, the policy file, and stops the container on success", async () => {
+  it("toggles the store and the policy file, and applies the new policy to the network", async () => {
     const res = await PATCH(request({ enabled: true }), ctx());
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({
@@ -84,7 +87,9 @@ describe("PATCH /api/workspaces/[id]/internet-access", () => {
     });
     expect(h.setWorkspaceInternetAccess).toHaveBeenCalledWith("ws-1", true);
     expect(h.setInternetAccessPolicy).toHaveBeenCalledWith("ws-1", true);
-    expect(h.stop).toHaveBeenCalledWith("ws-1");
+    // Carries the new value, so the network is rebuilt with the right --internal flag directly
+    // rather than being left for a later container bring-up to reconcile.
+    expect(h.applyInternetAccess).toHaveBeenCalledWith("ws-1", true);
   });
 
   it("rolls back the store field when the policy-file write fails", async () => {
@@ -97,11 +102,11 @@ describe("PATCH /api/workspaces/[id]/internet-access", () => {
     // Called once to set true, once to roll back to the previous value (false).
     expect(h.setWorkspaceInternetAccess).toHaveBeenNthCalledWith(1, "ws-1", true);
     expect(h.setWorkspaceInternetAccess).toHaveBeenNthCalledWith(2, "ws-1", false);
-    expect(h.stop).not.toHaveBeenCalled();
+    expect(h.applyInternetAccess).not.toHaveBeenCalled();
   });
 
-  it("rolls back and fails when the container cannot be stopped", async () => {
-    h.stop.mockImplementation(async () => {
+  it("rolls back and fails when the network cannot be rebuilt", async () => {
+    h.applyInternetAccess.mockImplementation(async () => {
       throw new Error("docker daemon unreachable");
     });
     const res = await PATCH(request({ enabled: true }), ctx());

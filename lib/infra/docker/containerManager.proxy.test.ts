@@ -17,8 +17,8 @@ const { ContainerManager } = await import("./containerManager");
 
 const workspaceDeps: ContainerWorkspaceDependencies = {
   internetAccessFor: () => true,
-  credentialFingerprint: () => "test",
-  credentialEnvironment: () => ({ envArgs: [], hasProxyCA: false }),
+  runEnvironment: () => ({ envArgs: [], hasProxyCA: false }),
+  execEnvironment: () => ({}),
   installProxyCA: async () => {},
 };
 

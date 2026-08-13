@@ -8,7 +8,7 @@ const writer = (overrides: Partial<EgressWriter> = {}): EgressWriter => ({
 
 const services = (overrides: Partial<EgressServices> = {}): EgressServices => ({
   setPolicy: () => {},
-  stopContainer: async () => {},
+  applyToContainer: async () => {},
   ...overrides,
 });
 
@@ -27,7 +27,7 @@ describe("setting workspace egress", () => {
       }),
       services({
         setPolicy: (_id, enabled) => steps.push(`policy:${enabled}`),
-        stopContainer: async () => {
+        applyToContainer: async () => {
           steps.push("stop");
         },
       }),
@@ -76,7 +76,7 @@ describe("setting workspace egress", () => {
           setPolicy: () => {
             throw new Error("proxy unavailable");
           },
-          stopContainer: async () => {
+          applyToContainer: async () => {
             throw new Error("must not stop a container after a rolled-back toggle");
           },
         }),
@@ -101,7 +101,7 @@ describe("setting workspace egress", () => {
         }),
         services({
           setPolicy: (_id, enabled) => policies.push(enabled),
-          stopContainer: async () => {
+          applyToContainer: async () => {
             throw new Error("docker daemon unavailable");
           },
         }),

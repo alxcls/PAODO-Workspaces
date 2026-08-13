@@ -14,6 +14,7 @@ import {
   listSecretMeta,
   normalizeDomain,
   setSecret,
+  RESERVED_SECRET_NAMES,
 } from "@/lib/infra/security/workspaceSecretStore";
 import { WorkspaceUpdateError, WorkspaceUpdateFailure } from "./errors";
 import type { WorkspaceLookup } from "./read";
@@ -22,6 +23,11 @@ import type { WorkspaceLookup } from "./read";
 // validates, instead of a copy that drifts.
 export const SECRET_NAME_RE = /^[A-Z_][A-Z0-9_]*$/;
 const SECRET_DOMAIN_RE = /^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$/;
+
+// Re-exported so a caller that publishes this input contract (the CLI's schema) states the same
+// rule this validates, rather than a copy that drifts. Defined in the secret store because the
+// injection point enforces it too — see RESERVED_SECRET_NAMES there.
+export { RESERVED_SECRET_NAMES };
 
 /**
  * One third-party secret held for a workspace: its name, when it was stored, and the hosts it may be
@@ -123,6 +129,9 @@ export function validateSecret(input: unknown): WorkspaceSecretInput {
   // one they need either way.
   if (typeof name !== "string" || !SECRET_NAME_RE.test(name)) {
     throw new WorkspaceUpdateError("name must be uppercase letters, digits, and underscores (e.g. OPENAI_KEY)");
+  }
+  if (RESERVED_SECRET_NAMES.has(name)) {
+    throw new WorkspaceUpdateError(`${name} is used by the workspace container itself — choose another name`);
   }
   if (typeof value !== "string" || !value.trim()) throw new WorkspaceUpdateError("value required");
   if (!Array.isArray(domains) || domains.length === 0) {

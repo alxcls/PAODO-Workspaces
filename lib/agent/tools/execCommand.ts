@@ -28,8 +28,11 @@ function diagnoseStderr(stderr: string): string {
   if (!trimmed) return "";
   let out = `[stderr]: ${trimmed}`;
   if (trimmed.includes("no matching entries in passwd file")) {
+    // Deliberately does NOT suggest removing the container. Its writable layer holds everything
+    // installed in this workspace since it was created, and `docker rm` would destroy all of it to
+    // fix a user-lookup problem that is repairable in place.
     out +=
-      "\n[setup] The workspace container is stale. The user needs to run: docker rmi paodo-workspace && docker rm ws_<id> — the server will rebuild automatically on the next command.";
+      "\n[setup] The container cannot resolve its runtime user. This is a container-level fault, not something you can fix from the shell — report it to the workspace owner. Do NOT suggest deleting or recreating the container: that would erase every package installed in this workspace.";
   } else if (trimmed.includes("Permission denied")) {
     out +=
       "\n[permission] You run as a non-root user and cannot modify system paths (e.g. /etc, /root, /usr). For workspace files, check ownership; to install system packages use the apt_install tool instead of apt-get.";

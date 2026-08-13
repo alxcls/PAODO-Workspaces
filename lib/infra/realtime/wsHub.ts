@@ -24,12 +24,12 @@ const connections = g._wsConnections;
 // 2MB is far past useful: the console panel keeps only the last 500 lines, so anything queued behind
 // that much backlog is already scrolled out of existence before it can be rendered. Dropping it costs
 // the viewer nothing real — and the drop is reported (console_dropped) rather than hidden.
-const WS_MAX_BUFFERED_BYTES = parseInt(process.env.WS_MAX_BUFFERED_BYTES ?? "", 10) || 2 * 1024 * 1024;
+const WS_MAX_BUFFERED_BYTES = 2 * 1024 * 1024;
 
 // A socket pinned at the ceiling this long is not a slow viewer, it is a dead one that has not
 // finished dying (a closed laptop, a dropped network with no FIN). Terminating reclaims its buffer
 // and its slot; the browser hook reconnects 2s later and resyncs, so a live viewer loses nothing.
-const WS_STALL_MS = parseInt(process.env.WS_STALL_MS ?? "", 10) || 30_000;
+const WS_STALL_MS = 30_000;
 
 // Per-socket drop bookkeeping. WeakMap so an entry cannot outlive the socket it describes — this map
 // is never cleaned up on disconnect, and must not be a reason a closed connection stays reachable.

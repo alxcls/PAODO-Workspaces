@@ -1,22 +1,13 @@
-// One ceiling on what a spawned child process may materialize in this process, shared by every
-// spawner we own (dockerClient, gitClient).
+// One ceiling on what a spawned child process may materialize here, shared by dockerClient and
+// gitClient. Unbounded `stdout += d.toString()` throws RangeError past V8's ~536M char string limit,
+// and it throws from a "data" handler Node invokes directly — so it reaches server.ts's
+// uncaughtException guard, not the spawner's promise, and exits the instance.
 //
-// WHY it lives here rather than in each spawner: `stdout += d.toString()` inside a "data" handler
-// has no ceiling, and past V8's maximum string length (~536M chars) the `+=` throws RangeError from
-// a callback Node invokes DIRECTLY — not from the promise the spawner returns, so no .catch() sees
-// it. It lands on server.ts's uncaughtException guard, which fatal()s, taking every workspace,
-// socket and in-flight run on the instance down with it.
-//
-// A per-spawner copy of the fix is exactly how gitClient kept the bug after dockerClient was capped:
-// its own header says it "mirrors dockerClient._spawn", and it mirrored the defect too. One ceiling,
-// called from both, is the difference between fixing this class of bug and fixing one instance of it.
-//
-// Deliberately generous: this is the floor that stops a subprocess taking the process down, not a
-// product-level limit. Tools wanting a smaller, meaningful bound impose their own (see fileRead,
-// which stops the bytes at the source instead of transferring them just to drop them).
+// Shared rather than copied because a copy is how gitClient kept the bug after dockerClient was
+// capped. A safety floor, not a product limit: tools needing a meaningful bound set their own.
 import type { ChildProcess } from "child_process";
 
-export const MAX_CAPTURE_BYTES = parseInt(process.env.SPAWN_MAX_CAPTURE_BYTES ?? "", 10) || 8 * 1024 * 1024;
+export const MAX_CAPTURE_BYTES = 8 * 1024 * 1024;
 
 export class SpawnCapture {
   private text = { stdout: "", stderr: "" };

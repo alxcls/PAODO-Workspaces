@@ -56,7 +56,7 @@ const EXEC_OUTPUT_DIR = "/tmp/paodo-exec";
 // A ceiling on the file itself. Without it the "keep everything" promise would let one command fill
 // the container's writable layer — which the mid-run disk check cannot see, since that watches the
 // workspace mount, not the container layer.
-const EXEC_OUTPUT_MAX_BYTES = parseInt(process.env.EXEC_OUTPUT_MAX_BYTES ?? "", 10) || 20 * 1024 * 1024;
+const EXEC_OUTPUT_MAX_BYTES = 20 * 1024 * 1024;
 // How many spill files survive in a container. These containers are never auto-recreated, so this
 // directory would otherwise grow for the workspace's entire lifetime with nothing to clear it.
 //

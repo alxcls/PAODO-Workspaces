@@ -54,14 +54,19 @@ a callback Node invokes directly, so no `.catch()` sees it. It reaches the proce
 exhaust the heap outright, which no `try/catch` can intercept at all. Both were reachable from
 ordinary agent tool calls, so each path now has a ceiling.
 
+None of these is an env knob, deliberately. Unlike `CONTAINER_MEMORY`, none depends on the host:
+every PAODO instance runs the same kinds of workloads, so each of these has one right answer and an
+operator asked to pick would have nothing to base the choice on. A knob nobody has cause to turn is
+surface area, not flexibility — one bad value breaks things quietly. Each number is stated with its
+reasoning at the definition, where anyone changing it is already reading.
+
 - Command output (`execute_command`): 30KB inline; the rest streams to a file in the container that
-  the agent is given the path to (`EXEC_OUTPUT_MAX_BYTES`, 5 files kept per container)
-- File reads: `MAX_FILE_READ_BYTES` (default 400KB), enforced in-container by `head -c` so an
-  oversized file is never transferred; `offset`/`limit` pages past it
-- Every docker and git subprocess: `SPAWN_MAX_CAPTURE_BYTES` (default 8MB), one shared ceiling in
-  `lib/infra/spawnCapture.ts` — a per-spawner copy is how the git path kept the bug after the docker
-  path was fixed
-- Live console sockets: `WS_MAX_BUFFERED_BYTES` / `WS_STALL_MS` — `ws.send()` never blocks, so a tab
+  the agent is given the path to — 20MB per file, 5 kept per container (`containerManager.ts`)
+- File reads: 400KB (`fileRead.ts`), enforced in-container by `head -c` so an oversized file is
+  never transferred; `offset`/`limit` pages past it
+- Every docker and git subprocess: 8MB, one shared ceiling in `lib/infra/spawnCapture.ts` — a
+  per-spawner copy is how the git path kept the bug after the docker path was fixed
+- Live console sockets: 2MB buffered, 30s pinned (`wsHub.ts`) — `ws.send()` never blocks, so a tab
   that stopped reading queues its bytes in the app's heap, once per tab; past the ceiling messages
   are dropped (and reported to that tab) rather than queued
 - Every one of these reports when it cut something. A silently truncated result is the failure mode

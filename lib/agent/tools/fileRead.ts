@@ -17,7 +17,7 @@ import type { ExecRunner } from "../interfaces";
 // This tool sets skipResultCap, deliberately, so that a legitimately large file still reads in one
 // call. That makes this constant the only thing bounding it, hence a generous value rather than the
 // 50k dispatch cap — and offset/limit remains the way to page past it.
-const MAX_FILE_READ_BYTES = parseInt(process.env.MAX_FILE_READ_BYTES ?? "", 10) || 400_000;
+const MAX_FILE_READ_BYTES = 400_000;
 
 const schema = z.object({
   file_path: z.string().describe("File path relative to workspace root"),

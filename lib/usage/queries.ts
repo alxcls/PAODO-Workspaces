@@ -101,18 +101,18 @@ export function listUsageLight(workspaceId?: string): LightTurnRecord[] {
           tools.status AS tool_status
         FROM (
           SELECT
-            seq, id, session_id, workspace_id, workspace_name, origin, timestamp,
+            seq, id, session_id, conversation_id, workspace_id, workspace_name, origin, timestamp,
             model, input_tokens_total, input_tokens_cache_read, input_tokens_cache_write,
             output_tokens_total, output_tokens_reasoning, cost_usd, error_code, error_message,
             -- Usage records outlive the conversations that produced them (deleting a workspace drops
-            -- its conversation rows but keeps its execution records), so a conversation that is no
-            -- longer in the registry reads as no conversation at all — the dashboard has nothing to
-            -- link and renders the same dash as an external run.
-            CASE WHEN EXISTS (
+            -- its conversation rows but keeps its execution records). The id stays on the row either
+            -- way — it is what ties the run to its conversation in an audit trail — and this decides
+            -- only whether the dashboard may offer it as a link.
+            EXISTS (
               SELECT 1 FROM conversations
               WHERE conversations.workspace_id = usage_turns.workspace_id
                 AND conversations.id = usage_turns.conversation_id
-            ) THEN conversation_id END AS conversation_id
+            ) AS conversation_live
           FROM usage_turns
           ${where}
           ORDER BY seq DESC
@@ -133,6 +133,7 @@ export function listUsageLight(workspaceId?: string): LightTurnRecord[] {
         id: row.id,
         sessionId: row.session_id,
         conversationId: row.conversation_id ?? undefined,
+        conversationLive: row.conversation_live === 1,
         workspaceId: row.workspace_id,
         workspaceName: row.workspace_name,
         origin: row.origin ? (row.origin as SessionOrigin) : undefined,

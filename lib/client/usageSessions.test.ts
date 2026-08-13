@@ -112,6 +112,19 @@ describe("groupBySessions", () => {
     ]);
     expect(s.error).toEqual({ code: "TIMEOUT", message: "run aborted" });
   });
+
+  it("marks the conversation live when any of the run's turns still resolves it", () => {
+    const [s] = groupBySessions([rec({ id: "a", conversationId: "c1", conversationLive: true })]);
+    expect(s.conversationLive).toBe(true);
+  });
+
+  it("keeps the id of a conversation that is gone, but not as something to open", () => {
+    const [deleted] = groupBySessions([rec({ conversationId: "c1", conversationLive: false })]);
+    expect(deleted).toMatchObject({ conversationId: "c1", conversationLive: false });
+    // Records from a reader that never set the flag must not be linked on a guess either.
+    const [unknown] = groupBySessions([rec({ conversationId: "c1" })]);
+    expect(unknown.conversationLive).toBe(false);
+  });
 });
 
 describe("formatRunError", () => {

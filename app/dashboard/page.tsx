@@ -373,7 +373,6 @@ export default function DashboardPage() {
           ) : (
             <table className="w-full text-ms border-separate border-spacing-0 whitespace-nowrap">
               <colgroup>
-                <col className="w-[70px]" />
                 <col className="w-[140px]" />
                 <col className="w-[140px]" />
                 <col />
@@ -384,11 +383,11 @@ export default function DashboardPage() {
                 <col className="w-[12%]" />
                 <col className="w-[12%]" />
                 <col className="w-[12%]" />
+                <col className="w-[70px]" />
                 <col className="w-[40px]" />
               </colgroup>
               <thead>
                 <tr className="border-b border-border text-2xs font-semibold text-text-3 tracking-[.06em] uppercase h-[45px]">
-                  <th className="text-center px-4 font-semibold align-middle">Run</th>
                   <th className="text-left px-6 font-semibold align-middle">Conversation</th>
                   <th className="text-left px-6 font-semibold align-middle">Session</th>
                   <th className="text-left px-6 font-semibold align-middle">Workspace</th>
@@ -399,6 +398,7 @@ export default function DashboardPage() {
                   <th className="text-right px-6 font-semibold align-middle">Cached ↻</th>
                   <th className="text-right px-6 font-semibold align-middle">Out ↓</th>
                   <th className="text-right px-6 font-semibold align-middle">Cost</th>
+                  <th className="text-center px-4 font-semibold align-middle">Run</th>
                   <th className="w-[40px]" />
                 </tr>
               </thead>
@@ -409,16 +409,18 @@ export default function DashboardPage() {
                     onClick={() => setOpenSession(s)}
                     className={`border-b border-border cursor-pointer transition-colors hover:bg-bg-deep ${openSession?.sessionId === s.sessionId ? "bg-bg-tint" : ""}`}
                   >
-                    <td className="px-4 py-2.5 text-center align-middle">
-                      <RunOutcomeIcon error={s.error} />
-                    </td>
                     {/* Conversation id deep-links to its conversation tab in the callee/UI workspace,
                         matching the call_agent "View conversation" link. The visible id is the
                         conversation id so it matches the link target. stopPropagation so the link
-                        navigates instead of opening the detail drawer (the row's click). The reader
-                        drops the id of a deleted conversation, so a link here always resolves. */}
+                        navigates instead of opening the detail drawer (the row's click). A deleted
+                        conversation keeps its id as plain text — the id still identifies the run's
+                        conversation, but linking it would promise a page that no longer opens. */}
                     <td className="px-6 py-2.5 font-mono">
-                      {s.conversationId ? (
+                      {!s.conversationId ? (
+                        <span className="text-text-3" title="No conversation (external agent run)">
+                          —
+                        </span>
+                      ) : s.conversationLive ? (
                         <a
                           href={`/workspace/${s.workspaceId}?conversation=${s.conversationId}`}
                           onClick={(e) => e.stopPropagation()}
@@ -428,8 +430,8 @@ export default function DashboardPage() {
                           {s.conversationId.slice(0, 8)} ↗
                         </a>
                       ) : (
-                        <span className="text-text-3" title="No conversation to open">
-                          —
+                        <span className="text-text-3" title="This conversation no longer exists">
+                          {s.conversationId.slice(0, 8)}
                         </span>
                       )}
                     </td>
@@ -457,6 +459,9 @@ export default function DashboardPage() {
                       title={s.cost !== undefined ? `$${s.cost.toFixed(6)}` : "No pricing for this session's model(s)"}
                     >
                       {formatCost(s.cost)}
+                    </td>
+                    <td className="px-4 py-2.5 text-center align-middle">
+                      <RunOutcomeIcon error={s.error} />
                     </td>
                     {/* Static dim chevron hints the row opens a detail drawer; the row's bg tint is the hover cue. */}
                     <td className="px-4 py-2.5 align-middle text-right text-text-3 text-[15px] leading-none opacity-40">

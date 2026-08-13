@@ -9,6 +9,8 @@ import type { LightTurnRecord, RunErrorRecord, SessionOrigin } from "@/lib/usage
 export interface LightSession {
   sessionId: string;
   conversationId?: string;
+  /** The conversation is still openable — false once it (or its workspace) was deleted. */
+  conversationLive: boolean;
   workspaceId: string;
   workspaceName: string;
   origin: SessionOrigin;
@@ -41,6 +43,7 @@ export function groupBySessions(records: LightTurnRecord[]): LightSession[] {
       s = {
         sessionId: r.sessionId,
         conversationId: r.conversationId,
+        conversationLive: false,
         workspaceId: r.workspaceId,
         workspaceName: r.workspaceName,
         origin: r.origin ?? "manual",
@@ -54,6 +57,7 @@ export function groupBySessions(records: LightTurnRecord[]): LightSession[] {
       };
       map.set(r.sessionId, s);
     }
+    if (r.conversationLive) s.conversationLive = true;
     if (r.error && r.timestamp > (errorAt.get(r.sessionId) ?? "")) {
       s.error = r.error;
       errorAt.set(r.sessionId, r.timestamp);

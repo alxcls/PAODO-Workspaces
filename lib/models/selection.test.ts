@@ -22,7 +22,7 @@ const lookup = (provider: string): ModelVocabulary => VOCABULARIES[provider] ?? 
 const CURRENT = { provider: "openai", model: "gpt-5.4", reasoningEffort: "medium" as const };
 
 describe("defaultModelFor", () => {
-  it("takes the catalog's first entry, which is ordered flagship-first", () => {
+  it("takes the catalog's first entry, which is ordered default-first", () => {
     expect(defaultModelFor(OPENAI)).toBe("gpt-5.5");
   });
 

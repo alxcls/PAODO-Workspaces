@@ -1,5 +1,5 @@
 // loadAgentConfig resolves provider/model/reasoning-effort from the workspace's stored selection,
-// falling back to DEFAULT_LLM (deepseek-v4-pro) when the workspace hasn't picked, and resolves the
+// falling back to DEFAULT_LLM (deepseek-v4-flash) when the workspace hasn't picked, and resolves the
 // API key from the env var the selected provider's registry entry declares.
 import { describe, it, expect, beforeEach } from "vitest";
 import { loadAgentConfig } from "./buildTools";
@@ -38,7 +38,7 @@ describe("loadAgentConfig", () => {
     });
     const c = loadAgentConfig("ws-unset");
     expect(c.provider).toBe("deepseek");
-    expect(c.model).toBe("deepseek-v4-pro");
+    expect(c.model).toBe("deepseek-v4-flash");
   });
 
   it("uses the workspace's stored selection", () => {

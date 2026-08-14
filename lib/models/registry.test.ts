@@ -10,7 +10,8 @@ import { DEFAULT_LLM } from "@/lib/models/llmSelection";
 describe("models catalog", () => {
   it("lists a provider's models from the curated catalog", () => {
     expect(listModels("anthropic")).toContain("claude-opus-4-8");
-    expect(listModels("deepseek")).toContain("deepseek-v4-pro");
+    // Order matters for deepseek: the first entry is what a bare provider choice resolves to.
+    expect(listModels("deepseek")).toEqual(["deepseek-v4-flash", "deepseek-v4-pro"]);
     expect(listModels("moonshot")).toContain("kimi-k3");
   });
 

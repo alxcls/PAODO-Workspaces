@@ -14,7 +14,7 @@ describe("model catalog", () => {
         reasoningEfforts: ["low", "medium", "high", "xhigh", "max"],
       },
       deepseek: {
-        models: ["deepseek-v4-pro"],
+        models: ["deepseek-v4-flash", "deepseek-v4-pro"],
         reasoningEfforts: [],
       },
     });

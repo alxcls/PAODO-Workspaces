@@ -37,7 +37,8 @@ function trimmed(value: string | undefined): string | undefined {
 
 /**
  * The model to select when the caller named none and the previous one no longer applies: the
- * provider's first catalog entry, which the catalog orders flagship-first. Empty when the provider
+ * provider's first catalog entry, which the catalog orders default-first — usually the flagship, but
+ * deepseek leads with the cheaper Flash on purpose (see registry.ts). Empty when the provider
  * serves no models, which the caller reports rather than storing.
  */
 export function defaultModelFor(vocabulary: ModelVocabulary): string {

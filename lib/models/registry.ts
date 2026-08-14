@@ -11,7 +11,10 @@
 export const AVAILABLE_MODELS: Record<string, readonly string[]> = {
   anthropic: ["claude-opus-4-8", "claude-sonnet-5", "claude-haiku-4-5"],
   openai: ["gpt-5.5", "gpt-5.5-pro", "gpt-5.4", "gpt-5.1", "gpt-5"],
-  deepseek: ["deepseek-v4-pro"],
+  // Flash leads on cost, not capability: DeepSeek's Aug 16 2026 move to peak/off-peak pricing put Pro
+  // between $0.66 and $3.96 per M output depending on the hour, so it is no longer the sane default.
+  // Being first also makes Flash what defaultModelFor picks for a bare "deepseek" choice.
+  deepseek: ["deepseek-v4-flash", "deepseek-v4-pro"],
   moonshot: ["kimi-k3"],
 };
 

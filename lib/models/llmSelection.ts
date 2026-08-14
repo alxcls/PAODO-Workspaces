@@ -24,6 +24,6 @@ export interface WorkspaceLlmSelection {
 
 export const DEFAULT_LLM: WorkspaceLlmSelection = {
   provider: "deepseek",
-  model: "deepseek-v4-pro",
+  model: "deepseek-v4-flash",
   reasoningEffort: "low",
 };

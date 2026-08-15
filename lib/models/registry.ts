@@ -20,9 +20,9 @@ export const AVAILABLE_MODELS: Record<string, readonly string[]> = {
   deepseek: ["deepseek-v4-flash", "deepseek-v4-pro"],
   moonshot: ["kimi-k3"],
   // The two generalist models retained for the ReAct loop. These are the API's own current aliases,
-  // confirmed by GET /v1/models. Medium supports optional reasoning; Large does not expose it. The
-  // smaller/specialist Mistral models are deliberately not offered.
-  mistral: ["mistral-large-latest", "mistral-medium-latest"],
+  // confirmed by GET /v1/models. Codestral is the code-specialist option, Medium supports optional
+  // reasoning, and Large does not expose it. Keep aliases so Mistral owns version maintenance.
+  mistral: ["codestral-latest", "mistral-large-latest", "mistral-medium-latest"],
 };
 
 /** The models offered for a provider (empty for an unknown provider). Drives the model picker dropdown. */

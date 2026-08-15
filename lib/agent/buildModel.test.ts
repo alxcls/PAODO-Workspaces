@@ -141,13 +141,15 @@ describe("buildChatModel", () => {
     expect(m.modelKwargs?.reasoning_effort).toBe(expected?.reasoning_effort);
   });
 
-  it("does not send reasoning_effort to mistral-large-latest, which does not support it", () => {
-    const model = "mistral-large-latest";
-    const m = buildChatModel(config({ provider: "mistral", model, reasoningEffort: "high" })) as unknown as {
-      modelKwargs?: Record<string, unknown>;
-    };
-    expect(m.modelKwargs ?? {}).not.toHaveProperty("reasoning_effort");
-  });
+  it.each(["codestral-latest", "mistral-large-latest"])(
+    "does not send reasoning_effort to %s, which does not support it",
+    (model) => {
+      const m = buildChatModel(config({ provider: "mistral", model, reasoningEffort: "high" })) as unknown as {
+        modelKwargs?: Record<string, unknown>;
+      };
+      expect(m.modelKwargs ?? {}).not.toHaveProperty("reasoning_effort");
+    },
+  );
 
   it("rejects an unregistered provider instead of falling back to another vendor's builder", () => {
     expect(() => buildChatModel(config({ provider: "retired-vendor" }))).toThrow(/unsupported LLM provider/);

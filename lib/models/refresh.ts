@@ -110,6 +110,15 @@ export function fromLiteLLM(upstream: Record<string, LiteLLMEntry>): Catalog {
       }),
     };
   }
+
+  // LiteLLM's Codestral alias can lag behind its versioned row. Price the maintained `-latest`
+  // model from the newest version present so a refresh cannot restore the retired 24.05 rate.
+  const newestCodestral = Object.keys(out)
+    .filter((id) => /^codestral-\d{4}$/.test(id))
+    .sort()
+    .at(-1);
+  if (newestCodestral) out["codestral-latest"] = { ...out[newestCodestral] };
+
   return out;
 }
 

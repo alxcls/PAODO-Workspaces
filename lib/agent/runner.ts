@@ -18,7 +18,8 @@ import { createLogger } from "../infra/logger";
 import type { ToolStatus } from "@/lib/usage/types";
 import type { CallAgentMeta } from "./tools/agentCall";
 import { streamModelTurn, synthesizeLimit, type ResolvedToolCall } from "./modelTurn";
-import { NO_USAGE, type ModelUsage } from "./modelGateway";
+import { NO_USAGE, type ModelCallObserver, type ModelCallRecord, type ModelUsage } from "./modelGateway";
+import { providerConcurrency } from "./providerConcurrency";
 import { dispatchTools, type RunnerTool } from "./toolDispatch";
 import { normalizeToolCallIds } from "./toolCallIds";
 import {
@@ -180,12 +181,25 @@ export async function* runAgent(
   }
 
   const resolvedContainers = containers ?? getContainers();
+
+  // Compaction runs inside a signal handler, which cannot yield. Its cost is parked here and drained
+  // into turn_usage below, so the summary request lands in the same ledger as every other call.
+  const pendingCompaction: ModelCallRecord[] = [];
+  const observeModelCall: ModelCallObserver = (record) => {
+    wlog.debug({ event: "model_call", ...record, ...record.usage }, "model call complete");
+    if (record.stage === "compaction") pendingCompaction.push(record);
+  };
+
   const {
     modelWithTools,
     model,
     toolMap,
     signalHandlers: builtHandlers,
-  } = (buildAgentTools ?? buildTools)(workspaceId, workspaceDir, config, { containers: resolvedContainers, store });
+  } = (buildAgentTools ?? buildTools)(workspaceId, workspaceDir, config, {
+    containers: resolvedContainers,
+    store,
+    observe: observeModelCall,
+  });
   const signalHandlers: Record<string, PostDispatchFn> = injectedHandlers ?? builtHandlers ?? {};
   const typedToolMap = toolMap as Record<string, RunnerTool>;
 
@@ -377,6 +391,18 @@ export async function* runAgent(
         const handler = signalHandlers[tc.name];
         if (handler) await handler(tc.args, resultStr, postDispatchCtx);
       }
+
+      // Whatever compaction just spent. A fresh turnId each: these are their own rows, not an
+      // amendment to the turn whose tool call triggered them.
+      for (const record of pendingCompaction.splice(0)) {
+        yield {
+          type: "turn_usage",
+          turnId: crypto.randomUUID(),
+          model: record.model,
+          ...record.usage,
+          toolCalls: [],
+        };
+      }
     }
   } catch (err) {
     // A throw lands here before any tool-call turn is committed, so history stays consistent. The
@@ -397,6 +423,12 @@ export async function* runAgent(
     }
     yield { type: "done" };
   } finally {
+    // Process-wide, not this run's: the provider's quota is shared, so the peak worth tuning against
+    // is how many calls it was carrying overall. Measurement only — nothing throttles on it yet.
+    wlog.info(
+      { event: "provider_concurrency", ...providerConcurrency.snapshot(config.provider) },
+      "provider concurrency at run end",
+    );
     // One result commit on EVERY exit path, abort included (`.return()` still runs `finally`).
     // commitResult skips a run that changed nothing, and is try/caught so versioning cannot break it.
     await tryCommitResult(versioning, workspaceId, workspaceDir, userInput, wlog);

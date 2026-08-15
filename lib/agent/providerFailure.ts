@@ -5,6 +5,7 @@ import { throttleLog } from "../infra/logThrottle";
 export const PROVIDER_CREDIT_EXHAUSTED_CODE = "PROVIDER_CREDIT_EXHAUSTED" as const;
 export const PROVIDER_KEY_INVALID_CODE = "PROVIDER_KEY_INVALID" as const;
 export const PROVIDER_KEY_MISSING_CODE = "PROVIDER_KEY_MISSING" as const;
+export const PROVIDER_RATE_LIMITED_CODE = "PROVIDER_RATE_LIMITED" as const;
 export const PROVIDER_UNAVAILABLE_CODE = "PROVIDER_UNAVAILABLE" as const;
 
 /** Who refused, for message wording. Both parts are optional — not every call site knows both. */
@@ -20,8 +21,8 @@ export interface ProviderFailure {
   resource: string;
   resourceScope: string;
   /**
-   * Whether waiting could help. False for every rule today — each is a config or billing fact a
-   * retry cannot change — but a funded account's 429 is not, and must be able to say so.
+   * Whether waiting could help. False for a config or billing fact a retry cannot change; true for
+   * throttling, which is the same refusal a funded account gets and clears on its own.
    */
   retryable: boolean;
   /** The HTTP status the provider answered with, when it gave one. */
@@ -163,6 +164,39 @@ const RULES = [
     event: "provider_key_invalid",
     outcome: "run_stopped_bad_credential",
     logMessage: "LLM provider rejected the configured API key",
+  },
+  {
+    code: PROVIDER_RATE_LIMITED_CODE,
+    failureClass: "rate_limit",
+    resource: "llm_provider_request_quota",
+    resourceScope: "llm_provider_account",
+    // The only retryable rule: the account is fine and the key is fine, we simply asked too fast.
+    retryable: true,
+    // Last on purpose — a balance-worded 429 belongs to the credit rule, which has already run.
+    // 529 is Anthropic's overload: a different cause, but the same "wait and ask again" remedy.
+    decisiveStatuses: [429, 529],
+    patterns: [
+      /rate[\s_-]*limit/i,
+      /too many requests/i,
+      // Mistral "Requests rate limit exceeded"; OpenAI "Limit: 30000 tokens per min (TPM)".
+      /requests? per (second|minute|day)|tokens? per (minute|day)/i,
+      // OpenAI when the shared pool, not the account, is out of room.
+      /service tier capacity exceeded/i,
+      // Anthropic 529 `overloaded_error`.
+      /overloaded/i,
+    ],
+    message: (failure: ProviderFailure, target: ProviderTarget) => {
+      const named = target.provider ?? "The model provider";
+      const scope = target.model ? ` for ${target.model}` : "";
+      return (
+        `${named} is refusing requests${scope} because they arrived too quickly (${failure.providerMessage}). ` +
+        `Nothing is wrong with the account or the key — the same request should succeed once the ` +
+        `provider's window resets.`
+      );
+    },
+    event: "provider_rate_limited",
+    outcome: "run_stopped_rate_limited",
+    logMessage: "LLM provider is throttling this deployment",
   },
 ] as const satisfies readonly ProviderFailureRule[];
 

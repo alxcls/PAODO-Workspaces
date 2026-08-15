@@ -77,6 +77,10 @@ interface ProviderDescriptor extends ProviderMetadata {
   build: (config: LLMProviderConfig) => ChatOpenAI | ChatAnthropic;
 }
 
+// Retries belong to us, not the SDK. Left alone, LangChain's AsyncCaller silently retries 6 times
+// with backoff, hiding the refusals the gateway has to pace around. Every build spreads this.
+const NO_SDK_RETRY = { maxRetries: 0 } as const;
+
 // The single source of truth for provider support. Adding one means an entry here plus its models in
 // lib/models/registry.ts — nothing else in the agent layer changes, and nothing in .env.
 const PROVIDERS: Record<string, ProviderDescriptor> = {
@@ -88,6 +92,7 @@ const PROVIDERS: Record<string, ProviderDescriptor> = {
       new ChatAnthropic({
         model: config.model,
         apiKey: config.apiKey,
+        ...NO_SDK_RETRY,
         ...anthropicThinkingConfig(config.model, config.reasoningEffort),
         ...(config.anthropicCacheTtl1h && {
           clientOptions: {
@@ -109,6 +114,7 @@ const PROVIDERS: Record<string, ProviderDescriptor> = {
         // `apiKey`, not the legacy `openAIApiKey` alias — the latter is silently ignored by
         // @langchain/openai v1, which then falls back to process.env.OPENAI_API_KEY on its own.
         apiKey: config.apiKey,
+        ...NO_SDK_RETRY,
         useResponsesApi: true,
         reasoning: effort === "none" ? { effort } : { effort, summary: "auto" },
       });
@@ -121,6 +127,7 @@ const PROVIDERS: Record<string, ProviderDescriptor> = {
     build: (config) =>
       new ChatOpenAI({
         model: config.model,
+        ...NO_SDK_RETRY,
         configuration: {
           baseURL: "https://api.deepseek.com/v1",
           apiKey: config.apiKey,
@@ -136,6 +143,7 @@ const PROVIDERS: Record<string, ProviderDescriptor> = {
     build: (config) =>
       new ChatOpenAI({
         model: config.model,
+        ...NO_SDK_RETRY,
         configuration: {
           baseURL: "https://api.moonshot.ai/v1",
           apiKey: config.apiKey,
@@ -159,6 +167,7 @@ const PROVIDERS: Record<string, ProviderDescriptor> = {
     build: (config) =>
       new ChatOpenAI({
         model: config.model,
+        ...NO_SDK_RETRY,
         configuration: {
           baseURL: "https://api.mistral.ai/v1",
           apiKey: config.apiKey,

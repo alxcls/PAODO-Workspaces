@@ -194,6 +194,16 @@ describe("buildChatModel", () => {
     expect(gateway.provider).toBe("mistral");
     expect(gateway.model).toBe("mistral-small-2603");
   });
+
+  // Iterates the registry rather than naming providers: a sixth entry that forgets NO_SDK_RETRY fails
+  // here, instead of silently retrying 6 times behind whatever pacing the gateway applies.
+  it("disables SDK-level retries on every provider", () => {
+    for (const provider of SUPPORTED_PROVIDERS) {
+      const chat = buildChatModel(config({ provider, model: "test-model" }));
+      const { caller } = chat as unknown as { caller: { maxRetries: number } };
+      expect(caller.maxRetries, `${provider} must not retry on its own`).toBe(0);
+    }
+  });
 });
 
 // Availability is the ONLY question .env answers about a provider. Keys are entered in the app, so

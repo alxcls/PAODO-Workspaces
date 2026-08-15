@@ -3,6 +3,7 @@
 import { describe, it, expect } from "vitest";
 import { AIMessageChunk, HumanMessage } from "@langchain/core/messages";
 import { createModelGateway, usageTokens, NO_USAGE, type ModelCallRecord } from "./modelGateway";
+import { ProviderConcurrency } from "./providerConcurrency";
 
 function chunk(content: string, usage?: { input: number; output: number; reasoning?: number }): AIMessageChunk {
   return new AIMessageChunk({
@@ -40,15 +41,19 @@ function fakeChat(chunks: AIMessageChunk[]) {
   };
 }
 
-function recordingGateway(chunks: AIMessageChunk[]) {
+// A private counter per gateway: the real one is process-wide on purpose, which would otherwise let
+// one test's calls show up in another's `concurrent`.
+function recordingGateway(chunks: AIMessageChunk[], chatOverride?: unknown) {
   const records: ModelCallRecord[] = [];
-  const chat = fakeChat(chunks);
+  const chat = (chatOverride ?? fakeChat(chunks)) as ReturnType<typeof fakeChat>;
+  const concurrency = new ProviderConcurrency();
   const gateway = createModelGateway(chat as never, {
     provider: "mistral",
     model: "mistral-small-2603",
     observe: (record) => records.push(record),
+    concurrency,
   });
-  return { gateway, records, chat };
+  return { gateway, records, chat, concurrency };
 }
 
 const MESSAGES = [new HumanMessage("hi")];
@@ -176,5 +181,97 @@ describe("ModelGateway.bindTools", () => {
       model: "mistral-small-2603",
     });
     expect(() => gateway.bindTools([])).toThrow(/mistral/);
+  });
+
+  it("shares the counter with the bound gateway, so bound and bare calls contend as one", async () => {
+    const { gateway, concurrency } = recordingGateway([chunk("x", { input: 1, output: 1 })]);
+    const call = await gateway.bindTools([]).stream(MESSAGES, { stage: "model_turn" });
+    expect(concurrency.snapshot("mistral").active).toBe(1);
+    for await (const _ of call.chunks) {
+      // drain
+    }
+    expect(concurrency.snapshot("mistral").active).toBe(0);
+  });
+});
+
+// Whether output has reached the user is what separates a failure that can be retried invisibly from
+// one that cannot: past the first chunk, a second attempt would repeat text already on screen.
+describe("ModelGateway — emitted output", () => {
+  it("reports nothing emitted until the first chunk is consumed", async () => {
+    const { gateway } = recordingGateway([chunk("a", { input: 1, output: 1 }), chunk("b")]);
+    const call = await gateway.stream(MESSAGES, { stage: "model_turn" });
+
+    expect(call.emitted()).toBe(false);
+    await call.chunks.next();
+    expect(call.emitted()).toBe(true);
+  });
+
+  it("marks a stream that produced no chunk at all as unemitted", async () => {
+    const { gateway, records } = recordingGateway([]);
+    const call = await gateway.stream(MESSAGES, { stage: "model_turn" });
+    for await (const _ of call.chunks) {
+      // drain
+    }
+    expect(records[0]).toMatchObject({ emitted: false, partial: false });
+  });
+
+  it("marks an abandoned stream as emitted, since its first chunks already reached the consumer", async () => {
+    const { gateway, records } = recordingGateway([chunk("a", { input: 9, output: 1 }), chunk("b")]);
+    const call = await gateway.stream(MESSAGES, { stage: "model_turn" });
+    await call.chunks.next();
+    await call.chunks.return(undefined);
+
+    expect(records[0]).toMatchObject({ emitted: true, partial: true });
+  });
+});
+
+describe("ModelGateway — concurrency accounting", () => {
+  it("counts a call for as long as it is in flight, and releases it once drained", async () => {
+    const { gateway, records, concurrency } = recordingGateway([chunk("x", { input: 3, output: 1 })]);
+    const call = await gateway.stream(MESSAGES, { stage: "model_turn" });
+
+    expect(concurrency.snapshot("mistral").active).toBe(1);
+    for await (const _ of call.chunks) {
+      // drain
+    }
+    expect(concurrency.snapshot("mistral")).toMatchObject({ active: 0, peak: 1, total: 1 });
+    expect(records[0].concurrent).toBe(1);
+  });
+
+  it("sees overlapping calls as overlapping, which is the number a limit would be set against", async () => {
+    const { gateway, records, concurrency } = recordingGateway([chunk("x", { input: 1, output: 1 })]);
+    const first = await gateway.stream(MESSAGES, { stage: "model_turn" });
+    const second = await gateway.stream(MESSAGES, { stage: "model_turn" });
+
+    expect(concurrency.snapshot("mistral")).toMatchObject({ active: 2, peak: 2 });
+    for await (const _ of first.chunks) {
+      // drain
+    }
+    for await (const _ of second.chunks) {
+      // drain
+    }
+    expect(concurrency.snapshot("mistral")).toMatchObject({ active: 0, peak: 2, total: 2 });
+    expect(records.map((r) => r.concurrent)).toEqual([1, 2]);
+  });
+
+  // A leaked slot is permanent: the count never falls back and every later limit reads a provider
+  // as busier than it is, throttling calls that should have gone straight out.
+  it("releases the slot when the request fails before any stream exists", async () => {
+    const failing = {
+      stream: async () => {
+        throw new Error("429 Too Many Requests");
+      },
+      invoke: async () => {
+        throw new Error("429 Too Many Requests");
+      },
+    };
+    const { gateway, records, concurrency } = recordingGateway([], failing);
+
+    await expect(gateway.stream(MESSAGES, { stage: "model_turn" })).rejects.toThrow(/429/);
+    await expect(gateway.invoke(MESSAGES, { stage: "compaction" })).rejects.toThrow(/429/);
+
+    expect(concurrency.snapshot("mistral")).toMatchObject({ active: 0, total: 2 });
+    expect(records).toHaveLength(2);
+    expect(records.every((r) => r.emitted === false && r.usage === NO_USAGE)).toBe(true);
   });
 });

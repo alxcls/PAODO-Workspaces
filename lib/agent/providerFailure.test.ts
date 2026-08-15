@@ -115,13 +115,48 @@ describe("classifyProviderFailure — precedence", () => {
       "PROVIDER_KEY_INVALID",
     );
   });
+
+  // The reason the rate-limit rule sits last: DeepSeek scales concurrency to the remaining balance,
+  // so an empty account is announced as a 429 and would otherwise read as ordinary throttling.
+  it.each([
+    ["DeepSeek's balance-scaled 429", { status: 429, message: "Your remaining balance is insufficient" }],
+    ["OpenAI's quota 429", { status: 429, message: "You exceeded your current quota" }],
+  ])("reads %s as out of credit, not as throttling", (_label, error) => {
+    expect(classifyProviderFailure(raw(error))?.failureCode).toBe("PROVIDER_CREDIT_EXHAUSTED");
+  });
+});
+
+describe("classifyProviderFailure — rate limiting", () => {
+  it("classifies a funded account's 429 as throttling, and says waiting can fix it", () => {
+    expect(classifyProviderFailure(raw({ status: 429, message: "Rate limit reached for requests" }))).toEqual({
+      failureClass: "rate_limit",
+      failureCode: "PROVIDER_RATE_LIMITED",
+      resource: "llm_provider_request_quota",
+      resourceScope: "llm_provider_account",
+      retryable: true,
+      status: 429,
+      providerMessage: "Rate limit reached for requests",
+    });
+  });
+
+  it.each([
+    ["Mistral", { status: 429, message: "Requests rate limit exceeded" }],
+    ["OpenAI's per-minute wording", { status: 429, message: "Limit: 30000 tokens per min (TPM)" }],
+    ["OpenAI's shared-pool refusal", { status: 429, message: "service tier capacity exceeded" }],
+    ["Anthropic's overload", { status: 529, message: "Overloaded" }],
+    ["a bare too-many-requests with no status", raw({ message: "Too Many Requests" })],
+  ])("recognizes %s", (_label, error) => {
+    expect(classifyProviderFailure(raw(error as Record<string, unknown>))?.failureCode).toBe("PROVIDER_RATE_LIMITED");
+  });
+
+  it("does not end the run permanently, unlike every other classified cause", () => {
+    expect(isTerminalProviderCode("PROVIDER_RATE_LIMITED")).toBe(false);
+    expect(TERMINAL_PROVIDER_CODES).not.toContain("PROVIDER_RATE_LIMITED");
+  });
 });
 
 describe("classifyProviderFailure — what it leaves alone", () => {
   it.each([
-    // A funded account's 429 has no balance wording. Misreading it as an empty account would tell the
-    // user to top up when they only need to wait — and it is the case a pacing layer will own.
-    ["an ordinary rate limit", { status: 429, message: "Rate limit reached for requests" }],
     ["an ordinary 400 about the request body", { status: 400, message: "model does not support tools" }],
     ["a 404 for an unknown model", { status: 404, message: "The model `gpt-9` does not exist" }],
     ["a 500 from the provider", { status: 500, message: "internal server error" }],

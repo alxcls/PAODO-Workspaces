@@ -613,3 +613,114 @@ describe("runAgent — refuses to start without a usable provider", () => {
     expect(events.some((e) => e.type === "error")).toBe(false);
   });
 });
+
+// Compaction is fired from a signal handler, which cannot yield into the run's event stream. Its
+// cost used to be spent and then dropped; these pin the route that now carries it to the ledger.
+describe("runAgent — compaction cost reaches the usage ledger", () => {
+  const COMPACTION_USAGE = {
+    inputTokensTotal: 40_000,
+    inputTokensCacheRead: 0,
+    inputTokensCacheWrite: 0,
+    outputTokensTotal: 300,
+    outputTokensReasoning: 0,
+  };
+
+  // Mirrors buildTools: the model it hands back reports through `deps.observe`, and the compaction
+  // handler is what spends. The runner supplies the observer, so a double must accept one.
+  function buildToolsThatCompacts(turns: Chunk[][], compactions = 1) {
+    let turn = 0;
+    const modelWithTools = {
+      stream: async () => {
+        const chunks = turns[turn++] ?? [];
+        let accumulated: Chunk | null = null;
+        return {
+          chunks: (async function* () {
+            for (const c of chunks) {
+              accumulated = accumulated ? accumulated.concat(c) : c;
+              yield c;
+            }
+          })(),
+          accumulated: () => accumulated,
+          usage: () => usageTokens(accumulated),
+          emitted: () => accumulated !== null,
+        };
+      },
+    };
+    return ((_w: string, _d: string, _c: unknown, deps: { observe?: (r: unknown) => void }) => ({
+      modelWithTools,
+      model: modelWithTools,
+      toolMap: { compact_context: { invoke: async () => "[Context compacted: hard.] Next step: go" } },
+      signalHandlers: {
+        compact_context: async () => {
+          for (let i = 0; i < compactions; i++) {
+            deps.observe?.({
+              provider: "deepseek",
+              model: "deepseek-v4-flash",
+              stage: "compaction",
+              usage: COMPACTION_USAGE,
+              durationMs: 12,
+              partial: false,
+              emitted: true,
+              concurrent: 1,
+            });
+          }
+        },
+      },
+    })) as never;
+  }
+
+  const compactCallChunk = () =>
+    new AIMessageChunk({
+      content: "",
+      tool_call_chunks: [
+        {
+          index: 0,
+          id: "call_c1",
+          name: "compact_context",
+          args: '{"level":"hard","next_step":"go"}',
+          type: "tool_call_chunk",
+        },
+      ],
+    });
+
+  async function runWithCompaction(compactions = 1): Promise<AgentEvent[]> {
+    const events: AgentEvent[] = [];
+    for await (const event of runAgent([], "do work", "/tmp/ws", "ws-1", {
+      ...noopDeps,
+      buildAgentTools: buildToolsThatCompacts(
+        [[compactCallChunk()], [new AIMessageChunk({ content: "done" })]],
+        compactions,
+      ),
+    })) {
+      events.push(event);
+    }
+    return events;
+  }
+
+  const usageEvents = (events: AgentEvent[]) => events.filter((e) => e.type === "turn_usage");
+
+  it("emits the summary request as its own usage row", async () => {
+    const rows = usageEvents(await runWithCompaction());
+    const compaction = rows.filter((r) => r.inputTokensTotal === COMPACTION_USAGE.inputTokensTotal);
+
+    expect(compaction).toHaveLength(1);
+    expect(compaction[0]).toMatchObject({ ...COMPACTION_USAGE, model: "deepseek-v4-flash", toolCalls: [] });
+  });
+
+  // A shared turnId would make the second row an update of the first, and the dashboard would show
+  // one compaction where two were paid for.
+  it("gives every compaction its own turn id, including the turn that triggered it", async () => {
+    const rows = usageEvents(await runWithCompaction(2));
+    const ids = rows.map((r) => r.turnId);
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(rows.filter((r) => r.inputTokensTotal === COMPACTION_USAGE.inputTokensTotal)).toHaveLength(2);
+  });
+
+  it("leaves the triggering turn's own row untouched", async () => {
+    const rows = usageEvents(await runWithCompaction());
+    const toolTurn = rows.find((r) => r.toolCalls.some((tc) => tc.name === "compact_context"));
+
+    expect(toolTurn).toBeDefined();
+    expect(toolTurn!.inputTokensTotal).not.toBe(COMPACTION_USAGE.inputTokensTotal);
+  });
+});

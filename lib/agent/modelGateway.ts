@@ -3,6 +3,7 @@
 import type { AIMessageChunk, BaseMessage } from "@langchain/core/messages";
 import type { BindToolsInput } from "@langchain/core/language_models/chat_models";
 import { createLogger } from "../infra/logger";
+import { providerConcurrency, type ProviderConcurrencyGate } from "./providerConcurrency";
 
 const log = createLogger("model");
 
@@ -59,6 +60,8 @@ export interface ModelStream {
   chunks: AsyncGenerator<AIMessageChunk>;
   accumulated(): AIMessageChunk | null;
   usage(): ModelUsage;
+  /** True once a chunk has reached the consumer. Past this point a retry would repeat visible text. */
+  emitted(): boolean;
 }
 
 export interface ModelInvocation {
@@ -75,6 +78,10 @@ export interface ModelCallRecord {
   durationMs: number;
   /** True when the consumer abandoned the stream before the provider finished (user abort). */
   partial: boolean;
+  /** Whether any output reached the consumer — false means a failure here is still retryable unseen. */
+  emitted: boolean;
+  /** Calls this provider was carrying when this one started, this one included. */
+  concurrent: number;
 }
 
 /**
@@ -112,14 +119,25 @@ export interface ModelGatewayOptions {
   model: string;
   /** Defaults to a debug log line per call. */
   observe?: ModelCallObserver;
+  /** Defaults to the process-wide counter. Inject a fresh one to keep tests from sharing state. */
+  concurrency?: ProviderConcurrencyGate;
 }
 
 export function createModelGateway(chat: BindableChatModel, options: ModelGatewayOptions): ModelGateway {
   const { provider, model } = options;
   const observe = options.observe ?? logCall;
+  const concurrency = options.concurrency ?? providerConcurrency;
 
-  const report = (stage: ModelCallStage, usage: ModelUsage, startedAt: number, partial: boolean) => {
-    observe({ provider, model, stage, usage, durationMs: Date.now() - startedAt, partial });
+  // Every call is bracketed by this: enter before the request leaves, release exactly once when it
+  // settles, and report what it cost. Both call shapes go through it so neither can skip accounting.
+  const begin = (stage: ModelCallStage) => {
+    const startedAt = Date.now();
+    const release = concurrency.enter(provider);
+    const concurrent = concurrency.snapshot(provider).active;
+    return (usage: ModelUsage, partial: boolean, emitted: boolean) => {
+      release();
+      observe({ provider, model, stage, usage, durationMs: Date.now() - startedAt, partial, emitted, concurrent });
+    };
   };
 
   return {
@@ -127,17 +145,27 @@ export function createModelGateway(chat: BindableChatModel, options: ModelGatewa
     model,
 
     async stream(messages, call) {
-      const startedAt = Date.now();
-      const raw = await chat.stream(messages, { signal: call.signal });
+      const finish = begin(call.stage);
       let accumulated: AIMessageChunk | null = null;
       let usage: ModelUsage = NO_USAGE;
       let settled = false;
       let drained = false;
+      let emitted = false;
+
+      let raw: AsyncIterable<AIMessageChunk>;
+      try {
+        raw = await chat.stream(messages, { signal: call.signal });
+      } catch (err) {
+        settled = true;
+        finish(NO_USAGE, true, false);
+        throw err;
+      }
 
       async function* chunks(): AsyncGenerator<AIMessageChunk> {
         try {
           for await (const chunk of raw) {
             accumulated = accumulated ? accumulated.concat(chunk) : chunk;
+            emitted = true;
             yield chunk;
           }
           drained = true;
@@ -147,25 +175,36 @@ export function createModelGateway(chat: BindableChatModel, options: ModelGatewa
           if (!settled) {
             settled = true;
             usage = usageTokens(accumulated);
-            report(call.stage, usage, startedAt, !drained);
+            finish(usage, !drained, emitted);
           }
         }
       }
 
-      return { chunks: chunks(), accumulated: () => accumulated, usage: () => usage };
+      return {
+        chunks: chunks(),
+        accumulated: () => accumulated,
+        usage: () => usage,
+        emitted: () => emitted,
+      };
     },
 
     async invoke(messages, call) {
-      const startedAt = Date.now();
-      const message = await chat.invoke(messages, { signal: call.signal });
+      const finish = begin(call.stage);
+      let message: AIMessageChunk;
+      try {
+        message = await chat.invoke(messages, { signal: call.signal });
+      } catch (err) {
+        finish(NO_USAGE, true, false);
+        throw err;
+      }
       const usage = usageTokens(message);
-      report(call.stage, usage, startedAt, false);
+      finish(usage, false, true);
       return { message, usage };
     },
 
     bindTools(tools) {
       if (!chat.bindTools) throw new Error(`provider "${provider}" model "${model}" does not support tool binding`);
-      return createModelGateway(chat.bindTools(tools), { provider, model, observe });
+      return createModelGateway(chat.bindTools(tools), { provider, model, observe, concurrency });
     },
   };
 }

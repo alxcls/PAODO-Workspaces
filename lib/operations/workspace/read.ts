@@ -2,6 +2,7 @@
 import type { IWorkspaceStore } from "@/lib/infra/interfaces";
 import { getStore } from "@/lib/infra/services";
 import { defaultModelSelection, getProviderMetadata } from "@/lib/agent/buildModel";
+import { providerHasKey } from "@/lib/operations/settings/providerKeys";
 import type { Workspace } from "@/lib/workspace/types";
 import type { ModelSelection } from "@/lib/models/selection";
 
@@ -18,6 +19,8 @@ export interface WorkspaceDetails extends WorkspaceSummary {
   internetAccess: boolean;
   llmProvider: string;
   llmModel: string;
+  /** Whether the selected provider currently has an API key configured. */
+  llmProviderHasKey: boolean;
   /** Omitted when the selected provider has no reasoning-effort control. */
   reasoningEffort?: ModelSelection["reasoningEffort"];
 }
@@ -34,8 +37,12 @@ export type WorkspaceLookup = Pick<IWorkspaceStore, "getWorkspace">;
 /**
  * A workspace's stored model choice, with defaults applied for fields it never set. The defaults come
  * from the available catalog, so a workspace that never picked shows and runs a provider .env actually
- * allows. A workspace that DID pick keeps its choice even if that provider is no longer available —
- * withdrawing a provider stops it being offered, it does not rewrite selections already made.
+ * allows.
+ *
+ * A stored choice is returned as-is, unexamined: this projects what the workspace holds, it does not
+ * police it. Nothing reachable here can be pointed at a withdrawn provider anyway — startup clears
+ * those selections (clearWithdrawnLlmSelections), which puts the workspace back on this function's
+ * defaults, and validateMetadata refuses to write a new one.
  */
 export function currentModelSelection(workspace: Workspace): ModelSelection {
   const fallback = defaultModelSelection();
@@ -68,15 +75,21 @@ export function listWorkspaces(store: WorkspaceReader = getStore()): WorkspaceSu
   return store.listWorkspaces().map(workspaceSummary);
 }
 
-export function getWorkspace(id: string, store: WorkspaceLookup = getStore()): WorkspaceDetails | null {
+export function getWorkspace(
+  id: string,
+  store: WorkspaceLookup = getStore(),
+  hasProviderKey: (provider: string) => boolean = providerHasKey,
+): WorkspaceDetails | null {
   const workspace = store.getWorkspace(id);
   if (!workspace) return null;
+  const modelSelection = currentModelSelection(workspace);
   return {
     ...workspaceSummary(workspace),
     createdAt: workspace.createdAt,
     maxIterations: workspace.maxIterations,
     maxRunMinutes: workspace.maxRunMinutes,
     internetAccess: workspace.internetAccess,
-    ...publicModelSelection(currentModelSelection(workspace)),
+    ...publicModelSelection(modelSelection),
+    llmProviderHasKey: hasProviderKey(modelSelection.provider),
   };
 }

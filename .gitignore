@@ -49,6 +49,13 @@ next-env.d.ts
 /data/*
 !/data/.gitkeep
 /.data-backup
+/.paodo-provider-vault/
+/.paodo-provider-key/
+/.paodo-workspace-secret-vault/
+/.paodo-workspace-secret-key/
+# Legacy greenfield artifacts are not read or migrated, but may still contain credentials locally.
+/.paodo-secret-vault/
+/.paodo-secret-key/
 
 # captured production logs — contain client IPs, never commit
 /logs/

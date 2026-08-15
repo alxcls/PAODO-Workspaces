@@ -117,8 +117,10 @@ export default function ModelBlock({ wsId }: { wsId: string }) {
   // and swap a retired selection to the default before save.
   const modelOptions = models;
 
-  // A workspace selected before its provider was withdrawn — key removed or <PROVIDER>_AVAILABLE set
-  // to false — remains visible even though it is no longer offered for new selections.
+  // Belt and braces for a stale tab. The server no longer keeps a workspace on a withdrawn provider
+  // (startup clears those selections, and a PATCH naming one is refused), so this only fires when the
+  // deployment switched a provider off after this page loaded — and even then the row shows the value
+  // the workspace really holds rather than silently swapping it for the first catalog entry.
   const providerOptions = provider && !providers.includes(provider) ? [provider, ...providers] : providers;
 
   // Whether the selected provider can actually authenticate. Read from the catalog this component

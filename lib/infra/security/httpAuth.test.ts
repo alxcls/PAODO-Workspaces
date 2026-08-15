@@ -11,7 +11,9 @@ import {
   safeEqual,
   authRequestFromIncoming,
   getClientIp,
+  trustedRequestHosts,
   type AuthRequest,
+  validateRequestHost,
 } from "./httpAuth";
 
 const CREDS = { user: "admin", pass: "hunter2" };
@@ -64,6 +66,68 @@ describe("AuthFailureTracker", () => {
     t.recordFailure("a");
     expect(t.isBlocked("a")).toBe(true);
     expect(t.isBlocked("b")).toBe(false);
+  });
+});
+
+describe("trusted request hosts", () => {
+  const trusted = trustedRequestHosts({
+    PAODO_TRUSTED_HOSTS: "ui.example.com, admin.example.com:8443",
+    WORKSPACE_API_DOMAIN: "api.example.com",
+  });
+
+  it("includes local, Docker-internal, UI and public API hostnames", () => {
+    expect([...trusted]).toEqual(
+      expect.arrayContaining([
+        "localhost",
+        "127.0.0.1",
+        "::1",
+        "app",
+        "ui.example.com",
+        "admin.example.com",
+        "api.example.com",
+      ]),
+    );
+  });
+
+  it("accepts a trusted Host with any port and an agreeing forwarded host", () => {
+    expect(validateRequestHost({ host: "UI.Example.com:3000" }, trusted)).toEqual({
+      ok: true,
+      hostname: "ui.example.com",
+    });
+    expect(
+      validateRequestHost({ host: "api.example.com:3000", "x-forwarded-host": "api.example.com:443" }, trusted),
+    ).toEqual({ ok: true, hostname: "api.example.com" });
+  });
+
+  it("rejects missing, malformed and untrusted Host values", () => {
+    expect(validateRequestHost({}, trusted)).toEqual({ ok: false, reason: "host_missing" });
+    expect(validateRequestHost({ host: "ui.example.com,evil.example" }, trusted)).toEqual({
+      ok: false,
+      reason: "host_malformed",
+    });
+    expect(validateRequestHost({ host: "evil.example" }, trusted)).toEqual({
+      ok: false,
+      reason: "host_untrusted",
+    });
+  });
+
+  it("rejects duplicate, malformed, untrusted or disagreeing X-Forwarded-Host values", () => {
+    expect(
+      validateRequestHost({ host: "ui.example.com", "x-forwarded-host": ["ui.example.com", "evil.example"] }, trusted),
+    ).toEqual({ ok: false, reason: "forwarded_host_malformed" });
+    expect(validateRequestHost({ host: "ui.example.com", "x-forwarded-host": "evil.example" }, trusted)).toEqual({
+      ok: false,
+      reason: "host_mismatch",
+    });
+    expect(validateRequestHost({ host: "ui.example.com", "x-forwarded-host": "ui.example.com/path" }, trusted)).toEqual(
+      { ok: false, reason: "forwarded_host_malformed" },
+    );
+  });
+
+  it("fails startup configuration closed when an allowlist entry is malformed", () => {
+    expect(() => trustedRequestHosts({ PAODO_TRUSTED_HOSTS: "good.example,bad.example/path" })).toThrow(
+      "invalid trusted hostname",
+    );
   });
 });
 

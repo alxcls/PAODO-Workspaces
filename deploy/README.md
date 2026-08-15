@@ -29,10 +29,13 @@ nano .env
 
 Set:
 
-- at least one supported LLM provider key;
 - `USERNAME` and `PASSWORD`;
+- `PAODO_TRUSTED_HOSTS` to every public UI hostname (comma-separated);
 - `MAX_CONCURRENT_AGENT_RUNS` to the instance-wide emergency ceiling (start with `10`);
 - optional container resource limits and timeouts.
+
+After startup, enter at least one supported LLM provider key in **Settings → Provider API keys**.
+Provider keys do not belong in `.env`.
 
 The ceiling counts chat, API, scheduled, MCP, and nested agent-to-agent runs together. A request
 above it is rejected immediately with `CAPACITY_REACHED`; PAODO does not queue it yet.
@@ -78,6 +81,21 @@ docker compose ps
 
 The app listens on `127.0.0.1:3000` by default. Keep that port private.
 
+### Backups and credential handoff
+
+Compose keeps five named volumes deliberately separate:
+
+- `workspaces` contains workspace data;
+- `provider-vault` contains encrypted LLM provider keys;
+- `provider-key` unlocks only the provider vault;
+- `workspace-secret-vault` contains encrypted third-party secrets intended for proxy injection;
+- `workspace-secret-key` unlocks only the workspace-secret vault.
+
+Back up each vault separately from its matching key when credentials must survive a restore. Anyone
+who obtains a matching pair can recover that credential class. A credential-free handoff transfers
+only `workspaces`. There is intentionally no migration from the former/shared greenfield format:
+enter new credentials after switching to this layout.
+
 Workspace containers reach the internet only through the `credproxy` sidecar,
 over an internal Docker network. That port is never published to the host, so it
 needs no firewall rule of its own.
@@ -94,6 +112,10 @@ http://127.0.0.1:3000
 Use the literal `127.0.0.1`, not `localhost`: the app publishes on IPv4 only, and
 `localhost` resolves to `::1` first. The failed dial stays hidden until it
 surfaces under load as intermittent 502s.
+
+Set that exact UI hostname in `PAODO_TRUSTED_HOSTS`. The ingress must replace, not append, `Host`
+and `X-Forwarded-Host` with that hostname. PAODO rejects missing, malformed, unlisted or disagreeing
+values before authentication. The optional `WORKSPACE_API_DOMAIN` is trusted automatically.
 
 The ingress must support WebSocket upgrades for `/ws`. PAODO Basic Auth remains
 enabled through `USERNAME` and `PASSWORD`. It must also discard any
@@ -166,9 +188,9 @@ docker compose \
   up --build --force-recreate -d
 ```
 
-Always rebuild the complete stack, never a single service: `app` and `credproxy`
-run the same image, so a scoped rebuild leaves the sidecar on stale code and
-silently breaks per-workspace secret injection. Changes to the gateway's Caddy
+Always rebuild both `app` and `credproxy`: they now use separate images, and either side can change
+the credential-injection contract. A scoped rebuild can leave the other side on stale code and
+silently break per-workspace secret injection. Changes to the gateway's Caddy
 configuration need the same recreate: the file is bind-mounted individually, so
 reloading Caddy in place keeps serving the version the container started with.
 

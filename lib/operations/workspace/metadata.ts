@@ -1,7 +1,13 @@
 // Validation, canonicalization, and persistence descriptors for workspace metadata updates.
 import type { IWorkspaceStore } from "@/lib/infra/interfaces";
 import { type ReasoningEffort } from "@/lib/models/llmSelection";
-import { defaultModelSelection, getProviderMetadata, SUPPORTED_PROVIDERS } from "@/lib/agent/buildModel";
+import {
+  availableProviders,
+  defaultModelSelection,
+  getProviderMetadata,
+  providerAvailabilityEnv,
+  SUPPORTED_PROVIDERS,
+} from "@/lib/agent/buildModel";
 import { listModels } from "@/lib/models/registry";
 import {
   resolveModelSelection,
@@ -137,6 +143,26 @@ export function validateMetadata(
     // place the answer is both correct and available without a second lookup.
     if (!SUPPORTED_PROVIDERS.includes(selection.provider)) {
       throw new WorkspaceUpdateError(`llmProvider must be one of: ${SUPPORTED_PROVIDERS.join(", ")}`);
+    }
+
+    // Supported is not the same as offered, and only the second one can run: a switched-off provider
+    // has no key (startup destroyed it) and no catalog entry, so storing it buys a workspace that
+    // fails on its next message. Startup clears the workspaces already in that state; this is what
+    // stops the next caller putting one back. The picker cannot express the choice — it only lists
+    // the catalog — but the REST route, the CLI and the MCP adapters all validate through here.
+    // Separate message from the unsupported case above, for the same reason the key form separates
+    // them (lib/operations/settings/providerKeys.ts): "must be one of" sent to someone who
+    // deliberately switched openai off hides the setting they wrote.
+    const offered = availableProviders();
+    if (!offered.includes(selection.provider)) {
+      throw new WorkspaceUpdateError(
+        `${selection.provider} is switched off in this deployment ` +
+          `(${providerAvailabilityEnv(selection.provider)}=false in .env). ` +
+          (offered.length
+            ? `Pick one of: ${offered.join(", ")}.`
+            : "No provider is switched on, so no workspace can be given one."),
+        { field: "llmProvider", provider: selection.provider },
+      );
     }
     // Only reachable for a supported provider serving no models that the workspace was not already on —
     // resolution supplies a model in every other case.

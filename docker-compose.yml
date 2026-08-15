@@ -39,8 +39,16 @@ services:
       - DOCKER_HOST=tcp://socket-proxy:2375
       - WORKSPACES_VOLUME_NAME=paodo_ws_workspaces
       - WORKSPACES_ROOT=/app/data
+      - PAODO_PROVIDER_VAULT_ROOT=/app/provider-vault
+      - PAODO_PROVIDER_KEY_FILE=/app/provider-key/master.key
+      - PAODO_WORKSPACE_SECRET_VAULT_ROOT=/app/workspace-secret-vault
+      - PAODO_WORKSPACE_SECRET_KEY_FILE=/app/workspace-secret-key/master.key
     volumes:
       - workspaces:/app/data
+      - provider-vault:/app/provider-vault
+      - provider-key:/app/provider-key
+      - workspace-secret-vault:/app/workspace-secret-vault
+      - workspace-secret-key:/app/workspace-secret-key
     depends_on:
       socket-proxy:
         condition: service_started
@@ -65,35 +73,39 @@ services:
 
   # Credential-proxy sidecar. Runs ONLY the proxy (proxyEntry.ts) so the app never has to join a
   # per-workspace network — the app attaches THIS container to each wsnet at runtime, exposing only
-  # port 9998 to the sandbox and never the control plane (app:3000 / /ws). It reads the CA + encrypted
-  # secret store from the shared volume read-only and shares no IPC with the app. It is deliberately
-  # NOT on app_net/socket_proxy_net, so it has no route to the app; `credproxy_net` provides upstream
-  # egress. 9998 is never published to the host.
+  # port 9998 to the sandbox and never the control plane (app:3000 / /ws). It reads the CA,
+  # workspace-secret vault and key from separate read-only mounts and shares no IPC with the app.
+  # Provider credentials use app-only volumes that are not mounted here.
+  # It is deliberately NOT on app_net/socket_proxy_net, so it has no route to the app;
+  # `credproxy_net` provides upstream egress. 9998 is never published to the host.
   credproxy:
-    image: paodo_ws_app
+    build:
+      context: .
+      dockerfile: Dockerfile.credproxy
+    image: paodo_ws_credproxy
     container_name: paodo_ws_credproxy
-    command: ["npx", "tsx", "proxyEntry.ts"]
-    # No env_file: .env here — unlike the app, the sidecar reads only the four vars below (its whole
-    # import graph: proxyEntry.ts + lib/infra/{paths,logger}.ts). Inheriting the app's .env would put
-    # the admin PASSWORD/USERNAME into the one container the untrusted sandbox can reach, for no
-    # functional reason. The secret-store encryption key is read from a FILE
-    # (data/.proxy-ca/secrets-enc.key), not env, so dropping .env does not affect decryption.
-    #
-    # Provider API keys are no longer in .env at all — they live encrypted in data/.provider-keys.json
-    # on the volume below, which this sidecar mounts read-only. It never reads that file, but it could:
-    # the isolation here is the untrusted SANDBOX containers, which mount only their own workspace
-    # subdirectory and so cannot reach any dotted file in the data root. This sidecar is app code.
+    # No env_file: .env here. Inheriting the app's .env would put the admin PASSWORD/USERNAME into
+    # the one container the untrusted sandbox can reach, for no functional reason. Recoverable
+    # workspace secrets live in the encrypted vault below; its key is a file on a different mount.
+    # Provider credentials live in two app-only volumes this service cannot access.
     environment:
       - WORKSPACES_ROOT=/app/data
+      - PAODO_WORKSPACE_SECRET_VAULT_ROOT=/app/workspace-secret-vault
+      - PAODO_WORKSPACE_SECRET_KEY_FILE=/app/workspace-secret-key/master.key
       - CREDENTIAL_PROXY_PORT=9998
       # Pin explicitly: without NODE_ENV the logger treats the sidecar as dev and logs at debug.
       - NODE_ENV=production
       - LOG_LEVEL=${LOG_LEVEL:-info}
     volumes:
       - workspaces:/app/data:ro
+      - workspace-secret-vault:/app/workspace-secret-vault:ro
+      - workspace-secret-key:/app/workspace-secret-key:ro
     depends_on:
       - app
     restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,noexec,nosuid,nodev,mode=1777
     cap_drop:
       - ALL
     security_opt:
@@ -105,6 +117,10 @@ services:
 
 volumes:
   workspaces:
+  provider-vault:
+  provider-key:
+  workspace-secret-vault:
+  workspace-secret-key:
 
 networks:
   socket_proxy_net:

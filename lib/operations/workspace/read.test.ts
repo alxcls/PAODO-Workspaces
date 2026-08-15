@@ -47,7 +47,7 @@ describe("workspace record queries", () => {
 
   it("returns details without leaking the server directory", () => {
     offerOnly("deepseek");
-    const result = getWorkspace("ws-1", store);
+    const result = getWorkspace("ws-1", store, (provider) => provider === "deepseek");
     expect(result).toMatchObject({
       id: "ws-1",
       name: "Alpha",
@@ -58,6 +58,7 @@ describe("workspace record queries", () => {
       internetAccess: false,
       llmProvider: "deepseek",
       llmModel: "deepseek-v4-flash",
+      llmProviderHasKey: true,
     });
     expect(result).not.toHaveProperty("dir");
     expect(result).not.toHaveProperty("reasoningEffort");
@@ -71,10 +72,11 @@ describe("workspace record queries", () => {
       llmModel: "gpt-5",
       reasoningEffort: "high",
     };
-    const result = getWorkspace("ws-1", { ...store, getWorkspace: () => selected });
+    const result = getWorkspace("ws-1", { ...store, getWorkspace: () => selected }, () => false);
     expect(result).toMatchObject({
       llmProvider: "openai",
       llmModel: "gpt-5",
+      llmProviderHasKey: false,
       reasoningEffort: "high",
     });
     expect(result).not.toHaveProperty("reasoningEffortSupported");
@@ -84,11 +86,24 @@ describe("workspace record queries", () => {
   // deployment makes available — never one it switched off.
   it("falls back to the available provider, not a fixed one", () => {
     offerOnly("anthropic");
-    expect(getWorkspace("ws-1", store)).toMatchObject({
+    expect(getWorkspace("ws-1", store, (provider) => provider === "anthropic")).toMatchObject({
       llmProvider: "anthropic",
       llmModel: "claude-haiku-4-5",
+      llmProviderHasKey: true,
       reasoningEffort: "low",
     });
+  });
+
+  it("reads provider key availability live instead of storing it on the workspace", () => {
+    const hasProviderKey = vi.fn(() => false);
+    const result = getWorkspace(
+      "ws-1",
+      { ...store, getWorkspace: () => ({ ...workspace, llmProvider: "openai" }) },
+      hasProviderKey,
+    );
+
+    expect(hasProviderKey).toHaveBeenCalledWith("openai");
+    expect(result?.llmProviderHasKey).toBe(false);
   });
 
   it("returns null for an unknown workspace", () => {

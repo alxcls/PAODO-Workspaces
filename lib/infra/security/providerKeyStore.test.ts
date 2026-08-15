@@ -2,7 +2,7 @@
 // pin the two properties that matter beyond "it round-trips": a value never leaves except through
 // getProviderKey, and a store that exists but cannot be read must never be silently replaced by an
 // empty one — the next save would destroy every key the operator had.
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterAll, vi } from "vitest";
 import { readFileSync, writeFileSync, rmSync, existsSync } from "fs";
 
 // vi.mock is hoisted above the imports, so the temp root has to be created in a hoisted block too.
@@ -10,12 +10,15 @@ const { ROOT } = vi.hoisted(() => {
   const { mkdtempSync } = require("fs") as typeof import("fs");
   const { tmpdir } = require("os") as typeof import("os");
   const { join } = require("path") as typeof import("path");
-  return { ROOT: mkdtempSync(join(tmpdir(), "provider-keys-")) };
+  const root = mkdtempSync(join(tmpdir(), "provider-keys-"));
+  process.env.PAODO_PROVIDER_VAULT_ROOT = join(root, "provider-vault");
+  process.env.PAODO_PROVIDER_KEY_FILE = join(root, "provider-key", "master.key");
+  process.env.PAODO_WORKSPACE_SECRET_VAULT_ROOT = join(root, "workspace-vault");
+  process.env.PAODO_WORKSPACE_SECRET_KEY_FILE = join(root, "workspace-key", "master.key");
+  delete (global as Record<string, unknown>)._providerKeyVaultState;
+  delete (global as Record<string, unknown>)._vaultEncryptionKeys;
+  return { ROOT: root };
 });
-
-// Both this store and secretsEncryption.ts read WORKSPACES_ROOT from the same module, so one mock
-// redirects the key file and the store file together into the temp root.
-vi.mock("../paths", () => ({ WORKSPACES_ROOT: ROOT }));
 
 import {
   PROVIDER_KEY_STORE_FILE,
@@ -33,6 +36,8 @@ beforeEach(() => {
   _resetProviderKeysForTest();
   rmSync(PROVIDER_KEY_STORE_FILE, { force: true });
 });
+
+afterAll(() => rmSync(ROOT, { recursive: true, force: true }));
 
 describe("provider key round-trip", () => {
   it("gives back the key it was handed", () => {
@@ -119,7 +124,7 @@ describe("purgeProviderKeysExcept", () => {
 // The global holder has to be cleared too — it is what makes the store survive module reloads in
 // production, and it would otherwise make the re-import skip the load entirely.
 async function reload() {
-  delete (global as typeof global & { _providerKeys?: unknown })._providerKeys;
+  delete (global as Record<string, unknown>)._providerKeyVaultState;
   vi.resetModules();
   return import("./providerKeyStore");
 }

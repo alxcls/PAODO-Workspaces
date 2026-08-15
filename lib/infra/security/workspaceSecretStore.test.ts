@@ -1,34 +1,40 @@
-// Pins the at-rest guarantees of the secret store: values never hit disk in plaintext, legacy
-// plaintext files migrate to the encrypted envelope on first load, and a corrupt/tampered file
-// fails closed (empty store) instead of crashing the server.
+// Pins the at-rest guarantees of the workspace-secret vault: values never hit disk in plaintext,
+// malformed files are rejected, and the provider/workspace stores remain independent.
 
 import { describe, it, expect, vi, beforeEach, afterAll } from "vitest";
 import fs from "fs";
 import path from "path";
 
-// Redirect the store file to a throwaway dir BEFORE paths.ts reads WORKSPACES_ROOT at import
-// time (vi.hoisted runs above imports — same pattern as credentialStore.test.ts).
+// Redirect vault and key storage before their path module is evaluated.
 const { ROOT } = vi.hoisted(() => {
   const os = require("os");
   const fs = require("fs");
   const path = require("path");
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "secret-store-test-"));
-  process.env.WORKSPACES_ROOT = root;
+  process.env.PAODO_WORKSPACE_SECRET_VAULT_ROOT = path.join(root, "workspace-vault");
+  process.env.PAODO_WORKSPACE_SECRET_KEY_FILE = path.join(root, "workspace-key", "master.key");
+  process.env.PAODO_PROVIDER_VAULT_ROOT = path.join(root, "provider-vault");
+  process.env.PAODO_PROVIDER_KEY_FILE = path.join(root, "provider-key", "master.key");
+  delete (global as Record<string, unknown>)._workspaceSecretVaultState;
+  delete (global as Record<string, unknown>)._providerKeyVaultState;
+  delete (global as Record<string, unknown>)._vaultEncryptionKeys;
   return { ROOT: root };
 });
 
-const FILE = path.join(ROOT, ".workspace-secrets.json");
+const FILE = path.join(ROOT, "workspace-vault", "vault.json");
+const PROVIDER_FILE = path.join(ROOT, "provider-vault", "vault.json");
 
 // The store loads from disk once at module evaluation and caches on global. To exercise the
-// load/migration paths repeatedly, each test clears the caches and re-imports a fresh instance.
+// load paths repeatedly, each test clears the shared state and re-imports a fresh instance.
 async function freshStore() {
-  delete (global as Record<string, unknown>)._workspaceSecrets;
+  delete (global as Record<string, unknown>)._workspaceSecretVaultState;
   vi.resetModules();
   return await import("./workspaceSecretStore");
 }
 
 beforeEach(() => {
   fs.rmSync(FILE, { force: true });
+  fs.rmSync(PROVIDER_FILE, { force: true });
 });
 
 afterAll(() => fs.rmSync(ROOT, { recursive: true, force: true }));
@@ -68,20 +74,13 @@ describe("encryption at rest", () => {
     expect(rules[0].tokenMap.size + rules[1].tokenMap.size).toBe(2);
   });
 
-  it("migrates a legacy plaintext file to the envelope on first load", async () => {
-    const legacy = {
-      ws1: { MY_KEY: { value: "legacy-secret", createdAt: "2026-01-01T00:00:00.000Z", domain: "api.example.com" } },
-    };
-    fs.writeFileSync(FILE, JSON.stringify(legacy));
+  it("rejects a plaintext file instead of treating it as a legacy store", async () => {
+    fs.mkdirSync(path.dirname(FILE), { recursive: true });
+    fs.writeFileSync(FILE, JSON.stringify({ ws1: { MY_KEY: { value: "plaintext-secret" } } }));
 
     const store = await freshStore();
-    // Values are readable…
-    const rules = store.getWorkspaceRules("ws1");
-    expect([...rules[0].tokenMap.values()]).toEqual(["legacy-secret"]);
-    // …and the file on disk was immediately re-saved encrypted.
-    const raw = fs.readFileSync(FILE, "utf-8");
-    expect(raw).not.toContain("legacy-secret");
-    expect(JSON.parse(raw).alg).toBe("aes-256-gcm");
+    expect(store.listSecretMeta("ws1")).toEqual([]);
+    expect(() => store.assertSecretStoreAvailable()).toThrow();
   });
 
   it("fails closed on a tampered envelope: empty store, no crash", async () => {
@@ -101,13 +100,35 @@ describe("encryption at rest", () => {
     expect(() => reloaded.assertSecretStoreAvailable()).toThrow();
   });
 
-  it("marks a malformed legacy store unavailable without throwing during module import", async () => {
-    fs.writeFileSync(FILE, JSON.stringify({ ws1: "not-a-secret-map" }));
+  it("marks a malformed encrypted vault unavailable without throwing during module import", async () => {
+    const { encryptToEnvelope } = await import("./secretsEncryption");
+    fs.mkdirSync(path.dirname(FILE), { recursive: true });
+    fs.writeFileSync(
+      FILE,
+      JSON.stringify(encryptToEnvelope(JSON.stringify({ version: 1, workspaceSecrets: { ws1: "bad" } }))),
+    );
 
     const store = await freshStore();
 
     expect(store.listSecretMeta("ws1")).toEqual([]);
     expect(() => store.assertSecretStoreAvailable()).toThrow();
+  });
+
+  it("keeps provider keys and workspace secrets in independent encrypted vaults", async () => {
+    const workspaceStore = await freshStore();
+    const providerStore = await import("./providerKeyStore");
+
+    providerStore.setProviderKey("anthropic", "provider-value");
+    workspaceStore.setSecret("ws1", "DEPLOY_TOKEN", "workspace-value", ["api.example.com"]);
+
+    delete (global as Record<string, unknown>)._providerKeyVaultState;
+    const reloadedWorkspaceStore = await freshStore();
+    const reloadedProviderStore = await import("./providerKeyStore");
+    expect(reloadedProviderStore.getProviderKey("anthropic")).toBe("provider-value");
+    expect([...reloadedWorkspaceStore.getWorkspaceRules("ws1")[0].tokenMap.values()]).toEqual(["workspace-value"]);
+    expect(FILE).not.toBe(PROVIDER_FILE);
+    expect(fs.existsSync(FILE)).toBe(true);
+    expect(fs.existsSync(PROVIDER_FILE)).toBe(true);
   });
 
   it("starts empty when no file exists (first run)", async () => {

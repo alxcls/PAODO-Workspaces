@@ -65,7 +65,7 @@ cp .env.example .env          # set USERNAME and PASSWORD
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000), then add your provider API key under the gear icon → **Settings → Provider API keys**. Keys are stored encrypted on the data volume rather than in `.env`, so a deployment can be copied or handed over without its credentials. Until a key is set, a workspace stops at the start of its conversation and names the provider it needs one for.
+Open [http://localhost:3000](http://localhost:3000), then add your provider API key under the gear icon → **Settings → Provider API keys**. Provider keys and per-workspace third-party secrets live in independent encrypted vaults with independent master keys, outside workspace data. Until a key is set, a workspace stops at the start of its conversation and names the provider it needs one for.
 
 The workspace Docker image is built automatically on first run.
 
@@ -85,6 +85,13 @@ using defined input/output contracts. See [Triggers and operations](doc/trigger-
 Every sandboxed tool call — file ops, glob, shell, package installs — runs inside a per-workspace Docker container (`ws_<id>`) as a restricted non-root user, with only that workspace's directory mounted. Containers start on demand and stop after an idle timeout.
 
 Workspace metadata and network configuration are stored as JSON files under `data/`.
+
+Recoverable credentials use four storage boundaries: provider vault/key and workspace-secret
+vault/key. Docker Compose keeps each in a named volume separate from `workspaces`; local development
+uses four ignored `.paodo-…` directories. The credential proxy receives only the workspace-secret
+pair, so it cannot decrypt provider API keys. A workspace-data backup contains none of them. Treat
+each vault as sensitive encrypted material, keep its key backup elsewhere, and transfer neither half
+for a credential-free handoff. This greenfield format deliberately has no legacy-vault migration.
 
 For the full architecture, see [`doc/`](doc/).
 

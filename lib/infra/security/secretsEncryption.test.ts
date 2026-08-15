@@ -1,24 +1,28 @@
-// The envelope is what stands between a copied data/ dir and every workspace secret. These pin
-// that encryption round-trips, that any tamper fails closed (throws), and that the key file is
-// self-provisioned with the right shape and permissions.
+// The envelope is what stands between an encrypted-vault snapshot and every recoverable secret.
+// These pin round-tripping, tamper detection, and separate key provisioning.
 
 import { describe, it, expect, vi, afterAll } from "vitest";
 import fs from "fs";
 import path from "path";
 
-// Redirect the key file to a throwaway dir BEFORE the module (via paths.ts) reads
-// WORKSPACES_ROOT at import time. Same pattern as credentialStore.test.ts.
-const { ROOT } = vi.hoisted(() => {
+// Redirect the key file before the module reads its path at import time.
+const { ROOT, KEY_FILE } = vi.hoisted(() => {
   const os = require("os");
   const fs = require("fs");
   const path = require("path");
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "secrets-enc-test-"));
-  process.env.WORKSPACES_ROOT = root;
-  delete (global as Record<string, unknown>)._secretsEncKey;
-  return { ROOT: root };
+  const keyFile = path.join(root, "key", "master.key");
+  process.env.PAODO_WORKSPACE_SECRET_VAULT_ROOT = path.join(root, "vault");
+  process.env.PAODO_WORKSPACE_SECRET_KEY_FILE = keyFile;
+  process.env.PAODO_PROVIDER_VAULT_ROOT = path.join(root, "provider-vault");
+  process.env.PAODO_PROVIDER_KEY_FILE = path.join(root, "provider-key", "master.key");
+  delete (global as Record<string, unknown>)._vaultEncryptionKeys;
+  return { ROOT: root, KEY_FILE: keyFile };
 });
 
 import { isEncEnvelope, encryptToEnvelope, decryptFromEnvelope, getSecretsEncKey } from "./secretsEncryption";
+import { decryptProviderEnvelope, encryptProviderEnvelope, getProviderVaultKey } from "./providerKeyEncryption";
+import { WORKSPACE_SECRET_VAULT_KEY_FILE, assertSecretStorageSeparated } from "./secretVaultPaths";
 
 afterAll(() => fs.rmSync(ROOT, { recursive: true, force: true }));
 
@@ -69,7 +73,7 @@ describe("isEncEnvelope", () => {
     expect(isEncEnvelope(encryptToEnvelope("x"))).toBe(true);
   });
 
-  it("rejects the legacy plaintext store shape", () => {
+  it("rejects plaintext secret records", () => {
     expect(isEncEnvelope({ ws1: { KEY: { value: "v", createdAt: "t", domain: "d" } } })).toBe(false);
   });
 
@@ -87,23 +91,36 @@ describe("key provisioning", () => {
     expect(key.length).toBe(32);
     expect(getSecretsEncKey()).toBe(key); // cached
 
-    const keyFile = path.join(ROOT, ".proxy-ca", "secrets-enc.key");
-    const stat = fs.statSync(keyFile);
+    const stat = fs.statSync(KEY_FILE);
     expect(stat.mode & 0o777).toBe(0o600);
-    expect(fs.readFileSync(keyFile).equals(key)).toBe(true);
+    expect(fs.readFileSync(KEY_FILE).equals(key)).toBe(true);
+  });
+
+  it("keeps the key outside workspace data and rejects a collapsed boundary", () => {
+    expect(WORKSPACE_SECRET_VAULT_KEY_FILE).toBe(KEY_FILE);
+    expect(() => assertSecretStorageSeparated(path.join(ROOT, "workspace-data"))).not.toThrow();
+    expect(() => assertSecretStorageSeparated(ROOT)).toThrow("must use separate directory trees");
   });
 
   it("does not replace an existing key after a non-ENOENT read failure", () => {
     getSecretsEncKey();
-    const keyFile = path.join(ROOT, ".proxy-ca", "secrets-enc.key");
-    const original = fs.readFileSync(keyFile);
-    delete (global as Record<string, unknown>)._secretsEncKey;
+    const original = fs.readFileSync(KEY_FILE);
+    delete (global as Record<string, unknown>)._vaultEncryptionKeys;
     const read = vi.spyOn(fs, "readFileSync").mockImplementationOnce(() => {
       throw Object.assign(new Error("simulated storage failure"), { code: "EIO" });
     });
 
     expect(() => getSecretsEncKey()).toThrow("simulated storage failure");
     read.mockRestore();
-    expect(fs.readFileSync(keyFile).equals(original)).toBe(true);
+    expect(fs.readFileSync(KEY_FILE).equals(original)).toBe(true);
+  });
+
+  it("uses cryptographically independent provider and workspace-secret keys", () => {
+    expect(getProviderVaultKey().equals(getSecretsEncKey())).toBe(false);
+
+    const providerEnvelope = encryptProviderEnvelope("provider-value");
+    const workspaceEnvelope = encryptToEnvelope("workspace-value");
+    expect(() => decryptFromEnvelope(providerEnvelope)).toThrow();
+    expect(() => decryptProviderEnvelope(workspaceEnvelope)).toThrow();
   });
 });

@@ -31,13 +31,13 @@ export default function SettingsModal({ open, onClose }: SettingsModalProps) {
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-start justify-center bg-black/30 px-4 pt-[12vh]"
+      className="fixed inset-0 z-50 flex items-start justify-center bg-black/30 px-4 pt-[8vh]"
       onMouseDown={(event) => {
         if (event.currentTarget === event.target) close();
       }}
     >
       <div
-        className="max-h-[76vh] w-full max-w-[520px] overflow-y-auto rounded-card border border-border bg-white p-5 shadow-md"
+        className="max-h-[84vh] w-full max-w-[640px] overflow-y-auto rounded-card border border-border bg-white p-6 shadow-md"
         role="dialog"
         aria-modal="true"
         aria-label="Settings"
@@ -51,7 +51,9 @@ export default function SettingsModal({ open, onClose }: SettingsModalProps) {
           </button>
         </div>
 
-        <div className="mt-5 flex flex-col gap-6">
+        {/* A wider step than the gap inside a section, so a section reads as one thing rather than as
+            more rows in the same list. */}
+        <div className="mt-6 flex flex-col gap-8">
           {/* `open` is passed down rather than relied on through mounting: each section loads its own
               data, and only when the modal is actually showing. */}
           <ProviderKeysSection open={open} />

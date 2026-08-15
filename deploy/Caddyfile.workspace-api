@@ -20,6 +20,9 @@
 # forgets it trusts a client-supplied CF-Connecting-IP, which lets a caller choose
 # their own brute-force bucket and forge the address in the audit trail.
 (forwardedHeaders) {
+	header_up Host {host}
+	header_up -X-Forwarded-Host
+	header_up X-Forwarded-Host {host}
 	header_up -X-Real-IP
 	header_up -X-Forwarded-For
 	header_up -CF-Connecting-IP

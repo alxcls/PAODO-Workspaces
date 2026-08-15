@@ -51,31 +51,33 @@ export default function CliAccessSection({ open }: { open: boolean }) {
       )}
 
       {credential.enabled && (
-        <div className="mt-4 flex flex-col gap-4">
-          <div className="flex flex-col gap-1.5">
+        <div className="mt-5 flex flex-col gap-6">
+          <div className="flex flex-col gap-2">
             <span className="text-xs font-medium">Endpoint</span>
             <div className="flex items-start gap-2">
-              <code className="min-w-0 flex-1 break-all rounded border border-border bg-bg-tint px-2 py-1 font-mono text-xs">
+              <code className="min-w-0 flex-1 break-all rounded border border-border bg-bg-tint px-2.5 py-1.5 font-mono text-xs">
                 {endpoint}
               </code>
-              <button className="btn btn-sm" onClick={copyEndpoint}>
+              {/* Level with the box beside it: 16px line + 12px padding + 2px border. */}
+              <button className="btn btn-sm h-[30px]" onClick={copyEndpoint}>
                 {copied ? "Copied!" : "Copy"}
               </button>
             </div>
           </div>
 
-          <div className="flex flex-col gap-1.5">
+          <div className="flex flex-col gap-2">
             <span className="text-xs font-medium">Key</span>
             {credential.plaintext ? (
               <CredentialReveal plaintext={credential.plaintext} />
             ) : (
-              <code className="rounded border border-border bg-bg-tint px-2 py-1 font-mono text-xs text-text-3">
+              <code className="rounded border border-border bg-bg-tint px-2.5 py-1.5 font-mono text-xs text-text-3">
                 {credential.hasKey ? "••••••••••••••••••••••••" : "No key"}
               </code>
             )}
           </div>
 
-          <div className="flex items-center gap-2.5">
+          {/* -ml-1.5 cancels the link's own padding so its text starts on the box's left edge above it. */}
+          <div className="-ml-1.5 flex items-center gap-2">
             <button
               className="linkbtn self-start"
               onClick={credential.hasKey ? credential.rotate : credential.generate}

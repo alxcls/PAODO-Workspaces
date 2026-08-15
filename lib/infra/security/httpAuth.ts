@@ -71,6 +71,105 @@ export type AuthCredentials = { user: string; pass: string };
 // what it may reach.
 export type PlatformTokenValidator = (plain: string) => boolean;
 
+type RequestHostHeaders = {
+  host?: string | string[];
+  "x-forwarded-host"?: string | string[];
+};
+
+export type RequestHostValidation =
+  | { ok: true; hostname: string }
+  | {
+      ok: false;
+      reason: "host_missing" | "host_malformed" | "host_untrusted" | "forwarded_host_malformed" | "host_mismatch";
+    };
+
+/**
+ * Normalize an HTTP authority to a hostname. Ports are intentionally ignored: they are transport
+ * details, while the hostname is the security boundary. URL parsing also canonicalizes case,
+ * trailing dots, IDNs and bracketed IPv6 without accepting paths, credentials or header lists.
+ */
+function normalizeHostname(value: string): string | null {
+  const candidate = value.trim();
+  if (
+    !candidate ||
+    candidate.includes(",") ||
+    /[\s/@\\?#]/.test(candidate) ||
+    /[\u0000-\u001f\u007f]/.test(candidate)
+  ) {
+    return null;
+  }
+  try {
+    const parsed = new URL(`http://${candidate}`);
+    if (!parsed.hostname || parsed.username || parsed.password || parsed.pathname !== "/") return null;
+    return parsed.hostname
+      .replace(/^\[|\]$/g, "")
+      .replace(/\.$/, "")
+      .toLowerCase();
+  } catch {
+    return null;
+  }
+}
+
+function singleHeader(value: string | string[] | undefined): string | null | undefined {
+  if (value === undefined) return undefined;
+  if (Array.isArray(value)) return value.length === 1 ? value[0] : null;
+  return value;
+}
+
+/** Build the deployment's hostname allowlist. A malformed configured hostname is a startup error. */
+type TrustedHostEnvironment = {
+  PAODO_TRUSTED_HOSTS?: string;
+  WORKSPACE_API_DOMAIN?: string;
+};
+
+export function trustedRequestHosts(
+  env: TrustedHostEnvironment = {
+    PAODO_TRUSTED_HOSTS: process.env.PAODO_TRUSTED_HOSTS,
+    WORKSPACE_API_DOMAIN: process.env.WORKSPACE_API_DOMAIN,
+  },
+): ReadonlySet<string> {
+  const configured = ["localhost", "127.0.0.1", "[::1]", "app"];
+  if (env.WORKSPACE_API_DOMAIN?.trim()) configured.push(env.WORKSPACE_API_DOMAIN.trim());
+  if (env.PAODO_TRUSTED_HOSTS?.trim()) {
+    configured.push(...env.PAODO_TRUSTED_HOSTS.split(",").map((host) => host.trim()));
+  }
+
+  const trusted = new Set<string>();
+  for (const configuredHost of configured) {
+    const hostname = normalizeHostname(configuredHost);
+    if (!hostname) throw new Error(`invalid trusted hostname: ${JSON.stringify(configuredHost)}`);
+    trusted.add(hostname);
+  }
+  return trusted;
+}
+
+/**
+ * Reject Host-header poisoning before authentication or Next.js routing. A proxy may omit
+ * X-Forwarded-Host; if it sends one, it must be one canonical value and agree with Host.
+ */
+export function validateRequestHost(
+  headers: RequestHostHeaders,
+  trustedHosts: ReadonlySet<string>,
+): RequestHostValidation {
+  const rawHost = singleHeader(headers.host);
+  if (rawHost === undefined) return { ok: false, reason: "host_missing" };
+  if (rawHost === null) return { ok: false, reason: "host_malformed" };
+  const hostname = normalizeHostname(rawHost);
+  if (!hostname) return { ok: false, reason: "host_malformed" };
+  if (!trustedHosts.has(hostname)) return { ok: false, reason: "host_untrusted" };
+
+  const rawForwardedHost = singleHeader(headers["x-forwarded-host"]);
+  if (rawForwardedHost === null) return { ok: false, reason: "forwarded_host_malformed" };
+  if (rawForwardedHost !== undefined) {
+    const forwardedHostname = normalizeHostname(rawForwardedHost);
+    if (!forwardedHostname) return { ok: false, reason: "forwarded_host_malformed" };
+    if (forwardedHostname !== hostname || !trustedHosts.has(forwardedHostname)) {
+      return { ok: false, reason: "host_mismatch" };
+    }
+  }
+  return { ok: true, hostname };
+}
+
 // The primitives checkAuth/isCsrf need off a request — extracted so the core logic never touches
 // Node's http types and can be unit-tested with plain objects.
 export type AuthRequest = { method: string; pathname: string; authorization: string; cookie: string };

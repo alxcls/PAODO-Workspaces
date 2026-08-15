@@ -7,6 +7,7 @@ import { runAgent, classifyToolStatus, type AgentEvent } from "./runner";
 import { buildSignalHandlers } from "./buildTools";
 import { SUPPORTED_PROVIDERS, providerAvailabilityEnv } from "./buildModel";
 import { usageTokens } from "./modelGateway";
+import { prepareMistralMessages } from "./mistralProtocol";
 
 // Every test below runs on "deepseek", and runAgent refuses a switched-off provider. Pinning the
 // availability vars keeps a developer's own shell from failing the whole file at preflight.
@@ -36,9 +37,11 @@ function hasUnansweredToolCalls(messages: BaseMessage[]): boolean {
 
 // A fake gateway replaying scripted chunks per turn — tool calls or plain text. Returns a real
 // ModelStream handle, accumulating as it goes so usage is only correct after the loop, as in production.
-function makeBuildTools(turns: Chunk[][], executeResult = "command ran") {
+function makeBuildTools(turns: Chunk[][], executeResult = "command ran", provider = "deepseek") {
   let turn = 0;
   const modelWithTools = {
+    provider,
+    model: "test-model",
     stream: async (_messages: BaseMessage[], _call: { stage: string; signal?: AbortSignal }) => {
       const chunks = turns[turn++] ?? [];
       let accumulated: Chunk | null = null;
@@ -60,6 +63,41 @@ function makeBuildTools(turns: Chunk[][], executeResult = "command ran") {
   };
   return () => ({ modelWithTools, model: modelWithTools, toolMap, signalHandlers: {} }) as never;
 }
+
+describe("runAgent — provider-specific history compatibility", () => {
+  const history = (id: string): BaseMessage[] => [
+    new AIMessage({ content: "", tool_calls: [{ id, name: "execute_command", args: { cmd: "true" } }] }),
+    new ToolMessage({ tool_call_id: id, content: "done" }),
+  ];
+
+  it("keeps native ids for providers that accept them", async () => {
+    const messages = history("call_native_openai_id");
+    const buildAgentTools = makeBuildTools([[new AIMessageChunk({ content: "done" })]]);
+
+    for await (const _ of runAgent(messages, "continue", "/tmp/ws", "ws-1", { ...noopDeps, buildAgentTools })) {
+      // drain
+    }
+
+    expect((messages[0] as AIMessage).tool_calls![0].id).toBe("call_native_openai_id");
+    expect((messages[1] as ToolMessage).tool_call_id).toBe("call_native_openai_id");
+  });
+
+  it("leaves canonical ids unchanged for Mistral because its gateway adapts only the outbound copy", async () => {
+    const messages = history("toolu_01A09q9rDJmwvLpPCJKtxpvB");
+    const buildAgentTools = makeBuildTools([[new AIMessageChunk({ content: "done" })]], "command ran", "mistral");
+
+    for await (const _ of runAgent(messages, "continue", "/tmp/ws", "ws-1", {
+      ...noopDeps,
+      loadConfig: () => ({ provider: "mistral", model: "mistral-medium-latest", apiKey: "sk" }) as never,
+      buildAgentTools,
+    })) {
+      // drain
+    }
+
+    expect((messages[0] as AIMessage).tool_calls![0].id).toBe("toolu_01A09q9rDJmwvLpPCJKtxpvB");
+    expect((messages[1] as ToolMessage).tool_call_id).toBe("toolu_01A09q9rDJmwvLpPCJKtxpvB");
+  });
+});
 
 // The real production workspace_restore handler, so runner-dispatch tests exercise the same code
 // path the app runs (no hand-mirrored copy that can silently drift out of sync).
@@ -235,7 +273,7 @@ describe("runAgent — history stays consistent across aborts", () => {
 
     for await (const event of runAgent([], "do work", "/tmp/ws", "ws-1", {
       ...noopDeps,
-      loadConfig: () => ({ provider: "deepseek", model: "deepseek-chat", apiKey: "sk-test" }) as never,
+      loadConfig: () => ({ provider: "deepseek", model: "deepseek-v4-flash", apiKey: "sk-test" }) as never,
       buildAgentTools,
     })) {
       events.push(event);
@@ -272,6 +310,55 @@ describe("runAgent — history stays consistent across aborts", () => {
     expect(toolTurn!.content).toBe("Let me list the files.");
     // No streaming-only artifact survives into persisted history.
     expect(JSON.stringify(messages)).not.toMatch(/thinking|input_json_delta/);
+  });
+
+  it("keeps Mistral reasoning private while restoring it for the next provider request", async () => {
+    const messages: BaseMessage[] = [];
+    const reasoningToolChunk = new AIMessageChunk({
+      content: [
+        {
+          index: 0,
+          type: "thinking",
+          thinking: [
+            { type: "text", text: "I should " },
+            { type: "text", text: "list the files." },
+          ],
+        },
+        { index: 1, type: "text", text: "Let me list the files." },
+      ] as never,
+      tool_call_chunks: [
+        { index: 2, id: "abc123XYZ", name: "execute_command", args: '{"cmd":"ls"}', type: "tool_call_chunk" },
+      ],
+    });
+    const buildAgentTools = makeBuildTools(
+      [[reasoningToolChunk], [new AIMessageChunk({ content: "done" })]],
+      "command ran",
+      "mistral",
+    );
+    const events: AgentEvent[] = [];
+
+    for await (const event of runAgent(messages, "list files", "/tmp/ws", "ws-1", {
+      ...noopDeps,
+      loadConfig: () => ({ provider: "mistral", model: "mistral-medium-latest", apiKey: "sk" }) as never,
+      buildAgentTools,
+    })) {
+      events.push(event);
+    }
+
+    const toolTurnIndex = messages.findIndex(
+      (message) => message instanceof AIMessage && (message.tool_calls?.length ?? 0) > 0,
+    );
+    const toolTurn = messages[toolTurnIndex] as AIMessage;
+    const outbound = prepareMistralMessages(messages)[toolTurnIndex] as AIMessage;
+
+    expect(toolTurn.content).toBe("Let me list the files.");
+    expect(outbound.content).toEqual([
+      { type: "thinking", thinking: [{ type: "text", text: "I should list the files." }] },
+      { type: "text", text: "Let me list the files." },
+    ]);
+    expect(events.filter((event) => event.type === "reasoning").map((event) => event.content)).toEqual([
+      "I should list the files.",
+    ]);
   });
 });
 
@@ -574,6 +661,19 @@ describe("runAgent — refuses to start without a usable provider", () => {
     const events = await collect({ provider: "deepseek", model: "deepseek-v4-flash" });
 
     expect(events[0]).toMatchObject({ type: "error", code: "PROVIDER_UNAVAILABLE" });
+  });
+
+  it("stops a retired model and requires an explicit UI choice", async () => {
+    const events = await collect({ provider: "mistral", model: "mistral-small-2603", apiKey: "sk" });
+
+    expect(events).toEqual([
+      {
+        type: "error",
+        code: "MODEL_UNAVAILABLE",
+        message: expect.stringContaining("choose a current model"),
+      },
+      { type: "done" },
+    ]);
   });
 
   // Closing the stream properly matters as much as the message: the SSE consumer and runBroker both

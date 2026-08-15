@@ -2,8 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/operations/models/catalog", () => ({
   getModelCatalog: () => ({
-    openai: { models: ["gpt-5.5"], reasoningEfforts: ["none", "low", "high"], thinking: {}, hasKey: true },
-    deepseek: { models: ["deepseek-v4-pro"], reasoningEfforts: [], thinking: {}, hasKey: false },
+    openai: { models: ["gpt-5.5"], reasoningEfforts: ["none", "low", "high"], hasKey: true },
+    deepseek: { models: ["deepseek-v4-pro"], reasoningEfforts: [], hasKey: false },
   }),
 }));
 
@@ -13,8 +13,12 @@ describe("GET /api/models", () => {
   it("returns one hierarchical provider catalog", async () => {
     expect(await GET().json()).toEqual({
       providers: {
-        openai: { models: ["gpt-5.5"], reasoningEfforts: ["none", "low", "high"], thinking: {}, hasKey: true },
-        deepseek: { models: ["deepseek-v4-pro"], reasoningEfforts: [], thinking: {}, hasKey: false },
+        openai: {
+          models: ["gpt-5.5"],
+          reasoningEfforts: ["none", "low", "high"],
+          hasKey: true,
+        },
+        deepseek: { models: ["deepseek-v4-pro"], reasoningEfforts: [], hasKey: false },
       },
     });
   });
@@ -31,7 +35,7 @@ describe("GET /api/models", () => {
 
     for (const [provider, entry] of Object.entries(providers)) {
       expect(typeof entry.hasKey, `${provider}.hasKey`).toBe("boolean");
-      expect(Object.keys(entry).sort(), provider).toEqual(["hasKey", "models", "reasoningEfforts", "thinking"]);
+      expect(Object.keys(entry).sort(), provider).toEqual(["hasKey", "models", "reasoningEfforts"]);
     }
   });
 });

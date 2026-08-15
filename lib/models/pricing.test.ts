@@ -67,6 +67,11 @@ describe("modelPricing", () => {
     expect(computeCost(tokens, "deepseek-v4-pro")).toBeCloseTo(expected, 12);
   });
 
+  it("prices Mistral cache reads at 10% of normal input", () => {
+    const rate = getRate("mistral-large-latest")!;
+    expect(rate.cachedInput).toBeCloseTo(rate.input * 0.1, 12);
+  });
+
   it("does not double-charge Anthropic cache-creation tokens folded into input_tokens", () => {
     const rate = getRate("claude-opus-4-8")!;
     // Providers report input_tokens as the total: here 1000 = 600 base + 300 cache_read + 100

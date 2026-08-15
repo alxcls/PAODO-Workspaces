@@ -31,9 +31,7 @@ const PROVIDERS = new Set(["anthropic", "openai", "deepseek", "mistral"]);
 //
 // This is the same mismatch that keeps Moonshot on models.dev, and Moonshot could move here too;
 // it deliberately hasn't, because that would reprice a model already shipping on a models.dev rate.
-// Mistral has no such history, and LiteLLM is the only source that carries its full catalog: models.dev
-// is missing the entire Ministral 3 generation and prices labs-devstral-small-2512 at $0, which would
-// silently report free runs — the one outcome ./pricing.ts exists to prevent.
+// Mistral has no such history, so its prefixed LiteLLM rows are safe to normalize.
 const LITELLM_PREFIXED = new Set(["mistral"]);
 
 // App provider id → models.dev provider id, for the fallback lookup. A provider added to
@@ -122,7 +120,7 @@ export function fillGaps(catalog: Catalog, modelsDev: Record<string, ModelsDevPr
   for (const [provider, entries] of Object.entries(AVAILABLE_MODELS)) {
     const devProvider = MODELS_DEV_PROVIDER[provider];
     if (!devProvider) continue;
-    for (const { id: model } of entries) {
+    for (const model of entries) {
       if (resolves(catalog, model)) continue;
       const cost = modelsDev[devProvider]?.models?.[model]?.cost;
       if (typeof cost?.input !== "number" || typeof cost?.output !== "number") continue;

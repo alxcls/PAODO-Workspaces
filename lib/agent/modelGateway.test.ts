@@ -1,7 +1,7 @@
 // The gateway is the only place the app talks to a provider: every call is measured, and announced
 // to the observer exactly once. A pacing layer cannot budget traffic it never sees.
 import { describe, it, expect } from "vitest";
-import { AIMessageChunk, HumanMessage } from "@langchain/core/messages";
+import { AIMessage, AIMessageChunk, HumanMessage, ToolMessage, type BaseMessage } from "@langchain/core/messages";
 import { createModelGateway, usageTokens, NO_USAGE, type ModelCallRecord } from "./modelGateway";
 import { ProviderConcurrency } from "./providerConcurrency";
 
@@ -24,17 +24,17 @@ function chunk(content: string, usage?: { input: number; output: number; reasoni
 // A chat double standing in for whatever the registry built. Records what it was asked for so the
 // gateway can be shown to pass the abort signal through rather than quietly dropping it.
 function fakeChat(chunks: AIMessageChunk[]) {
-  const seen: { signal?: AbortSignal }[] = [];
+  const seen: { messages: BaseMessage[]; signal?: AbortSignal }[] = [];
   return {
     seen,
-    stream: async (_messages: never, options?: { signal?: AbortSignal }) => {
-      seen.push({ ...(options?.signal ? { signal: options.signal } : {}) });
+    stream: async (messages: BaseMessage[], options?: { signal?: AbortSignal }) => {
+      seen.push({ messages, ...(options?.signal ? { signal: options.signal } : {}) });
       return (async function* () {
         for (const c of chunks) yield c;
       })();
     },
-    invoke: async (_messages: never, options?: { signal?: AbortSignal }) => {
-      seen.push({ ...(options?.signal ? { signal: options.signal } : {}) });
+    invoke: async (messages: BaseMessage[], options?: { signal?: AbortSignal }) => {
+      seen.push({ messages, ...(options?.signal ? { signal: options.signal } : {}) });
       return chunks[chunks.length - 1];
     },
     bindTools: () => fakeChat(chunks),
@@ -43,13 +43,13 @@ function fakeChat(chunks: AIMessageChunk[]) {
 
 // A private counter per gateway: the real one is process-wide on purpose, which would otherwise let
 // one test's calls show up in another's `concurrent`.
-function recordingGateway(chunks: AIMessageChunk[], chatOverride?: unknown) {
+function recordingGateway(chunks: AIMessageChunk[], chatOverride?: unknown, provider = "mistral") {
   const records: ModelCallRecord[] = [];
   const chat = (chatOverride ?? fakeChat(chunks)) as ReturnType<typeof fakeChat>;
   const concurrency = new ProviderConcurrency();
   const gateway = createModelGateway(chat as never, {
-    provider: "mistral",
-    model: "mistral-small-2603",
+    provider,
+    model: "mistral-medium-latest",
     observe: (record) => records.push(record),
     concurrency,
   });
@@ -112,7 +112,7 @@ describe("ModelGateway.stream", () => {
     expect(records).toHaveLength(1);
     expect(records[0]).toMatchObject({
       provider: "mistral",
-      model: "mistral-small-2603",
+      model: "mistral-medium-latest",
       stage: "limit_synthesis",
       partial: false,
       usage: { inputTokensTotal: 7, outputTokensTotal: 1 },
@@ -141,6 +141,36 @@ describe("ModelGateway.stream", () => {
     await gateway.stream(MESSAGES, { stage: "model_turn", signal: controller.signal });
     expect(chat.seen[0].signal).toBe(controller.signal);
   });
+
+  it("adapts foreign tool ids for Mistral without mutating the caller's history", async () => {
+    const nativeId = "toolu_01A09q9rDJmwvLpPCJKtxpvB";
+    const messages: BaseMessage[] = [
+      new AIMessage({ content: "", tool_calls: [{ id: nativeId, name: "file_read", args: {} }] }),
+      new ToolMessage({ tool_call_id: nativeId, content: "body" }),
+    ];
+    const { gateway, chat } = recordingGateway([chunk("done")]);
+
+    await gateway.stream(messages, { stage: "model_turn" });
+
+    const outboundId = (chat.seen[0].messages[0] as AIMessage).tool_calls![0].id!;
+    expect(outboundId).toMatch(/^[A-Za-z0-9]{9}$/);
+    expect((chat.seen[0].messages[1] as ToolMessage).tool_call_id).toBe(outboundId);
+    expect((messages[0] as AIMessage).tool_calls![0].id).toBe(nativeId);
+    expect((messages[1] as ToolMessage).tool_call_id).toBe(nativeId);
+  });
+
+  it("passes the exact original history to non-Mistral providers", async () => {
+    const messages: BaseMessage[] = [
+      new AIMessage({ content: "", tool_calls: [{ id: "call_openai_native", name: "file_read", args: {} }] }),
+      new ToolMessage({ tool_call_id: "call_openai_native", content: "body" }),
+    ];
+    const { gateway, chat } = recordingGateway([chunk("done")], undefined, "deepseek");
+
+    await gateway.stream(messages, { stage: "model_turn" });
+
+    expect(chat.seen[0].messages).toBe(messages);
+    expect((chat.seen[0].messages[0] as AIMessage).tool_calls![0].id).toBe("call_openai_native");
+  });
 });
 
 describe("ModelGateway.invoke", () => {
@@ -155,6 +185,22 @@ describe("ModelGateway.invoke", () => {
     expect(records).toHaveLength(1);
     expect(records[0]).toMatchObject({ stage: "compaction", partial: false });
   });
+
+  it("uses the same Mistral boundary adapter as streaming calls", async () => {
+    const nativeId = "call_openai_native";
+    const messages: BaseMessage[] = [
+      new AIMessage({ content: "", tool_calls: [{ id: nativeId, name: "file_read", args: {} }] }),
+      new ToolMessage({ tool_call_id: nativeId, content: "body" }),
+    ];
+    const { gateway, chat } = recordingGateway([chunk("BRIEF")]);
+
+    await gateway.invoke(messages, { stage: "compaction" });
+
+    const outboundId = (chat.seen[0].messages[0] as AIMessage).tool_calls![0].id!;
+    expect(outboundId).toMatch(/^[A-Za-z0-9]{9}$/);
+    expect((chat.seen[0].messages[1] as ToolMessage).tool_call_id).toBe(outboundId);
+    expect((messages[0] as AIMessage).tool_calls![0].id).toBe(nativeId);
+  });
 });
 
 describe("ModelGateway.bindTools", () => {
@@ -165,7 +211,7 @@ describe("ModelGateway.bindTools", () => {
     const bound = gateway.bindTools([]);
 
     expect(bound.provider).toBe("mistral");
-    expect(bound.model).toBe("mistral-small-2603");
+    expect(bound.model).toBe("mistral-medium-latest");
 
     const call = await bound.stream(MESSAGES, { stage: "model_turn" });
     for await (const _ of call.chunks) {
@@ -178,7 +224,7 @@ describe("ModelGateway.bindTools", () => {
   it("names the provider when the underlying client cannot bind tools", () => {
     const gateway = createModelGateway({ stream: async () => [], invoke: async () => chunk("") } as never, {
       provider: "mistral",
-      model: "mistral-small-2603",
+      model: "mistral-medium-latest",
     });
     expect(() => gateway.bindTools([])).toThrow(/mistral/);
   });

@@ -4,10 +4,14 @@ import { AIMessage, HumanMessage } from "@langchain/core/messages";
 import type { AIMessageChunk, BaseMessage } from "@langchain/core/messages";
 import type { Logger } from "pino";
 import { throttleLog } from "../infra/logThrottle";
-import { newToolCallId } from "./toolCallIds";
-import { contentToText } from "@/lib/transcript/content";
 import type { AgentEvent } from "./runner";
 import type { ModelGateway, ModelUsage } from "./modelGateway";
+import {
+  mistralReplayContent,
+  mistralThinkingText,
+  providerToolCallId,
+  type MistralReplayContent,
+} from "./mistralProtocol";
 import { classifyProviderFailure, providerFailureMessage } from "./providerFailure";
 
 export type ResolvedToolCall = { id: string; name: string; args: Record<string, unknown> };
@@ -17,16 +21,26 @@ export type TurnEvent =
   | { type: "reasoning"; content: string }
   // Measured usage, not the raw accumulated chunk: the runner persists coalesced text instead, and
   // handing it the chunk invited every consumer to do its own token arithmetic.
-  | { type: "turn_complete"; fullText: string; toolCalls: ResolvedToolCall[]; usage: ModelUsage };
+  | {
+      type: "turn_complete";
+      fullText: string;
+      toolCalls: ResolvedToolCall[];
+      usage: ModelUsage;
+      mistralReplayContent?: MistralReplayContent;
+    };
 
 type PartialToolCall = { id: string; name: string; args: string };
 type ContentBlock =
   | { type: "text"; text?: string }
   | { type: "reasoning"; reasoning?: string }
-  | { type: "thinking"; thinking?: string }
+  | { type: "thinking"; thinking?: unknown }
   | { type: string };
 
-function extractContentFromChunk(chunk: AIMessageChunk, log: Logger): { tokens: string[]; reasoning: string[] } {
+function extractContentFromChunk(
+  chunk: AIMessageChunk,
+  provider: string,
+  log: Logger,
+): { tokens: string[]; reasoning: string[] } {
   const tokens: string[] = [];
   const reasoning: string[] = [];
   const rawContent = chunk.content;
@@ -46,7 +60,15 @@ function extractContentFromChunk(chunk: AIMessageChunk, log: Logger): { tokens: 
           if ("reasoning" in block && block.reasoning) reasoning.push(block.reasoning);
           break;
         case "thinking":
-          if ("thinking" in block && block.thinking) reasoning.push(block.thinking);
+          if ("thinking" in block) {
+            const text =
+              provider === "mistral"
+                ? mistralThinkingText(block.thinking)
+                : typeof block.thinking === "string"
+                  ? block.thinking
+                  : "";
+            if (text) reasoning.push(text);
+          }
           break;
         default: {
           const suppressed = throttleLog("agent_content_block_unhandled");
@@ -71,7 +93,7 @@ function extractContentFromChunk(chunk: AIMessageChunk, log: Logger): { tokens: 
   return { tokens, reasoning };
 }
 
-function assembleToolCalls(partials: PartialToolCall[]): ResolvedToolCall[] {
+function assembleToolCalls(partials: PartialToolCall[], provider: string): ResolvedToolCall[] {
   const minted = new Set<string>();
   return partials
     .filter((partial) => partial.name)
@@ -82,9 +104,8 @@ function assembleToolCalls(partials: PartialToolCall[]): ResolvedToolCall[] {
       } catch {
         // Malformed provider deltas are surfaced to the tool as empty args.
       }
-      // An id every provider accepts, minted portable: it is replayed on the NEXT turn of this same
-      // run, behind the run-start normalization pass, which cannot reach it.
-      return { id: partial.id || newToolCallId(minted), name: partial.name, args };
+      const id = providerToolCallId(provider, partial.id, minted);
+      return { id, name: partial.name, args };
     });
 }
 
@@ -97,18 +118,22 @@ export async function* streamModelTurn(
 ): AsyncGenerator<TurnEvent> {
   const partials: PartialToolCall[] = [];
   let fullText = "";
+  let fullReasoning = "";
   const startedAt = Date.now();
   const call = await modelWithTools.stream(messages, { stage: "model_turn", signal });
   let timeToFirstTokenMs: number | null = null;
 
   for await (const chunk of call.chunks) {
     if (timeToFirstTokenMs === null) timeToFirstTokenMs = Date.now() - startedAt;
-    const { tokens, reasoning } = extractContentFromChunk(chunk, log);
+    const { tokens, reasoning } = extractContentFromChunk(chunk, modelWithTools.provider, log);
     for (const content of tokens) {
       fullText += content;
       yield { type: "token", content };
     }
-    for (const content of reasoning) yield { type: "reasoning", content };
+    for (const content of reasoning) {
+      fullReasoning += content;
+      yield { type: "reasoning", content };
+    }
 
     for (const delta of chunk.tool_call_chunks ?? []) {
       const index = delta.index ?? 0;
@@ -121,7 +146,15 @@ export async function* streamModelTurn(
 
   log.debug({ iteration, ttftMs: timeToFirstTokenMs, streamMs: Date.now() - startedAt }, "model stream timing");
   // Read after the loop, where the gateway has finished measuring the drained stream.
-  yield { type: "turn_complete", fullText, toolCalls: assembleToolCalls(partials), usage: call.usage() };
+  yield {
+    type: "turn_complete",
+    fullText,
+    toolCalls: assembleToolCalls(partials, modelWithTools.provider),
+    usage: call.usage(),
+    ...(modelWithTools.provider === "mistral"
+      ? { mistralReplayContent: mistralReplayContent(fullReasoning, fullText) }
+      : {}),
+  };
 }
 
 export async function* synthesizeLimit(
@@ -144,15 +177,29 @@ export async function* synthesizeLimit(
     );
     const turnId = crypto.randomUUID();
     let text = "";
+    let reasoning = "";
     for await (const chunk of call.chunks) {
-      const content = contentToText(chunk.content);
-      if (content) {
-        text += content;
-        yield { type: "token", content };
+      const extracted = extractContentFromChunk(chunk, model.provider, log);
+      reasoning += extracted.reasoning.join("");
+      for (const content of extracted.tokens) {
+        if (content) {
+          text += content;
+          yield { type: "token", content };
+        }
       }
     }
     if (text) {
-      messages.push(new AIMessage({ content: text, response_metadata: { executionTurnId: turnId } }));
+      messages.push(
+        new AIMessage({
+          content: text,
+          response_metadata: {
+            executionTurnId: turnId,
+            ...(model.provider === "mistral" && reasoning
+              ? { mistralReplayContent: mistralReplayContent(reasoning, text) }
+              : {}),
+          },
+        }),
+      );
       yield {
         type: "turn_usage",
         turnId,

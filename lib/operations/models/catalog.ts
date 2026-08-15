@@ -7,20 +7,13 @@
 // empty picker — no way in from a fresh install, since keys are now entered in the app. What a key
 // changes is `hasKey`, so a caller can see that a provider is offered but cannot currently run.
 import { availableProviders, getProviderMetadata } from "@/lib/agent/buildModel";
-import { type ReasoningEffort, type ThinkingSupport } from "@/lib/models/llmSelection";
-import { AVAILABLE_MODELS, listModels } from "@/lib/models/registry";
+import type { ReasoningEffort } from "@/lib/models/llmSelection";
+import { listModels } from "@/lib/models/registry";
 import { providerHasKey } from "@/lib/operations/settings/providerKeys";
 
 export interface ProviderModelCatalog {
   models: string[];
   reasoningEfforts: ReasoningEffort[];
-  /**
-   * Per-model thinking capability, keyed by model id — the picker reads it to decide whether to draw
-   * the thinking checkbox for the selected model, and whether that box is interactive or checked and
-   * disabled. Per model rather than per provider because Mistral serves all three kinds at once;
-   * see ThinkingSupport. Every id in `models` has an entry, so the UI never has to guess a default.
-   */
-  thinking: Record<string, ThinkingSupport>;
   /**
    * Whether an API key is stored for this provider — that is, whether choosing it yields a workspace
    * that can actually run.
@@ -49,7 +42,6 @@ export function getModelCatalog(
       {
         models: listModels(provider),
         reasoningEfforts: [...getProviderMetadata(provider).reasoningEfforts],
-        thinking: Object.fromEntries((AVAILABLE_MODELS[provider] ?? []).map((entry) => [entry.id, entry.thinking])),
         hasKey: hasKey(provider),
       },
     ]),

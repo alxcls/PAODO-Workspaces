@@ -3,6 +3,7 @@
 import type { AIMessageChunk, BaseMessage } from "@langchain/core/messages";
 import type { BindToolsInput } from "@langchain/core/language_models/chat_models";
 import { createLogger } from "../infra/logger";
+import { prepareMistralMessages } from "./mistralProtocol";
 import { providerConcurrency, type ProviderConcurrencyGate } from "./providerConcurrency";
 
 const log = createLogger("model");
@@ -127,6 +128,10 @@ export function createModelGateway(chat: BindableChatModel, options: ModelGatewa
   const { provider, model } = options;
   const observe = options.observe ?? logCall;
   const concurrency = options.concurrency ?? providerConcurrency;
+  // Mistral's wire format is quarantined here. Other providers receive the caller's exact array;
+  // Mistral receives a short-lived clone with its reasoning blocks and tool ids restored.
+  const outboundMessages = (messages: BaseMessage[]) =>
+    provider === "mistral" ? prepareMistralMessages(messages) : messages;
 
   // Every call is bracketed by this: enter before the request leaves, release exactly once when it
   // settles, and report what it cost. Both call shapes go through it so neither can skip accounting.
@@ -154,7 +159,7 @@ export function createModelGateway(chat: BindableChatModel, options: ModelGatewa
 
       let raw: AsyncIterable<AIMessageChunk>;
       try {
-        raw = await chat.stream(messages, { signal: call.signal });
+        raw = await chat.stream(outboundMessages(messages), { signal: call.signal });
       } catch (err) {
         settled = true;
         finish(NO_USAGE, true, false);
@@ -192,7 +197,7 @@ export function createModelGateway(chat: BindableChatModel, options: ModelGatewa
       const finish = begin(call.stage);
       let message: AIMessageChunk;
       try {
-        message = await chat.invoke(messages, { signal: call.signal });
+        message = await chat.invoke(outboundMessages(messages), { signal: call.signal });
       } catch (err) {
         finish(NO_USAGE, true, false);
         throw err;

@@ -5,10 +5,10 @@ import { ChatOpenAI } from "@langchain/openai";
 import { ChatAnthropic } from "@langchain/anthropic";
 import type { LLMProviderConfig } from "./interfaces";
 import { createModelGateway, type ModelCallObserver, type ModelGateway } from "./modelGateway";
-import { THINKING_OFF_EFFORT, type ReasoningEffort } from "../models/llmSelection";
-import { listModels, thinkingSupport } from "../models/registry";
+import { mistralReasoningConfig } from "./mistralProtocol";
+import type { ReasoningEffort } from "../models/llmSelection";
+import { listModels } from "../models/registry";
 import { firstAvailableSelection, type ModelSelection, type ModelVocabulary } from "../models/selection";
-import { ALPHANUMERIC, narrowestConstraint, type ToolCallIdConstraint } from "./toolCallIdConstraint";
 
 // Legacy extended-thinking budgets, keyed by the workspace's reasoning-effort knob. Used only for
 // models that still accept thinking:{type:"enabled", budget_tokens} — see ANTHROPIC_ADAPTIVE_MODELS.
@@ -38,15 +38,6 @@ export function anthropicThinkingConfig(model: string, effort: ReasoningEffort) 
   return { thinking: { type: "enabled" as const, budget_tokens: ANTHROPIC_THINKING_BUDGET[effort] ?? 10_000 } };
 }
 
-// Mistral's reasoning field, or nothing: only registry `toggle` models accept it, magistral 400s on
-// its mere presence. Via modelKwargs because the typed field is OpenAI's union — as with Moonshot.
-export function mistralReasoningConfig(model: string, effort: ReasoningEffort) {
-  if (thinkingSupport("mistral", model) !== "toggle") return {};
-  // Mistral accepts "none" and "high" only. Collapse anything else rather than trust it: a legacy
-  // selection carrying another provider's level must not reach the API as an unknown value.
-  return { modelKwargs: { reasoning_effort: effort === THINKING_OFF_EFFORT ? "none" : "high" } };
-}
-
 // The capability half of a provider entry — the only part callers outside this module see.
 interface ProviderMetadata {
   supportsPromptCaching: boolean;
@@ -64,16 +55,6 @@ interface ProviderDescriptor extends ProviderMetadata {
    * Named per provider rather than derived from the id, so the var is greppable from the registry.
    */
   availabilityEnv: string;
-  /**
-   * What this provider requires of an inbound tool-call id, when it requires anything. Omitted means
-   * permissive — it accepts whatever the app already stores.
-   *
-   * Declared here, beside the provider's other facts, rather than hardcoded in the module that mints
-   * ids: the app stores ONE id shape for every provider (lib/agent/toolCallIds.ts explains why), so
-   * the shape is the intersection of what is declared across this record. A provider whose demand
-   * cannot be reconciled with another's fails at module load instead of at request time.
-   */
-  toolCallIdConstraint?: ToolCallIdConstraint;
   build: (config: LLMProviderConfig) => ChatOpenAI | ChatAnthropic;
 }
 
@@ -155,15 +136,10 @@ const PROVIDERS: Record<string, ProviderDescriptor> = {
   },
   mistral: {
     availabilityEnv: "MISTRAL_AVAILABLE",
-    // The only provider validating inbound tool-call ids: anything but exactly 9 alphanumerics 400s.
-    // This one declaration narrows the app's canonical id shape; the other four already accept it.
-    toolCallIdConstraint: { name: "mistral", alphabet: ALPHANUMERIC, minLength: 9, maxLength: 9 },
-    // FALSE DOES NOT MEAN UNCACHED. The flag asks whether the prompt builder must mark the cached
-    // prefix — an Anthropic-only block. Mistral caches automatically and discounts with this false.
+    // This flag controls Anthropic-style cache_control markers; Mistral does not use those markers.
     supportsPromptCaching: false,
-    // A binary dial, so the picker renders a checkbox rather than a dropdown. "none" appears here
-    // because it is the only storable representation of an unchecked box (see THINKING_OFF_EFFORT).
-    reasoningEfforts: [THINKING_OFF_EFFORT, "high"],
+    // Mistral reasoning is model-owned and always on when available, not a workspace setting.
+    reasoningEfforts: [],
     build: (config) =>
       new ChatOpenAI({
         model: config.model,
@@ -172,7 +148,7 @@ const PROVIDERS: Record<string, ProviderDescriptor> = {
           baseURL: "https://api.mistral.ai/v1",
           apiKey: config.apiKey,
         },
-        ...mistralReasoningConfig(config.model, config.reasoningEffort),
+        ...mistralReasoningConfig(config.model),
       }),
   },
 };
@@ -215,21 +191,6 @@ export function buildModel(config: LLMProviderConfig, options: { observe?: Model
 // The providers the app supports — the source of truth for the UI provider picker and the API-side
 // validation of a workspace's stored provider. Derived from the registry so it can't drift.
 export const SUPPORTED_PROVIDERS = Object.keys(PROVIDERS);
-
-/**
- * The one tool-call id shape every supported provider accepts — the intersection of what they
- * declare above, which lib/agent/toolCallIds.ts generates and enforces against.
- *
- * Resolved at module load ON PURPOSE. If a provider is ever added whose demand cannot be reconciled
- * with an existing one, this throws while the process starts, on the branch that added it, naming
- * both constraints. The failure it replaces is the bad one: a 400 at request time, on a conversation
- * that worked yesterday, about ids the run did not create.
- */
-export const TOOL_CALL_ID_CONSTRAINT = narrowestConstraint(
-  Object.values(PROVIDERS)
-    .map((descriptor) => descriptor.toolCallIdConstraint)
-    .filter((constraint): constraint is ToolCallIdConstraint => constraint !== undefined),
-);
 
 /**
  * Whether a provider is offered in this deployment, per its `<PROVIDER>_AVAILABLE` .env var.

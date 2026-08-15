@@ -26,36 +26,14 @@ describe("model catalog", () => {
       anthropic: {
         models: ["claude-haiku-4-5", "claude-sonnet-5", "claude-opus-4-8"],
         reasoningEfforts: ["low", "medium", "high", "xhigh", "max"],
-        // Every model in `models` carries a thinking entry, so the picker never has to guess a
-        // default for one of them. Anthropic's are all "always": buildModel sends a thinking config
-        // on every request, so the checkbox shows checked and disabled rather than pretending the
-        // user could turn it off.
-        thinking: {
-          "claude-haiku-4-5": "always",
-          "claude-sonnet-5": "always",
-          "claude-opus-4-8": "always",
-        },
         hasKey: true,
       },
       deepseek: {
         models: ["deepseek-v4-flash", "deepseek-v4-pro"],
         reasoningEfforts: [],
-        thinking: { "deepseek-v4-flash": "never", "deepseek-v4-pro": "never" },
         hasKey: true,
       },
     });
-  });
-
-  // Mistral is why thinking is per-model: one provider id serving a model that toggles, a model that
-  // always thinks and rejects the switch, and models with no thinking mode at all.
-  it("describes thinking per model, not per provider", () => {
-    const { mistral } = getModelCatalog(only("mistral"), keyed("mistral"));
-    expect(mistral.thinking["mistral-small-2603"]).toBe("toggle");
-    expect(mistral.thinking["magistral-medium-latest"]).toBe("always");
-    expect(mistral.thinking["codestral-2508"]).toBe("never");
-    // Nothing may be missing an entry — an absent key would silently read as "never" in the picker
-    // and hide a control the model genuinely offers.
-    for (const model of mistral.models) expect(mistral.thinking[model], `no thinking for ${model}`).toBeDefined();
   });
 
   // The dead end this replaces: the catalog used to publish only keyed providers, so a deployment
@@ -78,7 +56,7 @@ describe("model catalog", () => {
   // masked hint and set-date live on GET /api/settings/provider-keys, which the CLI cannot reach.
   it("carries no key material — only the boolean", () => {
     const catalog = getModelCatalog(only("deepseek"), keyed("deepseek"));
-    expect(Object.keys(catalog.deepseek).sort()).toEqual(["hasKey", "models", "reasoningEfforts", "thinking"]);
+    expect(Object.keys(catalog.deepseek).sort()).toEqual(["hasKey", "models", "reasoningEfforts"]);
   });
 
   it("omits a provider .env switched off, models and all", () => {

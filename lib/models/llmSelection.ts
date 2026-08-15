@@ -28,28 +28,9 @@ export type ReasoningEffort = "none" | "minimal" | "low" | "medium" | "high" | "
 export const NO_DIAL_EFFORT: ReasoningEffort = "low";
 
 /**
- * Whether a MODEL thinks, and whether the caller gets a say. Model-level rather than provider-level
- * because providers are no longer uniform: Mistral offers models that take a thinking switch
- * (mistral-small-4, mistral-medium-3.5), models that always think and REJECT the switch with a 400
- * (the magistral pair), and models that never think (devstral, codestral, ministral) — all under one
- * provider id, so `reasoningEfforts` alone can't describe them.
+ * How "thinking off" is stored: a `toggle` provider with its box unchecked runs at effort "none".
  *
- * - `toggle` — thinking can be turned on and off. The picker shows an interactive checkbox.
- * - `always` — the model always thinks and offers no way to stop it. The picker shows the checkbox
- *   checked and disabled, because "on" is the truth and pretending it's a choice would be a lie.
- * - `never`  — the model has no thinking mode. The picker shows no checkbox at all.
- *
- * Each model is classified by what the app ALREADY does with it today, not by what the vendor's API
- * might additionally permit. Anthropic and Moonshot models are `always` because buildModel
- * unconditionally sends a thinking config for them; reclassifying one as `toggle` is a deliberate
- * behavior change to that provider, not a relabelling.
- */
-export type ThinkingSupport = "never" | "toggle" | "always";
-
-/**
- * How "thinking off" is stored: a `toggle` model with its box unchecked runs at effort "none".
- *
- * This is why a `toggle` model's provider must offer "none" in its reasoningEfforts — there would
+ * This is why a `toggle` provider must offer "none" in its reasoningEfforts — there would
  * otherwise be no storable representation of the unchecked state. lib/models/registry.test.ts
  * asserts that invariant across every provider so a future model can't quietly violate it.
  */

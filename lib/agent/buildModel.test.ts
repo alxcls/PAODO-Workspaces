@@ -11,7 +11,6 @@ import {
   providerAvailabilityEnv,
 } from "./buildModel";
 import type { LLMProviderConfig } from "./interfaces";
-import type { ReasoningEffort } from "../models/llmSelection";
 
 describe("anthropicThinkingConfig", () => {
   it("uses adaptive thinking + effort for claude-sonnet-5", () => {
@@ -90,7 +89,7 @@ describe("buildChatModel", () => {
     ["openai", "gpt-5.5"],
     ["deepseek", "deepseek-v4-pro"],
     ["moonshot", "kimi-k3"],
-    ["mistral", "mistral-small-2603"],
+    ["mistral", "mistral-medium-latest"],
   ])("wires the selected model and key into the %s client", (provider, model) => {
     const m = buildChatModel(config({ provider, model, apiKey: `key-${provider}` })) as unknown as {
       model: string;
@@ -105,7 +104,7 @@ describe("buildChatModel", () => {
   it.each([
     ["deepseek", "deepseek-v4-pro", "https://api.deepseek.com/v1"],
     ["moonshot", "kimi-k3", "https://api.moonshot.ai/v1"],
-    ["mistral", "mistral-small-2603", "https://api.mistral.ai/v1"],
+    ["mistral", "mistral-medium-latest", "https://api.mistral.ai/v1"],
   ])("points %s at its own endpoint, never another vendor's", (provider, model, baseURL) => {
     const m = buildChatModel(config({ provider, model, apiKey: `key-${provider}` })) as unknown as {
       clientConfig: { baseURL?: string; apiKey?: string };
@@ -132,40 +131,19 @@ describe("buildChatModel", () => {
     expect(m.modelKwargs).toEqual({ reasoning_effort: "max" });
   });
 
-  // Mistral decides thinking per model, and gets it wrong two ways: the field 400s on magistral, and
-  // omitting it on Small 4 means thinking silently never happens. Neither is visible from the picker.
-  it.each([
-    ["mistral-small-2603", "high", { reasoning_effort: "high" }],
-    ["mistral-small-2603", "none", { reasoning_effort: "none" }],
-    ["mistral-medium-2604", "high", { reasoning_effort: "high" }],
-  ])("sends reasoning_effort for the toggle model %s at %s", (model, effort, expected) => {
+  it("always enables high reasoning for mistral-medium-latest", () => {
     const m = buildChatModel(
-      config({ provider: "mistral", model, reasoningEffort: effort as ReasoningEffort }),
+      config({ provider: "mistral", model: "mistral-medium-latest", reasoningEffort: "none" }),
     ) as unknown as { modelKwargs?: Record<string, unknown> };
-    expect(m.modelKwargs).toEqual(expected);
+    expect(m.modelKwargs).toEqual({ reasoning_effort: "high" });
   });
 
-  it.each([
-    ["magistral-medium-latest", "reasons natively and 400s if the field is present at all"],
-    ["magistral-small-latest", "reasons natively and 400s if the field is present at all"],
-    ["codestral-2508", "has no thinking mode to address"],
-    ["ministral-3-3b-2512", "has no thinking mode to address"],
-  ])("omits reasoning_effort entirely for %s — it %s", (model) => {
+  it("does not send reasoning_effort to mistral-large-latest, which does not support it", () => {
+    const model = "mistral-large-latest";
     const m = buildChatModel(config({ provider: "mistral", model, reasoningEffort: "high" })) as unknown as {
       modelKwargs?: Record<string, unknown>;
     };
-    // Absence of the KEY is the contract, not an absent modelKwargs: ChatOpenAI defaults it to {},
-    // which adds no request field. What must never appear is reasoning_effort itself.
     expect(m.modelKwargs ?? {}).not.toHaveProperty("reasoning_effort");
-  });
-
-  // A workspace moved onto mistral can still hold "max" or "medium". Mistral knows only none|high,
-  // so anything not off must arrive as "high" rather than be forwarded verbatim into a 400.
-  it("collapses an effort level mistral doesn't know rather than forwarding it", () => {
-    const m = buildChatModel(
-      config({ provider: "mistral", model: "mistral-small-2603", reasoningEffort: "max" }),
-    ) as unknown as { modelKwargs: Record<string, unknown> };
-    expect(m.modelKwargs).toEqual({ reasoning_effort: "high" });
   });
 
   it("rejects an unregistered provider instead of falling back to another vendor's builder", () => {
@@ -179,9 +157,9 @@ describe("buildChatModel", () => {
   // The seam itself: a buildModel handing back a bare SDK client would route the app around every
   // cross-cutting concern while still typechecking. Identity matters too — it is the policy key.
   it("hands callers a gateway rather than the vendor client", () => {
-    const gateway = buildModel(config({ provider: "mistral", model: "mistral-small-2603" }));
+    const gateway = buildModel(config({ provider: "mistral", model: "mistral-medium-latest" }));
     expect(gateway.provider).toBe("mistral");
-    expect(gateway.model).toBe("mistral-small-2603");
+    expect(gateway.model).toBe("mistral-medium-latest");
     expect(typeof gateway.stream).toBe("function");
     expect(typeof gateway.invoke).toBe("function");
     // No vendor internals reachable through it — the tests above had to unwrap for a reason.
@@ -190,9 +168,9 @@ describe("buildChatModel", () => {
   });
 
   it("keeps provider identity across bindTools, so bound and bare calls share one policy", () => {
-    const gateway = buildModel(config({ provider: "mistral", model: "mistral-small-2603" })).bindTools([]);
+    const gateway = buildModel(config({ provider: "mistral", model: "mistral-medium-latest" })).bindTools([]);
     expect(gateway.provider).toBe("mistral");
-    expect(gateway.model).toBe("mistral-small-2603");
+    expect(gateway.model).toBe("mistral-medium-latest");
   });
 
   // Iterates the registry rather than naming providers: a sixth entry that forgets NO_SDK_RETRY fails

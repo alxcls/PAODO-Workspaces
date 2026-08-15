@@ -88,7 +88,11 @@ export function getRate(modelId: string | undefined): Rate | undefined {
   if (!e) return undefined;
   return {
     input: e.input_cost_per_token,
-    cachedInput: e.cache_read_input_token_cost ?? e.input_cost_per_token,
+    // Mistral bills cache hits at 10% of the normal input rate. Its LiteLLM rows do not currently
+    // carry that field, so supply the documented rate here while still preferring an explicit one.
+    cachedInput:
+      e.cache_read_input_token_cost ??
+      (e.provider === "mistral" ? e.input_cost_per_token * 0.1 : e.input_cost_per_token),
     cacheCreation: e.cache_creation_input_token_cost ?? e.input_cost_per_token,
     output: e.output_cost_per_token,
   };

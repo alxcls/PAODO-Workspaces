@@ -277,6 +277,13 @@ describe("preflightProviderFailure", () => {
     expect(blocked!.message).toContain("Settings");
   });
 
+  it("stops a retired model without silently replacing it", () => {
+    const blocked = preflightProviderFailure({ provider: "anthropic", model: "claude-retired", apiKey: "sk" }, OFFERED);
+    expect(blocked).toMatchObject({ code: "MODEL_UNAVAILABLE" });
+    expect(blocked!.message).toContain("claude-retired");
+    expect(blocked!.message).toContain("choose a current model");
+  });
+
   // The distinction that earns the second code: both end with no key in the store, so reporting the
   // consequence sends this operator to a form that will not list the provider.
   it("blames the switch, not the missing key, for a withdrawn provider", () => {
@@ -305,6 +312,7 @@ describe("preflightProviderFailure", () => {
 describe("TERMINAL_PROVIDER_CODES", () => {
   it("covers every way a provider can make a run unrunnable", () => {
     expect([...TERMINAL_PROVIDER_CODES].sort()).toEqual([
+      "MODEL_UNAVAILABLE",
       "PROVIDER_CREDIT_EXHAUSTED",
       "PROVIDER_KEY_INVALID",
       "PROVIDER_KEY_MISSING",
@@ -318,9 +326,9 @@ describe("TERMINAL_PROVIDER_CODES", () => {
     for (const { code, retryable } of CLASSIFIED_PROVIDER_FAILURES) {
       expect(isTerminalProviderCode(code)).toBe(!retryable);
     }
-    // The locally-known pair is unconditional: no amount of waiting switches a provider back on or
-    // enters a key.
+    // Locally-known failures are unconditional: waiting cannot restore a provider/model or enter a key.
     expect(isTerminalProviderCode("PROVIDER_KEY_MISSING")).toBe(true);
+    expect(isTerminalProviderCode("MODEL_UNAVAILABLE")).toBe(true);
     expect(isTerminalProviderCode("PROVIDER_UNAVAILABLE")).toBe(true);
   });
 

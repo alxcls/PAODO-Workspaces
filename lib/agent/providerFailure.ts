@@ -1,10 +1,12 @@
 // Every way a run cannot reach a working model: the vocabulary, the rules that recognize each cause
 // in the provider's own wording, and its message. Locally-known causes are in preflight, below.
 import { throttleLog } from "../infra/logThrottle";
+import { listModels } from "../models/registry";
 
 export const PROVIDER_CREDIT_EXHAUSTED_CODE = "PROVIDER_CREDIT_EXHAUSTED" as const;
 export const PROVIDER_KEY_INVALID_CODE = "PROVIDER_KEY_INVALID" as const;
 export const PROVIDER_KEY_MISSING_CODE = "PROVIDER_KEY_MISSING" as const;
+export const MODEL_UNAVAILABLE_CODE = "MODEL_UNAVAILABLE" as const;
 export const PROVIDER_RATE_LIMITED_CODE = "PROVIDER_RATE_LIMITED" as const;
 export const PROVIDER_UNAVAILABLE_CODE = "PROVIDER_UNAVAILABLE" as const;
 
@@ -206,7 +208,10 @@ type Rule = (typeof RULES)[number];
 export type ClassifiedProviderCode = Rule["code"];
 
 /** A cause known locally, before any request. */
-export type LocalProviderCode = typeof PROVIDER_UNAVAILABLE_CODE | typeof PROVIDER_KEY_MISSING_CODE;
+export type LocalProviderCode =
+  | typeof PROVIDER_UNAVAILABLE_CODE
+  | typeof PROVIDER_KEY_MISSING_CODE
+  | typeof MODEL_UNAVAILABLE_CODE;
 
 export type ProviderFailureCode = ClassifiedProviderCode | LocalProviderCode;
 
@@ -228,6 +233,7 @@ export const CLASSIFIED_PROVIDER_FAILURES: readonly { code: ClassifiedProviderCo
 export const TERMINAL_PROVIDER_CODES: readonly TerminalProviderCode[] = [
   PROVIDER_UNAVAILABLE_CODE,
   PROVIDER_KEY_MISSING_CODE,
+  MODEL_UNAVAILABLE_CODE,
   // The cast carries what the filter proves and the type system cannot: exactly the rules whose
   // `retryable` is false, which is how TerminalProviderCode is defined.
   ...CLASSIFIED_PROVIDER_FAILURES.filter(({ retryable }) => !retryable).map(
@@ -323,6 +329,14 @@ export function preflightProviderFailure(
         `This workspace is set to ${config.provider}, which this deployment has switched off ` +
         `(${config.provider.toUpperCase()}_AVAILABLE=false). Its stored API key was deleted when it was ` +
         `withdrawn. Pick another provider for this workspace, or switch ${config.provider} back on.`,
+    };
+  }
+  if (!listModels(config.provider).includes(config.model)) {
+    return {
+      code: MODEL_UNAVAILABLE_CODE,
+      message:
+        `This workspace is set to ${config.model}, which is no longer available for ${config.provider}. ` +
+        "Open the workspace Model block, click Edit, and choose a current model. Nothing was sent to the provider.",
     };
   }
   if (!config.apiKey) {

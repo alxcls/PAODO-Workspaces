@@ -1,7 +1,7 @@
 // Public workspace projections and trigger-neutral queries.
 import type { IWorkspaceStore } from "@/lib/infra/interfaces";
 import { getStore } from "@/lib/infra/services";
-import { DEFAULT_LLM } from "@/lib/models/llmSelection";
+import { defaultModelSelection } from "@/lib/operations/models/catalog";
 import { getProviderMetadata } from "@/lib/agent/buildModel";
 import type { Workspace } from "@/lib/workspace/types";
 import type { ModelSelection } from "@/lib/models/selection";
@@ -32,12 +32,18 @@ export type PublicModelSelection = {
 export type WorkspaceReader = Pick<IWorkspaceStore, "getWorkspace" | "listWorkspaces">;
 export type WorkspaceLookup = Pick<IWorkspaceStore, "getWorkspace">;
 
-/** A workspace's stored model choice, with defaults applied for fields it never set. */
+/**
+ * A workspace's stored model choice, with defaults applied for fields it never set. The defaults come
+ * from the available catalog, so a workspace that never picked shows and runs a provider .env actually
+ * allows. A workspace that DID pick keeps its choice even if that provider is no longer available —
+ * withdrawing a provider stops it being offered, it does not rewrite selections already made.
+ */
 export function currentModelSelection(workspace: Workspace): ModelSelection {
+  const fallback = defaultModelSelection();
   return {
-    provider: workspace.llmProvider ?? DEFAULT_LLM.provider,
-    model: workspace.llmModel ?? DEFAULT_LLM.model,
-    reasoningEffort: workspace.reasoningEffort ?? DEFAULT_LLM.reasoningEffort,
+    provider: workspace.llmProvider ?? fallback.provider,
+    model: workspace.llmModel ?? fallback.model,
+    reasoningEffort: workspace.reasoningEffort ?? fallback.reasoningEffort,
   };
 }
 

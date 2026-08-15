@@ -1,10 +1,9 @@
 // loadAgentConfig resolves provider/model/reasoning-effort from the workspace's stored selection,
-// falling back to DEFAULT_LLM (deepseek-v4-flash) when the workspace hasn't picked, and resolves the
+// falling back to the first AVAILABLE provider when the workspace hasn't picked, and resolves the
 // API key from the env var the selected provider's registry entry declares.
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { loadAgentConfig } from "./buildTools";
-import { buildModel } from "./buildModel";
-import { DEFAULT_LLM } from "../models/llmSelection";
+import { buildModel, SUPPORTED_PROVIDERS, providerApiKeyEnv, providerAvailabilityEnv } from "./buildModel";
 
 // The workspace store singleton is backed by a global map (survives module reloads). loadAgentConfig
 // reads it via getWorkspace, so seeding the map directly is enough to exercise the merge.
@@ -14,20 +13,44 @@ function seedWorkspace(ws: Record<string, unknown>) {
   g._workspaces.set(ws.id as string, ws);
 }
 
+// The provider env vars loadAgentConfig reads, restored after each test so one case's keys can't
+// decide another's fallback.
+//
+// Derived from the provider registry rather than hand-listed: the fallback these tests exercise is
+// "first AVAILABLE provider", so a var this list forgets is a var the developer's own shell still
+// supplies — quietly changing which provider the fallback picks, in whichever direction their
+// machine happens to be configured. A hand-written list stops covering the newest provider on the
+// day it is added, which is precisely when these tests matter most.
+const PROVIDER_ENV = SUPPORTED_PROVIDERS.flatMap((provider) =>
+  [providerApiKeyEnv(provider), providerAvailabilityEnv(provider)].filter((v): v is string => Boolean(v)),
+);
+
 describe("loadAgentConfig", () => {
+  let savedEnv: Record<string, string | undefined>;
+
   beforeEach(() => {
     const g = global as typeof global & { _workspaces?: Map<string, unknown> };
     g._workspaces?.clear();
+    savedEnv = Object.fromEntries(PROVIDER_ENV.map((key) => [key, process.env[key]]));
+    for (const key of PROVIDER_ENV) delete process.env[key];
   });
 
-  it("falls back to DEFAULT_LLM when no workspace id is given", () => {
+  afterEach(() => {
+    for (const [key, value] of Object.entries(savedEnv)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  });
+
+  it("falls back to the first available provider when no workspace id is given", () => {
+    process.env.DEEPSEEK_API_KEY = "sk-ds";
     const c = loadAgentConfig();
-    expect(c.provider).toBe(DEFAULT_LLM.provider);
-    expect(c.model).toBe(DEFAULT_LLM.model);
-    expect(c.reasoningEffort).toBe(DEFAULT_LLM.reasoningEffort);
+    expect(c.provider).toBe("deepseek");
+    expect(c.model).toBe("deepseek-v4-flash");
   });
 
-  it("falls back to DEFAULT_LLM for a workspace that hasn't chosen", () => {
+  it("falls back to the first available provider for a workspace that hasn't chosen", () => {
+    process.env.DEEPSEEK_API_KEY = "sk-ds";
     seedWorkspace({
       id: "ws-unset",
       name: "x",
@@ -39,6 +62,17 @@ describe("loadAgentConfig", () => {
     const c = loadAgentConfig("ws-unset");
     expect(c.provider).toBe("deepseek");
     expect(c.model).toBe("deepseek-v4-flash");
+  });
+
+  // The bug this pins: the fallback used to be a hardcoded deepseek, so a workspace that had never
+  // picked ran (and displayed) deepseek even where .env had switched it off.
+  it("skips a provider .env switched off when picking the fallback", () => {
+    process.env.DEEPSEEK_API_KEY = "sk-ds";
+    process.env.ANTHROPIC_API_KEY = "sk-ant";
+    process.env.DEEPSEEK_AVAILABLE = "false";
+    const c = loadAgentConfig();
+    expect(c.provider).toBe("anthropic");
+    expect(c.model).toBe("claude-haiku-4-5");
   });
 
   it("uses the workspace's stored selection", () => {
@@ -76,7 +110,11 @@ describe("loadAgentConfig", () => {
       reasoningEffort: "high",
     });
     expect(loadAgentConfig("ws-key").apiKey).toBe("sk-ant-test");
-    // No workspace -> DEFAULT_LLM's provider (deepseek), so its key follows.
+    // No workspace -> the fallback provider, whose own key follows. anthropic leads the registry, so
+    // with both keys set that is anthropic.
+    expect(loadAgentConfig().apiKey).toBe("sk-ant-test");
+    // ...and deepseek's key once anthropic is out of the running.
+    process.env.ANTHROPIC_AVAILABLE = "false";
     expect(loadAgentConfig().apiKey).toBe("sk-ds-test");
   });
 

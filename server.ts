@@ -46,8 +46,9 @@ import { buildSecurityHeaders } from "./lib/infra/security/securityHeaders";
 import { startScheduler, stopScheduler } from "./lib/infra/schedules/scheduler";
 import { startProxyReconciler, stopProxyReconciler } from "./lib/infra/docker/proxyReconciler";
 import { startUploadSweeper, stopUploadSweeper } from "./lib/uploads/sweeper";
+import { startPriceRefresher, stopPriceRefresher } from "./lib/models/priceRefresher";
 import { checkApiRateLimit } from "./lib/infra/security/rateLimit";
-import { hasConfiguredProviderApiKey } from "./lib/agent/buildModel";
+import { hasAvailableProvider } from "./lib/agent/buildModel";
 import { assertDataRootAvailable, assertWorkspaceRegistryAvailable } from "./lib/infra/startupChecks";
 import { appDataDb, PAODO_DB_FILE } from "./lib/data/database";
 import { validate as validateCredential } from "./lib/infra/security/credentialStore";
@@ -375,10 +376,11 @@ if (!UI_USER || !UI_PASS) {
   exitAfterLogs(1);
 }
 
-if (!hasConfiguredProviderApiKey() && !dev) {
+if (!hasAvailableProvider() && !dev) {
   log.fatal(
     { event: "startup_llm_api_keys_missing", outcome: "process_exit" },
-    "At least one LLM provider API key must be set in production — refusing to start.",
+    "At least one LLM provider must be available in production — refusing to start. Set that provider's " +
+      "API key and leave its <PROVIDER>_AVAILABLE unset (or true).",
   );
   exitAfterLogs(1);
 }
@@ -503,6 +505,9 @@ assertGitAvailable()
     startScheduler();
     // Reclaim upload temp files orphaned by a process kill mid-upload.
     startUploadSweeper();
+    // Keep LLM rates current without a redeploy. A turn's cost is frozen when it is written, so a
+    // stale rate is permanently wrong in the database rather than a display bug — see priceRefresher.
+    startPriceRefresher();
   })
   .catch((err) => fatal("startup", err));
 
@@ -539,6 +544,7 @@ function shutdown(signal: NodeJS.Signals) {
     stopScheduler();
     stopProxyReconciler();
     stopUploadSweeper();
+    stopPriceRefresher();
     stopAllWatchers();
   } catch (err) {
     failShutdown(err);

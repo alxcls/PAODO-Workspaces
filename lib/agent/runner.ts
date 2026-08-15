@@ -21,6 +21,7 @@ import type { ToolStatus } from "@/lib/usage/types";
 import type { CallAgentMeta } from "./tools/agentCall";
 import { streamModelTurn, synthesizeLimit, usageTokens, type ResolvedToolCall } from "./modelTurn";
 import { dispatchTools, type RunnerTool } from "./toolDispatch";
+import { normalizeToolCallIds } from "./toolCallIds";
 import {
   PROVIDER_CREDIT_EXHAUSTED_CODE,
   providerCreditExhaustedMessage,
@@ -192,6 +193,14 @@ export async function* runAgent(
     notify: resolvedNotify,
     log: wlog,
   };
+
+  // Make every id in the replayed history portable before this run's first request. A conversation
+  // built on another provider carries ids Mistral rejects outright (`toolu_01…`), and the whole
+  // history is replayed every turn — so the run would die on history it did not create. Doing it
+  // here, on the live array the conversation store owns, also repairs conversations persisted before
+  // this existed with no migration: these rewritten ids are what persist() writes back at run end.
+  // Ids minted later in this run come from one provider, which by definition accepts its own.
+  normalizeToolCallIds(messages);
 
   messages.push(new HumanMessage(userInput));
   // The broker/stream owner emits the correlated info-level run lifecycle with session and

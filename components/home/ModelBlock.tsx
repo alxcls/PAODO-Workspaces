@@ -1,24 +1,20 @@
 "use client";
 
 import { useState, useEffect } from "react";
-// DEFAULT_LLM is a plain const in a type-only module (no runtime imports), so it's safe in a client
-// component and keeps the picker's fallback in lockstep with the server's actual default.
-import { DEFAULT_LLM as DEFAULT, type ReasoningEffort } from "@/lib/models/llmSelection";
+import { THINKING_OFF_EFFORT, type ReasoningEffort, type ThinkingSupport } from "@/lib/models/llmSelection";
 // The model/effort defaulting rules, shared with the server-side update path so the picker and a
 // partial PATCH resolve a gap the same way.
 import { defaultEffortFor, defaultModelFor } from "@/lib/models/selection";
+// The GET /api/models payload shape, imported from the module that SERVES it rather than redeclared
+// here. `import type` is erased at compile time, so this pulls none of that module's runtime graph
+// (which reaches the LLM SDKs) into the client bundle. Redeclaring it drifted once already: the
+// server made `thinking` required while this copy still had it optional.
+import type { ModelCatalog } from "@/lib/operations/models/catalog";
 import { confirmedValues } from "@/lib/client/workspaceReceipt";
 
 // Compact fixed widths so the row of controls stays roughly half the block width. Applied inline
 // because the `.input` base class is `w-full`, which otherwise stretches each field to fill the row.
 const FIELD_WIDTH = { provider: 128, model: 168, effort: 100 };
-
-interface ProviderCatalog {
-  models: string[];
-  reasoningEfforts: ReasoningEffort[];
-}
-
-type ModelCatalog = Record<string, ProviderCatalog>;
 
 // A committed value shown when not editing: a greyed, caret-less read-only field so it clearly
 // reads as a set value rather than an interactive dropdown. Keep this component at module scope so
@@ -37,31 +33,37 @@ function LockedValue({ value, width }: { value: string; width: number }) {
 // Per-workspace LLM picker: provider + model + reasoning effort, persisted on the workspace via
 // PATCH /api/workspaces/:id. The complete provider → models/efforts hierarchy comes from one
 // /api/models read, so the UI and programmatic callers consume the same code-owned catalog without a
-// request per provider change. The provider list is narrowed to those with an API key set in .env.
+// request per provider change. The provider list is narrowed to those .env makes available: an API key
+// is set and <PROVIDER>_AVAILABLE is not false.
 
+// Empty until the workspace read lands, rather than seeded with a guess at the default: the default is
+// the first provider .env makes available, which only the server knows. A hardcoded seed here would
+// flash a provider this deployment may have switched off, and would stick if the read failed.
 export default function ModelBlock({ wsId }: { wsId: string }) {
-  const [provider, setProvider] = useState<string>(DEFAULT.provider);
-  const [model, setModel] = useState<string>(DEFAULT.model);
-  const [effort, setEffort] = useState<string>(DEFAULT.reasoningEffort);
+  const [provider, setProvider] = useState<string>("");
+  const [model, setModel] = useState<string>("");
+  const [effort, setEffort] = useState<string>("");
   const [catalog, setCatalog] = useState<ModelCatalog>({});
 
   const [saved, setSaved] = useState<{ provider: string; model: string; effort: string }>({
-    provider: DEFAULT.provider,
-    model: DEFAULT.model,
-    effort: DEFAULT.reasoningEffort,
+    provider: "",
+    model: "",
+    effort: "",
   });
   const [saving, setSaving] = useState(false);
   // Committed view by default: dropdowns are locked to the saved selection until the user clicks Edit.
   const [editing, setEditing] = useState(false);
 
-  // Load the workspace's current selection (falling back to the defaults when unset).
+  // Load the workspace's current selection. The server already applies the defaults for a workspace
+  // that never picked, so what arrives is the complete selection — reasoningEffort excepted, which is
+  // absent for a provider with no effort dial.
   useEffect(() => {
     fetch(`/api/workspaces/${wsId}`)
       .then((r) => r.json())
       .then((d: { llmProvider?: string; llmModel?: string; reasoningEffort?: string }) => {
-        const p = d.llmProvider ?? DEFAULT.provider;
-        const m = d.llmModel ?? DEFAULT.model;
-        const e = d.reasoningEffort ?? DEFAULT.reasoningEffort;
+        const p = d.llmProvider ?? "";
+        const m = d.llmModel ?? "";
+        const e = d.reasoningEffort ?? "";
         setProvider(p);
         setModel(m);
         setEffort(e);
@@ -97,14 +99,26 @@ export default function ModelBlock({ wsId }: { wsId: string }) {
       ? defaultEffortFor(providerCatalog)
       : effort;
 
+  // Whether the SELECTED MODEL thinks, and whether the user gets a say. Unknown models answer
+  // "never" — a model this catalog doesn't list (an old stored selection, a provider since withdrawn)
+  // must not be offered a control whose value the agent would then send.
+  const thinking: ThinkingSupport = providerCatalog?.thinking?.[selectedModel] ?? "never";
+  const thinkingOn = thinking === "always" || selectedEffort !== THINKING_OFF_EFFORT;
+  // The levels worth choosing BETWEEN once thinking is on. "none" is excluded because turning
+  // thinking off is the checkbox's job, and offering it in both places lets the two disagree.
+  const levels = efforts.filter((eff) => eff !== THINKING_OFF_EFFORT);
+  // One level is not a choice: Mistral's dial is none|high, so the checkbox alone says everything and
+  // a single-option dropdown next to it would be furniture.
+  const showEffort = thinkingOn && levels.length > 1;
+
   const dirty = provider !== saved.provider || selectedModel !== saved.model || selectedEffort !== saved.effort;
 
   // PATCH refuses a model the provider does not serve, so configured providers expose their catalog
   // and swap a retired selection to the default before save.
   const modelOptions = models;
 
-  // A workspace selected before its provider key was removed remains visible even though it is no
-  // longer offered for new selections.
+  // A workspace selected before its provider was withdrawn — key removed or <PROVIDER>_AVAILABLE set
+  // to false — remains visible even though it is no longer offered for new selections.
   const providerOptions = provider && !providers.includes(provider) ? [provider, ...providers] : providers;
 
   const save = async () => {
@@ -180,19 +194,45 @@ export default function ModelBlock({ wsId }: { wsId: string }) {
               ))}
             </select>
 
-            {efforts.length > 0 && (
+            {showEffort && (
               <select
                 style={{ width: FIELD_WIDTH.effort }}
                 className="input input-sm flex-none"
                 value={selectedEffort}
                 onChange={(e) => setEffort(e.target.value)}
               >
-                {efforts.map((eff) => (
+                {levels.map((eff) => (
                   <option key={eff} value={eff}>
                     {eff}
                   </option>
                 ))}
               </select>
+            )}
+
+            {thinking !== "never" && (
+              <label
+                className="flex-none flex items-center gap-1.5 text-ms text-text-2 select-none"
+                title={
+                  thinking === "always"
+                    ? "This model always thinks — it offers no way to switch that off."
+                    : "Let the model think before it answers."
+                }
+              >
+                <input
+                  type="checkbox"
+                  // An "always" model is checked and disabled rather than hidden: "on" is the truth,
+                  // and presenting it as a choice the user could change would be a lie the API
+                  // enforces — those models reject the request outright if told otherwise.
+                  checked={thinkingOn}
+                  disabled={thinking === "always"}
+                  onChange={(e) =>
+                    setEffort(
+                      e.target.checked && providerCatalog ? defaultEffortFor(providerCatalog) : THINKING_OFF_EFFORT,
+                    )
+                  }
+                />
+                Thinking
+              </label>
             )}
 
             <button className="btn" disabled={saving || !selectedModel.trim()} onClick={save}>
@@ -203,7 +243,13 @@ export default function ModelBlock({ wsId }: { wsId: string }) {
           <>
             <LockedValue value={provider} width={FIELD_WIDTH.provider} />
             <LockedValue value={selectedModel} width={FIELD_WIDTH.model} />
-            {efforts.length > 0 && <LockedValue value={selectedEffort} width={FIELD_WIDTH.effort} />}
+            {showEffort && <LockedValue value={selectedEffort} width={FIELD_WIDTH.effort} />}
+            {thinking !== "never" && (
+              <label className="flex-none flex items-center gap-1.5 text-ms text-text-3 select-none cursor-default">
+                <input type="checkbox" checked={thinkingOn} disabled readOnly />
+                Thinking
+              </label>
+            )}
             <button className="btn" onClick={() => setEditing(true)}>
               Edit
             </button>

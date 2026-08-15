@@ -1,5 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { getWorkspace, listWorkspaces } from "./read";
+import { providerApiKeyEnv, SUPPORTED_PROVIDERS } from "@/lib/agent/buildModel";
 import type { Workspace } from "@/lib/workspace/types";
 
 const workspace: Workspace = {
@@ -18,7 +19,16 @@ const store = {
   getWorkspace: (id: string) => (id === workspace.id ? workspace : undefined),
 };
 
+// What a workspace that never picked falls back to is now read from .env, so a test asserting it has
+// to pin .env — otherwise whatever keys the developer's shell exports decide the expected value.
+// Keyed from the registry rather than a hand-listed set so a new provider can't quietly leak in.
+function keyOnly(provider: string) {
+  for (const p of SUPPORTED_PROVIDERS) vi.stubEnv(providerApiKeyEnv(p)!, p === provider ? "configured" : "");
+}
+
 describe("workspace record queries", () => {
+  afterEach(() => vi.unstubAllEnvs());
+
   it("returns a compact collection shape shared by UI and CLI", () => {
     expect(listWorkspaces(store)).toEqual([
       {
@@ -30,6 +40,7 @@ describe("workspace record queries", () => {
   });
 
   it("returns details without leaking the server directory", () => {
+    keyOnly("deepseek");
     const result = getWorkspace("ws-1", store);
     expect(result).toMatchObject({
       id: "ws-1",
@@ -61,6 +72,17 @@ describe("workspace record queries", () => {
       reasoningEffort: "high",
     });
     expect(result).not.toHaveProperty("reasoningEffortSupported");
+  });
+
+  // The fallback follows .env, so the same never-picked workspace reports whichever provider the
+  // deployment makes available — never one it switched off.
+  it("falls back to the available provider, not a fixed one", () => {
+    keyOnly("anthropic");
+    expect(getWorkspace("ws-1", store)).toMatchObject({
+      llmProvider: "anthropic",
+      llmModel: "claude-haiku-4-5",
+      reasoningEffort: "low",
+    });
   });
 
   it("returns null for an unknown workspace", () => {

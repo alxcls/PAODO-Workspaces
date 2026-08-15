@@ -4,6 +4,7 @@ import { AIMessage, HumanMessage } from "@langchain/core/messages";
 import type { AIMessageChunk, BaseMessage } from "@langchain/core/messages";
 import type { Logger } from "pino";
 import { throttleLog } from "../infra/logThrottle";
+import { newToolCallId } from "./toolCallIds";
 import { contentToText } from "@/lib/transcript/content";
 import type { AgentEvent } from "./runner";
 import {
@@ -88,16 +89,21 @@ export function usageTokens(chunk: AIMessageChunk | null) {
 }
 
 function assembleToolCalls(partials: PartialToolCall[]): ResolvedToolCall[] {
+  const minted = new Set<string>();
   return partials
     .filter((partial) => partial.name)
-    .map((partial, index) => {
+    .map((partial) => {
       let args: Record<string, unknown> = {};
       try {
         args = JSON.parse(partial.args || "{}");
       } catch {
         // Malformed provider deltas are surfaced to the tool as empty args.
       }
-      return { id: partial.id || `tc_${index}_${Date.now()}`, name: partial.name, args };
+      // A provider that streams a tool call without an id gets one every provider accepts. The old
+      // `tc_<i>_<epoch>` shape had underscores and ran well past 9 characters, and it is replayed on
+      // the NEXT turn of this same run — behind the run-start normalization pass, which cannot reach
+      // it. So it has to be portable at the moment it is created.
+      return { id: partial.id || newToolCallId(minted), name: partial.name, args };
     });
 }
 

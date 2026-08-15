@@ -4,7 +4,7 @@
 // Concrete infra dependencies are wired here and injected into tool constructors — tools
 // themselves only depend on the ContainerRunner interface defined in interfaces.ts.
 
-import { buildModel, providerApiKeyEnv } from "./buildModel";
+import { buildModel, defaultModelSelection, providerApiKeyEnv } from "./buildModel";
 import { applyCompaction, type CompactLevel } from "./compact";
 import { classifyToolStatus } from "./toolUtils";
 import type { PostDispatchFn } from "./interfaces";
@@ -42,7 +42,6 @@ import type {
   IWorkspaceLookup,
 } from "../infra/interfaces";
 import type { AgentConfig, PrivilegedRunner, StreamingExecFn, BackgroundExecFn } from "./interfaces";
-import { DEFAULT_LLM } from "../models/llmSelection";
 
 function makeContainerRunner(workspaceId: string, workspaceDir: string, containers: IContainerExec): PrivilegedRunner {
   return {
@@ -64,15 +63,17 @@ function makeBackgroundExecFn(
 }
 
 // Resolves the LLM config for a run. Provider / model / reasoning effort come from the workspace's
-// stored selection (chosen in the UI), falling back to DEFAULT_LLM when the workspace hasn't picked.
-// .env supplies ONLY the provider API keys (+ the anthropic cache flag) — never the model choice.
+// stored selection (chosen in the UI), falling back to the first available provider when the workspace
+// hasn't picked — so a run never lands on a provider .env switched off. .env supplies the provider API
+// keys, which providers are available, and the anthropic cache flag — never a workspace's model choice.
 // Called with no workspaceId in a few provider-agnostic spots (e.g. building a system prompt), where
 // the defaults are fine.
 export function loadAgentConfig(workspaceId?: string): AgentConfig {
   const ws = workspaceId ? defaultWorkspaceStore.getWorkspace(workspaceId) : undefined;
-  const provider = ws?.llmProvider ?? DEFAULT_LLM.provider;
-  const model = ws?.llmModel ?? DEFAULT_LLM.model;
-  const reasoningEffort = ws?.reasoningEffort ?? DEFAULT_LLM.reasoningEffort;
+  const fallback = defaultModelSelection();
+  const provider = ws?.llmProvider ?? fallback.provider;
+  const model = ws?.llmModel ?? fallback.model;
+  const reasoningEffort = ws?.reasoningEffort ?? fallback.reasoningEffort;
   // The key comes from the env var the provider's registry entry declares, so a new provider needs no
   // change here. Undefined for an unknown provider — buildModel rejects it with a clear error.
   const apiKeyEnv = providerApiKeyEnv(provider);

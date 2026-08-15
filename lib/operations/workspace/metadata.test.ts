@@ -99,7 +99,7 @@ describe("workspace metadata validation", () => {
   it("refuses a model the provider does not serve, naming the ones it does", () => {
     // Another provider's model, which is well-formed and entirely wrong.
     expect(() => validateMetadata({ model: { provider: "anthropic", model: "gpt-5.5" } })).toThrow(
-      "llmModel for anthropic must be one of: claude-opus-4-8, claude-sonnet-5, claude-haiku-4-5",
+      "llmModel for anthropic must be one of: claude-haiku-4-5, claude-sonnet-5, claude-opus-4-8",
     );
     // A typo is refused the same way: near-miss is not a category we treat gently.
     expect(() => validateMetadata({ model: { provider: "moonshot", model: "kimi-k4" } })).toThrow(
@@ -156,7 +156,7 @@ describe("workspace metadata validation", () => {
     // level the previous provider was on.
     expect(validateMetadata({ model: { provider: "anthropic" } }, CURRENT).model).toEqual({
       provider: "anthropic",
-      model: "claude-opus-4-8",
+      model: "claude-haiku-4-5",
       reasoningEffort: "low",
     });
     // Model only: stays on the current provider and resets effort to that provider's default.

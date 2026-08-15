@@ -1,12 +1,18 @@
-// LLM rate lookup. The data is a vendored copy of public price lists — LiteLLM for the bulk,
-// models.dev for models LiteLLM hasn't published yet (./model-pricing.json), trimmed to
-// the providers this app supports. It is DATA WE OWN — nothing hits the network at request time.
-// Refresh it with `npm run update-pricing`.
+// LLM rate lookup. The data starts as a vendored copy of public price lists — LiteLLM for the bulk,
+// models.dev for models LiteLLM hasn't published yet (./model-pricing.json), trimmed to the
+// providers this app supports. Nothing hits the network at request time: the vendored file is the
+// seed, and ./priceRefresher.ts swaps in fresher rates on a timer in the running server.
+// Refresh the vendored seed at author time with `npm run update-pricing`.
 //
 // getRate / computeCost turn the per-turn token counts the runner already records into a USD cost
 // (used by the usage dashboard). The set of models offered in the picker is a separate, code-owned
 // list (lib/models/registry.ts); pricing is looked up here by model id when usage is recorded.
-import catalog from "./model-pricing.json";
+//
+// A turn's cost is frozen at write time (lib/usage/record.ts), so a stale rate here is not a display
+// bug that a later refresh repairs — it is permanently wrong in the database. That is why the
+// refresher exists at all, and why the catalog has to be swappable in the live process.
+import { globalSingleton } from "../infra/globalSingleton";
+import seed from "./model-pricing.json";
 
 interface CatalogEntry {
   provider: string;
@@ -18,7 +24,28 @@ interface CatalogEntry {
   cache_creation_input_token_cost?: number;
 }
 
-const CATALOG = catalog as Record<string, CatalogEntry>;
+// Held on the Node global, not in a module-level binding. The custom server (server.ts, where the
+// refresher runs) and the webpack-bundled API routes (where appendUsage actually prices a turn) load
+// this module into SEPARATE scopes — see globalSingleton. A plain `let` would let the refresher
+// update its own copy while every recorded cost kept using the boot-time seed.
+type Holder = { entries: Record<string, CatalogEntry> };
+const holder = globalSingleton<Holder>("modelPricingCatalog", () => ({
+  entries: seed as Record<string, CatalogEntry>,
+}));
+
+/**
+ * Replace the live rate table. Called by ./priceRefresher.ts after a successful fetch, and by tests.
+ * Swapped wholesale rather than merged: a merge would keep a rate whose model upstream has dropped,
+ * which is the stale-rate failure this is meant to end.
+ */
+export function setCatalog(entries: Record<string, CatalogEntry>): void {
+  holder.entries = entries;
+}
+
+/** The rate table currently in force. Exported for the refresher's logging and for tests. */
+export function getCatalog(): Record<string, CatalogEntry> {
+  return holder.entries;
+}
 
 // Per-token USD rates for a model. Cache rates fall back to the plain input rate when the catalog
 // doesn't break them out, so a provider without explicit cache pricing still costs something sane.
@@ -46,7 +73,10 @@ export interface TokenCounts {
 // Object.prototype and return a truthy non-entry — every rate then reads undefined and the cost
 // comes back NaN, which propagates through the per-session SUM in lib/client/usageSessions.ts.
 // "Unknown" is the contract for an unpriced model; NaN is not.
-const own = (key: string): CatalogEntry | undefined => (Object.hasOwn(CATALOG, key) ? CATALOG[key] : undefined);
+const own = (key: string): CatalogEntry | undefined => {
+  const entries = holder.entries;
+  return Object.hasOwn(entries, key) ? entries[key] : undefined;
+};
 
 function lookup(modelId: string): CatalogEntry | undefined {
   return own(modelId) ?? own(modelId.split("/").pop() ?? modelId);

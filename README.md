@@ -55,7 +55,7 @@ _Demo video of PAODO in action_ :
 
 ## Quick start
 
-**Requirements:** Node.js 20+, [Docker](https://docs.docker.com/get-docker/) (running), and an OpenAI, Anthropic, or DeepSeek API key.
+**Requirements:** Node.js 20+, [Docker](https://docs.docker.com/get-docker/) (running), and an API key for at least one supported provider (OpenAI, Anthropic, DeepSeek, Moonshot, or Mistral).
 
 ```bash
 git clone https://github.com/alxcls/PAODO-Workspaces.git

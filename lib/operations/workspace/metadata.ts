@@ -1,7 +1,8 @@
 // Validation, canonicalization, and persistence descriptors for workspace metadata updates.
 import type { IWorkspaceStore } from "@/lib/infra/interfaces";
-import { DEFAULT_LLM, type ReasoningEffort } from "@/lib/models/llmSelection";
+import { type ReasoningEffort } from "@/lib/models/llmSelection";
 import { getProviderMetadata, SUPPORTED_PROVIDERS } from "@/lib/agent/buildModel";
+import { defaultModelSelection } from "@/lib/operations/models/catalog";
 import { listModels } from "@/lib/models/registry";
 import {
   resolveModelSelection,
@@ -69,12 +70,12 @@ export type MetadataWriter = Pick<
  * a value we silently replaced.
  *
  * `current` is the workspace's existing model choice, which a partial model request resolves against.
- * It defaults to DEFAULT_LLM so a caller validating a request with no workspace in hand still gets the
- * same answer a fresh workspace would.
+ * It defaults to the selection a fresh workspace would run, so a caller validating a request with no
+ * workspace in hand gets that same answer.
  */
 export function validateMetadata(
   input: WorkspaceMetadataInput,
-  current: ModelSelection = DEFAULT_LLM,
+  current: ModelSelection = defaultModelSelection(),
 ): WorkspaceMetadata {
   const metadata: WorkspaceMetadata = {};
 

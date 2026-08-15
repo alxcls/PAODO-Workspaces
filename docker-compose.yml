@@ -75,7 +75,7 @@ services:
     command: ["npx", "tsx", "proxyEntry.ts"]
     # No env_file: .env here — unlike the app, the sidecar reads only the four vars below (its whole
     # import graph: proxyEntry.ts + lib/infra/{paths,logger}.ts). Inheriting the app's .env would put
-    # ANTHROPIC/OPENAI/DEEPSEEK keys + admin PASSWORD/USERNAME into the one container the untrusted
+    # provider API keys (ANTHROPIC/OPENAI/DEEPSEEK/MOONSHOT/MISTRAL) + admin PASSWORD/USERNAME into the one container the untrusted
     # sandbox can reach, for no functional reason. The secret-store encryption key is read from a FILE
     # (data/.proxy-ca/secrets-enc.key), not env, so dropping .env does not affect decryption.
     environment:

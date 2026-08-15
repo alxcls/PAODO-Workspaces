@@ -131,11 +131,14 @@ describe("buildChatModel", () => {
     expect(m.modelKwargs).toEqual({ reasoning_effort: "max" });
   });
 
-  it("always enables high reasoning for mistral-medium-latest", () => {
+  it.each([
+    ["high", { reasoning_effort: "high" }],
+    ["none", undefined],
+  ])("maps the Mistral Medium thinking checkbox value %s", (reasoningEffort, expected) => {
     const m = buildChatModel(
-      config({ provider: "mistral", model: "mistral-medium-latest", reasoningEffort: "none" }),
+      config({ provider: "mistral", model: "mistral-medium-latest", reasoningEffort: reasoningEffort as never }),
     ) as unknown as { modelKwargs?: Record<string, unknown> };
-    expect(m.modelKwargs).toEqual({ reasoning_effort: "high" });
+    expect(m.modelKwargs?.reasoning_effort).toBe(expected?.reasoning_effort);
   });
 
   it("does not send reasoning_effort to mistral-large-latest, which does not support it", () => {

@@ -97,12 +97,16 @@ export default function ModelBlock({ wsId, catalogVersion = 0 }: { wsId: string;
   const providerCatalog = catalog[provider];
   const providers = Object.keys(catalog);
   const models = providerCatalog?.models ?? [];
-  // Empty means the selected provider has no effort dial (for example DeepSeek), so the control is
-  // absent rather than presenting a setting the agent never sends.
-  const efforts = providerCatalog?.reasoningEfforts ?? [];
   // Never replace a stored retired id just for display. It stays visible until the user explicitly
   // picks a current model, which also prevents the UI and runtime from claiming different models.
   const selectedModel = model;
+  // Empty means the selected provider has no effort dial (for example DeepSeek), so the control is
+  // absent rather than presenting a setting the agent never sends.
+  // Mistral's effort vocabulary belongs only to Medium; Large has no reasoning mode.
+  const efforts =
+    provider === "mistral" && selectedModel !== "mistral-medium-latest"
+      ? []
+      : (providerCatalog?.reasoningEfforts ?? []);
   const modelUnavailable =
     catalogLoaded && Boolean(model) && (!providerCatalog || !providerCatalog.models.includes(model));
   const validModel = Boolean(providerCatalog?.models.includes(selectedModel));

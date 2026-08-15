@@ -3,6 +3,7 @@
 import { createHash } from "node:crypto";
 import { AIMessage, ToolMessage, type BaseMessage } from "@langchain/core/messages";
 import { isMistralToolCallId, newMistralToolCallId } from "./toolCallIds";
+import { THINKING_OFF_EFFORT, type ReasoningEffort } from "../models/llmSelection";
 
 const REPLAY_CONTENT_KEY = "mistralReplayContent";
 
@@ -10,9 +11,14 @@ type MistralTextChunk = { type: "text"; text: string };
 type MistralThinkChunk = { type: "thinking"; thinking: MistralTextChunk[] };
 export type MistralReplayContent = Array<MistralThinkChunk | MistralTextChunk>;
 
-/** Medium supports adjustable reasoning; PAODO deliberately runs it at Mistral's agentic default. */
-export function mistralReasoningConfig(model: string): { modelKwargs?: { reasoning_effort: "high" } } {
-  return model === "mistral-medium-latest" ? { modelKwargs: { reasoning_effort: "high" } } : {};
+/** Medium supports optional high reasoning; Large accepts no reasoning field. */
+export function mistralReasoningConfig(
+  model: string,
+  effort: ReasoningEffort,
+): { modelKwargs?: { reasoning_effort: "high" } } {
+  return model === "mistral-medium-latest" && effort !== THINKING_OFF_EFFORT
+    ? { modelKwargs: { reasoning_effort: "high" } }
+    : {};
 }
 
 /** A provider-valid id derived from the canonical id, stable across requests for prompt caching. */

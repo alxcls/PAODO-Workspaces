@@ -20,9 +20,8 @@ export const AVAILABLE_MODELS: Record<string, readonly string[]> = {
   deepseek: ["deepseek-v4-flash", "deepseek-v4-pro"],
   moonshot: ["kimi-k3"],
   // The two generalist models retained for the ReAct loop. These are the API's own current aliases,
-  // confirmed by GET /v1/models. Medium supports reasoning upstream, but this integration must not
-  // request it until it can replay Mistral's structured thinking blocks across tool turns; Large does
-  // not expose reasoning. The smaller/specialist Mistral models are deliberately not offered.
+  // confirmed by GET /v1/models. Medium supports optional reasoning; Large does not expose it. The
+  // smaller/specialist Mistral models are deliberately not offered.
   mistral: ["mistral-large-latest", "mistral-medium-latest"],
 };
 

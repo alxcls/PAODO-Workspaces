@@ -47,9 +47,8 @@ describe("models catalog", () => {
     expect(getProviderMetadata("deepseek").reasoningEfforts).toEqual([]);
     // Kimi K3 accepts low|high|max — no medium, and it always thinks, so none/minimal aren't offered.
     expect(getProviderMetadata("moonshot").reasoningEfforts).toEqual(["low", "high", "max"]);
-    // Medium can reason upstream, but the current ReAct integration cannot replay its structured
-    // thinking blocks safely, so Mistral exposes no reasoning control in this app yet.
-    expect(getProviderMetadata("mistral").reasoningEfforts).toEqual([]);
+    // Medium exposes one binary choice: off or Mistral's supported high reasoning mode.
+    expect(getProviderMetadata("mistral").reasoningEfforts).toEqual(["none", "high"]);
   });
 
   it("has a resolvable price for every offered model", () => {

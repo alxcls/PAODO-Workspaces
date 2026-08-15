@@ -6,7 +6,7 @@ import { ChatAnthropic } from "@langchain/anthropic";
 import type { LLMProviderConfig } from "./interfaces";
 import { createModelGateway, type ModelCallObserver, type ModelGateway } from "./modelGateway";
 import { mistralReasoningConfig } from "./mistralProtocol";
-import type { ReasoningEffort } from "../models/llmSelection";
+import { THINKING_OFF_EFFORT, type ReasoningEffort } from "../models/llmSelection";
 import { listModels } from "../models/registry";
 import { firstAvailableSelection, type ModelSelection, type ModelVocabulary } from "../models/selection";
 
@@ -138,8 +138,8 @@ const PROVIDERS: Record<string, ProviderDescriptor> = {
     availabilityEnv: "MISTRAL_AVAILABLE",
     // This flag controls Anthropic-style cache_control markers; Mistral does not use those markers.
     supportsPromptCaching: false,
-    // Mistral reasoning is model-owned and always on when available, not a workspace setting.
-    reasoningEfforts: [],
+    // Medium exposes a simple on/off checkbox: none disables reasoning, high enables it.
+    reasoningEfforts: [THINKING_OFF_EFFORT, "high"],
     build: (config) =>
       new ChatOpenAI({
         model: config.model,
@@ -148,7 +148,7 @@ const PROVIDERS: Record<string, ProviderDescriptor> = {
           baseURL: "https://api.mistral.ai/v1",
           apiKey: config.apiKey,
         },
-        ...mistralReasoningConfig(config.model),
+        ...mistralReasoningConfig(config.model, config.reasoningEffort),
       }),
   },
 };

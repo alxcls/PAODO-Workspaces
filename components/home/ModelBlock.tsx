@@ -39,7 +39,7 @@ function LockedValue({ value, width }: { value: string; width: number }) {
 // Empty until the workspace read lands, rather than seeded with a guess at the default: the default is
 // the first provider .env makes available, which only the server knows. A hardcoded seed here would
 // flash a provider this deployment may have switched off, and would stick if the read failed.
-export default function ModelBlock({ wsId }: { wsId: string }) {
+export default function ModelBlock({ wsId, catalogVersion = 0 }: { wsId: string; catalogVersion?: number }) {
   const [provider, setProvider] = useState<string>("");
   const [model, setModel] = useState<string>("");
   const [effort, setEffort] = useState<string>("");
@@ -72,14 +72,23 @@ export default function ModelBlock({ wsId }: { wsId: string }) {
       .catch(() => {});
   }, [wsId]);
 
-  // One catalog read for the component's lifetime. Provider ids own their models and accepted effort
-  // levels, so changing the dropdown is a local lookup rather than another network request.
+  // Provider ids own their models and accepted effort levels, so changing a dropdown stays a local
+  // lookup rather than another network request. The one thing that does invalidate the catalog is a
+  // provider key being added or removed in Settings, since `hasKey` drives the warning below —
+  // `catalogVersion` is the parent's signal that this happened, and re-reading is how the warning
+  // clears without a page reload.
   useEffect(() => {
+    let active = true;
     fetch("/api/models")
       .then((r) => r.json())
-      .then((d: { providers?: ModelCatalog }) => setCatalog(d.providers ?? {}))
+      .then((d: { providers?: ModelCatalog }) => {
+        if (active) setCatalog(d.providers ?? {});
+      })
       .catch(() => {});
-  }, []);
+    return () => {
+      active = false;
+    };
+  }, [catalogVersion]);
 
   const providerCatalog = catalog[provider];
   const providers = Object.keys(catalog);

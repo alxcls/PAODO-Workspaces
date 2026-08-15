@@ -1,8 +1,7 @@
 // Public workspace projections and trigger-neutral queries.
 import type { IWorkspaceStore } from "@/lib/infra/interfaces";
 import { getStore } from "@/lib/infra/services";
-import { defaultModelSelection } from "@/lib/operations/models/catalog";
-import { getProviderMetadata } from "@/lib/agent/buildModel";
+import { defaultModelSelection, getProviderMetadata } from "@/lib/agent/buildModel";
 import type { Workspace } from "@/lib/workspace/types";
 import type { ModelSelection } from "@/lib/models/selection";
 

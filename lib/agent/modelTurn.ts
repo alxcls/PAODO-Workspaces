@@ -12,6 +12,7 @@ import {
   PROVIDER_CREDIT_EXHAUSTED_CODE,
   providerCreditExhaustedMessage,
 } from "./providerCreditFailure";
+import { classifyProviderAuthFailure, providerKeyInvalidMessage } from "./providerAuthFailure";
 
 export type ResolvedToolCall = { id: string; name: string; args: Record<string, unknown> };
 
@@ -191,20 +192,30 @@ export async function* synthesizeLimit(
     log.debug({ chars: text.length }, "limit synthesis done");
   } catch (err) {
     // Best-effort by design — the run is already ending on the iteration limit, so a failed summary
-    // only costs the closing paragraph. An out-of-credit provider is the exception: swallowing it
-    // here leaves a run that looks merely truncated, with no sign anywhere that the account is dry.
+    // only costs the closing paragraph. A provider that has stopped accepting the account is the
+    // exception, whether because the money ran out or the key stopped being valid mid-run: swallowing
+    // either leaves a run that looks merely truncated, with no sign anywhere of why it really ended.
     const creditExhausted = classifyProviderCreditExhaustion(err);
+    const keyRefused = creditExhausted ? null : classifyProviderAuthFailure(err);
     if (creditExhausted) {
       yield {
         type: "error",
         code: PROVIDER_CREDIT_EXHAUSTED_CODE,
         message: providerCreditExhaustedMessage(creditExhausted, { model: modelId }),
       };
+    } else if (keyRefused) {
+      yield { type: "error", code: keyRefused.failureCode, message: providerKeyInvalidMessage(keyRefused) };
     }
     log.error(
-      // Carry the classification onto the line this path already logs, so a dry account is queryable
-      // by the same `failureCode` here as on the main model turn — which reports it separately.
-      { event: "agent_limit_synthesis_failed", outcome: "response_summary_missing", err, ...creditExhausted },
+      // Carry the classification onto the line this path already logs, so the cause is queryable by
+      // the same `failureCode` here as on the main model turn — which reports it separately.
+      {
+        event: "agent_limit_synthesis_failed",
+        outcome: "response_summary_missing",
+        err,
+        ...creditExhausted,
+        ...keyRefused,
+      },
       "limit synthesis failed",
     );
   }

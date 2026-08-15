@@ -70,9 +70,10 @@ export function defaultEffortFor(vocabulary: ModelVocabulary): ReasoningEffort {
  * imported here (see this module's header). So the rule lives here, where it is testable and safe to
  * import from a client component, and the environment lookup stays in lib/agent/buildModel.ts.
  *
- * All three fields are empty when nothing is available. Production startup refuses in that state, so
- * it only occurs in dev, where an empty picker and a run that fails naming the unusable provider are
- * both truthful.
+ * All three fields are empty when nothing is available — a deployment that has switched every
+ * provider off. Startup no longer refuses in that state (it cannot: keys are entered in the app, so
+ * refusing to boot would make the screen that fixes it unreachable), so this is a state the running
+ * app has to render. An empty picker and a run that stops naming the reason are both truthful.
  */
 export function firstAvailableSelection(
   providers: readonly string[],

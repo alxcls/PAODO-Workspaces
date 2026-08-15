@@ -40,6 +40,18 @@ describe("platform access policy", () => {
     expect(isPlatformRouteAllowed("POST", "/api/settings/cli-access")).toBe(false);
   });
 
+  // The line drawn for BYOK: the CLI may learn that a provider cannot authenticate — that is the
+  // `hasKey` flag on GET /api/models, allowed above — but nothing about the key itself, and it may
+  // never change one. A leaked automation token must not be able to redirect the deployment's model
+  // spend to another account, delete the working keys, or read back the masked hint these routes
+  // carry. Asserted per method so widening the policy has to be a deliberate edit here.
+  it("denies provider API key administration entirely, including reads", () => {
+    for (const method of ["GET", "POST", "PUT", "PATCH", "DELETE"]) {
+      expect(isPlatformRouteAllowed(method, "/api/settings/provider-keys")).toBe(false);
+      expect(isPlatformRouteAllowed(method, "/api/settings/provider-keys/anthropic")).toBe(false);
+    }
+  });
+
   it("allows only the file methods used by the CLI", () => {
     // Listing, reading and deleting: the routes the UI uses too.
     expect(isPlatformRouteAllowed("GET", "/api/workspaces/ws-1/files")).toBe(true);

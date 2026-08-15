@@ -10,7 +10,7 @@ import ModelBlock from "@/components/home/ModelBlock";
 import EnvVarsBlock from "@/components/home/EnvVarsBlock";
 import McpBlock from "@/components/home/McpBlock";
 import InternetAccessBlock from "@/components/home/InternetAccessBlock";
-import CliAccessModal from "@/components/settings/CliAccessModal";
+import SettingsModal from "@/components/settings/SettingsModal";
 import TopBar from "@/components/layout/TopBar";
 import { useWorkspaces } from "@/lib/client/hooks/useWorkspaces";
 import { useWorkspaceDescription } from "@/lib/client/hooks/useWorkspaceDescription";
@@ -173,7 +173,7 @@ export default function HomePage() {
           </div>
         }
       />
-      <CliAccessModal open={showSettings} onClose={() => setShowSettings(false)} />
+      <SettingsModal open={showSettings} onClose={() => setShowSettings(false)} />
 
       <div className="flex flex-1 min-h-0 bg-bg">
         {/* Sidebar */}

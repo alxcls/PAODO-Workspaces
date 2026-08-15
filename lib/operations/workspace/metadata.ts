@@ -1,8 +1,7 @@
 // Validation, canonicalization, and persistence descriptors for workspace metadata updates.
 import type { IWorkspaceStore } from "@/lib/infra/interfaces";
 import { type ReasoningEffort } from "@/lib/models/llmSelection";
-import { getProviderMetadata, SUPPORTED_PROVIDERS } from "@/lib/agent/buildModel";
-import { defaultModelSelection } from "@/lib/operations/models/catalog";
+import { defaultModelSelection, getProviderMetadata, SUPPORTED_PROVIDERS } from "@/lib/agent/buildModel";
 import { listModels } from "@/lib/models/registry";
 import {
   resolveModelSelection,

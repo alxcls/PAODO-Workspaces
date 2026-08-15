@@ -27,6 +27,9 @@ import {
   providerCreditExhaustedMessage,
   reportProviderCreditExhaustion,
 } from "./providerCreditFailure";
+import { providerKeyInvalidMessage, reportProviderAuthFailure } from "./providerAuthFailure";
+import { preflightProviderFailure, type TerminalProviderCode } from "./providerFailure";
+import { availableProviders } from "./buildModel";
 
 const log = createLogger("agent");
 
@@ -39,7 +42,10 @@ export type AgentErrorCode =
   | "TIMEOUT"
   | "CANCELLED"
   | "INFRASTRUCTURE_UNAVAILABLE"
-  | typeof PROVIDER_CREDIT_EXHAUSTED_CODE;
+  // Every way a run can fail on the provider itself — switched off, unkeyed, key refused, account
+  // dry. Spelled as the shared list rather than four members here, so a code added to
+  // providerFailure.ts cannot be one this union silently rejects.
+  | TerminalProviderCode;
 
 export type AgentEvent =
   | { type: "token"; content: string }
@@ -159,6 +165,29 @@ export async function* runAgent(
   const wlog = log.child({ workspaceId });
   const config = (loadConfig ?? loadAgentConfig)(workspaceId);
   const modelId = config.model;
+
+  // Nothing below this can work without a provider that is switched on AND has a key, and both facts
+  // are known right here — before a container is warmed, a model is constructed, or a byte leaves the
+  // process. Stopping now costs nothing and the message names the fix. Letting it through instead
+  // surfaces as whatever the SDK says about a missing credential, in a transcript, to the one person
+  // who could have fixed it in ten seconds had anyone told them which provider was unkeyed.
+  const blocked = preflightProviderFailure(config, availableProviders());
+  if (blocked) {
+    wlog.warn(
+      {
+        event: "run_blocked_unusable_provider",
+        outcome: "run_stopped_before_first_call",
+        code: blocked.code,
+        provider: config.provider,
+        model: config.model,
+      },
+      "run stopped before its first model call — no usable provider",
+    );
+    yield { type: "error", code: blocked.code, message: blocked.message };
+    yield { type: "done" };
+    return;
+  }
+
   const resolvedContainers = containers ?? getContainers();
   const {
     modelWithTools,
@@ -386,21 +415,23 @@ export async function* runAgent(
     // assistant tool-call turn is committed, so history is left consistent — see the
     // atomic commit above. Just surface the error and close the stream.
     //
-    // An out-of-credit provider is the one cause worth naming: `String(err)` reduces it to
-    // "Error: 402 Insufficient Balance", which says nothing about whose account, or that no retry
-    // and no other model on that key can get past it.
-    const creditExhausted = reportProviderCreditExhaustion(wlog, err, {
-      workspaceId,
-      provider: config.provider,
-      model: modelId,
-      stage: "model_turn",
-    });
-    // One line per failed run, whatever the cause. The account-level report above is collapsed per
-    // provider so a dry key cannot flood the log — routing credit failures through it *instead* of
-    // here would take the per-run record down with it, silencing this event during the one outage it
-    // exists to catch. The classification rides along so both are queryable by the same fields.
+    // Two causes are worth naming, because `String(err)` reduces both to something the reader cannot
+    // act on. "Error: 402 Insufficient Balance" says nothing about whose account, or that no retry
+    // and no other model on that key can get past it. "Error: 401 status code (no body)" says nothing
+    // about which of five providers refused the key it was given.
+    //
+    // Credit is classified FIRST and wins ties. A dry account sometimes answers 401 rather than 402,
+    // and telling that operator to replace a perfectly valid key sends them to fix the wrong thing.
+    const failureContext = { workspaceId, provider: config.provider, model: modelId, stage: "model_turn" };
+    const creditExhausted = reportProviderCreditExhaustion(wlog, err, failureContext);
+    const keyRefused = creditExhausted ? null : reportProviderAuthFailure(wlog, err, failureContext);
+    // One line per failed run, whatever the cause. The account-level reports above are collapsed per
+    // provider so a dry or bad key cannot flood the log — routing those failures through them
+    // *instead* of here would take the per-run record down with it, silencing this event during the
+    // one outage it exists to catch. The classification rides along so both are queryable by the
+    // same fields.
     wlog.error(
-      { event: "agent_run_failed", outcome: "error_event_emitted", err, ...creditExhausted },
+      { event: "agent_run_failed", outcome: "error_event_emitted", err, ...creditExhausted, ...keyRefused },
       "agent run failed",
     );
     if (creditExhausted) {
@@ -408,6 +439,12 @@ export async function* runAgent(
         type: "error",
         code: PROVIDER_CREDIT_EXHAUSTED_CODE,
         message: providerCreditExhaustedMessage(creditExhausted, { provider: config.provider, model: modelId }),
+      };
+    } else if (keyRefused) {
+      yield {
+        type: "error",
+        code: keyRefused.failureCode,
+        message: providerKeyInvalidMessage(keyRefused, { provider: config.provider }),
       };
     } else {
       yield { type: "error", message: String(err) };

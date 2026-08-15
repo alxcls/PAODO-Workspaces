@@ -48,7 +48,12 @@ import { startProxyReconciler, stopProxyReconciler } from "./lib/infra/docker/pr
 import { startUploadSweeper, stopUploadSweeper } from "./lib/uploads/sweeper";
 import { startPriceRefresher, stopPriceRefresher } from "./lib/models/priceRefresher";
 import { checkApiRateLimit } from "./lib/infra/security/rateLimit";
-import { hasAvailableProvider } from "./lib/agent/buildModel";
+import { availableProviders } from "./lib/agent/buildModel";
+import {
+  assertProviderKeyStoreAvailable,
+  purgeProviderKeysExcept,
+  PROVIDER_KEY_STORE_FILE,
+} from "./lib/infra/security/providerKeyStore";
 import { assertDataRootAvailable, assertWorkspaceRegistryAvailable } from "./lib/infra/startupChecks";
 import { appDataDb, PAODO_DB_FILE } from "./lib/data/database";
 import { validate as validateCredential } from "./lib/infra/security/credentialStore";
@@ -376,14 +381,10 @@ if (!UI_USER || !UI_PASS) {
   exitAfterLogs(1);
 }
 
-if (!hasAvailableProvider() && !dev) {
-  log.fatal(
-    { event: "startup_llm_api_keys_missing", outcome: "process_exit" },
-    "At least one LLM provider must be available in production — refusing to start. Set that provider's " +
-      "API key and leave its <PROVIDER>_AVAILABLE unset (or true).",
-  );
-  exitAfterLogs(1);
-}
+// There is deliberately NO startup gate on LLM provider keys. Keys are entered in the app
+// (Settings → Provider API keys), so a fresh deployment has none by definition — refusing to start
+// would make the very screen that fixes it unreachable. A workspace with no usable provider fails at
+// the start of its conversation instead, naming the provider and the fix (lib/agent/providerFailure.ts).
 
 try {
   assertDataRootAvailable(WORKSPACES_ROOT);
@@ -423,6 +424,37 @@ if (!dev) {
       "existing workspace secret store could not be read or decrypted — refusing to start",
     );
     exitAfterLogs(1);
+  }
+  try {
+    assertProviderKeyStoreAvailable();
+  } catch (err) {
+    log.fatal(
+      {
+        event: "startup_provider_key_store_unavailable",
+        outcome: "process_exit",
+        err,
+        filePath: PROVIDER_KEY_STORE_FILE,
+      },
+      "existing provider API key store could not be read or decrypted — refusing to start",
+    );
+    exitAfterLogs(1);
+  }
+}
+
+// Withdrawing a provider destroys its key, and this is where that happens: availability is read from
+// .env, so it can only change across a restart. Running it before the server listens means no request
+// and no scheduled run can spend on a provider the operator has just switched off.
+//
+// DESTRUCTIVE. Setting <PROVIDER>_AVAILABLE=false and restarting deletes that provider's stored key
+// for good; switching it back on does not bring it back. That is what makes the switch mean "nobody
+// can spend on this" rather than merely "hidden from the picker", and each deletion is audit-logged.
+{
+  const purged = purgeProviderKeysExcept(availableProviders());
+  if (purged.length) {
+    log.warn(
+      { event: "startup_provider_keys_purged", outcome: "stored_keys_destroyed", providers: purged },
+      "deleted the stored API keys of providers this deployment has switched off",
+    );
   }
 }
 

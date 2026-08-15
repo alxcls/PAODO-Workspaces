@@ -11,6 +11,7 @@ import { z } from "zod";
 import type { IWorkspaceLookup, IContainerManager } from "../../infra/interfaces";
 import type { SkillConfig } from "../interfaces";
 import { executeSkill } from "../skills/executeSkill";
+import { isTerminalProviderCode } from "../providerFailure";
 import { createLogger } from "../../infra/logger";
 import { toolError } from "../toolUtils";
 
@@ -126,14 +127,18 @@ A workspace with no declared skills is not callable. If the workspace is not con
         meta,
       };
     }
-    if (code === "PROVIDER_CREDIT_EXHAUSTED") {
+    if (isTerminalProviderCode(code)) {
       // Scoped to the callee: it may run on a different provider than this workspace, so this is
       // "stop calling that agent", not "stop working". Whether this workspace can keep going is
       // answered by its own next model turn.
+      //
+      // All four provider failures share one instruction because the caller's options are identical
+      // for every one of them — none is fixable from inside a run, and only an operator can clear it.
+      // The specific cause is already in `message`, which is what gets reported to the user.
       return {
         result:
-          `Error (PROVIDER_CREDIT_EXHAUSTED): ${message} Do not re-call "${workspace}" — no retry ` +
-          `can succeed until its provider account is topped up. Report this to the user.`,
+          `Error (${code}): ${message} Do not re-call "${workspace}" — no retry can succeed until an ` +
+          `operator fixes its model provider configuration. Report this to the user.`,
         meta,
       };
     }

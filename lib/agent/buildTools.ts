@@ -4,7 +4,8 @@
 // Concrete infra dependencies are wired here and injected into tool constructors — tools
 // themselves only depend on the ContainerRunner interface defined in interfaces.ts.
 
-import { buildModel, defaultModelSelection, providerApiKeyEnv } from "./buildModel";
+import { buildModel, defaultModelSelection } from "./buildModel";
+import { getProviderKey } from "../infra/security/providerKeyStore";
 import { applyCompaction, type CompactLevel } from "./compact";
 import { classifyToolStatus } from "./toolUtils";
 import type { PostDispatchFn } from "./interfaces";
@@ -64,24 +65,25 @@ function makeBackgroundExecFn(
 
 // Resolves the LLM config for a run. Provider / model / reasoning effort come from the workspace's
 // stored selection (chosen in the UI), falling back to the first available provider when the workspace
-// hasn't picked — so a run never lands on a provider .env switched off. .env supplies the provider API
-// keys, which providers are available, and the anthropic cache flag — never a workspace's model choice.
-// Called with no workspaceId in a few provider-agnostic spots (e.g. building a system prompt), where
-// the defaults are fine.
+// hasn't picked — so a run never lands on a provider .env switched off. .env supplies which providers
+// are available and the anthropic cache flag; it no longer carries any API key, and never a
+// workspace's model choice. Called with no workspaceId in a few provider-agnostic spots (e.g. building
+// a system prompt), where the defaults are fine.
 export function loadAgentConfig(workspaceId?: string): AgentConfig {
   const ws = workspaceId ? defaultWorkspaceStore.getWorkspace(workspaceId) : undefined;
   const fallback = defaultModelSelection();
   const provider = ws?.llmProvider ?? fallback.provider;
   const model = ws?.llmModel ?? fallback.model;
   const reasoningEffort = ws?.reasoningEffort ?? fallback.reasoningEffort;
-  // The key comes from the env var the provider's registry entry declares, so a new provider needs no
-  // change here. Undefined for an unknown provider — buildModel rejects it with a clear error.
-  const apiKeyEnv = providerApiKeyEnv(provider);
   return {
     provider,
     reasoningEffort,
     model,
-    apiKey: apiKeyEnv ? process.env[apiKeyEnv] : undefined,
+    // The operator's own key, entered in the app rather than .env. Undefined when none is set for
+    // this provider — the same "cannot run" signal an absent env var used to give, but now a state
+    // the operator can fix in the UI. runAgent checks for it before the first request so the run
+    // stops with a message naming the provider, instead of an SDK error about a missing credential.
+    apiKey: getProviderKey(provider),
     graphEnabled: process.env.GRAPH_ENABLED !== "false",
     internetAccess: ws ? (ws.internetAccess ?? true) : false,
     anthropicCacheTtl1h: process.env.ANTHROPIC_CACHE_TTL_1H === "true",

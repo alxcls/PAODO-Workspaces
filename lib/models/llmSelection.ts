@@ -15,9 +15,12 @@ export type ReasoningEffort = "none" | "minimal" | "low" | "medium" | "high" | "
 
 // Per-workspace LLM selection: provider + model + reasoning effort are chosen in the UI and stored on
 // the workspace record (not in .env). A workspace that has made no choice gets defaultModelSelection()
-// (lib/operations/models/catalog.ts) — the first provider .env makes available, not a hardcoded one.
+// (lib/agent/buildModel.ts) — the first provider .env leaves switched on, not a hardcoded one.
 // There is deliberately no default-selection constant here: one would have to be kept in sync with
 // what .env actually allows, and would name a provider the deployment may have switched off.
+//
+// Note this is about the CHOICE, not about whether it can run. Whether the chosen provider has an API
+// key is a separate question, answered from the encrypted key store at the start of a run.
 //
 // The reasoning effort stored for a provider that has no effort dial. Never sent to the provider —
 // the field is not nullable, so it holds one uniform value instead of whatever the last dial-having

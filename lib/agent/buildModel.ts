@@ -1,6 +1,12 @@
-// The provider registry: which LLM providers exist, what each accepts, which .env vars govern it,
+// The provider registry: which LLM providers exist, what each accepts, which .env var governs it,
 // and how to instantiate its LangChain chat model. Supports OpenAI (responses API + reasoning),
 // Anthropic (extended thinking), DeepSeek, Moonshot, and Mistral.
+//
+// API KEYS ARE NOT HERE AND NOT IN .env. They are entered in the app and held encrypted by
+// lib/infra/security/providerKeyStore.ts; loadAgentConfig reads one from there per run. This module
+// answers "which providers does this deployment OFFER", which is now a question about configuration
+// alone — a provider is offered whether or not anyone has paid for it yet, and a run that needs a key
+// nobody set fails at conversation start where the operator can act on it.
 //
 // Server-only — it imports the LLM SDKs. Anything a client component needs to know about a selection
 // lives in lib/models/{llmSelection,selection}.ts, which this module feeds rather than duplicates.
@@ -77,11 +83,12 @@ interface ProviderMetadata {
 }
 
 interface ProviderDescriptor extends ProviderMetadata {
-  /** The .env var carrying this provider's API key — resolved into config.apiKey by loadAgentConfig. */
-  apiKeyEnv: string;
   /**
-   * The .env var that switches this provider off for the whole deployment. Named per provider rather
-   * than derived from the id so both halves of a provider's .env contract are greppable from here.
+   * The .env var that switches this provider off for the whole deployment — now the provider's ONLY
+   * env contract. Its API key is not in .env at all: it is entered in the app and held encrypted by
+   * lib/infra/security/providerKeyStore.ts, so a deployment can be handed over without its keys.
+   *
+   * Named per provider rather than derived from the id, so the var is greppable from the registry.
    */
   availabilityEnv: string;
   /**
@@ -97,12 +104,11 @@ interface ProviderDescriptor extends ProviderMetadata {
   build: (config: LLMProviderConfig) => ChatOpenAI | ChatAnthropic;
 }
 
-// The single source of truth for provider support: capabilities, its two env vars (key and
-// availability switch) and model construction in one entry. Adding a provider means adding one entry
-// here plus its models in lib/models/registry.ts — nothing else in the agent layer changes.
+// The single source of truth for provider support: capabilities, its availability switch, and model
+// construction in one entry. Adding a provider means adding one entry here plus its models in
+// lib/models/registry.ts — nothing else in the agent layer changes, and nothing in .env.
 const PROVIDERS: Record<string, ProviderDescriptor> = {
   anthropic: {
-    apiKeyEnv: "ANTHROPIC_API_KEY",
     availabilityEnv: "ANTHROPIC_AVAILABLE",
     supportsPromptCaching: true,
     reasoningEfforts: ["low", "medium", "high", "xhigh", "max"],
@@ -119,7 +125,6 @@ const PROVIDERS: Record<string, ProviderDescriptor> = {
       }),
   },
   openai: {
-    apiKeyEnv: "OPENAI_API_KEY",
     availabilityEnv: "OPENAI_AVAILABLE",
     supportsPromptCaching: false,
     reasoningEfforts: ["none", "minimal", "low", "medium", "high", "xhigh"],
@@ -139,7 +144,6 @@ const PROVIDERS: Record<string, ProviderDescriptor> = {
     },
   },
   deepseek: {
-    apiKeyEnv: "DEEPSEEK_API_KEY",
     availabilityEnv: "DEEPSEEK_AVAILABLE",
     supportsPromptCaching: false,
     reasoningEfforts: [],
@@ -153,7 +157,6 @@ const PROVIDERS: Record<string, ProviderDescriptor> = {
       }),
   },
   moonshot: {
-    apiKeyEnv: "MOONSHOT_API_KEY",
     availabilityEnv: "MOONSHOT_AVAILABLE",
     supportsPromptCaching: false,
     // Kimi K3 takes low|high|max only — no medium, and none/minimal aren't offered because K3 always
@@ -173,7 +176,6 @@ const PROVIDERS: Record<string, ProviderDescriptor> = {
       }),
   },
   mistral: {
-    apiKeyEnv: "MISTRAL_API_KEY",
     availabilityEnv: "MISTRAL_AVAILABLE",
     // The only provider that validates inbound tool-call ids: anything other than exactly 9
     // alphanumerics answers 400 ("Tool call IDs should be alphanumeric strings with length 9!").
@@ -236,10 +238,10 @@ export const TOOL_CALL_ID_CONSTRAINT = narrowestConstraint(
 /**
  * Whether a provider is offered in this deployment, per its `<PROVIDER>_AVAILABLE` .env var.
  *
- * Opt-out, not opt-in: an unset (or blank) var means available, so an existing .env keeps every
- * provider it has a key for and nobody has to add four lines to stand still. Only the literal "false"
- * switches one off — the same reading GRAPH_ENABLED gets elsewhere — and it is matched after trimming
- * and lowercasing so `False` and a trailing space behave as written.
+ * Opt-out, not opt-in: an unset (or blank) var means available, so a deployment offers every provider
+ * the app supports until it says otherwise and nobody has to add five lines to stand still. Only the
+ * literal "false" switches one off — the same reading GRAPH_ENABLED gets elsewhere — and it is
+ * matched after trimming and lowercasing so `False` and a trailing space behave as written.
  *
  * Both spellings of the name are read, the uppercase one documented in .env.example and the
  * all-lowercase one (`deepseek_available`), because .env files get written either way and an
@@ -250,23 +252,23 @@ function providerAvailable(availabilityEnv: string, env: Record<string, string |
   return raw?.trim().toLowerCase() !== "false";
 }
 
-// The supported providers a workspace can actually choose: those with an API key configured that .env
-// has not switched off. Drives the UI provider picker and GET /api/models, so neither an
-// unauthenticated nor a disabled provider is ever offered. This is a usability filter, not
-// enforcement: the PATCH route still validates against SUPPORTED_PROVIDERS, so a programmatic caller
-// can still name a provider that isn't offered, and a workspace already stored on one keeps running
-// it. Nothing here revokes a stored selection.
+/**
+ * The providers this deployment offers: every supported one .env has not switched off.
+ *
+ * DELIBERATELY SAYS NOTHING ABOUT KEYS. It used to also require an API key in .env, which made one
+ * list serve two questions — "what may be chosen" and "what can authenticate" — and that conflation
+ * is what made a keyless deployment show an empty picker. A provider is offered whether or not
+ * anyone has entered its key; whether it can actually run is `hasProviderKey`, asked separately and
+ * answered at conversation start.
+ *
+ * Drives the UI provider picker, GET /api/models, and which providers may be given a key at all.
+ * That last one is what gives the switch teeth: a withdrawn provider cannot be keyed, and any key it
+ * already had is purged at startup (purgeProviderKeysExcept).
+ */
 export function availableProviders(env: Record<string, string | undefined> = process.env): string[] {
   return Object.entries(PROVIDERS)
-    .filter(([, { apiKeyEnv, availabilityEnv }]) => {
-      return Boolean(env[apiKeyEnv]?.trim()) && providerAvailable(availabilityEnv, env);
-    })
+    .filter(([, { availabilityEnv }]) => providerAvailable(availabilityEnv, env))
     .map(([provider]) => provider);
-}
-
-/** Whether startup has at least one LLM provider that is both keyed and enabled. */
-export function hasAvailableProvider(env: Record<string, string | undefined> = process.env): boolean {
-  return availableProviders(env).length > 0;
 }
 
 /** What a provider accepts, assembled from the two registries that own the halves. */
@@ -278,29 +280,28 @@ function vocabularyFor(provider: string): ModelVocabulary {
  * The selection a workspace that has never picked one runs and displays.
  *
  * The RULE is firstAvailableSelection in lib/models/selection.ts; this supplies it with the two
- * things only the registry knows — which providers .env actually allows, and what each accepts.
- * It lives here rather than in the operations layer because the agent runtime needs it on every run
+ * things only the registry knows — which providers .env allows, and what each accepts. It lives here
+ * rather than in the operations layer because the agent runtime needs it on every run
  * (loadAgentConfig), and an agent that reaches up into the trigger-facing layer for a provider fact
  * has the dependency backwards.
  *
  * "First" is registry order — PROVIDERS above, then the provider's list in lib/models/registry.ts —
  * filtered by availability. A deployment expresses a preference by reordering those lists or by
  * switching providers off, so there is no default constant that could name a provider it disallows.
+ *
+ * The result may well name a provider with no API key set. That is correct and intended: the picker
+ * shows a real choice from the first boot, before anyone has entered a key, and the missing key is
+ * reported where it can be acted on rather than by hiding the provider.
  */
 export function defaultModelSelection(env: Record<string, string | undefined> = process.env): ModelSelection {
   return firstAvailableSelection(availableProviders(env), vocabularyFor);
 }
 
-// The env var holding a provider's API key; undefined for an unknown provider (buildModel rejects it).
-export function providerApiKeyEnv(provider: string): string | undefined {
-  return PROVIDERS[provider]?.apiKeyEnv;
-}
-
-// The env var switching a provider off; undefined for an unknown provider. Exported for the same
-// reason as providerApiKeyEnv: tests that clear the environment must be able to enumerate BOTH halves
-// of every provider's .env contract from the registry. A hand-written list silently stops covering
-// the newest provider, and the symptom is the worst kind — a developer's own shell leaking into a
-// fallback-selection test, so it passes locally and fails in CI or vice versa.
+// The env var switching a provider off; undefined for an unknown provider. Exported so tests that
+// clear the environment can enumerate a provider's whole .env contract from the registry rather than
+// a hand-written list — one that silently stops covering the newest provider, with the worst possible
+// symptom: a developer's own shell leaking into a fallback-selection test, so it passes locally and
+// fails in CI or the reverse.
 export function providerAvailabilityEnv(provider: string): string | undefined {
   return PROVIDERS[provider]?.availabilityEnv;
 }

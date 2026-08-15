@@ -51,9 +51,15 @@ export type SkillErrorCode =
   | "CANCELLED"
   | "CAPACITY_REACHED"
   | "INFRASTRUCTURE_UNAVAILABLE"
-  // The callee's LLM provider account has no credit left. Distinct from EXECUTION_ERROR because
-  // nothing the caller does — different args, a retry, another skill on the same callee — changes it.
+  // The callee cannot reach a working model at all: its provider is switched off, has no API key,
+  // had its key refused, or its account has no credit left. All four are distinct from
+  // EXECUTION_ERROR because nothing the caller does — different args, a retry, another skill on the
+  // same callee — changes them; only an operator can. Kept in step with TERMINAL_PROVIDER_CODES in
+  // lib/agent/providerFailure.ts, which is the list executeSkill actually matches against.
   | "PROVIDER_CREDIT_EXHAUSTED"
+  | "PROVIDER_KEY_INVALID"
+  | "PROVIDER_KEY_MISSING"
+  | "PROVIDER_UNAVAILABLE"
   | "EXECUTION_ERROR";
 
 /**

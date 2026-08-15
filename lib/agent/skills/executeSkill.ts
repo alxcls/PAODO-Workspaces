@@ -15,6 +15,7 @@
 import Ajv, { type ErrorObject, type ValidateFunction } from "ajv";
 import { AIMessage, HumanMessage, type BaseMessage } from "@langchain/core/messages";
 import { canCall } from "@/lib/agent/network/graph";
+import { TERMINAL_PROVIDER_CODES } from "../providerFailure";
 import { loadSkills } from "@/lib/skills/store";
 import { createConversation, getMessages, persist } from "@/lib/conversations/store";
 import { refreshWorkspaceSystemPrompt } from "../workspacePrompt";
@@ -115,10 +116,14 @@ function parseOutput(text: string): { ok: true; value: Record<string, unknown> }
   return { ok: true, value: parsed as Record<string, unknown> };
 }
 
-// Run-ending causes worth naming to the caller rather than flattening into EXECUTION_ERROR: both
-// are conditions a correction retry cannot repair, and both are already SkillErrorCodes, so they
-// pass straight through `fail()`.
-const CALLEE_TERMINAL_CODES = ["INFRASTRUCTURE_UNAVAILABLE", "PROVIDER_CREDIT_EXHAUSTED"] as const;
+// Run-ending causes worth naming to the caller rather than flattening into EXECUTION_ERROR: each is
+// a condition a correction retry cannot repair, and each is already a SkillErrorCode, so they pass
+// straight through `fail()`.
+//
+// The provider half comes from TERMINAL_PROVIDER_CODES rather than being spelled again here. It was
+// two hand-written strings when there was one provider failure; BYOK adds three more, and a code
+// this list forgets is a callee that retries a missing API key on every call, forever, at cost.
+const CALLEE_TERMINAL_CODES = ["INFRASTRUCTURE_UNAVAILABLE", ...TERMINAL_PROVIDER_CODES] as const;
 type CalleeTerminalCode = (typeof CALLEE_TERMINAL_CODES)[number];
 type CalleeTurnFailure = { error: string; code?: CalleeTerminalCode };
 

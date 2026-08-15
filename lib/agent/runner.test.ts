@@ -1,10 +1,20 @@
 // runAgent must leave conversation history consistent when an aborted request
 // abandons the streaming generator mid tool-call turn.
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { AIMessage, AIMessageChunk, ToolMessage, type BaseMessage } from "@langchain/core/messages";
 import { runAgent, classifyToolStatus, type AgentEvent } from "./runner";
 import { buildSignalHandlers } from "./buildTools";
+import { SUPPORTED_PROVIDERS, providerAvailabilityEnv } from "./buildModel";
+
+// runAgent now refuses to start on a provider this deployment has switched off, and every test below
+// runs on "deepseek". Pinning the availability vars keeps that from depending on the developer's own
+// shell — a DEEPSEEK_AVAILABLE=false in the environment would otherwise turn every test in this file
+// into a preflight failure, for a reason invisible from the assertions.
+beforeEach(() => {
+  for (const provider of SUPPORTED_PROVIDERS) vi.stubEnv(providerAvailabilityEnv(provider)!, "true");
+});
+afterEach(() => vi.unstubAllEnvs());
 
 // runAgent mutates the conversation history (the messages array) in place. When a request is aborted
 // (the user hits escape) the SSE consumer stops pulling and the generator is abandoned via
@@ -79,7 +89,9 @@ function namedToolCallChunk(name: string, id: string, args: string): Chunk {
 const noopDeps = {
   notify: () => {},
   warmContainer: () => {},
-  loadConfig: () => ({}) as never,
+  // A runnable config: an offered provider with a key. runAgent's preflight stops any run that lacks
+  // either, so a config without them would end every test below at the first yield.
+  loadConfig: () => ({ provider: "deepseek", model: "deepseek-v4-flash", apiKey: "sk-test" }) as never,
   containers: {} as never,
   store: {} as never,
 };
@@ -223,7 +235,7 @@ describe("runAgent — history stays consistent across aborts", () => {
 
     for await (const event of runAgent([], "do work", "/tmp/ws", "ws-1", {
       ...noopDeps,
-      loadConfig: () => ({ provider: "deepseek", model: "deepseek-chat" }) as never,
+      loadConfig: () => ({ provider: "deepseek", model: "deepseek-chat", apiKey: "sk-test" }) as never,
       buildAgentTools,
     })) {
       events.push(event);
@@ -526,5 +538,83 @@ describe("buildSignalHandlers", () => {
     await expect(
       buildSignalHandlers().compact_context({ level: "hard", next_step: "carry on" }, "ok", ctx),
     ).resolves.toBeUndefined();
+  });
+});
+
+// The BYOK failure path. Keys are entered in the app, so "no key" is the state every deployment
+// starts in — it has to end the run with something the operator can act on, in the transcript, and
+// it has to do so before anything is spent or started.
+describe("runAgent — refuses to start without a usable provider", () => {
+  // Anything reaching this means the preflight ran too late: buildTools constructs the provider
+  // client, and runAgent pre-warms a container on the way past.
+  const explode = () => {
+    throw new Error("built the model despite having no usable provider");
+  };
+
+  async function collect(config: Record<string, unknown>) {
+    const events: AgentEvent[] = [];
+    for await (const event of runAgent([], "do work", "/tmp/ws", "ws-1", {
+      ...noopDeps,
+      loadConfig: () => config as never,
+      buildAgentTools: explode as never,
+      warmContainer: explode,
+    })) {
+      events.push(event);
+    }
+    return events;
+  }
+
+  it("stops with a message naming the provider when no key is set", async () => {
+    const events = await collect({ provider: "deepseek", model: "deepseek-v4-flash" });
+
+    expect(events).toEqual([
+      { type: "error", code: "PROVIDER_KEY_MISSING", message: expect.stringContaining("No API key set for deepseek") },
+      { type: "done" },
+    ]);
+  });
+
+  it("blames the switch, not the key, for a provider this deployment withdrew", async () => {
+    vi.stubEnv("DEEPSEEK_AVAILABLE", "false");
+
+    const events = await collect({ provider: "deepseek", model: "deepseek-v4-flash" });
+
+    expect(events[0]).toMatchObject({ type: "error", code: "PROVIDER_UNAVAILABLE" });
+  });
+
+  // Closing the stream properly matters as much as the message: the SSE consumer and runBroker both
+  // key off `done`, and a generator that just returns leaves the run showing as still working.
+  it("always closes the stream with done", async () => {
+    const events = await collect({ provider: "deepseek", model: "deepseek-v4-flash" });
+    expect(events.at(-1)).toEqual({ type: "done" });
+  });
+
+  it("leaves the conversation history untouched", async () => {
+    // Not even the user's message is appended: nothing happened, so replaying this conversation
+    // later must not show a turn that never ran.
+    const messages: BaseMessage[] = [];
+    for await (const _ of runAgent(messages, "do work", "/tmp/ws", "ws-1", {
+      ...noopDeps,
+      loadConfig: () => ({ provider: "deepseek", model: "deepseek-v4-flash" }) as never,
+      buildAgentTools: explode as never,
+      warmContainer: explode,
+    })) {
+      // drain
+    }
+    expect(messages).toEqual([]);
+  });
+
+  it("runs normally the moment a key is present", async () => {
+    // The same config that failed above, plus a key — so the preflight is what differed, not the
+    // surrounding setup.
+    const buildAgentTools = makeBuildTools([[new AIMessageChunk({ content: "hello" })]]);
+    const events: AgentEvent[] = [];
+    for await (const event of runAgent([], "do work", "/tmp/ws", "ws-1", {
+      ...noopDeps,
+      loadConfig: () => ({ provider: "deepseek", model: "deepseek-v4-flash", apiKey: "sk" }) as never,
+      buildAgentTools,
+    })) {
+      events.push(event);
+    }
+    expect(events.some((e) => e.type === "error")).toBe(false);
   });
 });

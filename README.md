@@ -55,17 +55,19 @@ _Demo video of PAODO in action_ :
 
 ## Quick start
 
-**Requirements:** Node.js 20+, [Docker](https://docs.docker.com/get-docker/) (running), and an API key for at least one supported provider (OpenAI, Anthropic, DeepSeek, Moonshot, or Mistral).
+**Requirements:** Node.js 20+, [Docker](https://docs.docker.com/get-docker/) (running), and an API key for at least one supported provider (OpenAI, Anthropic, DeepSeek, Moonshot, or Mistral). The key goes into the app, not into a file — see below.
 
 ```bash
 git clone https://github.com/alxcls/PAODO-Workspaces.git
 cd PAODO-Workspaces
 npm install
-cp .env.example .env          # set the API key for your provider
+cp .env.example .env          # set USERNAME and PASSWORD
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000). The workspace Docker image is built automatically on first run.
+Open [http://localhost:3000](http://localhost:3000), then add your provider API key under the gear icon → **Settings → Provider API keys**. Keys are stored encrypted on the data volume rather than in `.env`, so a deployment can be copied or handed over without its credentials. Until a key is set, a workspace stops at the start of its conversation and names the provider it needs one for.
+
+The workspace Docker image is built automatically on first run.
 
 For VPS deployment, see the [deploy guide](deploy/README.md).
 

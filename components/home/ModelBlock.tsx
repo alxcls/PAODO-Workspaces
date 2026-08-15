@@ -121,6 +121,16 @@ export default function ModelBlock({ wsId }: { wsId: string }) {
   // to false — remains visible even though it is no longer offered for new selections.
   const providerOptions = provider && !providers.includes(provider) ? [provider, ...providers] : providers;
 
+  // Whether the selected provider can actually authenticate. Read from the catalog this component
+  // already fetched, so the warning costs no extra request.
+  //
+  // A run stops with this same fact at conversation start, which is the backstop — but finding out
+  // there is no key only after sending a message, in the transcript, is a worse place to learn it
+  // than right here where the provider was chosen. A provider not in the catalog at all (a stored
+  // selection whose provider was since withdrawn) is left alone: it has its own message on the run,
+  // and "add a key" would be the wrong advice for it.
+  const missingKey = Boolean(provider) && providerCatalog !== undefined && !providerCatalog.hasKey;
+
   const save = async () => {
     if (!selectedModel.trim()) return;
     // Nothing changed — just leave edit mode without a needless PATCH.
@@ -256,6 +266,12 @@ export default function ModelBlock({ wsId }: { wsId: string }) {
           </>
         )}
       </div>
+
+      {missingKey && (
+        <p role="alert" className="mb-0 text-xs text-danger">
+          No API key set for {provider} — add one in Settings, or this workspace cannot run.
+        </p>
+      )}
     </div>
   );
 }

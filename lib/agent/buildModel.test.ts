@@ -7,9 +7,8 @@ import {
   availableProviders,
   buildModel,
   defaultModelSelection,
-  hasAvailableProvider,
   SUPPORTED_PROVIDERS,
-  providerApiKeyEnv,
+  providerAvailabilityEnv,
 } from "./buildModel";
 import type { LLMProviderConfig } from "./interfaces";
 import type { ReasoningEffort } from "../models/llmSelection";
@@ -68,11 +67,17 @@ describe("buildModel", () => {
     ...over,
   });
 
+  // The LLM SDKs read these on their own if we pass no apiKey — @langchain/openai falls back to
+  // OPENAI_API_KEY, @langchain/anthropic to ANTHROPIC_API_KEY. They are no longer part of THIS app's
+  // configuration (keys come from the encrypted store now), which is exactly why they have to be
+  // cleared here: a developer's shell still exports them, and a build that silently picked one up
+  // would make these assertions pass while proving nothing about our own wiring.
+  const SDK_FALLBACK_ENV = ["OPENAI_API_KEY", "ANTHROPIC_API_KEY"];
+
   let saved: Record<string, string | undefined>;
   beforeEach(() => {
     saved = {};
-    for (const p of SUPPORTED_PROVIDERS) {
-      const env = providerApiKeyEnv(p)!;
+    for (const env of SDK_FALLBACK_ENV) {
       saved[env] = process.env[env];
       delete process.env[env];
     }
@@ -190,79 +195,60 @@ describe("buildModel", () => {
   });
 });
 
+// Availability is now the ONLY question .env answers about a provider. API keys are entered in the
+// app, so a provider is offered whether or not anyone has paid for it — the assertions below say
+// nothing about keys because the function no longer knows anything about them.
 describe("availableProviders", () => {
-  it("lists only providers whose key is set, so the picker can't offer an unauthenticated one", () => {
-    expect(availableProviders({ ANTHROPIC_API_KEY: "sk-ant", DEEPSEEK_API_KEY: "sk-ds" })).toEqual([
-      "anthropic",
-      "deepseek",
-    ]);
+  it("offers every supported provider when nothing is switched off", () => {
+    // Not a hand-listed expectation: adding a provider must extend this automatically, or the test
+    // quietly stops covering the newest one.
+    expect(availableProviders({})).toEqual(SUPPORTED_PROVIDERS);
   });
 
-  it("treats blank and whitespace-only keys as unset", () => {
-    expect(availableProviders({ OPENAI_API_KEY: " ", ANTHROPIC_API_KEY: "", DEEPSEEK_API_KEY: "\t" })).toEqual([]);
+  it("offers a provider that has no API key, so a fresh deployment has something to pick", () => {
+    // The bug this replaces: requiring a key here meant a deployment with none served an empty
+    // picker, and the keys can only be entered through that picker's own settings modal.
+    expect(availableProviders({})).toContain("anthropic");
   });
 
-  it("returns a subset of the supported providers", () => {
-    // Env built from the registry rather than a hand-listed set, so adding a provider can't leave
-    // this asserting a stale list.
-    const all = availableProviders(Object.fromEntries(SUPPORTED_PROVIDERS.map((p) => [providerApiKeyEnv(p)!, "k"])));
-    expect(all).toEqual(SUPPORTED_PROVIDERS);
-  });
-
-  it("drops a keyed provider that .env switched off", () => {
-    expect(
-      availableProviders({
-        ANTHROPIC_API_KEY: "sk-ant",
-        DEEPSEEK_API_KEY: "sk-ds",
-        ANTHROPIC_AVAILABLE: "false",
-      }),
-    ).toEqual(["deepseek"]);
+  it("drops a provider .env switched off", () => {
+    expect(availableProviders({ ANTHROPIC_AVAILABLE: "false" })).not.toContain("anthropic");
   });
 
   it("keeps a provider whose availability var is unset, blank, or true", () => {
-    // Opt-out: an .env written before the switch existed must keep every provider it has a key for.
-    expect(availableProviders({ DEEPSEEK_API_KEY: "sk-ds" })).toEqual(["deepseek"]);
-    expect(availableProviders({ DEEPSEEK_API_KEY: "sk-ds", DEEPSEEK_AVAILABLE: "" })).toEqual(["deepseek"]);
-    expect(availableProviders({ DEEPSEEK_API_KEY: "sk-ds", DEEPSEEK_AVAILABLE: "true" })).toEqual(["deepseek"]);
+    // Opt-out: an .env written before the switch existed must keep every provider standing.
+    for (const env of [{}, { DEEPSEEK_AVAILABLE: "" }, { DEEPSEEK_AVAILABLE: "true" }]) {
+      expect(availableProviders(env)).toContain("deepseek");
+    }
   });
 
   it("reads the switch case-insensitively, trimmed, and in the lowercase spelling", () => {
-    expect(availableProviders({ OPENAI_API_KEY: "sk", OPENAI_AVAILABLE: "False" })).toEqual([]);
-    expect(availableProviders({ OPENAI_API_KEY: "sk", OPENAI_AVAILABLE: " false " })).toEqual([]);
-    expect(availableProviders({ OPENAI_API_KEY: "sk", openai_available: "false" })).toEqual([]);
+    expect(availableProviders({ OPENAI_AVAILABLE: "False" })).not.toContain("openai");
+    expect(availableProviders({ OPENAI_AVAILABLE: " false " })).not.toContain("openai");
+    expect(availableProviders({ openai_available: "false" })).not.toContain("openai");
   });
 
   it("ignores a value that is neither true nor false rather than guessing it meant off", () => {
     // Only the literal "false" disables, matching GRAPH_ENABLED. A typo leaves the provider offered,
     // which fails visibly in the picker rather than making a provider vanish for an unreadable reason.
-    expect(availableProviders({ OPENAI_API_KEY: "sk", OPENAI_AVAILABLE: "no" })).toEqual(["openai"]);
+    expect(availableProviders({ OPENAI_AVAILABLE: "no" })).toContain("openai");
+  });
+
+  it("returns nothing when every provider is switched off", () => {
+    const allOff = Object.fromEntries(SUPPORTED_PROVIDERS.map((p) => [providerAvailabilityEnv(p)!, "false"]));
+    expect(availableProviders(allOff)).toEqual([]);
   });
 });
 
-describe("hasAvailableProvider", () => {
-  it("returns false when every supported provider key is absent or blank", () => {
-    expect(hasAvailableProvider({})).toBe(false);
-    expect(
-      hasAvailableProvider({
-        OPENAI_API_KEY: " ",
-        ANTHROPIC_API_KEY: "",
-        DEEPSEEK_API_KEY: "\t",
-      }),
-    ).toBe(false);
-  });
-
-  it("returns true when any supported provider key is configured", () => {
-    expect(hasAvailableProvider({ OPENAI_API_KEY: "sk-test" })).toBe(true);
-  });
-
-  it("returns false when the only keyed provider is switched off", () => {
-    // Startup refuses in production: a key nobody is allowed to use is not a usable provider.
-    expect(hasAvailableProvider({ OPENAI_API_KEY: "sk-test", OPENAI_AVAILABLE: "false" })).toBe(false);
-  });
-});
 describe("defaultModelSelection", () => {
+  // Every case switches providers off rather than keying them on, because that is now the only lever.
+  const only = (provider: string) =>
+    Object.fromEntries(
+      SUPPORTED_PROVIDERS.filter((p) => p !== provider).map((p) => [providerAvailabilityEnv(p)!, "false"]),
+    );
+
   it("takes the first available provider's first model", () => {
-    expect(defaultModelSelection({ DEEPSEEK_API_KEY: "k" })).toEqual({
+    expect(defaultModelSelection(only("deepseek"))).toEqual({
       provider: "deepseek",
       model: "deepseek-v4-flash",
       // No effort dial, so the stored value is the uniform placeholder the agent never sends.
@@ -271,28 +257,28 @@ describe("defaultModelSelection", () => {
   });
 
   it("takes the provider's default effort when it has a dial", () => {
-    expect(defaultModelSelection({ ANTHROPIC_API_KEY: "k" })).toEqual({
+    expect(defaultModelSelection(only("anthropic"))).toEqual({
       provider: "anthropic",
       model: "claude-haiku-4-5",
       reasoningEffort: "low",
     });
   });
 
-  // The reported bug: a workspace that never picked showed and ran deepseek even with the switch off.
-  it("never picks a provider that is unkeyed or switched off", () => {
-    expect(
-      defaultModelSelection({
-        ANTHROPIC_API_KEY: "k",
-        DEEPSEEK_API_KEY: "k",
-        ANTHROPIC_AVAILABLE: "false",
-      }).provider,
-    ).toBe("deepseek");
-    expect(defaultModelSelection({ DEEPSEEK_API_KEY: "k", DEEPSEEK_AVAILABLE: "false" }).provider).toBe("");
+  it("skips a provider switched off in favour of the next one offered", () => {
+    expect(defaultModelSelection({ ANTHROPIC_AVAILABLE: "false" }).provider).toBe("openai");
   });
 
-  it("returns empty fields when no provider is available at all", () => {
-    // Production startup refuses in this state; dev shows an empty picker rather than a provider it
-    // cannot use.
-    expect(defaultModelSelection({})).toEqual({ provider: "", model: "", reasoningEffort: "low" });
+  // No longer a hypothetical corner: with keys out of .env, a deployment that switches everything
+  // off still starts, and this is what its workspaces report until something is switched back on.
+  it("returns empty fields when every provider is switched off", () => {
+    const allOff = Object.fromEntries(SUPPORTED_PROVIDERS.map((p) => [providerAvailabilityEnv(p)!, "false"]));
+    expect(defaultModelSelection(allOff)).toEqual({ provider: "", model: "", reasoningEffort: "low" });
+  });
+
+  it("picks a provider that has no API key rather than skipping to a keyed one", () => {
+    // Deliberate: the picker shows a real default from the first boot, and the missing key is
+    // reported at conversation start where it names the fix. Hiding it here would show an empty
+    // picker instead, which explains nothing.
+    expect(defaultModelSelection({}).provider).toBe(SUPPORTED_PROVIDERS[0]);
   });
 });

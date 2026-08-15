@@ -1,17 +1,5 @@
-// Core of structured agent-to-agent calls: a single in-process function that enforces
-// both sides of a skill contract and runs the callee agent in between.
-//
-// Order on every call (a rejection at any pre-run step returns `failed` without running):
-//   1. authorize      — workspaceGraph.canCall(callerId, calleeId)        → NOT_CONNECTED
-//   2. skill lookup   — `skillId` must match a skill id in .skills/       → SKILL_NOT_FOUND
-//   3. input check    — args validated against `input` (ajv)              → INPUT_VALIDATION_ERROR
-//   4. run callee     — fresh isolated runner with the structured-responder instruction
-//   5. output check   — final message parsed + validated against `output`; on failure the
-//      validation error is fed back into the SAME callee conversation and re-run, up to
-//      SKILL_OUTPUT_MAX_RETRIES times                                     → OUTPUT_VALIDATION_ERROR
-//
-// Both agents live in the same Node.js process — this is an ordinary function call,
-// no HTTP, no serialization.
+// Structured agent-to-agent calls: one function enforcing both sides of a skill contract and running
+// the callee between them. Same Node process — an ordinary call, no HTTP, no serialization.
 import Ajv, { type ErrorObject, type ValidateFunction } from "ajv";
 import { AIMessage, HumanMessage, type BaseMessage } from "@langchain/core/messages";
 import { canCall } from "@/lib/agent/network/graph";
@@ -35,8 +23,7 @@ import { createLogger } from "../../infra/logger";
 import type { runAgent, AgentEvent } from "../runner";
 import { createWorkspaceRunTimeout, USER_STOPPED_CONVERSATION_MESSAGE, WorkspaceRunTimeoutError } from "../runTimeout";
 import { ExecutionCapacityReachedError, type ExecutionCapacityGate } from "../executionCapacity";
-// runner (and runBroker, which pulls in runner) are imported dynamically inside executeSkill to
-// avoid the circular:
+// runner and runBroker are imported dynamically inside executeSkill, to break the cycle:
 // tools/index → AgentCallTool → executeSkill → runner → buildTools → tools/index
 
 const log = createLogger("executeSkill");
@@ -116,13 +103,8 @@ function parseOutput(text: string): { ok: true; value: Record<string, unknown> }
   return { ok: true, value: parsed as Record<string, unknown> };
 }
 
-// Run-ending causes worth naming to the caller rather than flattening into EXECUTION_ERROR: each is
-// a condition a correction retry cannot repair, and each is already a SkillErrorCode, so they pass
-// straight through `fail()`.
-//
-// The provider half comes from TERMINAL_PROVIDER_CODES rather than being spelled again here. It was
-// two hand-written strings when there was one provider failure; BYOK adds three more, and a code
-// this list forgets is a callee that retries a missing API key on every call, forever, at cost.
+// Causes worth naming rather than flattening into EXECUTION_ERROR: no correction retry repairs them.
+// The provider half is TERMINAL_PROVIDER_CODES, so a cause waiting DOES fix never lands here.
 const CALLEE_TERMINAL_CODES = ["INFRASTRUCTURE_UNAVAILABLE", ...TERMINAL_PROVIDER_CODES] as const;
 type CalleeTerminalCode = (typeof CALLEE_TERMINAL_CODES)[number];
 type CalleeTurnFailure = { error: string; code?: CalleeTerminalCode };
@@ -130,12 +112,8 @@ type CalleeTurnFailure = { error: string; code?: CalleeTerminalCode };
 const isCalleeTerminal = (code: string | undefined): code is CalleeTerminalCode =>
   CALLEE_TERMINAL_CODES.some((terminal) => terminal === code);
 
-// Runs the callee's loop once on the given (persisted) message history and collects the
-// final text. Output-correction retries call this again on the same array — just another
-// turn on the same conversation.
-// The callee's token usage is recorded under ITS OWN workspace (the chat route / agent
-// stream only record the caller's runner, so nested runs would otherwise be invisible in
-// the usage dashboard). One sessionId per skill call groups the run with its retries.
+// One pass of the callee's loop over the persisted history; correction retries call it again on the
+// same array. Usage is recorded under the CALLEE's workspace, else nested runs go unaccounted.
 async function runCalleeTurn(
   run: typeof runAgent,
   messages: BaseMessage[],
@@ -222,9 +200,8 @@ export async function executeSkill(
     };
   }
 
-  // 3. Input validation. A schema that fails to COMPILE is the callee author's bug, not the
-  // caller's — report it as EXECUTION_ERROR so the caller isn't blamed (INPUT_VALIDATION_ERROR
-  // counts as an input-failure strike in AgentCallTool, and retrying can't fix a broken file).
+  // 3. Input validation. A schema that fails to COMPILE is the callee author's bug: report
+  // EXECUTION_ERROR, since INPUT_VALIDATION_ERROR counts as a caller strike in AgentCallTool.
   const validateInput = compileSchema(skill.input);
   if ("compileError" in validateInput) {
     return {
@@ -241,9 +218,8 @@ export async function executeSkill(
     };
   }
 
-  // Use the author's JSON Schema unchanged. In particular, output properties are optional
-  // unless the schema explicitly lists them in `required`, just as they are for inputs and
-  // as MCP clients discover them.
+  // The author's JSON Schema unchanged: output properties stay optional unless `required` lists
+  // them, as for inputs and as MCP clients discover them.
   const validateOutput = compileSchema(skill.output);
   if ("compileError" in validateOutput) {
     return {
@@ -253,29 +229,23 @@ export async function executeSkill(
     };
   }
 
-  // 4. Run the callee — same prompt construction the free-form call_agent used, plus the
-  // structured-responder block carrying this skill's output schema. The run is persisted as a
-  // real conversation in the CALLEE's workspace so the caller's UI can deep-link to it and the
-  // operator can review the full session (reasoning, tool calls, messages) in the callee's tab.
+  // 4. Run the callee — call_agent's prompt plus a structured-responder block carrying the output
+  // schema. Persisted as a real conversation in the CALLEE's workspace, so both ends can review it.
   const { loadAgentConfig } = await import("../buildTools");
   const config = loadAgentConfig(callee.id);
   const run = opts.runAgentFn ?? (await import("../runner")).runAgent;
   const caller = opts.store?.getWorkspace(callerId);
 
-  // Created only now, after every pre-run rejection has been ruled out, so failed validations
-  // never leave empty conversations behind.
-  // No explicit title: fall back to createConversation's default (short id label), so a
-  // call_agent session is named exactly like one started from the chat UI. `kind` is kept for
-  // provenance only — it's not surfaced in the conversation list.
+  // Created only after every pre-run rejection is ruled out, so failed validations leave no empty
+  // conversations. No title, so the session is named like one started from the chat UI.
   const conv = (opts.createConversationFn ?? createConversation)(callee.id, {
     kind: "skill-call",
   });
   const messages = (opts.getMessagesFn ?? getMessages)(callee.id, conv.id) ?? ([] as BaseMessage[]);
   refreshWorkspaceSystemPrompt(callee, messages, config);
 
-  // Keep the call metadata and arguments in one machine-readable envelope. This is a normal
-  // user message to the callee agent, but JSON makes the protocol boundary clear when reviewing
-  // a skill-call conversation and avoids mixing routing metadata into prose.
+  // Metadata and arguments in one machine-readable envelope. An ordinary user message, but JSON
+  // marks the protocol boundary and keeps routing metadata out of prose.
   const callEnvelope = {
     ...(caller ? { caller: { workspaceId: caller.id, workspaceName: caller.name } } : {}),
     skill: { id: skill.id },
@@ -306,12 +276,8 @@ ${buildStructuredResponderBlock(skill)}`;
     return { state: "failed", code, message, conversationId: conv.id };
   };
 
-  // Register the callee's run with the run broker so its conversation tab is live-subscribable
-  // while it works — without this the callee runs entirely off-broker and a caller deep-linking
-  // into the session sees a blank, "stuck" UI (no broker session to attach to, history persisted
-  // only at the end). Imported dynamically to keep executeSkill out of the runBroker→runner cycle.
-  // The per-turn `done` events runAgent emits are suppressed; a single `done` is published in the
-  // finally below, after persist, so a correction retry never prematurely closes a subscriber.
+  // Registered with the broker so the callee's tab is live-subscribable; off-broker a deep-link shows
+  // a blank "stuck" UI. Per-turn `done` is suppressed — one publishes after persist, in the finally.
   const { startExternalRun } = await import("../runBroker");
   let liveRun;
   try {
@@ -328,12 +294,8 @@ ${buildStructuredResponderBlock(skill)}`;
     return fail("CAPACITY_REACHED", err.message);
   }
 
-  // The signal the callee actually runs under: whichever of these fires first halts it.
-  //   - opts.signal      — the caller's remaining deadline or explicit Stop (cascades recursively)
-  //   - liveRun.signal   — this callee session's own Stop action
-  //   - workspace timer  — this callee's persisted maxRunMinutes limit
-  // Threading liveRun.signal here is what makes broker.stop() on the callee's conversation work; it
-  // also becomes the opts.signal of any deeper nested call_agent, so the cascade is recursive.
+  // Whichever fires first halts the callee: the caller's deadline or Stop, this session's own Stop,
+  // or the workspace timer. It becomes the opts.signal of any deeper call, so the cascade recurses.
   const runTimeout = createWorkspaceRunTimeout(callee, [opts.signal, liveRun?.signal]);
   const calleeSignal = runTimeout.signal;
   const publish = liveRun
@@ -345,16 +307,14 @@ ${buildStructuredResponderBlock(skill)}`;
       }
     : undefined;
 
-  // Announce the session only now — after the broker run is registered — so a caller that clicks
-  // the "View session" link the instant it appears finds a live run to attach to, not an empty
-  // (not-yet-registered) session. createConversation already persisted it, so it resolves.
+  // Announced only after the broker run is registered, so a caller clicking "View session" the
+  // instant it appears finds a live run to attach to rather than an unregistered one.
   const maxRetries = opts.outputMaxRetries ?? config.skillOutputMaxRetries;
   let input = firstInput;
   let lastError = "";
 
-  // 5. Output validation + bounded correction retries on the same live conversation. The whole
-  // loop is bracketed by a persist() so the session is saved on every exit path — including
-  // failures, which are the ones most worth inspecting.
+  // 5. Output validation + bounded correction retries on the same live conversation, bracketed by a
+  // persist() so the session survives every exit path — failures most of all.
   try {
     opts.onConversationStart?.(conv.id);
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
@@ -393,9 +353,8 @@ ${buildStructuredResponderBlock(skill)}`;
       }
 
       const parsed = parseOutput(turn.text);
-      // Reserved envelope, checked before output validation: the callee asked for different
-      // input instead of answering. Not a malformatted response, so no correction retries —
-      // the fix has to come from the caller, not from re-prompting the callee.
+      // Reserved envelope, checked before output validation: the callee wants different input. Not a
+      // malformed response, so no correction retries — the fix comes from the caller.
       if (parsed.ok && typeof parsed.value[NEEDS_INPUT_KEY] === "string" && parsed.value[NEEDS_INPUT_KEY].trim()) {
         const question = (parsed.value[NEEDS_INPUT_KEY] as string).trim();
         elog.info({ attempt, question }, "skill call needs different input");

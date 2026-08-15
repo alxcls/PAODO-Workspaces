@@ -1,6 +1,5 @@
-// The gateway is the only place the app talks to a provider, so what it guarantees is what the whole
-// app can rely on: every call is measured, and every call is announced to the observer exactly once.
-// Both are properties a future pacing layer will sit on — it cannot budget traffic it never sees.
+// The gateway is the only place the app talks to a provider: every call is measured, and announced
+// to the observer exactly once. A pacing layer cannot budget traffic it never sees.
 import { describe, it, expect } from "vitest";
 import { AIMessageChunk, HumanMessage } from "@langchain/core/messages";
 import { createModelGateway, usageTokens, NO_USAGE, type ModelCallRecord } from "./modelGateway";
@@ -115,9 +114,8 @@ describe("ModelGateway.stream", () => {
     });
   });
 
-  // The user pressing escape abandons the generator mid-stream. Those tokens were spent and billed
-  // regardless, and before the gateway they were recorded nowhere — the run just threw. Measuring
-  // them in a `finally` is what makes an aborted turn cost something visible.
+  // Escape abandons the generator mid-stream. Those tokens were spent and billed regardless, and
+  // before the gateway they were recorded nowhere — the run just threw.
   it("still measures and reports a stream the consumer walks away from", async () => {
     const { gateway, records } = recordingGateway([
       chunk("one", { input: 12, output: 1 }),
@@ -155,9 +153,8 @@ describe("ModelGateway.invoke", () => {
 });
 
 describe("ModelGateway.bindTools", () => {
-  // A bound gateway is the same account talking to the same provider, so it has to answer to the
-  // same policy and land in the same ledger. A fresh observer here would silently halve the traffic
-  // any future budget can see — the tool-bound turn is the app's most frequent call by far.
+  // A bound gateway is the same account on the same provider, so it answers to the same policy. A
+  // fresh observer would hide the app's most frequent call from any future budget.
   it("keeps identity and observer, so bound calls are measured alongside bare ones", async () => {
     const { gateway, records } = recordingGateway([chunk("x", { input: 5, output: 2 })]);
     const bound = gateway.bindTools([]);

@@ -1,6 +1,5 @@
-// The Anthropic thinking API split by model generation: newer models (Opus 4.7+, Sonnet 5) reject
-// the legacy thinking:{type:"enabled", budget_tokens} shape with a 400 and require adaptive thinking
-// + output_config.effort; older models (Haiku 4.5) still take the legacy budget and reject effort.
+// The Anthropic thinking API split by model generation: newer models 400 on the legacy budget shape
+// and need adaptive thinking + effort; older ones still take the legacy budget and reject effort.
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import {
   anthropicThinkingConfig,
@@ -55,13 +54,8 @@ describe("anthropicThinkingConfig", () => {
   });
 });
 
-// The builders are the single point where a config becomes a real client, so these assert that the
-// selected model/key actually reach the SDK. Every provider's key env var is cleared first: the SDKs
-// fall back to process.env on their own, which would mask a builder that never wired the key through.
-//
-// Targets buildChatModel, not buildModel: these are claims about the vendor object's own fields, and
-// buildModel deliberately wraps that object in a ModelGateway which hides them. buildModel's own
-// contract — that the wrapping happens at all — is asserted separately below.
+// Where a config becomes a real client, so these assert the model/key actually reach the SDK.
+// Targets buildChatModel: these are claims about vendor fields the ModelGateway deliberately hides.
 describe("buildChatModel", () => {
   const config = (over: Partial<LLMProviderConfig>): LLMProviderConfig => ({
     provider: "openai",
@@ -72,11 +66,8 @@ describe("buildChatModel", () => {
     ...over,
   });
 
-  // The LLM SDKs read these on their own if we pass no apiKey — @langchain/openai falls back to
-  // OPENAI_API_KEY, @langchain/anthropic to ANTHROPIC_API_KEY. They are no longer part of THIS app's
-  // configuration (keys come from the encrypted store now), which is exactly why they have to be
-  // cleared here: a developer's shell still exports them, and a build that silently picked one up
-  // would make these assertions pass while proving nothing about our own wiring.
+  // The SDKs fall back to these on their own when passed no apiKey. A developer's shell still exports
+  // them, and a build that picked one up would pass these assertions while proving nothing.
   const SDK_FALLBACK_ENV = ["OPENAI_API_KEY", "ANTHROPIC_API_KEY"];
 
   let saved: Record<string, string | undefined>;
@@ -109,15 +100,8 @@ describe("buildChatModel", () => {
     expect(m.apiKey).toBe(`key-${provider}`);
   });
 
-  // Every OpenAI-compatible provider is the SAME client class as OpenAI itself, so the base URL is
-  // the only thing separating them. Nothing else in the suite pins it: a dropped or mistyped
-  // `configuration` doesn't fail loudly, it silently sends this provider's key to api.openai.com —
-  // one vendor's credential handed to another vendor, surfacing as a puzzling 401 rather than a
-  // visible bug. Assert the endpoint per provider so that can't happen quietly.
-  //
-  // `clientConfig` is where @langchain/openai lands the `configuration` object at construction time
-  // (base.js merges it into this.clientConfig in the constructor). The `client` it eventually builds
-  // is lazy — created on the first request — so it is still undefined here and cannot be asserted on.
+  // These share OpenAI's client class, so a dropped `configuration` silently sends this vendor's key
+  // to api.openai.com. Asserted on `clientConfig` because the `client` itself is built lazily.
   it.each([
     ["deepseek", "deepseek-v4-pro", "https://api.deepseek.com/v1"],
     ["moonshot", "kimi-k3", "https://api.moonshot.ai/v1"],
@@ -139,10 +123,8 @@ describe("buildChatModel", () => {
     expect(m.clientConfig.baseURL).toBeUndefined();
   });
 
-  // Kimi's strongest effort is "max", which OpenAI's effort union doesn't have — so it can't ride the
-  // typed `reasoningEffort` field and goes through modelKwargs instead. If that ever regresses to the
-  // typed field, "max" would be dropped or rejected and every turn would silently run at a lower
-  // effort, so assert the raw request field carries the value the workspace picked.
+  // Kimi's "max" is absent from OpenAI's effort union, so it rides modelKwargs. A regression to the
+  // typed field would silently drop it and run every turn at a lower effort.
   it("passes the Kimi reasoning effort through as a raw reasoning_effort request field", () => {
     const m = buildChatModel(config({ provider: "moonshot", model: "kimi-k3", reasoningEffort: "max" })) as unknown as {
       modelKwargs: Record<string, unknown>;
@@ -150,11 +132,8 @@ describe("buildChatModel", () => {
     expect(m.modelKwargs).toEqual({ reasoning_effort: "max" });
   });
 
-  // Mistral is the first provider whose models disagree about thinking, so the reasoning field is
-  // decided per model rather than per provider. Getting this wrong fails in two different ways: send
-  // reasoning_effort to a magistral model and the API answers 400 outright ("always" models reject
-  // the field even when it agrees with them); omit it on Small 4 and thinking silently never happens.
-  // Both are invisible from the picker, which is why they are pinned on the request body here.
+  // Mistral decides thinking per model, and gets it wrong two ways: the field 400s on magistral, and
+  // omitting it on Small 4 means thinking silently never happens. Neither is visible from the picker.
   it.each([
     ["mistral-small-2603", "high", { reasoning_effort: "high" }],
     ["mistral-small-2603", "none", { reasoning_effort: "none" }],
@@ -175,15 +154,13 @@ describe("buildChatModel", () => {
     const m = buildChatModel(config({ provider: "mistral", model, reasoningEffort: "high" })) as unknown as {
       modelKwargs?: Record<string, unknown>;
     };
-    // Absence of the KEY is the contract, not an absent modelKwargs object: ChatOpenAI defaults that
-    // to {}, and an empty object contributes no field to the request body. What must never appear is
-    // reasoning_effort itself — for the magistral pair its mere presence is the 400.
+    // Absence of the KEY is the contract, not an absent modelKwargs: ChatOpenAI defaults it to {},
+    // which adds no request field. What must never appear is reasoning_effort itself.
     expect(m.modelKwargs ?? {}).not.toHaveProperty("reasoning_effort");
   });
 
-  // A workspace carried onto mistral from a provider with a richer dial can still hold "max" or
-  // "medium" in storage. Mistral knows only none|high, so anything that isn't off must arrive as
-  // "high" rather than be forwarded verbatim into a 400.
+  // A workspace moved onto mistral can still hold "max" or "medium". Mistral knows only none|high,
+  // so anything not off must arrive as "high" rather than be forwarded verbatim into a 400.
   it("collapses an effort level mistral doesn't know rather than forwarding it", () => {
     const m = buildChatModel(
       config({ provider: "mistral", model: "mistral-small-2603", reasoningEffort: "max" }),
@@ -199,11 +176,8 @@ describe("buildChatModel", () => {
     expect(() => buildChatModel(config({ model: "" }))).toThrow(/no model selected/);
   });
 
-  // The seam itself. Every cross-cutting concern the app applies to model traffic — token
-  // accounting today, request pacing next — hangs off the gateway, so a buildModel that handed back
-  // a bare SDK client would route the whole app around all of them while still typechecking at every
-  // call site. Assert the wrapping, and that the gateway knows which provider/model it speaks for
-  // (the bucket key any per-provider policy is keyed by).
+  // The seam itself: a buildModel handing back a bare SDK client would route the app around every
+  // cross-cutting concern while still typechecking. Identity matters too — it is the policy key.
   it("hands callers a gateway rather than the vendor client", () => {
     const gateway = buildModel(config({ provider: "mistral", model: "mistral-small-2603" }));
     expect(gateway.provider).toBe("mistral");
@@ -222,9 +196,8 @@ describe("buildChatModel", () => {
   });
 });
 
-// Availability is now the ONLY question .env answers about a provider. API keys are entered in the
-// app, so a provider is offered whether or not anyone has paid for it — the assertions below say
-// nothing about keys because the function no longer knows anything about them.
+// Availability is the ONLY question .env answers about a provider. Keys are entered in the app, so
+// the assertions below say nothing about them — the function no longer knows they exist.
 describe("availableProviders", () => {
   it("offers every supported provider when nothing is switched off", () => {
     // Not a hand-listed expectation: adding a provider must extend this automatically, or the test
@@ -303,9 +276,8 @@ describe("defaultModelSelection", () => {
   });
 
   it("picks a provider that has no API key rather than skipping to a keyed one", () => {
-    // Deliberate: the picker shows a real default from the first boot, and the missing key is
-    // reported at conversation start where it names the fix. Hiding it here would show an empty
-    // picker instead, which explains nothing.
+    // Deliberate: the picker shows a real default from first boot, and the missing key is reported at
+    // conversation start where it names the fix. Hiding it would show an empty picker instead.
     expect(defaultModelSelection({}).provider).toBe(SUPPORTED_PROVIDERS[0]);
   });
 });

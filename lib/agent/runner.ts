@@ -1,7 +1,5 @@
-// Drives the agent's agentic loop: streams every model turn, collecting text tokens
-// and tool-call chunks simultaneously, then dispatches tools and loops until a turn
-// arrives with neither native nor inline tool calls.
-// Set DEBUG=1 in the environment to enable verbose tool call logging.
+// The agentic loop: stream a model turn, dispatch its tools, repeat until a turn has no tool calls.
+// Set DEBUG=1 for verbose tool call logging.
 
 import { HumanMessage, ToolMessage, AIMessage } from "@langchain/core/messages";
 import type { BaseMessage } from "@langchain/core/messages";
@@ -24,12 +22,11 @@ import { NO_USAGE, type ModelUsage } from "./modelGateway";
 import { dispatchTools, type RunnerTool } from "./toolDispatch";
 import { normalizeToolCallIds } from "./toolCallIds";
 import {
-  PROVIDER_CREDIT_EXHAUSTED_CODE,
-  providerCreditExhaustedMessage,
-  reportProviderCreditExhaustion,
-} from "./providerCreditFailure";
-import { providerKeyInvalidMessage, reportProviderAuthFailure } from "./providerAuthFailure";
-import { preflightProviderFailure, type TerminalProviderCode } from "./providerFailure";
+  preflightProviderFailure,
+  providerFailureMessage,
+  reportProviderFailure,
+  type ProviderFailureCode,
+} from "./providerFailure";
 import { availableProviders } from "./buildModel";
 
 const log = createLogger("agent");
@@ -43,17 +40,15 @@ export type AgentErrorCode =
   | "TIMEOUT"
   | "CANCELLED"
   | "INFRASTRUCTURE_UNAVAILABLE"
-  // Every way a run can fail on the provider itself — switched off, unkeyed, key refused, account
-  // dry. Spelled as the shared list rather than four members here, so a code added to
-  // providerFailure.ts cannot be one this union silently rejects.
-  | TerminalProviderCode;
+  // The shared list, so a code added to providerFailure.ts cannot be one this union rejects. All of
+  // them, not only the terminal ones: a survivable cause still has to explain why THIS run stopped.
+  | ProviderFailureCode;
 
 export type AgentEvent =
   | { type: "token"; content: string }
   | { type: "reasoning"; content: string }
-  // `id` is the provider's tool_call id: it pairs tool_link/tool_result with the exact bubble
-  // tool_start opened, which `name` cannot do when a turn runs several calls to the same tool
-  // in parallel. Optional — not every provider supplies one; consumers fall back to `name`.
+  // The provider's tool_call id, pairing tool_link/tool_result with the bubble tool_start opened —
+  // which `name` cannot do for parallel calls to one tool. Consumers fall back to `name` without it.
   | { type: "tool_start"; name: string; id?: string; args: Record<string, unknown> }
   // call_agent only: emitted mid-run, the moment the callee's conversation is created, so the
   // caller shows the "View session" deep-link while the callee is still working (not just at end).
@@ -107,10 +102,8 @@ export type RunAgentOptions = {
   signalHandlers?: Record<string, PostDispatchFn>;
 };
 
-// The injectable infra pair, threaded from the route layer (via getStore()/getContainers())
-// down through the run broker and nested agent-to-agent calls so a single setServices() swap
-// flows end-to-end. Kept separate from RunAgentOptions so callers that only forward infra
-// don't have to know about the test-only override seams.
+// Threaded from the route layer down through the broker and nested agent calls, so one setServices()
+// swap flows end-to-end. Separate from RunAgentOptions, which also holds test-only seams.
 export type AgentRuntimeDeps = Pick<RunAgentOptions, "store" | "containers" | "versioning">;
 
 export { classifyToolStatus } from "./toolUtils";
@@ -167,11 +160,8 @@ export async function* runAgent(
   const config = (loadConfig ?? loadAgentConfig)(workspaceId);
   const modelId = config.model;
 
-  // Nothing below this can work without a provider that is switched on AND has a key, and both facts
-  // are known right here — before a container is warmed, a model is constructed, or a byte leaves the
-  // process. Stopping now costs nothing and the message names the fix. Letting it through instead
-  // surfaces as whatever the SDK says about a missing credential, in a transcript, to the one person
-  // who could have fixed it in ten seconds had anyone told them which provider was unkeyed.
+  // Both facts are known before a container is warmed or a byte leaves the process, and the message
+  // names the fix — where an SDK credential error in a transcript would not.
   const blocked = preflightProviderFailure(config, availableProviders());
   if (blocked) {
     wlog.warn(
@@ -208,9 +198,8 @@ export async function* runAgent(
       resolvedContainers.ensure(workspaceId, workspaceDir).catch((err: unknown) => {
         wlog.warn({ err }, "container pre-warm failed");
       }));
-  // Start spinning up the workspace container while the first LLM call is in flight.
-  // ensureContainer is idempotent and coalesces concurrent calls, so execCommand calling
-  // it again later is a no-op if the container is already running.
+  // Warm the container while the first LLM call is in flight. ensureContainer is idempotent and
+  // coalesces, so a later execCommand call is a no-op if it is already running.
   resolvedWarmContainer();
 
   // Built once per run; passed to each PostDispatchFn after every tool turn settles.
@@ -224,12 +213,8 @@ export async function* runAgent(
     log: wlog,
   };
 
-  // Make every id in the replayed history portable before this run's first request. A conversation
-  // built on another provider carries ids Mistral rejects outright (`toolu_01…`), and the whole
-  // history is replayed every turn — so the run would die on history it did not create. Doing it
-  // here, on the live array the conversation store owns, also repairs conversations persisted before
-  // this existed with no migration: these rewritten ids are what persist() writes back at run end.
-  // Ids minted later in this run come from one provider, which by definition accepts its own.
+  // History built on another provider carries ids Mistral rejects (`toolu_01…`), and all of it is
+  // replayed every turn. Rewriting the live array also migrates it — persist() writes these back.
   normalizeToolCallIds(messages);
 
   messages.push(new HumanMessage(userInput));
@@ -268,12 +253,8 @@ export async function* runAgent(
         }
       }
 
-      // Per-turn usage shared by both exit paths. userInput is attached only on the first turn
-      // (it's the message that started the session); reasoningText/outputText/tool outputs make
-      // the turn observable in the usage dashboard. outputText is the model's prose for this turn
-      // — preamble alongside tool calls on intermediate turns, and the final answer on the
-      // terminal (no-tool) turn. Emitted AFTER tools settle (below) so tool outputs are included;
-      // the no-tool final turn emits it here with no tool calls.
+      // Shared by both exit paths. userInput rides only the first turn; outputText is the model's
+      // prose — preamble on tool turns, the answer on the last. Emitted after tools settle, below.
       const usageBase = {
         turnId,
         ...usage,
@@ -305,14 +286,8 @@ export async function* runAgent(
       toolCalls.forEach((tc, i) => seen.set(`${tc.name}:${JSON.stringify(tc.args)}`, i));
       const activeCalls = toolCalls.filter((tc, i) => seen.get(`${tc.name}:${JSON.stringify(tc.args)}`) === i);
 
-      // Persist the coalesced text, NOT the raw accumulated content array. That array
-      // carries provider-specific, streaming-only blocks — extended-thinking `thinking` blocks
-      // (with signatures) and partial `input_json_delta` tool-input deltas — that are not valid
-      // *input* content. Replaying them breaks the next request (a text-only provider rejects them
-      // with `unknown variant 'thinking', expected 'text'`) and they don't survive a per-workspace
-      // model switch. The tool calls are carried separately via tool_calls (re-encoded per provider
-      // on send); reasoning is intentionally omitted from replay (see messageSerialization.ts).
-      // This mirrors the terminal-turn push above, which already persists fullText.
+      // Coalesced text, NOT the raw content array: its streaming-only `thinking` and
+      // `input_json_delta` blocks are not valid input and break the next request when replayed.
       const assistantTurn = new AIMessage({
         content: fullText,
         tool_calls: activeCalls.map((tc) => ({ id: tc.id, name: tc.name, args: tc.args })),
@@ -329,19 +304,15 @@ export async function* runAgent(
       // atomic history commit below.
       const dispatch = dispatchTools(activeCalls, typedToolMap, signal, wlog);
 
-      // Drain link events as they arrive; exits once all tools settled and queue is empty.
-      // Suspends only before the atomic history-commit below — an abort during the wait can
-      // never leave a half-written turn.
+      // Drain link events as they arrive, exiting once all tools settle. Suspends only before the
+      // atomic commit below, so an abort during the wait cannot leave a half-written turn.
       for await (const link of dispatch.links) {
         yield { type: "tool_link", name: link.name, id: link.id, meta: link.meta };
       }
       const settled = await dispatch.settled;
 
-      // Commit the assistant turn and all its tool results in one synchronous block, with no
-      // yield or await in between. If the request is aborted (the user hits escape) the runner
-      // generator is abandoned at a yield — so it can only ever observe history with either
-      // none of this turn or all of it, never an AIMessage whose tool_calls lack their
-      // ToolMessages (which OpenAI rejects on the next request).
+      // One synchronous block, no yield or await between: an abort abandons the generator at a
+      // yield, so history holds all of this turn or none — never tool_calls without ToolMessages.
       messages.push(assistantTurn);
       for (const { tc, resultStr, meta } of settled) {
         // Persist the callee deep-link on the ToolMessage so a reloaded caller conversation can
@@ -383,9 +354,8 @@ export async function* runAgent(
         })),
       };
 
-      // A host-wide, explicitly non-retryable failure cannot be repaired by another model turn.
-      // End after persisting the complete tool turn so chat/API/schedules/MCP/A2A all receive one
-      // terminal error instead of spending the rest of the run repeating doomed workspace tools.
+      // A host-wide non-retryable failure survives another model turn. End after persisting the
+      // tool turn, so every consumer gets one terminal error instead of a run of doomed tools.
       const terminalFailure = settled.find(({ terminalFailure }) => terminalFailure)?.terminalFailure;
       if (terminalFailure) {
         yield { type: "error", ...terminalFailure };
@@ -393,69 +363,42 @@ export async function* runAgent(
         break;
       }
 
-      // User pressed escape: the tools above have already been killed and their results committed
-      // (atomic block, so history stays valid for a later resume). Stop here instead of looping
-      // back into another — immediately aborted — model stream. Skip compaction on the way out.
+      // Escape: the tools above are already killed and committed, so history stays resumable. Stop
+      // rather than looping into another immediately-aborted stream. Skips compaction.
       if (signal?.aborted) {
         wlog.debug("agent loop aborted");
         yield { type: "done" };
         break;
       }
 
-      // Signal-tool post-dispatch: runs AFTER the atomic turn commit above. Each handler in
-      // signalHandlers receives args + resultStr and performs its side-effect (restore, compact…).
-      // Adding a new signal tool only requires a new entry in buildTools.signalHandlers — this
-      // loop never changes. Best-effort: errors are caught inside each handler.
+      // Signal-tool side-effects (restore, compact…), after the atomic commit. A new signal tool
+      // only needs an entry in buildTools.signalHandlers; this loop never changes.
       for (const { tc, resultStr } of settled) {
         const handler = signalHandlers[tc.name];
         if (handler) await handler(tc.args, resultStr, postDispatchCtx);
       }
     }
   } catch (err) {
-    // A thrown error (e.g. the model stream aborting mid-turn) lands here before any
-    // assistant tool-call turn is committed, so history is left consistent — see the
-    // atomic commit above. Just surface the error and close the stream.
-    //
-    // Two causes are worth naming, because `String(err)` reduces both to something the reader cannot
-    // act on. "Error: 402 Insufficient Balance" says nothing about whose account, or that no retry
-    // and no other model on that key can get past it. "Error: 401 status code (no body)" says nothing
-    // about which of five providers refused the key it was given.
-    //
-    // Credit is classified FIRST and wins ties. A dry account sometimes answers 401 rather than 402,
-    // and telling that operator to replace a perfectly valid key sends them to fix the wrong thing.
+    // A throw lands here before any tool-call turn is committed, so history stays consistent. The
+    // classification names the cause, which `String(err)` cannot; its precedence lives in the rules.
     const failureContext = { workspaceId, provider: config.provider, model: modelId, stage: "model_turn" };
-    const creditExhausted = reportProviderCreditExhaustion(wlog, err, failureContext);
-    const keyRefused = creditExhausted ? null : reportProviderAuthFailure(wlog, err, failureContext);
-    // One line per failed run, whatever the cause. The account-level reports above are collapsed per
-    // provider so a dry or bad key cannot flood the log — routing those failures through them
-    // *instead* of here would take the per-run record down with it, silencing this event during the
-    // one outage it exists to catch. The classification rides along so both are queryable by the
-    // same fields.
-    wlog.error(
-      { event: "agent_run_failed", outcome: "error_event_emitted", err, ...creditExhausted, ...keyRefused },
-      "agent run failed",
-    );
-    if (creditExhausted) {
+    const failure = reportProviderFailure(wlog, err, failureContext);
+    // One line per failed run, whatever the cause. The report above is throttled per provider;
+    // routing this through it would silence the per-run record during the outage it exists to catch.
+    wlog.error({ event: "agent_run_failed", outcome: "error_event_emitted", err, ...failure }, "agent run failed");
+    if (failure) {
       yield {
         type: "error",
-        code: PROVIDER_CREDIT_EXHAUSTED_CODE,
-        message: providerCreditExhaustedMessage(creditExhausted, { provider: config.provider, model: modelId }),
-      };
-    } else if (keyRefused) {
-      yield {
-        type: "error",
-        code: keyRefused.failureCode,
-        message: providerKeyInvalidMessage(keyRefused, { provider: config.provider }),
+        code: failure.failureCode,
+        message: providerFailureMessage(failure, { provider: config.provider, model: modelId }),
       };
     } else {
       yield { type: "error", message: String(err) };
     }
     yield { type: "done" };
   } finally {
-    // Single result commit for the run, on EVERY exit path — normal completion, iteration limit,
-    // user abort (the SSE consumer abandons this generator via `.return()`, which still runs
-    // `finally`), and thrown errors. commitResult skips itself if the run changed nothing, so a
-    // no-op run leaves no commit. Guarded + try/caught so versioning never breaks the run.
+    // One result commit on EVERY exit path, abort included (`.return()` still runs `finally`).
+    // commitResult skips a run that changed nothing, and is try/caught so versioning cannot break it.
     await tryCommitResult(versioning, workspaceId, workspaceDir, userInput, wlog);
   }
 }

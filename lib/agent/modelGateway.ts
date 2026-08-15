@@ -1,31 +1,12 @@
-// The one doorway every model call passes through.
-//
-// Before this existed the app talked to providers from three places — the main agent turn and the
-// iteration-limit summary (./modelTurn.ts), and history compaction (./compact.ts) — each holding a
-// bare LangChain object typed `any`, each free to differ. Anything that has to be true of EVERY call
-// (measure the tokens, pace the requests, classify the refusal) had to be written three times and
-// remembered a fourth time by whoever added the next call site. Compaction is what that cost looks
-// like in practice: it sends the largest inputs in the app and, until this seam, recorded none of them.
-//
-// So the rule is: NOTHING OUTSIDE THIS MODULE CALLS A PROVIDER. Callers get a ModelGateway and ask it
-// to stream or invoke; the cross-cutting work happens here, in one order, for all of them.
-//
-// Token measurement is the first tenant. It is applied by construction rather than by convention —
-// `usage()` is part of the handle a caller already has to hold, so a new call site cannot forget to
-// account for itself the way compaction did.
+// The one doorway every model call passes through — agent turn, limit summary, compaction.
+// Nothing else calls a provider, so cross-cutting concerns attach here instead of at three call sites.
 import type { AIMessageChunk, BaseMessage } from "@langchain/core/messages";
 import type { BindToolsInput } from "@langchain/core/language_models/chat_models";
 import { createLogger } from "../infra/logger";
 
 const log = createLogger("model");
 
-/**
- * Which of the app's model calls this is.
- *
- * Carried on every call because the cross-cutting layers need to tell them apart: the three have very
- * different shapes (a tool-bound conversational turn, a one-shot closing summary, a very large
- * summarization), and a pacing or retry policy that treats them alike would be wrong for at least two.
- */
+/** Which call this is. The three have different shapes, so pacing and retry policy can differ. */
 export type ModelCallStage = "model_turn" | "limit_synthesis" | "compaction";
 
 export interface ModelUsage {
@@ -45,12 +26,8 @@ export const NO_USAGE: ModelUsage = {
 };
 
 /**
- * Normalize one provider's token accounting.
- *
- * Providers agree on the totals and disagree on cache attribution: LangChain surfaces it under
- * `usage_metadata.input_token_details` for those that report it there, while the OpenAI-compatible
- * vendors leave it in their raw response under two different names. All three are read, in the order
- * that prefers the normalized field.
+ * Normalize one provider's token accounting. Providers agree on the totals and disagree on cache
+ * attribution, so the normalized field is preferred and the two raw spellings are read after it.
  */
 export function usageTokens(chunk: AIMessageChunk | null): ModelUsage {
   return {
@@ -75,11 +52,8 @@ export interface ModelCall {
 }
 
 /**
- * A streaming call in progress.
- *
- * `chunks` is the provider's stream, unchanged. `accumulated` and `usage` are only final once that
- * generator is drained — which is why they are functions rather than fields: reading them early
- * returns what is known so far rather than pretending a half-consumed stream is complete.
+ * A streaming call in progress. `accumulated` and `usage` are functions because they are only final
+ * once `chunks` is drained — reading early reports what is known rather than faking a finished call.
  */
 export interface ModelStream {
   chunks: AsyncGenerator<AIMessageChunk>;
@@ -104,12 +78,8 @@ export interface ModelCallRecord {
 }
 
 /**
- * Notified once per completed call, whatever the outcome.
- *
- * The seam for everything that wants to watch traffic without being in its path — usage persistence,
- * concurrency accounting, and eventually the pacing this gateway exists to make possible. Observers
- * must not throw; the gateway does not guard the call, because a throwing observer is a bug that
- * should surface rather than silently drop a measurement.
+ * Notified once per completed call — the seam for usage persistence, concurrency accounting, and the
+ * pacing this gateway exists to enable. Must not throw; a throwing observer is a bug worth surfacing.
  */
 export type ModelCallObserver = (record: ModelCallRecord) => void;
 
@@ -117,12 +87,8 @@ const logCall: ModelCallObserver = (record) => {
   log.debug({ event: "model_call_complete", ...record, ...record.usage }, "model call complete");
 };
 
-/**
- * The slice of the LangChain surface this module actually uses.
- *
- * Named here so it can be satisfied by both a chat model and the Runnable that `bindTools` returns —
- * the mismatch between those two is the whole reason the call path used to be typed `any`.
- */
+// The slice of LangChain this module uses, satisfied by both a chat model and the Runnable bindTools
+// returns. That mismatch is why the call path used to be typed `any`.
 interface StreamingChatModel {
   stream(messages: BaseMessage[], options?: { signal?: AbortSignal }): Promise<AsyncIterable<AIMessageChunk>>;
   invoke(messages: BaseMessage[], options?: { signal?: AbortSignal }): Promise<AIMessageChunk>;
@@ -176,9 +142,8 @@ export function createModelGateway(chat: BindableChatModel, options: ModelGatewa
           }
           drained = true;
         } finally {
-          // `finally` rather than after the loop: a consumer that walks away mid-stream — the user
-          // pressing escape is the common one — still has its partial usage measured and reported.
-          // Those tokens were spent and previously went unrecorded entirely.
+          // `finally`, not after the loop: a consumer that walks away mid-stream (the user pressing
+          // escape) still has its spent tokens measured rather than losing them entirely.
           if (!settled) {
             settled = true;
             usage = usageTokens(accumulated);

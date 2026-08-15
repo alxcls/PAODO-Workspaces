@@ -8,23 +8,15 @@ import { buildSignalHandlers } from "./buildTools";
 import { SUPPORTED_PROVIDERS, providerAvailabilityEnv } from "./buildModel";
 import { usageTokens } from "./modelGateway";
 
-// runAgent now refuses to start on a provider this deployment has switched off, and every test below
-// runs on "deepseek". Pinning the availability vars keeps that from depending on the developer's own
-// shell — a DEEPSEEK_AVAILABLE=false in the environment would otherwise turn every test in this file
-// into a preflight failure, for a reason invisible from the assertions.
+// Every test below runs on "deepseek", and runAgent refuses a switched-off provider. Pinning the
+// availability vars keeps a developer's own shell from failing the whole file at preflight.
 beforeEach(() => {
   for (const provider of SUPPORTED_PROVIDERS) vi.stubEnv(providerAvailabilityEnv(provider)!, "true");
 });
 afterEach(() => vi.unstubAllEnvs());
 
-// runAgent mutates the conversation history (the messages array) in place. When a request is aborted
-// (the user hits escape) the SSE consumer stops pulling and the generator is abandoned via
-// `.return()` at whatever `yield` it is suspended on. The invariant these tests pin: at every
-// such suspension point, history is either missing the whole tool-call turn or has it complete
-// — never an AIMessage whose tool_calls lack their matching ToolMessages, which OpenAI rejects
-// on the next request with "An assistant message with 'tool_calls' must be followed by tool
-// messages". runAgent guarantees this by committing the AIMessage and all its ToolMessages in
-// one synchronous block, so these tests fail if that commit is ever made non-atomic again.
+// An abort abandons the generator at whatever yield it is suspended on. The invariant: history then
+// holds the whole tool-call turn or none of it, never tool_calls without their ToolMessages.
 
 type Chunk = AIMessageChunk;
 
@@ -42,12 +34,8 @@ function hasUnansweredToolCalls(messages: BaseMessage[]): boolean {
   });
 }
 
-// A fake gateway whose stream replays a scripted sequence of chunks per turn. Each turn either
-// emits tool calls (with tool_call_chunks) or plain text (final answer).
-//
-// Returns a ModelStream handle, matching the real gateway: the chunks plus the usage it measured
-// while they were drained. Accumulating here rather than returning a constant keeps the doubles
-// honest about the ordering the runner depends on — usage is only correct after the loop.
+// A fake gateway replaying scripted chunks per turn — tool calls or plain text. Returns a real
+// ModelStream handle, accumulating as it goes so usage is only correct after the loop, as in production.
 function makeBuildTools(turns: Chunk[][], executeResult = "command ran") {
   let turn = 0;
   const modelWithTools = {
@@ -230,9 +218,8 @@ describe("runAgent — history stays consistent across aborts", () => {
   });
 
   it("names the empty provider account when the model refuses, instead of leaking the raw error", async () => {
-    // What 20 workspaces on one dry DeepSeek key produced: the run ends on the first turn, and
-    // `String(err)` alone ("Error: 402 Insufficient Balance") never says whose account, or that no
-    // retry can get past it.
+    // What 20 workspaces on one dry DeepSeek key produced. `String(err)` alone never says whose
+    // account it was, or that no retry can get past it.
     const buildAgentTools = () =>
       ({
         modelWithTools: {
@@ -262,11 +249,8 @@ describe("runAgent — history stays consistent across aborts", () => {
 
   it("persists a reasoning-model tool turn as coalesced text, not raw streamed blocks", async () => {
     const messages: BaseMessage[] = [];
-    // A Claude/OpenAI extended-thinking chunk: content is an array of provider blocks (a signed
-    // `thinking` block + a text block) alongside the tool call. Persisting this raw array froze
-    // streaming-only blocks (`thinking`, `input_json_delta`) into history, which a later request
-    // rejected with `unknown variant 'thinking', expected 'text'`. The tool turn must instead be
-    // saved as the coalesced text string.
+    // An extended-thinking chunk, whose content is provider blocks. Persisting the raw array froze
+    // streaming-only blocks into history, which a later request rejected. Save coalesced text instead.
     const reasoningToolChunk = new AIMessageChunk({
       content: [
         { index: 0, type: "thinking", thinking: "I should list the files.", signature: "sig" },
@@ -464,9 +448,8 @@ describe("classifyToolStatus", () => {
   });
 });
 
-// Direct coverage of the production handlers (vs. only through runner dispatch). Pins the
-// PostDispatchFn contract: each handler catches and logs its own errors so a side-effect failure
-// never escapes into the run loop.
+// Direct coverage of the production handlers, pinning the PostDispatchFn contract: each catches and
+// logs its own errors, so a side-effect failure never escapes into the run loop.
 describe("buildSignalHandlers", () => {
   function makeCtx(
     over: Partial<import("./interfaces").PostDispatchContext> = {},
@@ -554,9 +537,8 @@ describe("buildSignalHandlers", () => {
   });
 });
 
-// The BYOK failure path. Keys are entered in the app, so "no key" is the state every deployment
-// starts in — it has to end the run with something the operator can act on, in the transcript, and
-// it has to do so before anything is spent or started.
+// The BYOK failure path. "No key" is the state every deployment starts in, so it must end the run
+// with something the operator can act on, before anything is spent or started.
 describe("runAgent — refuses to start without a usable provider", () => {
   // Anything reaching this means the preflight ran too late: buildTools constructs the provider
   // client, and runAgent pre-warms a container on the way past.

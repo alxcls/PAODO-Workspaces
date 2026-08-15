@@ -1,19 +1,5 @@
-// The provider registry: which LLM providers exist, what each accepts, which .env var governs it,
-// and how to instantiate its LangChain chat model. Supports OpenAI (responses API + reasoning),
-// Anthropic (extended thinking), DeepSeek, Moonshot, and Mistral.
-//
-// The vendor objects the `build` functions return are an implementation detail of this file. They are
-// wrapped in a ModelGateway (./modelGateway.ts) before they leave it, so the rest of the app talks to
-// one interface with one place to hang the concerns every call shares.
-//
-// API KEYS ARE NOT HERE AND NOT IN .env. They are entered in the app and held encrypted by
-// lib/infra/security/providerKeyStore.ts; loadAgentConfig reads one from there per run. This module
-// answers "which providers does this deployment OFFER", which is now a question about configuration
-// alone — a provider is offered whether or not anyone has paid for it yet, and a run that needs a key
-// nobody set fails at conversation start where the operator can act on it.
-//
-// Server-only — it imports the LLM SDKs. Anything a client component needs to know about a selection
-// lives in lib/models/{llmSelection,selection}.ts, which this module feeds rather than duplicates.
+// The provider registry: what each provider accepts, which .env var offers it, and how to build its
+// client. Server-only; vendor objects never leave here, and keys come from providerKeyStore, not .env.
 
 import { ChatOpenAI } from "@langchain/openai";
 import { ChatAnthropic } from "@langchain/anthropic";
@@ -34,16 +20,12 @@ const ANTHROPIC_THINKING_BUDGET: Partial<Record<ReasoningEffort, number>> = {
   max: 48_000,
 };
 
-// Anthropic models that require the adaptive-thinking API (thinking:{type:"adaptive"} +
-// output_config.effort) and REJECT the legacy thinking:{type:"enabled", budget_tokens} shape with a
-// 400 ("thinking.type.enabled is not supported for this model"). Keep in sync with the `anthropic`
-// list in lib/models/registry.ts: a model listed there but absent here falls through to the legacy
-// budget_tokens path (correct for older models like claude-haiku-4-5, which in turn rejects effort).
+// Models requiring adaptive thinking + output_config.effort, which 400 on the legacy budget_tokens
+// shape. A registry model absent here falls through to legacy — correct for haiku-4-5, which 400s on effort.
 const ANTHROPIC_ADAPTIVE_MODELS = new Set<string>(["claude-opus-4-8", "claude-sonnet-5"]);
 
-// The thinking/effort request fields for an Anthropic model. Newer models (Opus 4.7+, Sonnet 5, Fable
-// 5) take adaptive thinking with output_config.effort; the reasoning-effort knob maps straight onto
-// effort. Older models take the legacy fixed thinking budget and do not accept effort.
+// An Anthropic model's thinking fields. Newer models take adaptive thinking, and the effort knob maps
+// straight onto output_config.effort; older ones take the legacy fixed budget and reject effort.
 export function anthropicThinkingConfig(model: string, effort: ReasoningEffort) {
   if (ANTHROPIC_ADAPTIVE_MODELS.has(model)) {
     // Anthropic effort accepts low…max; the none/minimal members of ReasoningEffort never reach here
@@ -56,34 +38,20 @@ export function anthropicThinkingConfig(model: string, effort: ReasoningEffort) 
   return { thinking: { type: "enabled" as const, budget_tokens: ANTHROPIC_THINKING_BUDGET[effort] ?? 10_000 } };
 }
 
-// Mistral's reasoning request field, or nothing at all.
-//
-// Only the models the registry declares `toggle` (Small 4, Medium 3.5) accept reasoning_effort. The
-// magistral pair reasons natively and answers 400 if the field is present at ALL — not merely if it
-// disagrees — so an omitted field is the only correct request for them, and the rest of the catalog
-// (devstral, codestral, ministral, large) has no thinking mode to address. Reading the registry
-// rather than a second list here is what keeps the checkbox the picker renders and the field this
-// sends from ever disagreeing.
-//
-// Sent via modelKwargs rather than the typed `reasoningEffort` field for the same reason as Moonshot:
-// that field is typed to OpenAI's effort union, and modelKwargs is spread verbatim into the
-// chat-completions body, which is where Mistral reads it from.
+// Mistral's reasoning field, or nothing: only registry `toggle` models accept it, magistral 400s on
+// its mere presence. Via modelKwargs because the typed field is OpenAI's union — as with Moonshot.
 export function mistralReasoningConfig(model: string, effort: ReasoningEffort) {
   if (thinkingSupport("mistral", model) !== "toggle") return {};
-  // Mistral accepts "none" and "high" and nothing else. Validation already narrows a stored effort to
-  // that pair, so this collapses anything else rather than trusting it — a legacy selection carrying
-  // another provider's level must not reach the API as an unknown value.
+  // Mistral accepts "none" and "high" only. Collapse anything else rather than trust it: a legacy
+  // selection carrying another provider's level must not reach the API as an unknown value.
   return { modelKwargs: { reasoning_effort: effort === THINKING_OFF_EFFORT ? "none" : "high" } };
 }
 
 // The capability half of a provider entry — the only part callers outside this module see.
 interface ProviderMetadata {
   supportsPromptCaching: boolean;
-  // The reasoning-effort levels this provider actually accepts (a subset of ReasoningEffort), quietest
-  // first — sourced from the installed SDK unions: OpenAI takes none…xhigh, Anthropic low…max. Drives
-  // BOTH the picker's options and the API-side validation, so the UI can't offer a level the provider
-  // would reject. Empty when the provider has no effort dial (DeepSeek gates reasoning by model name,
-  // not a knob), which is also how the UI knows to hide the control.
+  // The effort levels this provider accepts, quietest first. Drives BOTH the picker and API-side
+  // validation, so the UI cannot offer a rejected level. Empty means no dial, and the UI hides it.
   reasoningEfforts: ReasoningEffort[];
 }
 
@@ -109,8 +77,7 @@ interface ProviderDescriptor extends ProviderMetadata {
   build: (config: LLMProviderConfig) => ChatOpenAI | ChatAnthropic;
 }
 
-// The single source of truth for provider support: capabilities, its availability switch, and model
-// construction in one entry. Adding a provider means adding one entry here plus its models in
+// The single source of truth for provider support. Adding one means an entry here plus its models in
 // lib/models/registry.ts — nothing else in the agent layer changes, and nothing in .env.
 const PROVIDERS: Record<string, ProviderDescriptor> = {
   anthropic: {
@@ -134,9 +101,8 @@ const PROVIDERS: Record<string, ProviderDescriptor> = {
     supportsPromptCaching: false,
     reasoningEfforts: ["none", "minimal", "low", "medium", "high", "xhigh"],
     build: (config) => {
-      // OpenAI accepts none|minimal|low|medium|high|xhigh (never "max" — validation keeps it out).
-      // "none" disables reasoning, so we omit the summary request (nothing would be produced to
-      // summarize); every other level pairs with an auto summary.
+      // OpenAI takes none…xhigh, never "max" (validation keeps it out). "none" disables reasoning, so
+      // the summary request is omitted — there would be nothing to summarize.
       const effort = config.reasoningEffort as Exclude<ReasoningEffort, "max">;
       return new ChatOpenAI({
         model: config.model,
@@ -174,29 +140,21 @@ const PROVIDERS: Record<string, ProviderDescriptor> = {
           baseURL: "https://api.moonshot.ai/v1",
           apiKey: config.apiKey,
         },
-        // Sent via modelKwargs, not the `reasoningEffort` field: that field is typed to OpenAI's
-        // effort union, which has no "max" — Kimi's default and strongest level. modelKwargs is
-        // spread verbatim into the chat-completions body, so the value reaches the API untranslated.
+        // modelKwargs, not the typed `reasoningEffort`: that field is OpenAI's union, which has no
+        // "max" — Kimi's strongest level. modelKwargs is spread verbatim into the request body.
         modelKwargs: { reasoning_effort: config.reasoningEffort },
       }),
   },
   mistral: {
     availabilityEnv: "MISTRAL_AVAILABLE",
-    // The only provider that validates inbound tool-call ids: anything other than exactly 9
-    // alphanumerics answers 400 ("Tool call IDs should be alphanumeric strings with length 9!").
-    // This one declaration is what narrows the app's canonical id shape; the other four accept it
-    // because it already sits inside what they take.
+    // The only provider validating inbound tool-call ids: anything but exactly 9 alphanumerics 400s.
+    // This one declaration narrows the app's canonical id shape; the other four already accept it.
     toolCallIdConstraint: { name: "mistral", alphabet: ALPHANUMERIC, minLength: 9, maxLength: 9 },
-    // FALSE HERE DOES NOT MEAN UNCACHED. This flag asks "must the prompt builder mark where the
-    // cached prefix ends?" — a cache_control block only Anthropic reads. Mistral caches prefixes
-    // automatically in 64-token blocks and bills a hit at 10% of the input rate with nothing to
-    // annotate, so it gets the discount with this false, exactly as deepseek and moonshot do. (A
-    // stable `prompt_cache_key` would raise the hit rate further; it is deliberately not sent,
-    // because the key would have to be a workspace id and LLMProviderConfig is kept provider-agnostic.)
+    // FALSE DOES NOT MEAN UNCACHED. The flag asks whether the prompt builder must mark the cached
+    // prefix — an Anthropic-only block. Mistral caches automatically and discounts with this false.
     supportsPromptCaching: false,
-    // Mistral's dial is binary — "none" or "high", no graded levels — so the picker renders it as the
-    // thinking checkbox rather than a dropdown. "none" has to appear here because it is the only
-    // storable representation of an unchecked box (see THINKING_OFF_EFFORT).
+    // A binary dial, so the picker renders a checkbox rather than a dropdown. "none" appears here
+    // because it is the only storable representation of an unchecked box (see THINKING_OFF_EFFORT).
     reasoningEfforts: [THINKING_OFF_EFFORT, "high"],
     build: (config) =>
       new ChatOpenAI({
@@ -326,11 +284,8 @@ export function defaultModelSelection(env: Record<string, string | undefined> = 
   return firstAvailableSelection(availableProviders(env), vocabularyFor);
 }
 
-// The env var switching a provider off; undefined for an unknown provider. Exported so tests that
-// clear the environment can enumerate a provider's whole .env contract from the registry rather than
-// a hand-written list — one that silently stops covering the newest provider, with the worst possible
-// symptom: a developer's own shell leaking into a fallback-selection test, so it passes locally and
-// fails in CI or the reverse.
+// The env var switching a provider off. Exported so env-clearing tests enumerate the contract from
+// the registry, not a hand-written list that quietly stops covering the newest provider.
 export function providerAvailabilityEnv(provider: string): string | undefined {
   return PROVIDERS[provider]?.availabilityEnv;
 }

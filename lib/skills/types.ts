@@ -1,7 +1,5 @@
-// Types for a workspace skill definition — one JSON file per skill under
-// data/<workspace-name>/.skills/. A skill is a named action with a typed input
-// (`input`) and a typed output (`output`), both expressed as JSON Schema.
-// The platform enforces both sides of the contract in executeSkill.
+// Workspace skill definitions — one JSON file per skill under data/<workspace-name>/.skills/. A
+// skill is a named action with JSON Schema input and output, both enforced in executeSkill.
 
 /** Loose JSON Schema shape — we validate with ajv at runtime, not at the type level. */
 export interface SkillSchema {
@@ -51,11 +49,8 @@ export type SkillErrorCode =
   | "CANCELLED"
   | "CAPACITY_REACHED"
   | "INFRASTRUCTURE_UNAVAILABLE"
-  // The callee cannot reach a working model at all: its provider is switched off, has no API key,
-  // had its key refused, or its account has no credit left. All four are distinct from
-  // EXECUTION_ERROR because nothing the caller does — different args, a retry, another skill on the
-  // same callee — changes them; only an operator can. Kept in step with TERMINAL_PROVIDER_CODES in
-  // lib/agent/providerFailure.ts, which is the list executeSkill actually matches against.
+  // The callee cannot reach a working model, and no retry the caller makes changes that — only an
+  // operator can. Mirrors TERMINAL_PROVIDER_CODES; a retryable cause stays EXECUTION_ERROR.
   | "PROVIDER_CREDIT_EXHAUSTED"
   | "PROVIDER_KEY_INVALID"
   | "PROVIDER_KEY_MISSING"

@@ -1,9 +1,5 @@
-// Provider-stream adaptation for one model turn. The agent loop consumes normalized token,
-// reasoning, tool-call, and usage data without knowing provider-specific chunk shapes.
-//
-// The stream itself comes from a ModelGateway (./modelGateway.ts), which owns the call and its
-// measurement. What is left here is purely the shape of a *turn*: which chunk fields carry prose,
-// which carry reasoning, and how a tool call is reassembled from its deltas.
+// The shape of one model turn: which chunk fields carry prose, which carry reasoning, and how a
+// tool call is reassembled from its deltas. ModelGateway owns the call itself and its measurement.
 import { AIMessage, HumanMessage } from "@langchain/core/messages";
 import type { AIMessageChunk, BaseMessage } from "@langchain/core/messages";
 import type { Logger } from "pino";
@@ -12,21 +8,15 @@ import { newToolCallId } from "./toolCallIds";
 import { contentToText } from "@/lib/transcript/content";
 import type { AgentEvent } from "./runner";
 import type { ModelGateway, ModelUsage } from "./modelGateway";
-import {
-  classifyProviderCreditExhaustion,
-  PROVIDER_CREDIT_EXHAUSTED_CODE,
-  providerCreditExhaustedMessage,
-} from "./providerCreditFailure";
-import { classifyProviderAuthFailure, providerKeyInvalidMessage } from "./providerAuthFailure";
+import { classifyProviderFailure, providerFailureMessage } from "./providerFailure";
 
 export type ResolvedToolCall = { id: string; name: string; args: Record<string, unknown> };
 
 export type TurnEvent =
   | { type: "token"; content: string }
   | { type: "reasoning"; content: string }
-  // Carries the turn's measured usage rather than the raw accumulated chunk. The runner has no other
-  // use for that chunk — it deliberately persists the coalesced text instead (see runner.ts) — and
-  // handing it one invited every consumer to do its own token arithmetic.
+  // Measured usage, not the raw accumulated chunk: the runner persists coalesced text instead, and
+  // handing it the chunk invited every consumer to do its own token arithmetic.
   | { type: "turn_complete"; fullText: string; toolCalls: ResolvedToolCall[]; usage: ModelUsage };
 
 type PartialToolCall = { id: string; name: string; args: string };
@@ -92,10 +82,8 @@ function assembleToolCalls(partials: PartialToolCall[]): ResolvedToolCall[] {
       } catch {
         // Malformed provider deltas are surfaced to the tool as empty args.
       }
-      // A provider that streams a tool call without an id gets one every provider accepts. The old
-      // `tc_<i>_<epoch>` shape had underscores and ran well past 9 characters, and it is replayed on
-      // the NEXT turn of this same run — behind the run-start normalization pass, which cannot reach
-      // it. So it has to be portable at the moment it is created.
+      // An id every provider accepts, minted portable: it is replayed on the NEXT turn of this same
+      // run, behind the run-start normalization pass, which cannot reach it.
       return { id: partial.id || newToolCallId(minted), name: partial.name, args };
     });
 }
@@ -176,31 +164,20 @@ export async function* synthesizeLimit(
     }
     log.debug({ chars: text.length }, "limit synthesis done");
   } catch (err) {
-    // Best-effort by design — the run is already ending on the iteration limit, so a failed summary
-    // only costs the closing paragraph. A provider that has stopped accepting the account is the
-    // exception, whether because the money ran out or the key stopped being valid mid-run: swallowing
-    // either leaves a run that looks merely truncated, with no sign anywhere of why it really ended.
-    const creditExhausted = classifyProviderCreditExhaustion(err);
-    const keyRefused = creditExhausted ? null : classifyProviderAuthFailure(err);
-    if (creditExhausted) {
+    // Best-effort — the run is already ending, so a failed summary costs only the closing paragraph.
+    // A provider that stopped accepting the account is the exception: silence would hide why it ended.
+    const failure = classifyProviderFailure(err);
+    if (failure) {
       yield {
         type: "error",
-        code: PROVIDER_CREDIT_EXHAUSTED_CODE,
-        message: providerCreditExhaustedMessage(creditExhausted, { model: modelId }),
+        code: failure.failureCode,
+        message: providerFailureMessage(failure, { model: modelId }),
       };
-    } else if (keyRefused) {
-      yield { type: "error", code: keyRefused.failureCode, message: providerKeyInvalidMessage(keyRefused) };
     }
     log.error(
       // Carry the classification onto the line this path already logs, so the cause is queryable by
       // the same `failureCode` here as on the main model turn — which reports it separately.
-      {
-        event: "agent_limit_synthesis_failed",
-        outcome: "response_summary_missing",
-        err,
-        ...creditExhausted,
-        ...keyRefused,
-      },
+      { event: "agent_limit_synthesis_failed", outcome: "response_summary_missing", err, ...failure },
       "limit synthesis failed",
     );
   }

@@ -5,10 +5,13 @@
 import { describe, it, expect } from "vitest";
 import { SystemMessage, HumanMessage, AIMessage, ToolMessage, type BaseMessage } from "@langchain/core/messages";
 import { applyCompaction, stripToolOutputs, CLEARED, STRIPPABLE_TOOLS } from "./compact";
+import { NO_USAGE } from "./modelGateway";
 
-// A tool-less model stub whose invoke returns a fixed brief — exercises summarize paths without
-// a network call.
-const fakeModel = { invoke: async () => new AIMessage("BRIEF") } as never;
+// A tool-less gateway stub whose invoke returns a fixed brief — exercises summarize paths without
+// a network call. Shaped as a ModelGateway invocation ({ message, usage }) because compaction now
+// goes through the gateway like every other model call, which is what finally puts its tokens —
+// the largest the app sends — on the record.
+const fakeModel = { invoke: async () => ({ message: new AIMessage("BRIEF"), usage: NO_USAGE }) } as never;
 
 // Builds a realistic history: system, a user turn, then two work turns each = an AIMessage with
 // one tool_call followed by its ToolMessage, then the compact_context turn (ai + ack).

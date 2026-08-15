@@ -10,8 +10,9 @@
 
 import { AIMessage, HumanMessage, ToolMessage } from "@langchain/core/messages";
 import type { BaseMessage } from "@langchain/core/messages";
-import type { BaseChatModel } from "@langchain/core/language_models/chat_models";
+import { contentToText } from "@/lib/transcript/content";
 import { createLogger } from "../infra/logger";
+import type { ModelGateway } from "./modelGateway";
 
 const log = createLogger("compact");
 
@@ -58,26 +59,22 @@ export function stripToolOutputs(messages: BaseMessage[]): void {
 }
 
 // One tool-less LLM turn that condenses the given history into a brief.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function summarizeHistory(model: any, history: BaseMessage[], nextStep: string): Promise<string> {
-  const res = await model.invoke([
-    ...history,
-    new HumanMessage(`${COMPACT_PROMPT}\n\nThe next step after this summary is: ${nextStep}`),
-  ]);
-  const content = res?.content;
-  if (typeof content === "string") return content;
-  if (Array.isArray(content)) {
-    return content
-      .map((b: unknown) => (b && typeof b === "object" && "text" in b ? (b as { text: string }).text : ""))
-      .join("");
-  }
-  return String(content ?? "");
+//
+// Goes through the gateway like every other model call. This one is the reason the gateway exists:
+// it sends the whole conversation, so it is routinely the largest request the app makes, and while it
+// held a bare model object its tokens were counted by nobody.
+async function summarizeHistory(model: ModelGateway, history: BaseMessage[], nextStep: string): Promise<string> {
+  const { message } = await model.invoke(
+    [...history, new HumanMessage(`${COMPACT_PROMPT}\n\nThe next step after this summary is: ${nextStep}`)],
+    { stage: "compaction" },
+  );
+  return contentToText(message.content);
 }
 
 // Applies the chosen level to `messages` IN PLACE (splice preserves the array reference the
 // runner and the route layer both hold). messages[0] is the SystemMessage and is always kept.
 export async function applyCompaction(
-  model: BaseChatModel,
+  model: ModelGateway,
   messages: BaseMessage[],
   level: CompactLevel,
   nextStep: string,

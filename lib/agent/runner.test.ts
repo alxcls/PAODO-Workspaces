@@ -6,6 +6,7 @@ import { AIMessage, AIMessageChunk, ToolMessage, type BaseMessage } from "@langc
 import { runAgent, classifyToolStatus, type AgentEvent } from "./runner";
 import { buildSignalHandlers } from "./buildTools";
 import { SUPPORTED_PROVIDERS, providerAvailabilityEnv } from "./buildModel";
+import { usageTokens } from "./modelGateway";
 
 // runAgent now refuses to start on a provider this deployment has switched off, and every test below
 // runs on "deepseek". Pinning the availability vars keeps that from depending on the developer's own
@@ -41,16 +42,28 @@ function hasUnansweredToolCalls(messages: BaseMessage[]): boolean {
   });
 }
 
-// A fake model whose stream replays a scripted sequence of chunks per turn. Each turn either
+// A fake gateway whose stream replays a scripted sequence of chunks per turn. Each turn either
 // emits tool calls (with tool_call_chunks) or plain text (final answer).
+//
+// Returns a ModelStream handle, matching the real gateway: the chunks plus the usage it measured
+// while they were drained. Accumulating here rather than returning a constant keeps the doubles
+// honest about the ordering the runner depends on — usage is only correct after the loop.
 function makeBuildTools(turns: Chunk[][], executeResult = "command ran") {
   let turn = 0;
   const modelWithTools = {
-    stream: async (_messages: BaseMessage[], _opts: { signal?: AbortSignal }) => {
+    stream: async (_messages: BaseMessage[], _call: { stage: string; signal?: AbortSignal }) => {
       const chunks = turns[turn++] ?? [];
-      return (async function* () {
-        for (const c of chunks) yield c;
-      })();
+      let accumulated: Chunk | null = null;
+      return {
+        chunks: (async function* () {
+          for (const c of chunks) {
+            accumulated = accumulated ? accumulated.concat(c) : c;
+            yield c;
+          }
+        })(),
+        accumulated: () => accumulated,
+        usage: () => usageTokens(accumulated),
+      };
     },
   };
   const toolMap = {

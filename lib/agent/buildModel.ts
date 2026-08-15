@@ -2,6 +2,10 @@
 // and how to instantiate its LangChain chat model. Supports OpenAI (responses API + reasoning),
 // Anthropic (extended thinking), DeepSeek, Moonshot, and Mistral.
 //
+// The vendor objects the `build` functions return are an implementation detail of this file. They are
+// wrapped in a ModelGateway (./modelGateway.ts) before they leave it, so the rest of the app talks to
+// one interface with one place to hang the concerns every call shares.
+//
 // API KEYS ARE NOT HERE AND NOT IN .env. They are entered in the app and held encrypted by
 // lib/infra/security/providerKeyStore.ts; loadAgentConfig reads one from there per run. This module
 // answers "which providers does this deployment OFFER", which is now a question about configuration
@@ -14,6 +18,7 @@
 import { ChatOpenAI } from "@langchain/openai";
 import { ChatAnthropic } from "@langchain/anthropic";
 import type { LLMProviderConfig } from "./interfaces";
+import { createModelGateway, type ModelCallObserver, type ModelGateway } from "./modelGateway";
 import { THINKING_OFF_EFFORT, type ReasoningEffort } from "../models/llmSelection";
 import { listModels, thinkingSupport } from "../models/registry";
 import { firstAvailableSelection, type ModelSelection, type ModelVocabulary } from "../models/selection";
@@ -205,7 +210,16 @@ const PROVIDERS: Record<string, ProviderDescriptor> = {
   },
 };
 
-export function buildModel(config: LLMProviderConfig): ChatOpenAI | ChatAnthropic {
+/**
+ * The vendor client for a config, unwrapped.
+ *
+ * RUNTIME CODE MUST NOT CALL THIS — buildModel is the entry point. A bare client is a provider call
+ * that nothing measures and, once pacing lands, nothing paces; that is the whole reason the gateway
+ * exists. It is split out and exported only so the registry's wiring (model id, key, base URL,
+ * reasoning fields) stays directly assertable, which is a claim about the SDK object and cannot be
+ * made through an interface that deliberately hides it.
+ */
+export function buildChatModel(config: LLMProviderConfig): ChatOpenAI | ChatAnthropic {
   const descriptor = PROVIDERS[config.provider];
   // Unknown providers fail loudly here rather than silently resolving to another vendor's builder:
   // the API validates provider on write, so reaching this means a retired provider is still stored.
@@ -214,6 +228,21 @@ export function buildModel(config: LLMProviderConfig): ChatOpenAI | ChatAnthropi
   }
   if (!config.model) throw new Error(`no model selected for provider "${config.provider}"`);
   return descriptor.build(config);
+}
+
+/**
+ * The model for one run, as a ModelGateway rather than a vendor object.
+ *
+ * The SDK instance stops here. Callers get the gateway (./modelGateway.ts), which is where anything
+ * true of every model call belongs — so a provider added above cannot arrive with its own
+ * accounting, and a new call site cannot bypass it.
+ */
+export function buildModel(config: LLMProviderConfig, options: { observe?: ModelCallObserver } = {}): ModelGateway {
+  return createModelGateway(buildChatModel(config), {
+    provider: config.provider,
+    model: config.model,
+    ...(options.observe ? { observe: options.observe } : {}),
+  });
 }
 
 // The providers the app supports — the source of truth for the UI provider picker and the API-side

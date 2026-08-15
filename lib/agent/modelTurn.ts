@@ -1,5 +1,9 @@
 // Provider-stream adaptation for one model turn. The agent loop consumes normalized token,
 // reasoning, tool-call, and usage data without knowing provider-specific chunk shapes.
+//
+// The stream itself comes from a ModelGateway (./modelGateway.ts), which owns the call and its
+// measurement. What is left here is purely the shape of a *turn*: which chunk fields carry prose,
+// which carry reasoning, and how a tool call is reassembled from its deltas.
 import { AIMessage, HumanMessage } from "@langchain/core/messages";
 import type { AIMessageChunk, BaseMessage } from "@langchain/core/messages";
 import type { Logger } from "pino";
@@ -7,6 +11,7 @@ import { throttleLog } from "../infra/logThrottle";
 import { newToolCallId } from "./toolCallIds";
 import { contentToText } from "@/lib/transcript/content";
 import type { AgentEvent } from "./runner";
+import type { ModelGateway, ModelUsage } from "./modelGateway";
 import {
   classifyProviderCreditExhaustion,
   PROVIDER_CREDIT_EXHAUSTED_CODE,
@@ -19,7 +24,10 @@ export type ResolvedToolCall = { id: string; name: string; args: Record<string, 
 export type TurnEvent =
   | { type: "token"; content: string }
   | { type: "reasoning"; content: string }
-  | { type: "turn_complete"; fullText: string; toolCalls: ResolvedToolCall[]; accumulatedChunk: AIMessageChunk | null };
+  // Carries the turn's measured usage rather than the raw accumulated chunk. The runner has no other
+  // use for that chunk — it deliberately persists the coalesced text instead (see runner.ts) — and
+  // handing it one invited every consumer to do its own token arithmetic.
+  | { type: "turn_complete"; fullText: string; toolCalls: ResolvedToolCall[]; usage: ModelUsage };
 
 type PartialToolCall = { id: string; name: string; args: string };
 type ContentBlock =
@@ -73,22 +81,6 @@ function extractContentFromChunk(chunk: AIMessageChunk, log: Logger): { tokens: 
   return { tokens, reasoning };
 }
 
-export function usageTokens(chunk: AIMessageChunk | null) {
-  return {
-    inputTokensTotal: chunk?.usage_metadata?.input_tokens ?? 0,
-    outputTokensTotal: chunk?.usage_metadata?.output_tokens ?? 0,
-    outputTokensReasoning: chunk?.usage_metadata?.output_token_details?.reasoning ?? 0,
-    inputTokensCacheRead:
-      chunk?.usage_metadata?.input_token_details?.cache_read ??
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (chunk?.response_metadata as any)?.usage?.prompt_cache_hit_tokens ??
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (chunk?.response_metadata as any)?.usage?.cached_tokens ??
-      0,
-    inputTokensCacheWrite: chunk?.usage_metadata?.input_token_details?.cache_creation ?? 0,
-  };
-}
-
 function assembleToolCalls(partials: PartialToolCall[]): ResolvedToolCall[] {
   const minted = new Set<string>();
   return partials
@@ -108,25 +100,21 @@ function assembleToolCalls(partials: PartialToolCall[]): ResolvedToolCall[] {
     });
 }
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
 export async function* streamModelTurn(
-  modelWithTools: any,
+  modelWithTools: ModelGateway,
   messages: BaseMessage[],
   iteration: number,
   signal: AbortSignal | undefined,
   log: Logger,
 ): AsyncGenerator<TurnEvent> {
-  /* eslint-enable @typescript-eslint/no-explicit-any */
   const partials: PartialToolCall[] = [];
   let fullText = "";
-  let accumulatedChunk: AIMessageChunk | null = null;
   const startedAt = Date.now();
-  const stream = await modelWithTools.stream(messages, { signal });
+  const call = await modelWithTools.stream(messages, { stage: "model_turn", signal });
   let timeToFirstTokenMs: number | null = null;
 
-  for await (const chunk of stream as AsyncIterable<AIMessageChunk>) {
+  for await (const chunk of call.chunks) {
     if (timeToFirstTokenMs === null) timeToFirstTokenMs = Date.now() - startedAt;
-    accumulatedChunk = accumulatedChunk ? accumulatedChunk.concat(chunk) : chunk;
     const { tokens, reasoning } = extractContentFromChunk(chunk, log);
     for (const content of tokens) {
       fullText += content;
@@ -144,34 +132,31 @@ export async function* streamModelTurn(
   }
 
   log.debug({ iteration, ttftMs: timeToFirstTokenMs, streamMs: Date.now() - startedAt }, "model stream timing");
-  yield { type: "turn_complete", fullText, toolCalls: assembleToolCalls(partials), accumulatedChunk };
+  // Read after the loop, where the gateway has finished measuring the drained stream.
+  yield { type: "turn_complete", fullText, toolCalls: assembleToolCalls(partials), usage: call.usage() };
 }
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
 export async function* synthesizeLimit(
-  model: any,
+  model: ModelGateway,
   messages: BaseMessage[],
   signal: AbortSignal | undefined,
   log: Logger,
   modelId?: string,
 ): AsyncGenerator<AgentEvent> {
-  /* eslint-enable @typescript-eslint/no-explicit-any */
   log.debug("limit synthesis started");
   try {
-    const stream = await model.stream(
+    const call = await model.stream(
       [
         ...messages,
         new HumanMessage(
           "You have reached the maximum number of steps. Briefly summarize what you accomplished and what still needs to be done. Do not attempt any tool calls.",
         ),
       ],
-      { signal },
+      { stage: "limit_synthesis", signal },
     );
     const turnId = crypto.randomUUID();
     let text = "";
-    let accumulatedChunk: AIMessageChunk | null = null;
-    for await (const chunk of stream as AsyncIterable<AIMessageChunk>) {
-      accumulatedChunk = accumulatedChunk ? accumulatedChunk.concat(chunk) : chunk;
+    for await (const chunk of call.chunks) {
       const content = contentToText(chunk.content);
       if (content) {
         text += content;
@@ -183,7 +168,7 @@ export async function* synthesizeLimit(
       yield {
         type: "turn_usage",
         turnId,
-        ...usageTokens(accumulatedChunk),
+        ...call.usage(),
         ...(modelId ? { model: modelId } : {}),
         outputText: text,
         toolCalls: [],

@@ -4,7 +4,7 @@
 // Set DEBUG=1 in the environment to enable verbose tool call logging.
 
 import { HumanMessage, ToolMessage, AIMessage } from "@langchain/core/messages";
-import type { AIMessageChunk, BaseMessage } from "@langchain/core/messages";
+import type { BaseMessage } from "@langchain/core/messages";
 import type { Logger } from "pino";
 import { buildTools, loadAgentConfig } from "./buildTools";
 import type { AgentConfig, PostDispatchContext, PostDispatchFn } from "./interfaces";
@@ -19,7 +19,8 @@ import { sendToWorkspace } from "../infra/realtime/wsHub";
 import { createLogger } from "../infra/logger";
 import type { ToolStatus } from "@/lib/usage/types";
 import type { CallAgentMeta } from "./tools/agentCall";
-import { streamModelTurn, synthesizeLimit, usageTokens, type ResolvedToolCall } from "./modelTurn";
+import { streamModelTurn, synthesizeLimit, type ResolvedToolCall } from "./modelTurn";
+import { NO_USAGE, type ModelUsage } from "./modelGateway";
 import { dispatchTools, type RunnerTool } from "./toolDispatch";
 import { normalizeToolCallIds } from "./toolCallIds";
 import {
@@ -254,13 +255,13 @@ export async function* runAgent(
       let fullText = "";
       let reasoningText = "";
       let toolCalls: ResolvedToolCall[] = [];
-      let accumulatedChunk: AIMessageChunk | null = null;
+      let usage: ModelUsage = NO_USAGE;
 
       for await (const event of streamModelTurn(modelWithTools, messages, iterations, signal, wlog)) {
         if (event.type === "turn_complete") {
           fullText = event.fullText;
           toolCalls = event.toolCalls;
-          accumulatedChunk = event.accumulatedChunk;
+          usage = event.usage;
         } else {
           if (event.type === "reasoning") reasoningText += event.content;
           yield event;
@@ -275,7 +276,7 @@ export async function* runAgent(
       // the no-tool final turn emits it here with no tool calls.
       const usageBase = {
         turnId,
-        ...usageTokens(accumulatedChunk),
+        ...usage,
         ...(modelId ? { model: modelId } : {}),
         ...(iterations === 1 ? { userInput } : {}),
         ...(reasoningText ? { reasoningText } : {}),
@@ -304,7 +305,7 @@ export async function* runAgent(
       toolCalls.forEach((tc, i) => seen.set(`${tc.name}:${JSON.stringify(tc.args)}`, i));
       const activeCalls = toolCalls.filter((tc, i) => seen.get(`${tc.name}:${JSON.stringify(tc.args)}`) === i);
 
-      // Persist the coalesced text, NOT accumulatedChunk.content. The raw streamed content array
+      // Persist the coalesced text, NOT the raw accumulated content array. That array
       // carries provider-specific, streaming-only blocks — extended-thinking `thinking` blocks
       // (with signatures) and partial `input_json_delta` tool-input deltas — that are not valid
       // *input* content. Replaying them breaks the next request (a text-only provider rejects them

@@ -5,6 +5,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import {
   anthropicThinkingConfig,
   availableProviders,
+  buildChatModel,
   buildModel,
   defaultModelSelection,
   SUPPORTED_PROVIDERS,
@@ -57,7 +58,11 @@ describe("anthropicThinkingConfig", () => {
 // The builders are the single point where a config becomes a real client, so these assert that the
 // selected model/key actually reach the SDK. Every provider's key env var is cleared first: the SDKs
 // fall back to process.env on their own, which would mask a builder that never wired the key through.
-describe("buildModel", () => {
+//
+// Targets buildChatModel, not buildModel: these are claims about the vendor object's own fields, and
+// buildModel deliberately wraps that object in a ModelGateway which hides them. buildModel's own
+// contract — that the wrapping happens at all — is asserted separately below.
+describe("buildChatModel", () => {
   const config = (over: Partial<LLMProviderConfig>): LLMProviderConfig => ({
     provider: "openai",
     model: "gpt-5.5",
@@ -96,7 +101,7 @@ describe("buildModel", () => {
     ["moonshot", "kimi-k3"],
     ["mistral", "mistral-small-2603"],
   ])("wires the selected model and key into the %s client", (provider, model) => {
-    const m = buildModel(config({ provider, model, apiKey: `key-${provider}` })) as unknown as {
+    const m = buildChatModel(config({ provider, model, apiKey: `key-${provider}` })) as unknown as {
       model: string;
       apiKey: string;
     };
@@ -118,7 +123,7 @@ describe("buildModel", () => {
     ["moonshot", "kimi-k3", "https://api.moonshot.ai/v1"],
     ["mistral", "mistral-small-2603", "https://api.mistral.ai/v1"],
   ])("points %s at its own endpoint, never another vendor's", (provider, model, baseURL) => {
-    const m = buildModel(config({ provider, model, apiKey: `key-${provider}` })) as unknown as {
+    const m = buildChatModel(config({ provider, model, apiKey: `key-${provider}` })) as unknown as {
       clientConfig: { baseURL?: string; apiKey?: string };
     };
     expect(m.clientConfig.baseURL).toBe(baseURL);
@@ -128,7 +133,7 @@ describe("buildModel", () => {
   // OpenAI itself is the one provider that must NOT carry an override: it talks to the SDK default.
   // Pinned separately because the assertion is the absence of a value, which no table row expresses.
   it("leaves openai on the SDK's default endpoint", () => {
-    const m = buildModel(config({ provider: "openai" })) as unknown as {
+    const m = buildChatModel(config({ provider: "openai" })) as unknown as {
       clientConfig: { baseURL?: string };
     };
     expect(m.clientConfig.baseURL).toBeUndefined();
@@ -139,7 +144,7 @@ describe("buildModel", () => {
   // typed field, "max" would be dropped or rejected and every turn would silently run at a lower
   // effort, so assert the raw request field carries the value the workspace picked.
   it("passes the Kimi reasoning effort through as a raw reasoning_effort request field", () => {
-    const m = buildModel(config({ provider: "moonshot", model: "kimi-k3", reasoningEffort: "max" })) as unknown as {
+    const m = buildChatModel(config({ provider: "moonshot", model: "kimi-k3", reasoningEffort: "max" })) as unknown as {
       modelKwargs: Record<string, unknown>;
     };
     expect(m.modelKwargs).toEqual({ reasoning_effort: "max" });
@@ -155,7 +160,7 @@ describe("buildModel", () => {
     ["mistral-small-2603", "none", { reasoning_effort: "none" }],
     ["mistral-medium-2604", "high", { reasoning_effort: "high" }],
   ])("sends reasoning_effort for the toggle model %s at %s", (model, effort, expected) => {
-    const m = buildModel(
+    const m = buildChatModel(
       config({ provider: "mistral", model, reasoningEffort: effort as ReasoningEffort }),
     ) as unknown as { modelKwargs?: Record<string, unknown> };
     expect(m.modelKwargs).toEqual(expected);
@@ -167,7 +172,7 @@ describe("buildModel", () => {
     ["codestral-2508", "has no thinking mode to address"],
     ["ministral-3-3b-2512", "has no thinking mode to address"],
   ])("omits reasoning_effort entirely for %s — it %s", (model) => {
-    const m = buildModel(config({ provider: "mistral", model, reasoningEffort: "high" })) as unknown as {
+    const m = buildChatModel(config({ provider: "mistral", model, reasoningEffort: "high" })) as unknown as {
       modelKwargs?: Record<string, unknown>;
     };
     // Absence of the KEY is the contract, not an absent modelKwargs object: ChatOpenAI defaults that
@@ -180,18 +185,40 @@ describe("buildModel", () => {
   // "medium" in storage. Mistral knows only none|high, so anything that isn't off must arrive as
   // "high" rather than be forwarded verbatim into a 400.
   it("collapses an effort level mistral doesn't know rather than forwarding it", () => {
-    const m = buildModel(
+    const m = buildChatModel(
       config({ provider: "mistral", model: "mistral-small-2603", reasoningEffort: "max" }),
     ) as unknown as { modelKwargs: Record<string, unknown> };
     expect(m.modelKwargs).toEqual({ reasoning_effort: "high" });
   });
 
   it("rejects an unregistered provider instead of falling back to another vendor's builder", () => {
-    expect(() => buildModel(config({ provider: "retired-vendor" }))).toThrow(/unsupported LLM provider/);
+    expect(() => buildChatModel(config({ provider: "retired-vendor" }))).toThrow(/unsupported LLM provider/);
   });
 
   it("rejects a config with no model rather than constructing an unusable client", () => {
-    expect(() => buildModel(config({ model: "" }))).toThrow(/no model selected/);
+    expect(() => buildChatModel(config({ model: "" }))).toThrow(/no model selected/);
+  });
+
+  // The seam itself. Every cross-cutting concern the app applies to model traffic — token
+  // accounting today, request pacing next — hangs off the gateway, so a buildModel that handed back
+  // a bare SDK client would route the whole app around all of them while still typechecking at every
+  // call site. Assert the wrapping, and that the gateway knows which provider/model it speaks for
+  // (the bucket key any per-provider policy is keyed by).
+  it("hands callers a gateway rather than the vendor client", () => {
+    const gateway = buildModel(config({ provider: "mistral", model: "mistral-small-2603" }));
+    expect(gateway.provider).toBe("mistral");
+    expect(gateway.model).toBe("mistral-small-2603");
+    expect(typeof gateway.stream).toBe("function");
+    expect(typeof gateway.invoke).toBe("function");
+    // No vendor internals reachable through it — the tests above had to unwrap for a reason.
+    expect(gateway).not.toHaveProperty("clientConfig");
+    expect(gateway).not.toHaveProperty("apiKey");
+  });
+
+  it("keeps provider identity across bindTools, so bound and bare calls share one policy", () => {
+    const gateway = buildModel(config({ provider: "mistral", model: "mistral-small-2603" })).bindTools([]);
+    expect(gateway.provider).toBe("mistral");
+    expect(gateway.model).toBe("mistral-small-2603");
   });
 });
 

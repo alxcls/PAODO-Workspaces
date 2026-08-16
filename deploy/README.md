@@ -83,13 +83,19 @@ The app listens on `127.0.0.1:3000` by default. Keep that port private.
 
 ### Backups and credential handoff
 
-Compose keeps five named volumes deliberately separate:
+Compose keeps six named volumes deliberately separate:
 
 - `workspaces` contains workspace data;
+- `proxy-ca` contains the credential proxy's CA, its HMAC key and the internet-access policy;
 - `provider-vault` contains encrypted LLM provider keys;
 - `provider-key` unlocks only the provider vault;
 - `workspace-secret-vault` contains encrypted third-party secrets intended for proxy injection;
 - `workspace-secret-key` unlocks only the workspace-secret vault.
+
+`proxy-ca` is mounted at `/app/data/.proxy-ca` — writable in `app`, read-only in `credproxy`, which
+gets no other view of `workspaces`. Keeping it a volume of its own is what lets `credproxy` start on
+a first deployment: a subpath mount requires the path to already exist in the volume, and on a fresh
+install nothing has created it yet.
 
 Back up each vault separately from its matching key when credentials must survive a restore. Anyone
 who obtains a matching pair can recover that credential class. A credential-free handoff transfers

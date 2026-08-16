@@ -45,6 +45,10 @@ services:
       - PAODO_WORKSPACE_SECRET_KEY_FILE=/app/workspace-secret-key/master.key
     volumes:
       - workspaces:/app/data
+      # Its own volume, nested inside /app/data, so credproxy can mount just this directory without
+      # a subpath into `workspaces` — Docker requires a subpath to pre-exist, which it does not on a
+      # first deployment. The app is the only writer (ensureCA).
+      - proxy-ca:/app/data/.proxy-ca
       - provider-vault:/app/provider-vault
       - provider-key:/app/provider-key
       - workspace-secret-vault:/app/workspace-secret-vault
@@ -100,12 +104,7 @@ services:
       # Only .proxy-ca (CA, HMAC key, internet-access policy) — NOT the whole workspaces volume,
       # which also holds the conversation database, the registry and every workspace's files. This
       # is the one container the untrusted sandbox can reach, so it gets the two files it reads.
-      - type: volume
-        source: workspaces
-        target: /app/data/.proxy-ca
-        read_only: true
-        volume:
-          subpath: .proxy-ca
+      - proxy-ca:/app/data/.proxy-ca:ro
       - workspace-secret-vault:/app/workspace-secret-vault:ro
       - workspace-secret-key:/app/workspace-secret-key:ro
     depends_on:
@@ -125,6 +124,7 @@ services:
 
 volumes:
   workspaces:
+  proxy-ca:
   provider-vault:
   provider-key:
   workspace-secret-vault:

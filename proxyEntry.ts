@@ -5,9 +5,9 @@
 // Instead this minimal process runs ONLY the proxy: the app attaches THIS container (never itself)
 // to each workspace network, so port 9998 is the sole thing a workspace can reach.
 //
-// It shares no IPC with the app: it reads CA material from the read-only `workspaces` volume and the
-// encrypted vault plus master key from their own read-only mounts. It reloads rules when the vault
-// changes. The app owns all generation and writes; this side only loads existing material.
+// It shares no IPC with the app: it reads CA material, the encrypted vault and the master key from
+// three separate read-only mounts and nothing else. It reloads rules when the vault changes. The
+// app owns all generation and writes; this side only loads existing material.
 import * as fs from "fs";
 import * as path from "path";
 import { createLogger, exitAfterLogs } from "./lib/infra/logger";
@@ -67,12 +67,17 @@ const CA_WAIT_WARN_AFTER_MS = 30_000;
 // domain.key is the last file ensureCA writes, so its presence implies the whole CA set exists —
 // use it as the barrier so we never fall into ensureCA's generate branch on the read-only mount.
 const CA_SENTINEL = path.join(WORKSPACES_ROOT, ".proxy-ca", "domain.key");
+// The policy is rewritten from the registry on every app boot. Starting between the CA write and
+// that one would serve "everyone enabled" until the next poll — the fail-open case it exists to stop.
+const STARTUP_FILES = [CA_SENTINEL, INTERNET_ACCESS_POLICY_FILE];
 
-// The data dir is mounted read-only; wait for the app to have generated the CA before loading it.
-async function waitForCA(): Promise<void> {
+// The CA dir is mounted read-only, and on a first deployment it starts empty (compose creates the
+// volume; only the app writes into it). Wait for the app to have written both before loading them.
+async function waitForAppStartupFiles(): Promise<void> {
   const startedAt = Date.now();
   let delayedWarningEmitted = false;
-  while (!fs.existsSync(CA_SENTINEL)) {
+  let missing = STARTUP_FILES.filter((f) => !fs.existsSync(f));
+  while (missing.length > 0) {
     const waitedMs = Date.now() - startedAt;
     if (!delayedWarningEmitted && waitedMs >= CA_WAIT_WARN_AFTER_MS) {
       delayedWarningEmitted = true;
@@ -81,13 +86,15 @@ async function waitForCA(): Promise<void> {
           event: "credential_proxy_ca_wait_delayed",
           outcome: "startup_waiting",
           waitedMs,
+          missing,
         },
-        "credential proxy is still waiting for the app to create its CA",
+        "credential proxy is still waiting for the app to write its startup files",
       );
     } else {
-      log.debug({ waitedMs }, "waiting for proxy CA to be created by the app");
+      log.debug({ waitedMs, missing }, "waiting for proxy startup files to be created by the app");
     }
     await new Promise((r) => setTimeout(r, CA_WAIT_INTERVAL_MS));
+    missing = STARTUP_FILES.filter((f) => !fs.existsSync(f));
   }
 }
 
@@ -107,7 +114,7 @@ async function main(): Promise<void> {
   } catch (err) {
     fatalSecretStore(err);
   }
-  await waitForCA();
+  await waitForAppStartupFiles();
   try {
     // files exist → load branch only (no writes to the RO mount)
     ensureCA(WORKSPACES_ROOT, { strictExisting: true });

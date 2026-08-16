@@ -91,9 +91,12 @@ describe("reloadInternetAccessPolicy", () => {
     expect(isInternetAccessEnabled("ws-protected")).toBe(false);
   });
 
-  it("treats a missing file as the normal empty case (nothing ever toggled off)", () => {
+  it("on a vanished file, keeps the last-known-good state instead of failing open", () => {
+    // The app rewrites this file on every boot and the sidecar waits for it, so a file that
+    // disappears is an anomaly — treating it as "nothing toggled off" would re-enable everyone.
+    setInternetAccessPolicy("ws-survives-deletion", false);
     fs.rmSync(INTERNET_ACCESS_POLICY_FILE, { force: true });
     reloadInternetAccessPolicy();
-    expect(isInternetAccessEnabled("anything")).toBe(true);
+    expect(isInternetAccessEnabled("ws-survives-deletion")).toBe(false);
   });
 });

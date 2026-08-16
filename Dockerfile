@@ -49,8 +49,11 @@ COPY app/ ./app/
 COPY components/ ./components/
 COPY scripts/ ./scripts/
 
+# .proxy-ca is a mount point for its own volume: Docker seeds a fresh named volume from the image
+# path, so this is what makes it node-owned rather than root-owned and unwritable.
 RUN mkdir -p \
       /app/data \
+      /app/data/.proxy-ca \
       /app/provider-vault \
       /app/provider-key \
       /app/workspace-secret-vault \

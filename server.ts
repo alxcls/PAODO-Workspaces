@@ -26,6 +26,7 @@ import next from "next";
 import { WebSocketServer } from "ws";
 import { getStore, getContainers, getVersioning, getCredentialProxy } from "./lib/infra/services";
 import { ensureCA } from "./lib/infra/proxy/proxyCA";
+import { reconcileInternetAccessPolicy } from "./lib/infra/proxy/internetAccessPolicy";
 import { WORKSPACES_ROOT } from "./lib/infra/paths";
 import { getWorkspaceRules } from "./lib/infra/security/workspaceSecretStore";
 import { getSecretsEncKey } from "./lib/infra/security/secretsEncryption";
@@ -628,6 +629,16 @@ assertGitAvailable()
       log.fatal(
         { event: "startup_proxy_key_material_invalid", outcome: "process_exit", err },
         "existing credential-proxy key material is incomplete or invalid — refusing to start",
+      );
+      exitAfterLogs(1);
+    }
+    // After ensureCA, which creates the directory this writes into. The sidecar waits for the file.
+    try {
+      reconcileInternetAccessPolicy(getStore().listWorkspaces());
+    } catch (err) {
+      log.fatal(
+        { event: "startup_internet_access_policy_unwritable", outcome: "process_exit", err },
+        "could not rebuild the internet-access policy the proxy enforces — refusing to start",
       );
       exitAfterLogs(1);
     }

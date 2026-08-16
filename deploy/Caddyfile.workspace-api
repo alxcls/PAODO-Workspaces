@@ -100,6 +100,10 @@
 		format console
 	}
 
+	# Strip Caddy's default Server banner — parity with the ws.* edge that
+	# Cloudflare rewrites. Recon-only, no functional effect.
+	header -Server
+
 	route {
 		@workspaceAgent {
 			method POST

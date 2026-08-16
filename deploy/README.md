@@ -29,7 +29,7 @@ nano .env
 
 Set:
 
-- `USERNAME` and `PASSWORD`;
+- `PAODO_AUTH_MODE` to `basic` or `iap`, and the variables that mode requires;
 - `PAODO_TRUSTED_HOSTS` to every public UI hostname (comma-separated);
 - `MAX_CONCURRENT_AGENT_RUNS` to the instance-wide emergency ceiling (start with `10`);
 - optional container resource limits and timeouts.
@@ -117,8 +117,7 @@ Set that exact UI hostname in `PAODO_TRUSTED_HOSTS`. The ingress must replace, n
 and `X-Forwarded-Host` with that hostname. PAODO rejects missing, malformed, unlisted or disagreeing
 values before authentication. The optional `WORKSPACE_API_DOMAIN` is trusted automatically.
 
-The ingress must support WebSocket upgrades for `/ws`. PAODO Basic Auth remains
-enabled through `USERNAME` and `PASSWORD`. It must also discard any
+The ingress must support WebSocket upgrades for `/ws`. It must also discard any
 caller-supplied `CF-Connecting-IP` header and replace it with the verified client
 address, because PAODO uses that header for rate limits and audit logs.
 

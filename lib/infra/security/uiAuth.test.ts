@@ -62,14 +62,25 @@ describe("basicAuthenticator", () => {
 });
 
 describe("resolveUiAuth", () => {
-  it("defaults to basic, so an unset variable never selects the mode needing an external service", () => {
-    const auth = resolveUiAuth({ USERNAME: "admin", PASSWORD: "hunter2" });
-    expect(auth.mode).toBe("basic");
+  it("builds the mode that was asked for", () => {
+    expect(resolveUiAuth({ PAODO_AUTH_MODE: "basic", USERNAME: "admin", PASSWORD: "hunter2" }).mode).toBe("basic");
+    expect(resolveUiAuth({ ...IAP_ENV, PAODO_AUTH_MODE: "IAP " }, stubJwks).mode).toBe("iap");
+  });
+
+  // A mode that fell back to basic here would serve a password to a deployment configured for iap:
+  // a migrated .env still carries USERNAME and PASSWORD, so the fallback would be a working door.
+  it("never falls back to a mode nobody asked for", () => {
+    for (const mode of [undefined, "", "   "]) {
+      expect(() => resolveUiAuth({ PAODO_AUTH_MODE: mode, USERNAME: "admin", PASSWORD: "hunter2" })).toThrow(
+        'PAODO_AUTH_MODE must be "basic" or "iap"',
+      );
+    }
   });
 
   it("refuses to build a mode that is not fully configured", () => {
-    expect(() => resolveUiAuth({ USERNAME: "admin" })).toThrow("USERNAME and PASSWORD are required");
-    expect(() => resolveUiAuth({ PASSWORD: "hunter2" })).toThrow("USERNAME and PASSWORD are required");
+    const basic = { PAODO_AUTH_MODE: "basic" };
+    expect(() => resolveUiAuth({ ...basic, USERNAME: "admin" })).toThrow("USERNAME and PASSWORD are required");
+    expect(() => resolveUiAuth({ ...basic, PASSWORD: "hunter2" })).toThrow("USERNAME and PASSWORD are required");
     expect(() => resolveUiAuth({ PAODO_AUTH_MODE: "sso", USERNAME: "a", PASSWORD: "b" })).toThrow(
       'PAODO_AUTH_MODE must be "basic" or "iap"',
     );

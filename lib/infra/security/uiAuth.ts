@@ -137,9 +137,10 @@ function assertHttpsUrl(value: string): string {
 }
 
 /**
- * Builds the authenticator for the configured mode, throwing when that mode is not fully configured
- * so the caller can refuse to start. Defaults to `basic`, which is the mode that needs no external
- * service — an unset variable must never select the one that does.
+ * Builds the authenticator for the configured mode, throwing when that mode is absent or not fully
+ * configured so the caller can refuse to start. There is deliberately no default: a mode that fell
+ * back when the variable was empty would silently serve a password to a deployment configured for
+ * `iap`, since a migrated .env keeps USERNAME and PASSWORD.
  *
  * Unconditional by design, and never gated on NODE_ENV: doing that once meant a container flipped to
  * debug logging served every route unauthenticated.
@@ -157,7 +158,10 @@ export function resolveUiAuth(
   },
   jwksFactory = (url: string) => new JwksCache(url),
 ): UiAuthenticator {
-  const mode = env.PAODO_AUTH_MODE?.trim() || "basic";
+  const mode = env.PAODO_AUTH_MODE?.trim().toLowerCase() ?? "";
+  if (mode !== "basic" && mode !== "iap") {
+    throw new Error(`PAODO_AUTH_MODE must be "basic" or "iap"; received ${JSON.stringify(mode)}`);
+  }
 
   if (mode === "basic") {
     const user = env.USERNAME?.trim();
@@ -166,18 +170,14 @@ export function resolveUiAuth(
     return basicAuthenticator({ user, pass });
   }
 
-  if (mode === "iap") {
-    const cookie = env.PAODO_IAP_COOKIE?.trim();
-    return iapAuthenticator({
-      header: normalizeHeaderName(required(env, "PAODO_IAP_HEADER")),
-      cookie: cookie || null,
-      policy: {
-        issuer: required(env, "PAODO_IAP_ISSUER"),
-        audience: required(env, "PAODO_IAP_AUDIENCE"),
-        jwks: jwksFactory(assertHttpsUrl(required(env, "PAODO_IAP_JWKS_URL"))),
-      },
-    });
-  }
-
-  throw new Error(`PAODO_AUTH_MODE must be "basic" or "iap"; received ${JSON.stringify(mode)}`);
+  const cookie = env.PAODO_IAP_COOKIE?.trim();
+  return iapAuthenticator({
+    header: normalizeHeaderName(required(env, "PAODO_IAP_HEADER")),
+    cookie: cookie || null,
+    policy: {
+      issuer: required(env, "PAODO_IAP_ISSUER"),
+      audience: required(env, "PAODO_IAP_AUDIENCE"),
+      jwks: jwksFactory(assertHttpsUrl(required(env, "PAODO_IAP_JWKS_URL"))),
+    },
+  });
 }

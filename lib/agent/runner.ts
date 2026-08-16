@@ -57,6 +57,9 @@ export type AgentEvent =
   // `meta` is set only for call_agent: a deep-link to the callee's persisted session.
   | { type: "tool_result"; name: string; id?: string; result: string; meta?: CallAgentMeta }
   | { type: "error"; message: string; code?: AgentErrorCode }
+  // The run is alive but waiting on a provider's rate limit. Transient: it exists so a paced run
+  // reads as slow rather than frozen, and it is replaced by the next real event, never kept.
+  | { type: "paced"; provider: string; model: string; waitMs: number; queueDepth: number }
   | { type: "limit_reached" }
   | { type: "done" }
   | {

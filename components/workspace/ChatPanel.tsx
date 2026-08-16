@@ -5,8 +5,16 @@ import { useState, useRef, useEffect } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import TokenUsageLine from "@/components/usage/TokenUsageLine";
-import { useAgentStream, toolLabel } from "@/lib/client/hooks/useAgentStream";
+import { useAgentStream, toolLabel, type PacedState } from "@/lib/client/hooks/useAgentStream";
 import type { InitialConversation } from "@/lib/client/hooks/useConversations";
+
+// Says why the run is quiet. The queue line matters most: it tells a user their own run is fine and
+// simply behind someone else's, which "waiting on a rate limit" alone does not.
+function pacedCaption({ provider, waitMs, queueDepth }: PacedState): string {
+  const seconds = Math.max(1, Math.round(waitMs / 1000));
+  const behind = queueDepth > 0 ? `, queued behind ${queueDepth} ${queueDepth === 1 ? "run" : "runs"}` : "";
+  return `Waiting on ${provider} rate limit — about ${seconds}s${behind}`;
+}
 
 const mdComponents: Components = {
   table: ({ node: _n, ...props }) => (
@@ -56,8 +64,19 @@ export default function ChatPanel({
   // always re-fetch — the payload can go stale once the conversation is used.
   const consumedInitialRef = useRef<string | null>(null);
 
-  const { messages, streaming, pendingTools, sendMessage, attachLive, loadConversation, hydrate, reset, detach, stop } =
-    useAgentStream(workspaceId, conversationId, { onTurnComplete: onAgentTurnComplete });
+  const {
+    messages,
+    streaming,
+    pendingTools,
+    paced,
+    sendMessage,
+    attachLive,
+    loadConversation,
+    hydrate,
+    reset,
+    detach,
+    stop,
+  } = useAgentStream(workspaceId, conversationId, { onTurnComplete: onAgentTurnComplete });
 
   useEffect(() => {
     if (!pinnedRef.current) return;
@@ -238,12 +257,14 @@ export default function ChatPanel({
         })}
 
         {streaming && pendingTools === 0 && (
-          <div className="flex justify-start">
+          <div className="flex justify-start flex-col items-start gap-1">
             <div className="bubble-agent md-prose typing">
               <span />
               <span />
               <span />
             </div>
+            {/* A throttled model can hold a turn for minutes; without this the dots read as a hang. */}
+            {paced && <div className="text-xs text-muted px-1">{pacedCaption(paced)}</div>}
           </div>
         )}
 

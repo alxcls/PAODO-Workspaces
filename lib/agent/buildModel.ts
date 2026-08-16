@@ -6,6 +6,8 @@ import { ChatAnthropic } from "@langchain/anthropic";
 import type { LLMProviderConfig } from "./interfaces";
 import { createModelGateway, type ModelCallObserver, type ModelGateway } from "./modelGateway";
 import { mistralReasoningConfig } from "./mistralProtocol";
+import { providerPacer } from "./rateLimit/providerPacer";
+import { parseRateLimitHeaders } from "./rateLimit/rateLimitHeaders";
 import { THINKING_OFF_EFFORT, type ReasoningEffort } from "../models/llmSelection";
 import { listModels } from "../models/registry";
 import { firstAvailableSelection, type ModelSelection, type ModelVocabulary } from "../models/selection";
@@ -62,6 +64,27 @@ interface ProviderDescriptor extends ProviderMetadata {
 // with backoff, hiding the refusals the gateway has to pace around. Every build spreads this.
 const NO_SDK_RETRY = { maxRetries: 0 } as const;
 
+/**
+ * A fetch that reports every response's rate-limit headers to the pacer.
+ *
+ * This exists because LangChain surfaces no headers on a streaming call, and the headers are the
+ * only place a provider says what its ceilings are — so the alternative is hard-coding numbers that
+ * go stale the moment a customer's support ticket raises them.
+ *
+ * Reads headers only. It never buffers, inspects or delays a body, so streaming is untouched.
+ */
+function pacedFetch(provider: string, model: string) {
+  return async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+    const response = await fetch(input as RequestInfo, init);
+    try {
+      providerPacer.settle({ provider, model }, parseRateLimitHeaders(response.headers));
+    } catch {
+      // Accounting must never be the reason a model call fails.
+    }
+    return response;
+  };
+}
+
 // The single source of truth for provider support. Adding one means an entry here plus its models in
 // lib/models/registry.ts — nothing else in the agent layer changes, and nothing in .env.
 const PROVIDERS: Record<string, ProviderDescriptor> = {
@@ -75,11 +98,12 @@ const PROVIDERS: Record<string, ProviderDescriptor> = {
         apiKey: config.apiKey,
         ...NO_SDK_RETRY,
         ...anthropicThinkingConfig(config.model, config.reasoningEffort),
-        ...(config.anthropicCacheTtl1h && {
-          clientOptions: {
+        clientOptions: {
+          fetch: pacedFetch("anthropic", config.model),
+          ...(config.anthropicCacheTtl1h && {
             defaultHeaders: { "anthropic-beta": "prompt-caching-scope-2026-01-05" },
-          },
-        }),
+          }),
+        },
       }),
   },
   openai: {
@@ -98,6 +122,7 @@ const PROVIDERS: Record<string, ProviderDescriptor> = {
         ...NO_SDK_RETRY,
         useResponsesApi: true,
         reasoning: effort === "none" ? { effort } : { effort, summary: "auto" },
+        configuration: { fetch: pacedFetch("openai", config.model) },
       });
     },
   },
@@ -112,6 +137,7 @@ const PROVIDERS: Record<string, ProviderDescriptor> = {
         configuration: {
           baseURL: "https://api.deepseek.com/v1",
           apiKey: config.apiKey,
+          fetch: pacedFetch("deepseek", config.model),
         },
       }),
   },
@@ -128,6 +154,7 @@ const PROVIDERS: Record<string, ProviderDescriptor> = {
         configuration: {
           baseURL: "https://api.moonshot.ai/v1",
           apiKey: config.apiKey,
+          fetch: pacedFetch("moonshot", config.model),
         },
         // modelKwargs, not the typed `reasoningEffort`: that field is OpenAI's union, which has no
         // "max" — Kimi's strongest level. modelKwargs is spread verbatim into the request body.
@@ -147,6 +174,7 @@ const PROVIDERS: Record<string, ProviderDescriptor> = {
         configuration: {
           baseURL: "https://api.mistral.ai/v1",
           apiKey: config.apiKey,
+          fetch: pacedFetch("mistral", config.model),
         },
         ...mistralReasoningConfig(config.model, config.reasoningEffort),
       }),

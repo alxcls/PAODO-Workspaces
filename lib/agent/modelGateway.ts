@@ -5,6 +5,9 @@ import type { BindToolsInput } from "@langchain/core/language_models/chat_models
 import { createLogger } from "../infra/logger";
 import { prepareMistralMessages } from "./mistralProtocol";
 import { providerConcurrency, type ProviderConcurrencyGate } from "./providerConcurrency";
+import { providerPacer, type PacerKey, type ProviderPacer } from "./rateLimit/providerPacer";
+import { RateLimitExhaustedError, RetryBudget } from "./rateLimit/retryPolicy";
+import { classifyProviderFailure, PROVIDER_RATE_LIMITED_CODE } from "./providerFailure";
 
 const log = createLogger("model");
 
@@ -47,10 +50,23 @@ export function usageTokens(chunk: AIMessageChunk | null): ModelUsage {
   };
 }
 
+/** A wait the pacer imposed, surfaced so the UI can say why a run has gone quiet. */
+export interface PacedNotice {
+  provider: string;
+  model: string;
+  waitMs: number;
+  queueDepth: number;
+}
+
 /** What a caller must say about a call it is making. */
 export interface ModelCall {
   stage: ModelCallStage;
   signal?: AbortSignal;
+  /**
+   * Told when this call is about to wait on a rate limit, before it sleeps. The call is suspended at
+   * this point and cannot yield, so the caller is handed the news instead of discovering it later.
+   */
+  onPaced?: (notice: PacedNotice) => void;
 }
 
 /**
@@ -83,6 +99,10 @@ export interface ModelCallRecord {
   emitted: boolean;
   /** Calls this provider was carrying when this one started, this one included. */
   concurrent: number;
+  /** Tries this call took, first included. Above 1 means the provider refused and we waited. */
+  attempts: number;
+  /** Time spent blocked by the pacer or by backoff, across every attempt. */
+  waitedMs: number;
 }
 
 /**
@@ -122,27 +142,108 @@ export interface ModelGatewayOptions {
   observe?: ModelCallObserver;
   /** Defaults to the process-wide counter. Inject a fresh one to keep tests from sharing state. */
   concurrency?: ProviderConcurrencyGate;
+  /** Defaults to the process-wide pacer. Inject a fresh one to keep tests from sharing state. */
+  pacer?: ProviderPacer;
+}
+
+/** One paced attempt that succeeded, plus the bookkeeping its caller still owes. */
+interface Attempt<T> {
+  value: T;
+  /** Releases the bucket reservation and the in-flight count, then reports the call. Call once. */
+  finish(usage: ModelUsage, partial: boolean, emitted: boolean): void;
 }
 
 export function createModelGateway(chat: BindableChatModel, options: ModelGatewayOptions): ModelGateway {
   const { provider, model } = options;
   const observe = options.observe ?? logCall;
   const concurrency = options.concurrency ?? providerConcurrency;
+  const pacer = options.pacer ?? providerPacer;
+  const pacerKey: PacerKey = { provider, model };
   // Mistral's wire format is quarantined here. Other providers receive the caller's exact array;
   // Mistral receives a short-lived clone with its reasoning blocks and tool ids restored.
   const outboundMessages = (messages: BaseMessage[]) =>
     provider === "mistral" ? prepareMistralMessages(messages) : messages;
 
-  // Every call is bracketed by this: enter before the request leaves, release exactly once when it
-  // settles, and report what it cost. Both call shapes go through it so neither can skip accounting.
-  const begin = (stage: ModelCallStage) => {
+  /**
+   * Run one logical call: wait for the provider's quota, try it, and on a refusal that reached no
+   * consumer, wait longer and try again.
+   *
+   * Retrying is safe only because nothing has been emitted yet. LangChain's `Runnable.stream` pulls
+   * the first chunk inside its own setup, so a 429 rejects here rather than mid-iteration; a failure
+   * after the first chunk surfaces to the consumer instead and is never retried.
+   *
+   * One record per logical call, not per attempt — `attempts` and `waitedMs` carry what the retries
+   * cost, so the observer contract stays one-in one-out.
+   */
+  const perform = async <T>(call: ModelCall, run: () => Promise<T>): Promise<Attempt<T>> => {
     const startedAt = Date.now();
-    const release = concurrency.enter(provider);
-    const concurrent = concurrency.snapshot(provider).active;
-    return (usage: ModelUsage, partial: boolean, emitted: boolean) => {
-      release();
-      observe({ provider, model, stage, usage, durationMs: Date.now() - startedAt, partial, emitted, concurrent });
-    };
+    const budget = new RetryBudget();
+    for (;;) {
+      const lease = await pacer.acquire(pacerKey, {
+        ...(call.signal ? { signal: call.signal } : {}),
+        onPaced: ({ waitMs, queueDepth }) => call.onPaced?.({ provider, model, waitMs, queueDepth }),
+      });
+      budget.recordWait(lease.waitedMs);
+      budget.startAttempt();
+      const release = concurrency.enter(provider);
+      const concurrent = concurrency.snapshot(provider).active;
+      try {
+        const value = await run();
+        // Only a call that had to wait says anything about the ceiling being tight; one that walked
+        // straight through is no evidence the learned recovery is too long.
+        if (lease.waitedMs > 0) pacer.reward(pacerKey);
+        return {
+          value,
+          finish: (usage, partial, emitted) => {
+            release();
+            lease.release();
+            observe({
+              provider,
+              model,
+              stage: call.stage,
+              usage,
+              durationMs: Date.now() - startedAt,
+              partial,
+              emitted,
+              concurrent,
+              attempts: budget.attemptsMade,
+              waitedMs: budget.waitedMs,
+            });
+          },
+        };
+      } catch (err) {
+        // Freed before the backoff, not after: a sleeping retry is not a call in flight, and holding
+        // the reservation would make the bucket look fuller than it is for the whole wait.
+        release();
+        lease.release();
+        // A call that gave up after eight attempts and ten minutes is the one most worth having in
+        // the ledger, so both terminal paths report before they throw.
+        const abandon = (thrown: unknown) => {
+          observe({
+            provider,
+            model,
+            stage: call.stage,
+            usage: NO_USAGE,
+            durationMs: Date.now() - startedAt,
+            partial: true,
+            emitted: false,
+            concurrent,
+            attempts: budget.attemptsMade,
+            waitedMs: budget.waitedMs,
+          });
+          return thrown;
+        };
+        if (classifyProviderFailure(err)?.failureCode !== PROVIDER_RATE_LIMITED_CODE) throw abandon(err);
+        // Budget is checked before the sleep, so a call with nothing left gives up now rather than
+        // after one more pointless wait.
+        const backoff = pacer.penalize(pacerKey);
+        if (!budget.canRetry(backoff)) {
+          throw abandon(new RateLimitExhaustedError(provider, model, budget.attemptsMade, budget.waitedMs, err));
+        }
+        budget.recordWait(backoff);
+        await pacer.wait(backoff, call.signal);
+      }
+    }
   };
 
   return {
@@ -150,21 +251,16 @@ export function createModelGateway(chat: BindableChatModel, options: ModelGatewa
     model,
 
     async stream(messages, call) {
-      const finish = begin(call.stage);
       let accumulated: AIMessageChunk | null = null;
       let usage: ModelUsage = NO_USAGE;
       let settled = false;
       let drained = false;
       let emitted = false;
 
-      let raw: AsyncIterable<AIMessageChunk>;
-      try {
-        raw = await chat.stream(outboundMessages(messages), { signal: call.signal });
-      } catch (err) {
-        settled = true;
-        finish(NO_USAGE, true, false);
-        throw err;
-      }
+      // Throws only once retrying is pointless — nothing to release here, `perform` owns that.
+      const attempt = await perform(call, () => chat.stream(outboundMessages(messages), { signal: call.signal }));
+      const raw = attempt.value;
+      const finish = attempt.finish;
 
       async function* chunks(): AsyncGenerator<AIMessageChunk> {
         try {
@@ -180,6 +276,7 @@ export function createModelGateway(chat: BindableChatModel, options: ModelGatewa
           if (!settled) {
             settled = true;
             usage = usageTokens(accumulated);
+            pacer.observeUsage(pacerKey, usage.inputTokensTotal + usage.outputTokensTotal);
             finish(usage, !drained, emitted);
           }
         }
@@ -194,22 +291,19 @@ export function createModelGateway(chat: BindableChatModel, options: ModelGatewa
     },
 
     async invoke(messages, call) {
-      const finish = begin(call.stage);
-      let message: AIMessageChunk;
-      try {
-        message = await chat.invoke(outboundMessages(messages), { signal: call.signal });
-      } catch (err) {
-        finish(NO_USAGE, true, false);
-        throw err;
-      }
+      const attempt = await perform(call, () => chat.invoke(outboundMessages(messages), { signal: call.signal }));
+      const message = attempt.value;
       const usage = usageTokens(message);
-      finish(usage, false, true);
+      // Where the provider prices the call itself the header already taught the pacer more; this is
+      // the fallback that keeps the estimate honest for the ones that do not.
+      pacer.observeUsage(pacerKey, usage.inputTokensTotal + usage.outputTokensTotal);
+      attempt.finish(usage, false, true);
       return { message, usage };
     },
 
     bindTools(tools) {
       if (!chat.bindTools) throw new Error(`provider "${provider}" model "${model}" does not support tool binding`);
-      return createModelGateway(chat.bindTools(tools), { provider, model, observe, concurrency });
+      return createModelGateway(chat.bindTools(tools), { provider, model, observe, concurrency, pacer });
     },
   };
 }

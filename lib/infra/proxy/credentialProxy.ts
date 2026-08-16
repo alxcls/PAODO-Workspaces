@@ -14,8 +14,8 @@
 // Domain allowlist prevents relay attacks: real values are only injected for the user-configured domain.
 // Responses on the MITM path are REDACTED in reverse (real value → token) so an upstream that
 // echoes the credential back (API error messages are the common case) never exposes plaintext to
-// the container. This covers the literal value only — an upstream that base64s or otherwise
-// transforms the secret before echoing is not caught; accidental-echo protection, not a guarantee.
+// the container. Covered: the literal value, plus the `Basic` base64 envelope we ourselves emit.
+// An upstream that transforms the secret some other way is not caught — echo protection, not a guarantee.
 import * as net from "net";
 import * as tls from "tls";
 import * as http from "http";
@@ -76,16 +76,26 @@ function substituteTokens(value: string, tokenMap: TokenMap, usedTokens?: Set<st
 }
 
 // Substitute in a single header value. Covers the plain case (token appears verbatim) and
-// `Authorization: Basic base64(user:token)`, where the client base64-encodes the credentials so
-// the literal token never appears in the header — we decode, substitute, and re-encode.
-export function substituteHeaderValue(value: string, tokenMap: Map<string, string>, usedTokens?: Set<string>): string {
+// `Authorization: Basic base64(user:token)`, which we decode, substitute, and re-encode.
+// `wireForms` collects each re-encoded envelope keyed to the client's original, so the response
+// direction can redact the exact bytes we emitted — the real value is not literally present in them.
+export function substituteHeaderValue(
+  value: string,
+  tokenMap: Map<string, string>,
+  usedTokens?: Set<string>,
+  wireForms?: Map<string, string>,
+): string {
   const direct = substituteTokens(value, tokenMap, usedTokens);
   const basic = /^Basic\s+(\S+)\s*$/i.exec(direct);
   if (basic) {
     try {
       const decoded = Buffer.from(basic[1], "base64").toString("latin1");
       const replaced = substituteTokens(decoded, tokenMap, usedTokens);
-      if (replaced !== decoded) return "Basic " + Buffer.from(replaced, "latin1").toString("base64");
+      if (replaced !== decoded) {
+        const encoded = Buffer.from(replaced, "latin1").toString("base64");
+        wireForms?.set(encoded, basic[1]);
+        return "Basic " + encoded;
+      }
     } catch {
       // not valid base64 — keep the direct substitution
     }
@@ -139,8 +149,11 @@ function substituteRequestMeta(
   headers: Record<string, string>,
   tokenMap: TokenMap,
   usedTokens?: Set<string>,
+  wireForms?: TokenMap,
 ): string {
-  for (const k of Object.keys(headers)) headers[k] = substituteHeaderValue(headers[k], tokenMap, usedTokens);
+  for (const k of Object.keys(headers)) {
+    headers[k] = substituteHeaderValue(headers[k], tokenMap, usedTokens, wireForms);
+  }
   return substituteTokens(requestPath, tokenMap, usedTokens);
 }
 
@@ -411,12 +424,15 @@ export class CredentialProxy {
     delete headers["accept-encoding"];
     headers["connection"] = "close";
     const usedTokens = new Set<string>();
-    const requestPath = substituteRequestMeta(parts[1] ?? "/", headers, tokenMap, usedTokens);
+    const wireForms: TokenMap = new Map();
+    const requestPath = substituteRequestMeta(parts[1] ?? "/", headers, tokenMap, usedTokens, wireForms);
     const requestContext: ProxyRequestContext = { workspaceId, hostname, port, transport: "https" };
 
-    // Response direction: redact real values back into tokens so an upstream echoing the
-    // credential (error messages, request mirrors) never exposes plaintext to the container.
+    // Response direction: redact real values back into tokens so an upstream echoing the credential
+    // never exposes plaintext. wireForms adds the base64 envelopes we built, which hide the value
+    // from a scan for the literal bytes — `Basic` auth (git/gh) is exactly that case.
     const redactMap = reverseTokenMap(tokenMap);
+    for (const [emitted, clientForm] of wireForms) redactMap.set(emitted, clientForm);
 
     const startUpstream = () =>
       https.request(

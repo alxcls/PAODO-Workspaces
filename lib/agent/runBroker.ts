@@ -146,6 +146,8 @@ export function startRun(params: StartRunParams): {
     containers: getContainers(),
     versioning: getVersioning(),
     ...params.runOptions,
+    // A caller cannot replace the cache scope: it must follow the persisted history being sent.
+    conversationId: params.conversationId,
     signal: runTimeout.signal,
   };
   const capacity = params.capacity ?? executionCapacity;

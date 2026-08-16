@@ -1,6 +1,7 @@
 // The Anthropic thinking API split by model generation: newer models 400 on the legacy budget shape
 // and need adaptive thinking + effort; older ones still take the legacy budget and reject effort.
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import type { ChatOpenAI } from "@langchain/openai";
 import {
   anthropicThinkingConfig,
   availableProviders,
@@ -150,6 +151,42 @@ describe("buildChatModel", () => {
       expect(m.modelKwargs ?? {}).not.toHaveProperty("reasoning_effort");
     },
   );
+
+  // Asserted on the request body, not on modelKwargs: ChatOpenAI writes prompt_cache_key from its
+  // typed field AFTER spreading modelKwargs, so a key parked in modelKwargs is overwritten with
+  // undefined and never sent — a constructor-shaped assertion passes while nothing is ever cached.
+  it("sends a stable Mistral prompt cache key without dropping reasoning configuration", () => {
+    const m = buildChatModel(config({ provider: "mistral", model: "mistral-medium-latest", reasoningEffort: "high" }), {
+      cacheScopeId: "conversation-42",
+    }) as ChatOpenAI;
+
+    expect(m.invocationParams({})).toMatchObject({
+      reasoning_effort: "high",
+      prompt_cache_key: "conversation-42",
+    });
+
+    const quiet = buildChatModel(
+      config({ provider: "mistral", model: "mistral-medium-latest", reasoningEffort: "none" }),
+      { cacheScopeId: "conversation-42" },
+    ) as ChatOpenAI;
+    const quietParams = quiet.invocationParams({}) as Record<string, unknown>;
+    expect(quietParams.prompt_cache_key).toBe("conversation-42");
+    expect(quietParams.reasoning_effort).toBeUndefined();
+  });
+
+  it.each([
+    ["openai", "gpt-5.5"],
+    ["anthropic", "claude-haiku-4-5"],
+    ["deepseek", "deepseek-v4-pro"],
+    ["moonshot", "kimi-k3"],
+  ])("does not leak the Mistral prompt cache key to %s", (provider, model) => {
+    const m = buildChatModel(config({ provider, model }), {
+      cacheScopeId: "conversation-42",
+    }) as unknown as { modelKwargs?: Record<string, unknown>; promptCacheKey?: string };
+
+    expect(m.modelKwargs ?? {}).not.toHaveProperty("prompt_cache_key");
+    expect(m.promptCacheKey).toBeUndefined();
+  });
 
   it("rejects an unregistered provider instead of falling back to another vendor's builder", () => {
     expect(() => buildChatModel(config({ provider: "retired-vendor" }))).toThrow(/unsupported LLM provider/);

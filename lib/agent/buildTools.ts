@@ -99,12 +99,17 @@ export function buildTools(
     versioning?: IAgentWorkspaceVersioning;
     /** Notified once per model call. Left out, the gateway only logs — nothing persists compaction. */
     observe?: ModelCallObserver;
+    /** Stable conversation scope used by providers with explicit prefix-cache keys. */
+    cacheScopeId?: string;
   } = {},
 ) {
   const containers = deps.containers ?? defaultContainerManager;
   const store = deps.store ?? defaultWorkspaceStore;
   const versioning = deps.versioning ?? getVersioning();
-  const model = buildModel(config, deps.observe ? { observe: deps.observe } : {});
+  const model = buildModel(config, {
+    ...(deps.observe ? { observe: deps.observe } : {}),
+    ...(deps.cacheScopeId ? { cacheScopeId: deps.cacheScopeId } : {}),
+  });
   const runner = makeContainerRunner(workspaceId, workspaceDir, containers);
   const streamExec = makeStreamingExecFn(workspaceId, workspaceDir, containers);
   const backgroundExec = makeBackgroundExecFn(workspaceId, workspaceDir, containers);

@@ -81,6 +81,8 @@ export type AgentEvent =
 export type RunAgentOptions = {
   signal?: AbortSignal;
   maxIterations?: number;
+  /** Persisted conversation id; stable across every ReAct turn and later runs in the same chat. */
+  conversationId?: string;
   /** Override WebSocket notification sender — defaults to sendToWorkspace. Inject for testing. */
   notify?: (msg: object) => void;
   /** Override container warm-up — defaults to ensureContainer. Inject for testing. */
@@ -150,6 +152,7 @@ export async function* runAgent(
   {
     signal,
     maxIterations = 30,
+    conversationId,
     notify,
     warmContainer,
     loadConfig,
@@ -202,6 +205,7 @@ export async function* runAgent(
     containers: resolvedContainers,
     store,
     observe: observeModelCall,
+    cacheScopeId: conversationId,
   });
   const signalHandlers: Record<string, PostDispatchFn> = injectedHandlers ?? builtHandlers ?? {};
   const typedToolMap = toolMap as Record<string, RunnerTool>;

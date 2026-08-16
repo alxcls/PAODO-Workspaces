@@ -5,7 +5,7 @@ import { ChatOpenAI } from "@langchain/openai";
 import { ChatAnthropic } from "@langchain/anthropic";
 import type { LLMProviderConfig } from "./interfaces";
 import { createModelGateway, type ModelCallObserver, type ModelGateway } from "./modelGateway";
-import { mistralReasoningConfig } from "./mistralProtocol";
+import { createMistralChatModel, mistralRequestConfig } from "./mistralProtocol";
 import { providerPacer } from "./rateLimit/providerPacer";
 import { parseRateLimitHeaders } from "./rateLimit/rateLimitHeaders";
 import { THINKING_OFF_EFFORT, type ReasoningEffort } from "../models/llmSelection";
@@ -57,7 +57,13 @@ interface ProviderDescriptor extends ProviderMetadata {
    * Named per provider rather than derived from the id, so the var is greppable from the registry.
    */
   availabilityEnv: string;
-  build: (config: LLMProviderConfig) => ChatOpenAI | ChatAnthropic;
+  build: (config: LLMProviderConfig, context: ModelBuildContext) => ChatOpenAI | ChatAnthropic;
+}
+
+/** Per-run information providers may translate into their own request fields. */
+export interface ModelBuildContext {
+  /** Stable for one persisted conversation; contains no prompt content or credentials. */
+  cacheScopeId?: string;
 }
 
 // Retries belong to us, not the SDK. Left alone, LangChain's AsyncCaller silently retries 6 times
@@ -167,8 +173,8 @@ const PROVIDERS: Record<string, ProviderDescriptor> = {
     supportsPromptCaching: false,
     // Medium exposes a simple on/off checkbox: none disables reasoning, high enables it.
     reasoningEfforts: [THINKING_OFF_EFFORT, "high"],
-    build: (config) =>
-      new ChatOpenAI({
+    build: (config, context) =>
+      createMistralChatModel({
         model: config.model,
         ...NO_SDK_RETRY,
         configuration: {
@@ -176,7 +182,7 @@ const PROVIDERS: Record<string, ProviderDescriptor> = {
           apiKey: config.apiKey,
           fetch: pacedFetch("mistral", config.model),
         },
-        ...mistralReasoningConfig(config.model, config.reasoningEffort),
+        ...mistralRequestConfig(config.model, config.reasoningEffort, context.cacheScopeId),
       }),
   },
 };
@@ -190,7 +196,7 @@ const PROVIDERS: Record<string, ProviderDescriptor> = {
  * reasoning fields) stays directly assertable, which is a claim about the SDK object and cannot be
  * made through an interface that deliberately hides it.
  */
-export function buildChatModel(config: LLMProviderConfig): ChatOpenAI | ChatAnthropic {
+export function buildChatModel(config: LLMProviderConfig, context: ModelBuildContext = {}): ChatOpenAI | ChatAnthropic {
   const descriptor = PROVIDERS[config.provider];
   // Unknown providers fail loudly here rather than silently resolving to another vendor's builder:
   // the API validates provider on write, so reaching this means a retired provider is still stored.
@@ -198,7 +204,7 @@ export function buildChatModel(config: LLMProviderConfig): ChatOpenAI | ChatAnth
     throw new Error(`unsupported LLM provider "${config.provider}" (supported: ${SUPPORTED_PROVIDERS.join(", ")})`);
   }
   if (!config.model) throw new Error(`no model selected for provider "${config.provider}"`);
-  return descriptor.build(config);
+  return descriptor.build(config, context);
 }
 
 /**
@@ -208,8 +214,14 @@ export function buildChatModel(config: LLMProviderConfig): ChatOpenAI | ChatAnth
  * true of every model call belongs — so a provider added above cannot arrive with its own
  * accounting, and a new call site cannot bypass it.
  */
-export function buildModel(config: LLMProviderConfig, options: { observe?: ModelCallObserver } = {}): ModelGateway {
-  return createModelGateway(buildChatModel(config), {
+export function buildModel(
+  config: LLMProviderConfig,
+  options: { observe?: ModelCallObserver; cacheScopeId?: string } = {},
+): ModelGateway {
+  const context: ModelBuildContext = {
+    ...(options.cacheScopeId ? { cacheScopeId: options.cacheScopeId } : {}),
+  };
+  return createModelGateway(buildChatModel(config, context), {
     provider: config.provider,
     model: config.model,
     ...(options.observe ? { observe: options.observe } : {}),

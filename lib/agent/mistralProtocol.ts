@@ -1,7 +1,8 @@
 // Everything Mistral requires that no other provider should inherit. Canonical conversation
 // messages stay provider-neutral; this module adapts a short-lived clone at the outbound boundary.
 import { createHash } from "node:crypto";
-import { AIMessage, ToolMessage, type BaseMessage } from "@langchain/core/messages";
+import { AIMessage, ToolMessage, type BaseMessage, type BaseMessageChunk } from "@langchain/core/messages";
+import { ChatOpenAI, ChatOpenAICompletions, type ChatOpenAIFields } from "@langchain/openai";
 import { isMistralToolCallId, newMistralToolCallId } from "./toolCallIds";
 import { THINKING_OFF_EFFORT, type ReasoningEffort } from "../models/llmSelection";
 
@@ -19,6 +20,75 @@ export function mistralReasoningConfig(
   return model === "mistral-medium-latest" && effort !== THINKING_OFF_EFFORT
     ? { modelKwargs: { reasoning_effort: "high" } }
     : {};
+}
+
+/**
+ * Mistral-only request fields. The caller supplies a provider-neutral conversation scope; this is
+ * the boundary that turns it into Mistral's prompt_cache_key. Keeping the key stable lets each
+ * ReAct turn reuse the unchanged prefix from the previous turn.
+ *
+ * The key rides the typed `promptCacheKey` field, NOT modelKwargs: ChatOpenAI writes
+ * `prompt_cache_key` from that field AFTER spreading modelKwargs, so a key placed in modelKwargs is
+ * overwritten with undefined and dropped from the body — cached silently, never actually sent.
+ */
+export function mistralRequestConfig(
+  model: string,
+  effort: ReasoningEffort,
+  cacheScopeId?: string,
+): { modelKwargs?: { reasoning_effort: "high" }; promptCacheKey?: string } {
+  return {
+    ...mistralReasoningConfig(model, effort),
+    ...(cacheScopeId ? { promptCacheKey: cacheScopeId } : {}),
+  };
+}
+
+/**
+ * Flatten one streamed Mistral delta into the shape ChatOpenAI's completions path accepts.
+ *
+ * Mistral streams reasoning as content blocks (`content: [{ type: "thinking", ... }]`). That path
+ * yields only deltas whose content is a string: anything else is logged as
+ * "[WARNING]: Received non-string content from OpenAI" and skipped, taking the tokens with it.
+ *
+ * So the prose stays in `content` and the thinking moves to `reasoning_content` — the field the turn
+ * reader already reads for reasoning providers — leaving nothing for that check to discard.
+ */
+export function flattenMistralDelta(delta: Record<string, unknown>): Record<string, unknown> {
+  if (!Array.isArray(delta.content)) return delta;
+  const text: string[] = [];
+  const thinking: string[] = [];
+  for (const part of delta.content) {
+    if (typeof part === "string") {
+      text.push(part);
+    } else if (part && typeof part === "object") {
+      const block = part as { type?: string; text?: unknown; thinking?: unknown };
+      if (block.type === "thinking") thinking.push(mistralThinkingText(block.thinking));
+      else if (typeof block.text === "string") text.push(block.text);
+    }
+  }
+  const carried = typeof delta.reasoning_content === "string" ? delta.reasoning_content : "";
+  const reasoning = carried + thinking.join("");
+  return { ...delta, content: text.join(""), ...(reasoning ? { reasoning_content: reasoning } : {}) };
+}
+
+// The hook is deprecated upstream ("overridable ... removed in a future release"), so its removal
+// must fail loudly: mistralProtocol.test.ts streams a thinking delta through a real model instance.
+class MistralCompletions extends ChatOpenAICompletions {
+  protected _convertCompletionsDeltaToBaseMessageChunk(
+    delta: Record<string, unknown>,
+    ...rest: [rawResponse: never, defaultRole?: never]
+  ): BaseMessageChunk {
+    return super._convertCompletionsDeltaToBaseMessageChunk(flattenMistralDelta(delta), ...rest);
+  }
+}
+
+/**
+ * A ChatOpenAI whose streaming half understands Mistral's content blocks.
+ *
+ * ChatOpenAI delegates every completions call to the instance it is handed, so injecting the
+ * subclass adapts the inbound wire format without a second client or a forked call path.
+ */
+export function createMistralChatModel(fields: ChatOpenAIFields): ChatOpenAI {
+  return new ChatOpenAI({ ...fields, completions: new MistralCompletions(fields) });
 }
 
 /** A provider-valid id derived from the canonical id, stable across requests for prompt caching. */

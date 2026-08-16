@@ -54,6 +54,7 @@ import {
   getClientIp,
   isCsrf,
   trustedRequestHosts,
+  apiRequestHost,
   type AuthResult,
   validateRequestHost,
 } from "./lib/infra/security/httpAuth";
@@ -98,8 +99,10 @@ try {
 const verifyWsSessionCookie = uiAuth.mode === "basic" ? verifySessionCookie : () => false;
 
 let allowedRequestHosts: ReadonlySet<string>;
+let apiHost: string | null;
 try {
   allowedRequestHosts = trustedRequestHosts();
+  apiHost = apiRequestHost();
 } catch (err) {
   log.fatal(
     { event: "startup_trusted_hosts_invalid", outcome: "process_exit", err },
@@ -142,17 +145,22 @@ let authLoggedOnce = false;
 // Thin adapter: extract the request primitives and delegate to the testable checkAuth. The platform
 // credential is instance-wide, so it takes no subject; which routes it may reach is decided by
 // platformAccessPolicy.ts inside checkAuth, not by the credential itself.
-function authenticate(ip: string, req: import("http").IncomingMessage): AuthResult {
-  return checkAuth(ip, authRequestFromIncoming(req, uiAuth.assertionHeader), uiAuth, authFailures, (plain) =>
-    validateCredential("platform", null, plain),
+function authenticate(ip: string, req: import("http").IncomingMessage, hostname: string): AuthResult {
+  return checkAuth(
+    ip,
+    authRequestFromIncoming(req, uiAuth.assertionHeader, hostname),
+    uiAuth,
+    authFailures,
+    (plain) => validateCredential("platform", null, plain),
+    apiHost,
   );
 }
 
 // Same adapter for the /ws upgrade, which additionally consults a cookie because no browser can put
 // an Authorization header on a handshake and WebKit does not reuse cached Basic credentials either.
-function authenticateWs(ip: string, req: import("http").IncomingMessage): AuthResult {
-  const authRequest = authRequestFromIncoming(req, uiAuth.assertionHeader);
-  return checkWsAuth(ip, authRequest, uiAuth, authFailures, verifyWsSessionCookie);
+function authenticateWs(ip: string, req: import("http").IncomingMessage, hostname: string): AuthResult {
+  const authRequest = authRequestFromIncoming(req, uiAuth.assertionHeader, hostname);
+  return checkWsAuth(ip, authRequest, uiAuth, authFailures, verifyWsSessionCookie, apiHost);
 }
 
 // A mode with no challenge sends no header at all: behind an identity-aware proxy a browser prompt
@@ -282,7 +290,7 @@ httpServer.on("request", (req, res) => {
     }
   }
 
-  const authResult = authenticate(ip, req);
+  const authResult = authenticate(ip, req, hostValidation.hostname);
   if (authResult === "blocked") {
     auditRejection("auth_blocked", { ip, method, pathname, requestId }, "auth blocked");
     reject(429, "RATE_LIMITED", "Too Many Requests", { "Retry-After": "60" });
@@ -351,7 +359,7 @@ httpServer.on("upgrade", (req, socket, head) => {
       socket.destroy();
       return;
     }
-    const wsAuthResult = authenticateWs(wsIp, req);
+    const wsAuthResult = authenticateWs(wsIp, req, hostValidation.hostname);
     if (wsAuthResult === "blocked") {
       auditWsRejection("auth_blocked", "auth blocked");
       socket.write("HTTP/1.1 429 Too Many Requests\r\nRetry-After: 60\r\n\r\n");

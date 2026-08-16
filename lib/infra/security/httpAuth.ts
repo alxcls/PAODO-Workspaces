@@ -135,6 +135,21 @@ export function trustedRequestHosts(
 }
 
 /**
+ * The public API/MCP gateway hostname, normalized, or null when this deployment runs no such gateway.
+ * On that host the shared UI credential is not an identity — only machine tokens and self-validating
+ * agent/MCP routes may pass. A malformed value is a startup error, mirroring trustedRequestHosts.
+ */
+export function apiRequestHost(
+  env: { WORKSPACE_API_DOMAIN?: string } = { WORKSPACE_API_DOMAIN: process.env.WORKSPACE_API_DOMAIN },
+): string | null {
+  const configured = env.WORKSPACE_API_DOMAIN?.trim();
+  if (!configured) return null;
+  const hostname = normalizeHostname(configured);
+  if (!hostname) throw new Error(`invalid WORKSPACE_API_DOMAIN: ${JSON.stringify(configured)}`);
+  return hostname;
+}
+
+/**
  * Reject Host-header poisoning before authentication or Next.js routing. A proxy may omit
  * X-Forwarded-Host; if it sends one, it must be one canonical value and agree with Host.
  */
@@ -164,7 +179,8 @@ export function validateRequestHost(
 /**
  * The primitives checkAuth/isCsrf need off a request — extracted so the core logic never touches
  * Node's http types and can be unit-tested with plain objects. `assertion` is the raw value of the
- * header the configured UI mode reads, empty in every mode that reads none.
+ * header the configured UI mode reads, empty in every mode that reads none. `hostname` is the
+ * already-validated request host, used to refuse the UI credential on the API gateway host.
  */
 export type AuthRequest = {
   method: string;
@@ -172,6 +188,7 @@ export type AuthRequest = {
   authorization: string;
   cookie: string;
   assertion: string;
+  hostname: string;
 };
 
 // A repeated assertion header is treated as absent. Node joins duplicates into one comma-separated
@@ -181,7 +198,11 @@ function singleAssertion(value: string | string[] | undefined): string {
   return value;
 }
 
-export function authRequestFromIncoming(req: IncomingMessage, assertionHeader: string | null = null): AuthRequest {
+export function authRequestFromIncoming(
+  req: IncomingMessage,
+  assertionHeader: string | null = null,
+  hostname = "",
+): AuthRequest {
   const url = new URL(req.url ?? "/", "http://localhost");
   return {
     method: req.method ?? "GET",
@@ -189,6 +210,7 @@ export function authRequestFromIncoming(req: IncomingMessage, assertionHeader: s
     authorization: req.headers["authorization"] ?? "",
     cookie: req.headers["cookie"] ?? "",
     assertion: assertionHeader ? singleAssertion(req.headers[assertionHeader]) : "",
+    hostname,
   };
 }
 
@@ -211,6 +233,7 @@ export function checkAuth(
   ui: UiAuthenticator,
   tracker: AuthFailureTracker,
   validatePlatformToken: PlatformTokenValidator = () => false,
+  apiHost: string | null = null,
 ): AuthResult {
   if (tracker.isBlocked(ip)) return "blocked";
 
@@ -240,6 +263,10 @@ export function checkAuth(
     tracker.clear(ip);
     return "platform";
   }
+
+  // The shared UI credential is the browser front door only; on the public API host the exempt and
+  // platform paths above are the sole identities. Untracked: all api.* traffic shares one gateway IP.
+  if (apiHost && req.hostname === apiHost) return "unauthorized";
 
   const outcome = ui.verify(req);
   // "absent" is the normal unauthenticated first request, not an attack, so it never counts toward
@@ -273,9 +300,13 @@ export function checkWsAuth(
   ui: UiAuthenticator,
   tracker: AuthFailureTracker,
   verifyCookie: (cookieHeader: string) => boolean,
+  apiHost: string | null = null,
 ): AuthResult {
-  const result = checkAuth(ip, req, ui, tracker);
+  const result = checkAuth(ip, req, ui, tracker, () => false, apiHost);
   if (result === "ok" || result === "blocked") return result;
+  // The session cookie is a basic-mode UI credential too, so it is refused on the API host alongside
+  // the password checkAuth already rejected above.
+  if (apiHost && req.hostname === apiHost) return result;
   return verifyCookie(req.cookie) ? "ok" : result;
 }
 

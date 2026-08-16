@@ -25,7 +25,7 @@ function basic(user: string, pass: string): string {
 }
 
 function req(partial: Partial<AuthRequest> = {}): AuthRequest {
-  return { method: "GET", pathname: "/", authorization: "", cookie: "", assertion: "", ...partial };
+  return { method: "GET", pathname: "/", authorization: "", cookie: "", assertion: "", hostname: "", ...partial };
 }
 
 // A stand-in for any assertion-header mode, so checkAuth's contract is tested without a real JWKS.
@@ -305,6 +305,56 @@ describe("checkAuth", () => {
   });
 });
 
+describe("checkAuth host-scoping (public API gateway)", () => {
+  const API = "api.example.com";
+  let tracker: AuthFailureTracker;
+  beforeEach(() => {
+    tracker = new AuthFailureTracker();
+  });
+
+  it("refuses the shared UI password on the API host", () => {
+    const r = req({ hostname: API, authorization: basic("admin", "hunter2") });
+    expect(checkAuth("ip", r, UI, tracker, () => false, API)).toBe("unauthorized");
+    // ...and refuses an assertion the same way, whatever the mode: nothing fronts this host.
+    const iap = assertionAuthenticator("good-token");
+    expect(checkAuth("ip", req({ hostname: API, assertion: "good-token" }), iap, tracker, () => false, API)).toBe(
+      "unauthorized",
+    );
+  });
+
+  it("refuses an unauthenticated request on the API host without a browser challenge", () => {
+    expect(checkAuth("ip", req({ hostname: API }), UI, tracker, () => false, API)).toBe("unauthorized");
+  });
+
+  it("does not track the refused UI credential (all api.* traffic shares one gateway IP)", () => {
+    const spy = vi.spyOn(tracker, "recordFailure");
+    for (let attempt = 0; attempt < 10; attempt++) {
+      expect(checkAuth("ip", req({ hostname: API, authorization: basic("admin", "wrong") }), UI, tracker, () => false, API)).toBe(
+        "unauthorized",
+      );
+    }
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it("leaves the machine paths on the API host working", () => {
+    const validate = (token: string) => token === "cli_good";
+    expect(checkAuth("ip", req({ hostname: API, method: "POST", pathname: "/api/workspaces/ws1/agent" }), UI, tracker, validate, API)).toBe(
+      "exempt",
+    );
+    expect(checkAuth("ip", req({ hostname: API, method: "POST", pathname: "/api/workspaces/ws1/mcp" }), UI, tracker, validate, API)).toBe(
+      "exempt",
+    );
+    expect(
+      checkAuth("ip", req({ hostname: API, method: "GET", pathname: "/api/workspaces", authorization: "Bearer cli_good" }), UI, tracker, validate, API),
+    ).toBe("platform");
+  });
+
+  it("leaves the UI host untouched — the password still works there", () => {
+    const r = req({ hostname: "ui.example.com", authorization: basic("admin", "hunter2") });
+    expect(checkAuth("ip", r, UI, tracker, () => false, API)).toBe("ok");
+  });
+});
+
 describe("checkWsAuth", () => {
   let tracker: AuthFailureTracker;
   const accept = () => true;
@@ -362,6 +412,13 @@ describe("checkWsAuth", () => {
     const r = req({ method: "POST", pathname: "/api/workspaces/ws1/agent" });
     expect(checkWsAuth("ip", r, UI, tracker, reject)).toBe("exempt");
   });
+
+  it("refuses the session-cookie fallback on the API host", () => {
+    // The cookie is a basic-mode UI credential too; a valid one must not open a socket on api.*.
+    // checkAuth refuses the UI path outright there, so this is "unauthorized", never "ok".
+    const r = req({ pathname: "/ws", hostname: "api.example.com", cookie: "paodo_ws_session=valid" });
+    expect(checkWsAuth("ip", r, UI, tracker, accept, "api.example.com")).toBe("unauthorized");
+  });
 });
 
 describe("isCsrf", () => {
@@ -389,24 +446,29 @@ describe("isCsrf", () => {
 });
 
 describe("authRequestFromIncoming / getClientIp", () => {
-  it("extracts method, pathname (stripping query), authorization and cookie", () => {
-    const r = authRequestFromIncoming({
-      method: "POST",
-      url: "/api/x?y=1",
-      headers: { authorization: "Basic zzz", cookie: "a=1; b=2" },
-    } as never);
+  it("extracts method, pathname (stripping query), authorization, cookie and the validated host", () => {
+    const r = authRequestFromIncoming(
+      {
+        method: "POST",
+        url: "/api/x?y=1",
+        headers: { authorization: "Basic zzz", cookie: "a=1; b=2" },
+      } as never,
+      null,
+      "api.example.com",
+    );
     expect(r).toEqual({
       method: "POST",
       pathname: "/api/x",
       authorization: "Basic zzz",
       cookie: "a=1; b=2",
       assertion: "",
+      hostname: "api.example.com",
     });
   });
 
-  it("defaults missing headers to empty strings rather than undefined", () => {
+  it("defaults missing headers to empty strings and the host to empty rather than undefined", () => {
     const r = authRequestFromIncoming({ method: "GET", url: "/", headers: {} } as never);
-    expect(r).toEqual({ method: "GET", pathname: "/", authorization: "", cookie: "", assertion: "" });
+    expect(r).toEqual({ method: "GET", pathname: "/", authorization: "", cookie: "", assertion: "", hostname: "" });
   });
 
   it("reads the assertion only from the header the mode names, and ignores a repeated one", () => {

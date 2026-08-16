@@ -1,4 +1,5 @@
-// Signed session cookie, used for one thing only: authenticating the /ws handshake.
+// Signed session cookie, used for one thing only: authenticating the /ws handshake in `basic` mode.
+// An `iap` deployment never mints one — the proxy's own assertion rides the upgrade.
 //
 // A browser cannot set an Authorization header on a WebSocket handshake. Chrome and Firefox paper
 // over that by reusing the cached Basic credentials for a same-origin upgrade; WebKit does not, so
@@ -18,6 +19,7 @@
 // load mints a fresh one, which is why the client hooks fall back to a "reload to reconnect" state
 // rather than retrying a handshake that cannot start succeeding on its own.
 import { createHmac, randomBytes, timingSafeEqual } from "crypto";
+import { readCookie } from "./cookies";
 
 export const SESSION_COOKIE_NAME = "paodo_ws_session";
 
@@ -53,16 +55,6 @@ export function mintSessionCookie(opts: SessionCookieOptions): string {
   ];
   if (opts.isProduction) attrs.push("Secure");
   return attrs.join("; ");
-}
-
-function readCookie(header: string | undefined, name: string): string | undefined {
-  if (!header) return undefined;
-  for (const part of header.split(";")) {
-    const eq = part.indexOf("=");
-    if (eq === -1) continue;
-    if (part.slice(0, eq).trim() === name) return part.slice(eq + 1).trim();
-  }
-  return undefined;
 }
 
 // Returns the cookie's expiry timestamp when the signature verifies and the cookie is still valid,

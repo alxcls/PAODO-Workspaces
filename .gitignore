@@ -72,5 +72,8 @@ graph.html
 # Claude project instructions (local only)
 CLAUDE.md
 
+# Operator notes for our own deployment — the repo stays IAP-agnostic
+*.local.md
+
 # Experimental CLI client — developed locally until it moves to its own repository
 /cli/

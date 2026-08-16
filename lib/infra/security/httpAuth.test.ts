@@ -8,32 +8,47 @@ import {
   checkAuth,
   checkWsAuth,
   isCsrf,
-  safeEqual,
   authRequestFromIncoming,
   getClientIp,
   trustedRequestHosts,
+  trustedRequestOrigins,
   type AuthRequest,
   validateRequestHost,
+  validateRequestOrigin,
 } from "./httpAuth";
+import { basicAuthenticator, type UiAuthenticator } from "./uiAuth";
 
-const CREDS = { user: "admin", pass: "hunter2" };
+// checkAuth is mode-agnostic, so these exercise it through the Basic authenticator and assert the
+// seam separately where a mode's own behaviour matters. Mode internals live in uiAuth.test.ts.
+const UI = basicAuthenticator({ user: "admin", pass: "hunter2" });
 
 function basic(user: string, pass: string): string {
   return "Basic " + Buffer.from(`${user}:${pass}`).toString("base64");
 }
 
 function req(partial: Partial<AuthRequest> = {}): AuthRequest {
-  return { method: "GET", pathname: "/", authorization: "", cookie: "", ...partial };
+  return {
+    method: "GET",
+    pathname: "/",
+    authorization: "",
+    cookie: "",
+    assertion: "",
+    hostname: "",
+    isUpgrade: false,
+    ...partial,
+  };
 }
 
-describe("safeEqual", () => {
-  it("returns true only for identical strings", () => {
-    expect(safeEqual("abc", "abc")).toBe(true);
-    expect(safeEqual("abc", "abd")).toBe(false);
-    expect(safeEqual("abc", "abcd")).toBe(false); // length mismatch path
-    expect(safeEqual("", "")).toBe(true);
-  });
-});
+// A stand-in for any assertion-header mode, so checkAuth's contract is tested without a real JWKS.
+function assertionAuthenticator(valid: string): UiAuthenticator {
+  return {
+    mode: "iap",
+    assertionHeader: "x-assertion",
+    challenge: null,
+    prime: () => Promise.resolve(),
+    verify: ({ assertion }) => (!assertion ? "absent" : assertion === valid ? "ok" : "invalid"),
+  };
+}
 
 describe("AuthFailureTracker", () => {
   it("blocks after max failures within the window and clears on success", () => {
@@ -131,43 +146,115 @@ describe("trusted request hosts", () => {
   });
 });
 
+describe("trustedRequestOrigins", () => {
+  const env = { PAODO_TRUSTED_HOSTS: "ui.example.com", WORKSPACE_API_DOMAIN: "api.example.com" };
+
+  it("trusts only the declared public UI hostnames in production", () => {
+    const origins = trustedRequestOrigins(env, false);
+    expect([...origins]).toEqual(["ui.example.com"]);
+  });
+
+  it("adds loopback in dev, where it is the UI's own origin", () => {
+    const origins = trustedRequestOrigins(env, true);
+    expect(origins.has("localhost")).toBe(true);
+    expect(origins.has("127.0.0.1")).toBe(true);
+    expect(origins.has("::1")).toBe(true);
+  });
+
+  it("trusts loopback on a production build that declares no public hostname", () => {
+    expect([...trustedRequestOrigins({}, false)]).toEqual(["localhost", "127.0.0.1", "::1"]);
+  });
+
+  it("drops loopback in the same edit that declares a public hostname", () => {
+    expect(trustedRequestOrigins({ PAODO_TRUSTED_HOSTS: "ui.example.com" }, false).has("localhost")).toBe(false);
+  });
+
+  // Each is required for Host validation and each would be a cross-site handshake if trusted here.
+  it("never inherits the host-only entries that make trustedRequestHosts unsafe as an origin list", () => {
+    const hosts = trustedRequestHosts(env);
+    const origins = trustedRequestOrigins(env, false);
+    for (const hostOnly of ["localhost", "127.0.0.1", "::1", "app", "api.example.com"]) {
+      expect(hosts.has(hostOnly)).toBe(true);
+      expect(origins.has(hostOnly)).toBe(false);
+    }
+  });
+
+  it("fails startup configuration closed when an entry is malformed", () => {
+    expect(() => trustedRequestOrigins({ PAODO_TRUSTED_HOSTS: "bad.example/path" }, false)).toThrow(
+      "invalid trusted origin hostname",
+    );
+  });
+});
+
+describe("validateRequestOrigin (cross-site WebSocket hijacking)", () => {
+  const env = { PAODO_TRUSTED_HOSTS: "ui.example.com" };
+  const trusted = trustedRequestOrigins(env, false);
+
+  it("accepts a handshake opened by a page on a trusted host, whatever its port or case", () => {
+    expect(validateRequestOrigin("https://ui.example.com", trusted)).toBe(true);
+    expect(validateRequestOrigin("https://UI.Example.com:8443", trusted)).toBe(true);
+  });
+
+  // Otherwise any page on the user's own machine opens a socket on cached Basic credentials.
+  it("accepts the dev server's own origin only in dev", () => {
+    const inDev = trustedRequestOrigins(env, true);
+    expect(validateRequestOrigin("http://localhost:3000", inDev)).toBe(true);
+    expect(validateRequestOrigin("http://[::1]:3000", inDev)).toBe(true);
+    expect(validateRequestOrigin("http://localhost:3000", trusted)).toBe(false);
+    expect(validateRequestOrigin("http://localhost:8080", trusted)).toBe(false);
+    expect(validateRequestOrigin("http://127.0.0.1:8080", trusted)).toBe(false);
+    expect(validateRequestOrigin("http://[::1]:3000", trusted)).toBe(false);
+  });
+
+  it("rejects a handshake opened by any other page", () => {
+    expect(validateRequestOrigin("https://evil.example", trusted)).toBe(false);
+    // The prefix/suffix shapes a naive string comparison would let through.
+    expect(validateRequestOrigin("https://ui.example.com.evil.example", trusted)).toBe(false);
+    expect(validateRequestOrigin("https://evil.example/?x=ui.example.com", trusted)).toBe(false);
+  });
+
+  it("rejects an absent, duplicated, opaque or unparseable Origin", () => {
+    // Nothing but a browser connects to /ws, and browsers always send it — so absent fails closed
+    // rather than being waved through as a non-browser client the way the CSRF guard does.
+    expect(validateRequestOrigin(undefined, trusted)).toBe(false);
+    expect(validateRequestOrigin("", trusted)).toBe(false);
+    expect(validateRequestOrigin(["https://ui.example.com", "https://evil.example"], trusted)).toBe(false);
+    // "null" is what a sandboxed iframe sends; it is an opaque origin, not a trusted one.
+    expect(validateRequestOrigin("null", trusted)).toBe(false);
+    expect(validateRequestOrigin("ui.example.com", trusted)).toBe(false);
+  });
+});
+
 describe("checkAuth", () => {
   let tracker: AuthFailureTracker;
   beforeEach(() => {
     tracker = new AuthFailureTracker();
   });
 
-  // safeEqual("", "") is true, so unset credentials must fail closed before the comparison.
-  it("rejects unset credentials instead of matching them against an empty Basic header", () => {
-    expect(checkAuth("ip", req({ authorization: basic("", "") }), { user: "", pass: "" }, tracker)).toBe(
-      "unauthorized",
-    );
-  });
-
   it("challenges when no Authorization header is present", () => {
-    expect(checkAuth("ip", req(), CREDS, tracker)).toBe("challenge");
+    expect(checkAuth("ip", req(), UI, tracker)).toBe("challenge");
   });
 
   it("accepts correct Basic credentials and clears prior failures", () => {
     tracker.recordFailure("ip");
-    expect(checkAuth("ip", req({ authorization: basic("admin", "hunter2") }), CREDS, tracker)).toBe("ok");
+    expect(checkAuth("ip", req({ authorization: basic("admin", "hunter2") }), UI, tracker)).toBe("ok");
   });
 
   it("rejects a wrong password and records a failure", () => {
     const spy = vi.spyOn(tracker, "recordFailure");
-    expect(checkAuth("ip", req({ authorization: basic("admin", "wrong") }), CREDS, tracker)).toBe("unauthorized");
+    expect(checkAuth("ip", req({ authorization: basic("admin", "wrong") }), UI, tracker)).toBe("unauthorized");
     expect(spy).toHaveBeenCalledWith("ip");
   });
 
   it("rejects a malformed Basic payload with no colon", () => {
     const noColon = "Basic " + Buffer.from("nocolon").toString("base64");
-    expect(checkAuth("ip", req({ authorization: noColon }), CREDS, tracker)).toBe("unauthorized");
+    expect(checkAuth("ip", req({ authorization: noColon }), UI, tracker)).toBe("unauthorized");
   });
 
   it("returns blocked once the IP is over its failure budget", () => {
     const t = new AuthFailureTracker(1, 60_000);
     t.recordFailure("bad-ip");
-    expect(checkAuth("bad-ip", req({ authorization: basic("admin", "hunter2") }), CREDS, t)).toBe("blocked");
+    expect(checkAuth("bad-ip", req({ authorization: basic("admin", "hunter2") }), UI, t)).toBe("blocked");
   });
 
   it("exempts POST to the agent endpoint (Bearer API key auth)", () => {
@@ -175,25 +262,25 @@ describe("checkAuth", () => {
     // "exempt", never "ok": nothing about this caller has been verified here, and server.ts hands
     // out a /ws session cookie on "ok". This route is published on the DNS-direct public hostname,
     // so conflating the two would mint a working UI session for any anonymous caller.
-    expect(checkAuth("ip", r, CREDS, tracker)).toBe("exempt");
+    expect(checkAuth("ip", r, UI, tracker)).toBe("exempt");
     // ...but only for that exact route, and only for POST
-    expect(checkAuth("ip", req({ method: "GET", pathname: "/api/workspaces/ws1/agent" }), CREDS, tracker)).toBe(
+    expect(checkAuth("ip", req({ method: "GET", pathname: "/api/workspaces/ws1/agent" }), UI, tracker)).toBe(
       "challenge",
     );
-    expect(checkAuth("ip", req({ method: "POST", pathname: "/api/workspaces/ws1/agent/extra" }), CREDS, tracker)).toBe(
+    expect(checkAuth("ip", req({ method: "POST", pathname: "/api/workspaces/ws1/agent/extra" }), UI, tracker)).toBe(
       "challenge",
     );
   });
 
   it("exempts the Workspace MCP endpoint (own Bearer secret) for every method", () => {
     for (const method of ["POST", "GET", "DELETE"]) {
-      expect(checkAuth("ip", req({ method, pathname: "/api/workspaces/ws1/mcp" }), CREDS, tracker)).toBe("exempt");
+      expect(checkAuth("ip", req({ method, pathname: "/api/workspaces/ws1/mcp" }), UI, tracker)).toBe("exempt");
     }
     // ...but not the management route or a sub-path
-    expect(checkAuth("ip", req({ method: "GET", pathname: "/api/workspaces/ws1/mcp-config" }), CREDS, tracker)).toBe(
+    expect(checkAuth("ip", req({ method: "GET", pathname: "/api/workspaces/ws1/mcp-config" }), UI, tracker)).toBe(
       "challenge",
     );
-    expect(checkAuth("ip", req({ method: "POST", pathname: "/api/workspaces/ws1/mcp/extra" }), CREDS, tracker)).toBe(
+    expect(checkAuth("ip", req({ method: "POST", pathname: "/api/workspaces/ws1/mcp/extra" }), UI, tracker)).toBe(
       "challenge",
     );
   });
@@ -202,7 +289,7 @@ describe("checkAuth", () => {
     const validate = vi.fn((token: string) => token === "cli_good");
     for (const pathname of ["/api/status", "/api/workspaces", "/api/workspaces/ws-1"]) {
       expect(
-        checkAuth("ip", req({ method: "GET", pathname, authorization: "Bearer cli_good" }), CREDS, tracker, validate),
+        checkAuth("ip", req({ method: "GET", pathname, authorization: "Bearer cli_good" }), UI, tracker, validate),
       ).toBe("platform");
     }
     // The validator only ever sees the secret. Authorization is the policy table's job, which is why
@@ -225,9 +312,9 @@ describe("checkAuth", () => {
       ["GET", "/api/workspaces/ws-1/files/transfer"],
       ["PUT", "/api/workspaces/ws-1/files/transfer"],
     ]) {
-      expect(
-        checkAuth("ip", req({ method, pathname, authorization: "Bearer cli_good" }), CREDS, tracker, validate),
-      ).toBe("platform");
+      expect(checkAuth("ip", req({ method, pathname, authorization: "Bearer cli_good" }), UI, tracker, validate)).toBe(
+        "platform",
+      );
     }
 
     for (const [method, pathname] of [
@@ -246,9 +333,9 @@ describe("checkAuth", () => {
       ["POST", "/api/settings/cli-access"],
       ["DELETE", "/api/settings/cli-access"],
     ]) {
-      expect(
-        checkAuth("ip", req({ method, pathname, authorization: "Bearer cli_good" }), CREDS, tracker, validate),
-      ).toBe("unauthorized");
+      expect(checkAuth("ip", req({ method, pathname, authorization: "Bearer cli_good" }), UI, tracker, validate)).toBe(
+        "unauthorized",
+      );
     }
   });
 
@@ -263,7 +350,7 @@ describe("checkAuth", () => {
         checkAuth(
           "ip",
           req({ method: "POST", pathname: "/api/workspaces/ws-1/files/upload", authorization: "Bearer cli_good" }),
-          CREDS,
+          UI,
           tracker,
           (token) => token === "cli_good",
         ),
@@ -271,7 +358,27 @@ describe("checkAuth", () => {
     }
     expect(spy).not.toHaveBeenCalled();
     // ...and the UI's own credentials still work from that IP.
-    expect(checkAuth("ip", req({ authorization: basic("admin", "hunter2") }), CREDS, tracker)).toBe("ok");
+    expect(checkAuth("ip", req({ authorization: basic("admin", "hunter2") }), UI, tracker)).toBe("ok");
+  });
+
+  it("reads the UI credential from whichever mode is configured, never a fixed scheme", () => {
+    // The seam: an assertion-header mode authenticates on `assertion` alone, and the Basic header a
+    // caller might still send is not a second way in.
+    const iap = assertionAuthenticator("good-token");
+    expect(checkAuth("ip", req({ assertion: "good-token" }), iap, tracker)).toBe("ok");
+    expect(checkAuth("ip", req({ assertion: "forged" }), iap, tracker)).toBe("unauthorized");
+    expect(checkAuth("ip", req({ authorization: basic("admin", "hunter2") }), iap, tracker)).toBe("challenge");
+  });
+
+  it("does not let a Basic header reach an assertion mode's tracker as a guess", () => {
+    // "absent" must not count: behind a proxy every unauthenticated probe looks like this, and
+    // counting it would let an unauthenticated caller lock a real user out of their own instance.
+    const spy = vi.spyOn(tracker, "recordFailure");
+    const iap = assertionAuthenticator("good-token");
+    for (let attempt = 0; attempt < 10; attempt++) {
+      expect(checkAuth("ip", req({ authorization: basic("admin", "hunter2") }), iap, tracker)).toBe("challenge");
+    }
+    expect(spy).not.toHaveBeenCalled();
   });
 
   it("rejects an invalid platform token and records a failure", () => {
@@ -279,12 +386,83 @@ describe("checkAuth", () => {
     const result = checkAuth(
       "ip",
       req({ method: "GET", pathname: "/api/workspaces", authorization: "Bearer cli_wrong" }),
-      CREDS,
+      UI,
       tracker,
       () => false,
     );
     expect(result).toBe("unauthorized");
     expect(spy).toHaveBeenCalledWith("ip");
+  });
+});
+
+describe("checkAuth host-scoping (public API gateway)", () => {
+  const API = "api.example.com";
+  let tracker: AuthFailureTracker;
+  beforeEach(() => {
+    tracker = new AuthFailureTracker();
+  });
+
+  it("refuses the shared UI password on the API host", () => {
+    const r = req({ hostname: API, authorization: basic("admin", "hunter2") });
+    expect(checkAuth("ip", r, UI, tracker, () => false, API)).toBe("unauthorized");
+    // ...and refuses an assertion the same way, whatever the mode: nothing fronts this host.
+    const iap = assertionAuthenticator("good-token");
+    expect(checkAuth("ip", req({ hostname: API, assertion: "good-token" }), iap, tracker, () => false, API)).toBe(
+      "unauthorized",
+    );
+  });
+
+  it("refuses an unauthenticated request on the API host without a browser challenge", () => {
+    expect(checkAuth("ip", req({ hostname: API }), UI, tracker, () => false, API)).toBe("unauthorized");
+  });
+
+  it("does not track the refused UI credential (all api.* traffic shares one gateway IP)", () => {
+    const spy = vi.spyOn(tracker, "recordFailure");
+    for (let attempt = 0; attempt < 10; attempt++) {
+      expect(
+        checkAuth("ip", req({ hostname: API, authorization: basic("admin", "wrong") }), UI, tracker, () => false, API),
+      ).toBe("unauthorized");
+    }
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it("leaves the machine paths on the API host working", () => {
+    const validate = (token: string) => token === "cli_good";
+    expect(
+      checkAuth(
+        "ip",
+        req({ hostname: API, method: "POST", pathname: "/api/workspaces/ws1/agent" }),
+        UI,
+        tracker,
+        validate,
+        API,
+      ),
+    ).toBe("exempt");
+    expect(
+      checkAuth(
+        "ip",
+        req({ hostname: API, method: "POST", pathname: "/api/workspaces/ws1/mcp" }),
+        UI,
+        tracker,
+        validate,
+        API,
+      ),
+    ).toBe("exempt");
+    expect(
+      checkAuth(
+        "ip",
+        req({ hostname: API, method: "GET", pathname: "/api/workspaces", authorization: "Bearer cli_good" }),
+        UI,
+        tracker,
+        validate,
+        API,
+      ),
+    ).toBe("platform");
+  });
+
+  it("leaves the UI host untouched — the password still works there", () => {
+    const r = req({ hostname: "ui.example.com", authorization: basic("admin", "hunter2") });
+    expect(checkAuth("ip", r, UI, tracker, () => false, API)).toBe("ok");
   });
 });
 
@@ -301,41 +479,56 @@ describe("checkWsAuth", () => {
     // Chrome and Firefox do reuse the cached credentials on a same-origin handshake, so the Basic
     // path must keep working unchanged — the cookie is a fallback, not a replacement.
     const r = req({ pathname: "/ws", authorization: basic("admin", "hunter2") });
-    expect(checkWsAuth("ip", r, CREDS, tracker, reject)).toBe("ok");
+    expect(checkWsAuth("ip", r, UI, tracker, reject)).toBe("ok");
   });
 
   it("accepts a valid session cookie when the handshake carries no Authorization", () => {
     // The Safari case: no credential on the upgrade at all.
     const r = req({ pathname: "/ws", cookie: "paodo_ws_session=valid" });
-    expect(checkWsAuth("ip", r, CREDS, tracker, accept)).toBe("ok");
+    expect(checkWsAuth("ip", r, UI, tracker, accept)).toBe("ok");
   });
 
   it("rejects when neither credential is present", () => {
-    expect(checkWsAuth("ip", req({ pathname: "/ws" }), CREDS, tracker, reject)).toBe("challenge");
+    expect(checkWsAuth("ip", req({ pathname: "/ws" }), UI, tracker, reject)).toBe("challenge");
   });
 
   it("rejects a bad cookie the same as no cookie", () => {
     const r = req({ pathname: "/ws", cookie: "paodo_ws_session=forged" });
-    expect(checkWsAuth("ip", r, CREDS, tracker, reject)).toBe("challenge");
+    expect(checkWsAuth("ip", r, UI, tracker, reject)).toBe("challenge");
   });
 
   it("rejects wrong Basic credentials even when they look well-formed", () => {
     const r = req({ pathname: "/ws", authorization: basic("admin", "wrong") });
-    expect(checkWsAuth("ip", r, CREDS, tracker, reject)).toBe("unauthorized");
+    expect(checkWsAuth("ip", r, UI, tracker, reject)).toBe("unauthorized");
   });
 
   it("still blocks an IP over its failure budget, cookie or not", () => {
     // Otherwise a forged-cookie flood would walk straight past the brute-force lockout.
     const t = new AuthFailureTracker(1, 60_000);
     t.recordFailure("bad-ip");
-    expect(checkWsAuth("bad-ip", req({ pathname: "/ws" }), CREDS, t, accept)).toBe("blocked");
+    expect(checkWsAuth("bad-ip", req({ pathname: "/ws" }), UI, t, accept)).toBe("blocked");
+  });
+
+  it("authenticates an assertion-mode upgrade without any session cookie", () => {
+    // server.ts passes a never-true cookie verifier in `iap` mode, so the assertion riding the
+    // upgrade is the only credential — and it must be enough on its own.
+    const iap = assertionAuthenticator("good-token");
+    expect(checkWsAuth("ip", req({ pathname: "/ws", assertion: "good-token" }), iap, tracker, reject)).toBe("ok");
+    expect(checkWsAuth("ip", req({ pathname: "/ws" }), iap, tracker, reject)).toBe("challenge");
   });
 
   it("does not accept the Bearer-route exemption as a pass", () => {
     // Those routes are HTTP-only and never upgrade; treating "exempt" as authenticated here would
     // let any caller open a socket by naming an exempt path.
     const r = req({ method: "POST", pathname: "/api/workspaces/ws1/agent" });
-    expect(checkWsAuth("ip", r, CREDS, tracker, reject)).toBe("exempt");
+    expect(checkWsAuth("ip", r, UI, tracker, reject)).toBe("exempt");
+  });
+
+  it("refuses the session-cookie fallback on the API host", () => {
+    // The cookie is a basic-mode UI credential too; a valid one must not open a socket on api.*.
+    // checkAuth refuses the UI path outright there, so this is "unauthorized", never "ok".
+    const r = req({ pathname: "/ws", hostname: "api.example.com", cookie: "paodo_ws_session=valid" });
+    expect(checkWsAuth("ip", r, UI, tracker, accept, "api.example.com")).toBe("unauthorized");
   });
 });
 
@@ -364,18 +557,54 @@ describe("isCsrf", () => {
 });
 
 describe("authRequestFromIncoming / getClientIp", () => {
-  it("extracts method, pathname (stripping query), authorization and cookie", () => {
-    const r = authRequestFromIncoming({
+  it("extracts method, pathname (stripping query), authorization, cookie and the validated host", () => {
+    const r = authRequestFromIncoming(
+      {
+        method: "POST",
+        url: "/api/x?y=1",
+        headers: { authorization: "Basic zzz", cookie: "a=1; b=2" },
+      } as never,
+      null,
+      "api.example.com",
+      true,
+    );
+    expect(r).toEqual({
       method: "POST",
-      url: "/api/x?y=1",
-      headers: { authorization: "Basic zzz", cookie: "a=1; b=2" },
-    } as never);
-    expect(r).toEqual({ method: "POST", pathname: "/api/x", authorization: "Basic zzz", cookie: "a=1; b=2" });
+      pathname: "/api/x",
+      authorization: "Basic zzz",
+      cookie: "a=1; b=2",
+      assertion: "",
+      hostname: "api.example.com",
+      isUpgrade: true,
+    });
   });
 
-  it("defaults missing headers to empty strings rather than undefined", () => {
+  it("defaults missing headers to empty strings, and the host and upgrade flag to their safe values", () => {
+    // isUpgrade must default false: it is what lets a mode read a cookie, and only /ws may.
     const r = authRequestFromIncoming({ method: "GET", url: "/", headers: {} } as never);
-    expect(r).toEqual({ method: "GET", pathname: "/", authorization: "", cookie: "" });
+    expect(r).toEqual({
+      method: "GET",
+      pathname: "/",
+      authorization: "",
+      cookie: "",
+      assertion: "",
+      hostname: "",
+      isUpgrade: false,
+    });
+  });
+
+  it("reads the assertion only from the header the mode names, and ignores a repeated one", () => {
+    const headers = { "x-assertion": "token", "cf-access-jwt-assertion": "other" };
+    const named = authRequestFromIncoming({ method: "GET", url: "/", headers } as never, "x-assertion");
+    expect(named.assertion).toBe("token");
+    // No configured header (Basic mode): nothing is read, so a caller cannot smuggle one in.
+    expect(authRequestFromIncoming({ method: "GET", url: "/", headers } as never).assertion).toBe("");
+    // Two copies means someone appended to the proxy's value — fail closed rather than pick one.
+    // Node joins them into one comma-separated string; the array shape is defensive, only set-cookie.
+    for (const duplicated of ["token, forged", ["token", "forged"]]) {
+      const headers = { "x-assertion": duplicated };
+      expect(authRequestFromIncoming({ method: "GET", url: "/", headers } as never, "x-assertion").assertion).toBe("");
+    }
   });
 
   it("prefers cf-connecting-ip, falling back to the socket peer", () => {
@@ -384,6 +613,15 @@ describe("authRequestFromIncoming / getClientIp", () => {
     ).toBe("9.9.9.9");
     expect(getClientIp({ headers: {}, socket: { remoteAddress: "1.2.3.4" } } as never)).toBe("1.2.3.4");
     expect(getClientIp({ headers: {}, socket: {} } as never)).toBe("unknown");
+  });
+
+  it("refuses a forwarded loopback address, which would waive every rate limit", () => {
+    // No edge sees a real client at a loopback address, and RateLimiter exempts one — so honouring
+    // this would let any caller opt out of every limit in the application with one header.
+    for (const spoofed of ["127.0.0.1", "::1", "::ffff:127.0.0.1", " 127.0.0.1 "]) {
+      const headers = { "cf-connecting-ip": spoofed };
+      expect(getClientIp({ headers, socket: { remoteAddress: "172.18.0.5" } } as never)).toBe("172.18.0.5");
+    }
   });
 
   it("ignores client-supplied forwarding headers", () => {

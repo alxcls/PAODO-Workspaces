@@ -29,8 +29,8 @@ nano .env
 
 Set:
 
-- `USERNAME` and `PASSWORD`;
-- `PAODO_TRUSTED_HOSTS` to every public UI hostname (comma-separated);
+- `PAODO_AUTH_MODE` to `basic` or `iap`, and the variables that mode requires;
+- `PAODO_TRUSTED_HOSTS` to the UI's domain (comma-separated if several);
 - `MAX_CONCURRENT_AGENT_RUNS` to the instance-wide emergency ceiling (start with `10`);
 - optional container resource limits and timeouts.
 
@@ -83,13 +83,19 @@ The app listens on `127.0.0.1:3000` by default. Keep that port private.
 
 ### Backups and credential handoff
 
-Compose keeps five named volumes deliberately separate:
+Compose keeps six named volumes deliberately separate:
 
 - `workspaces` contains workspace data;
+- `proxy-ca` contains the credential proxy's CA, its HMAC key and the internet-access policy;
 - `provider-vault` contains encrypted LLM provider keys;
 - `provider-key` unlocks only the provider vault;
 - `workspace-secret-vault` contains encrypted third-party secrets intended for proxy injection;
 - `workspace-secret-key` unlocks only the workspace-secret vault.
+
+`proxy-ca` is mounted at `/app/data/.proxy-ca` — writable in `app`, read-only in `credproxy`, which
+gets no other view of `workspaces`. Keeping it a volume of its own is what lets `credproxy` start on
+a first deployment: a subpath mount requires the path to already exist in the volume, and on a fresh
+install nothing has created it yet.
 
 Back up each vault separately from its matching key when credentials must survive a restore. Anyone
 who obtains a matching pair can recover that credential class. A credential-free handoff transfers
@@ -117,8 +123,7 @@ Set that exact UI hostname in `PAODO_TRUSTED_HOSTS`. The ingress must replace, n
 and `X-Forwarded-Host` with that hostname. PAODO rejects missing, malformed, unlisted or disagreeing
 values before authentication. The optional `WORKSPACE_API_DOMAIN` is trusted automatically.
 
-The ingress must support WebSocket upgrades for `/ws`. PAODO Basic Auth remains
-enabled through `USERNAME` and `PASSWORD`. It must also discard any
+The ingress must support WebSocket upgrades for `/ws`. It must also discard any
 caller-supplied `CF-Connecting-IP` header and replace it with the verified client
 address, because PAODO uses that header for rate limits and audit logs.
 

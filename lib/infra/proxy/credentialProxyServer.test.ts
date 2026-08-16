@@ -378,7 +378,11 @@ describe("CredentialProxy MITM response redaction", () => {
 
   // CONNECT through the proxy with valid workspace auth, TLS-handshake against the MITM cert,
   // send one GET carrying the token, and return the full plaintext response the client saw.
-  async function requestThroughMitm(proxyPort: number, stubPort: number): Promise<string> {
+  async function requestThroughMitm(
+    proxyPort: number,
+    stubPort: number,
+    authValue = `Bearer ${TOKEN}`,
+  ): Promise<string> {
     const client = net.connect(proxyPort, "127.0.0.1");
     cleanups.push(() => client.destroy());
     await once(client, "connect");
@@ -397,9 +401,7 @@ describe("CredentialProxy MITM response redaction", () => {
     cleanups.push(() => tlsSock.destroy());
     await once(tlsSock, "secureConnect");
 
-    tlsSock.write(
-      `GET /echo HTTP/1.1\r\n` + `Host: 127.0.0.1:${stubPort}\r\n` + `Authorization: Bearer ${TOKEN}\r\n\r\n`,
-    );
+    tlsSock.write(`GET /echo HTTP/1.1\r\n` + `Host: 127.0.0.1:${stubPort}\r\n` + `Authorization: ${authValue}\r\n\r\n`);
     // Response is connection-close delimited — read until the socket ends.
     return await readUntil(tlsSock, () => false);
   }
@@ -422,6 +424,31 @@ describe("CredentialProxy MITM response redaction", () => {
     expect(response).not.toContain(REAL);
     expect(response).toContain(`x-echo: Bearer ${TOKEN}`);
     expect(response).toContain(`Invalid API key provided: ${TOKEN}.`);
+  });
+
+  // Regression: substitution is base64-aware for `Authorization: Basic`, so the real value never
+  // appears literally on the wire — a redaction pass that only scanned for it handed the envelope
+  // back intact, and one decode recovered the credential. This is git/gh's exact auth shape.
+  it("redacts the Basic base64 envelope it emitted, not just the literal value", async () => {
+    let upstreamAuth = "";
+    const stubPort = await startHttpsStub((req, res) => {
+      upstreamAuth = req.headers.authorization ?? "";
+      res.writeHead(401, { "content-type": "text/plain", "x-echo": upstreamAuth });
+      res.end(`rejected: ${upstreamAuth}`);
+    });
+    const { port: proxyPort } = await startMitmProxy();
+
+    const clientEnvelope = Buffer.from(`x-access-token:${TOKEN}`).toString("base64");
+    const realEnvelope = Buffer.from(`x-access-token:${REAL}`).toString("base64");
+    const response = await requestThroughMitm(proxyPort, stubPort, `Basic ${clientEnvelope}`);
+
+    // Upstream got the real credential inside the envelope…
+    expect(upstreamAuth).toBe(`Basic ${realEnvelope}`);
+    // …and neither the envelope nor anything decoding to the secret reaches the client.
+    expect(response).not.toContain(realEnvelope);
+    expect(response).not.toContain(REAL);
+    expect(response).toContain(`x-echo: Basic ${clientEnvelope}`);
+    expect(response).toContain(`rejected: Basic ${clientEnvelope}`);
   });
 
   it("redacts a value split across two streamed response writes", async () => {

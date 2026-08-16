@@ -14,7 +14,9 @@ import { globalSingleton } from "../globalSingleton";
 import { createLogger } from "../logger";
 
 const log = createLogger("internetAccessPolicy");
-const FILE = path.join(WORKSPACES_ROOT, ".internet-access.json");
+// Lives inside .proxy-ca/ so the sidecar can mount that one directory rather than the whole
+// workspaces volume, which also holds the conversation database and every workspace's files.
+const FILE = path.join(WORKSPACES_ROOT, ".proxy-ca", "internet-access.json");
 export const INTERNET_ACCESS_POLICY_FILE = FILE;
 
 // wsId -> enabled. Sparse: only "off" entries are ever written (see setInternetAccessPolicy), so an
@@ -49,24 +51,64 @@ export function deleteInternetAccessPolicy(wsId: string): void {
   atomicSaveJson(FILE, store);
 }
 
-// Sidecar-only: re-read the on-disk policy into memory. Unlike reloadSecretStore (where an empty
-// store is the safe "no injection" fallback), an empty policy store means "everyone enabled" — so a
-// transient read/parse failure here must NOT reset `store`, or a workspace that was correctly
-// blocked could briefly fail open. On failure we log and keep serving the last-known-good state;
-// only a successful read replaces it, in place, for the same globalSingleton-sharing reason as above.
+/** A workspace as the registry records it. The registry is the primary record; this file mirrors it. */
+export interface InternetAccessRecord {
+  id: string;
+  internetAccess?: boolean;
+}
+
+/**
+ * Rebuild the mirror from the registry. The app calls this at startup, before the sidecar can read
+ * the file, because the two records are one security boundary and only the registry survives losing
+ * the .proxy-ca volume or a restore from backup. A missing entry here reads as ENABLED, so a mirror
+ * that is absent or behind silently reopens a workspace the UI still shows as off — the one drift
+ * direction that fails open. Throws if the rebuilt file cannot be written or read back intact;
+ * startup treats that as fatal rather than serving egress the registry says is off.
+ */
+export function reconcileInternetAccessPolicy(workspaces: InternetAccessRecord[]): void {
+  const off = new Set(workspaces.filter((w) => w.internetAccess === false).map((w) => w.id));
+  const restored = [...off].filter((id) => store[id] !== false);
+  const dropped = Object.keys(store).filter((id) => !off.has(id));
+
+  for (const id of dropped) delete store[id];
+  for (const id of off) store[id] = false;
+  atomicSaveJson(FILE, store);
+
+  // Read back rather than trust the write: this file is the sidecar's only view of the boundary,
+  // and it is the app's last chance to notice the volume is not holding what it was handed.
+  const persisted = JSON.parse(readFileSync(FILE, "utf-8")) as Store;
+  const persistedIds = Object.keys(persisted);
+  if (persistedIds.length !== off.size || persistedIds.some((id) => !off.has(id) || persisted[id] !== false)) {
+    throw new Error("internet-access policy did not persist as written");
+  }
+
+  if (restored.length > 0 || dropped.length > 0) {
+    log.warn(
+      { event: "internet_access_policy_reconciled", outcome: "policy_rebuilt_from_registry", restored, dropped },
+      "internet-access mirror disagreed with the workspace registry — rebuilt from the registry",
+    );
+    return;
+  }
+  log.info(
+    { event: "internet_access_policy_verified", outcome: "policy_matches_registry", disabled: off.size },
+    "internet-access mirror matches the workspace registry",
+  );
+}
+
+// Sidecar-only: re-read the on-disk policy into memory, replacing it in place for the same
+// globalSingleton-sharing reason as above. Only a successful read replaces the served state.
 export function reloadInternetAccessPolicy(): void {
   let next: Store;
   try {
     next = JSON.parse(readFileSync(FILE, "utf-8")) as Store;
   } catch (err) {
-    if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
-      log.error(
-        { event: "internet_access_policy_reload_failed", outcome: "policy_unchanged", err, filePath: FILE },
-        "failed to reload internet-access policy — keeping last-known-good state",
-      );
-      return;
-    }
-    next = {}; // missing file is the normal "nothing ever toggled off" case
+    // ENOENT included: the app writes this file on every boot and the sidecar waits for it, so a
+    // vanished or corrupt file is an anomaly — resetting to empty would re-enable every workspace.
+    log.error(
+      { event: "internet_access_policy_reload_failed", outcome: "policy_unchanged", err, filePath: FILE },
+      "failed to reload internet-access policy — keeping last-known-good state",
+    );
+    return;
   }
   for (const k of Object.keys(store)) delete store[k];
   Object.assign(store, next);

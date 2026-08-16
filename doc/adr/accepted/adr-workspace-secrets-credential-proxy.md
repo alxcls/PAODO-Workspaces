@@ -69,7 +69,8 @@ HTTPS. The container never receives a plaintext secret.
 9. Sidecar boundary. `credproxy` is built from a dedicated multi-stage Dockerfile. Its runtime image
    contains one bundled proxy entry point and only `pino`/`node-forge`, not the app, Next.js,
    provider SDKs or Docker tooling. Its root filesystem is read-only, with a small no-exec `/tmp`.
-   It mounts the workspace-secret vault/key read-only and never mounts the provider vault/key.
+   It mounts the workspace-secret vault/key and the CA (its own `proxy-ca` volume, not a slice of
+   `workspaces`) read-only, and never mounts the provider vault/key.
 
 Consequences
 

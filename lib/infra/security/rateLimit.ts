@@ -4,6 +4,16 @@
 // global bucket entirely, for the reason given in checkApiRateLimit.
 const LOOPBACK = new Set(["::1", "127.0.0.1", "::ffff:127.0.0.1"]);
 
+/**
+ * The addresses `check` waives, so local development is never throttled by its own traffic. Exported
+ * because the exemption is only safe while it cannot be selected: both client-IP extractors refuse a
+ * forwarded value that claims one of these, which would otherwise turn a header into a way to opt out
+ * of every limit in the application.
+ */
+export function isLoopbackAddress(ip: string): boolean {
+  return LOOPBACK.has(ip);
+}
+
 export class RateLimiter {
   private store = new Map<string, { tokens: number; updatedAt: number; lastSeen: number }>();
   private checks = 0;

@@ -30,7 +30,7 @@ nano .env
 Set:
 
 - `PAODO_AUTH_MODE` to `basic` or `iap`, and the variables that mode requires;
-- `PAODO_TRUSTED_HOSTS` to every public UI hostname (comma-separated);
+- `PAODO_TRUSTED_HOSTS` to the UI's domain (comma-separated if several);
 - `MAX_CONCURRENT_AGENT_RUNS` to the instance-wide emergency ceiling (start with `10`);
 - optional container resource limits and timeouts.
 

@@ -108,31 +108,53 @@ function singleHeader(value: string | string[] | undefined): string | null | und
   return value;
 }
 
-/** Build the deployment's hostname allowlist. A malformed configured hostname is a startup error. */
 type TrustedHostEnvironment = {
   PAODO_TRUSTED_HOSTS?: string;
   WORKSPACE_API_DOMAIN?: string;
 };
 
+const LOOPBACK_HOSTS = ["localhost", "127.0.0.1", "[::1]"];
+
+function normalizeAll(configured: readonly string[], label: string): Set<string> {
+  const normalized = new Set<string>();
+  for (const host of configured) {
+    const hostname = normalizeHostname(host);
+    if (!hostname) throw new Error(`invalid ${label}: ${JSON.stringify(host)}`);
+    normalized.add(hostname);
+  }
+  return normalized;
+}
+
+function publicUiHosts(env: TrustedHostEnvironment): string[] {
+  const raw = env.PAODO_TRUSTED_HOSTS?.trim();
+  return raw ? raw.split(",").map((host) => host.trim()) : [];
+}
+
+/** Build the deployment's hostname allowlist. A malformed configured hostname is a startup error. */
 export function trustedRequestHosts(
   env: TrustedHostEnvironment = {
     PAODO_TRUSTED_HOSTS: process.env.PAODO_TRUSTED_HOSTS,
     WORKSPACE_API_DOMAIN: process.env.WORKSPACE_API_DOMAIN,
   },
 ): ReadonlySet<string> {
-  const configured = ["localhost", "127.0.0.1", "[::1]", "app"];
+  const configured = [...LOOPBACK_HOSTS, "app", ...publicUiHosts(env)];
   if (env.WORKSPACE_API_DOMAIN?.trim()) configured.push(env.WORKSPACE_API_DOMAIN.trim());
-  if (env.PAODO_TRUSTED_HOSTS?.trim()) {
-    configured.push(...env.PAODO_TRUSTED_HOSTS.split(",").map((host) => host.trim()));
-  }
+  return normalizeAll(configured, "trusted hostname");
+}
 
-  const trusted = new Set<string>();
-  for (const configuredHost of configured) {
-    const hostname = normalizeHostname(configuredHost);
-    if (!hostname) throw new Error(`invalid trusted hostname: ${JSON.stringify(configuredHost)}`);
-    trusted.add(hostname);
-  }
-  return trusted;
+/**
+ * Hostnames a /ws handshake may come from. Not trustedRequestHosts: loopback and "app" have to be
+ * trusted as a Host but never as an origin, or any local page opens an authenticated socket.
+ */
+export function trustedRequestOrigins(
+  env: TrustedHostEnvironment = { PAODO_TRUSTED_HOSTS: process.env.PAODO_TRUSTED_HOSTS },
+  dev = process.env.NODE_ENV !== "production",
+): ReadonlySet<string> {
+  // Loopback only while no public hostname is declared: declaring one is the edit validateRequestHost
+  // already forced, so the safe set needs no second step. NODE_ENV can't tell — compose builds prod.
+  const declared = publicUiHosts(env);
+  const configured = dev || declared.length === 0 ? [...declared, ...LOOPBACK_HOSTS] : declared;
+  return normalizeAll(configured, "trusted origin hostname");
 }
 
 /**
@@ -185,10 +207,12 @@ export function validateRequestHost(
  *
  * Absent is refused rather than waved through as a non-browser client, because nothing but a browser
  * connects to /ws. `null` — what a sandboxed iframe sends — fails to parse and is refused with it.
+ *
+ * Takes trustedRequestOrigins, NOT trustedRequestHosts — see there for why the two differ.
  */
 export function validateRequestOrigin(
   origin: string | string[] | undefined,
-  trustedHosts: ReadonlySet<string>,
+  trustedOrigins: ReadonlySet<string>,
 ): boolean {
   const raw = singleHeader(origin);
   if (!raw) return false;
@@ -199,7 +223,7 @@ export function validateRequestOrigin(
     return false;
   }
   const hostname = normalizeHostname(parsed.host);
-  return hostname !== null && trustedHosts.has(hostname);
+  return hostname !== null && trustedOrigins.has(hostname);
 }
 
 /**

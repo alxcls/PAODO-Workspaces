@@ -11,6 +11,7 @@ import {
   authRequestFromIncoming,
   getClientIp,
   trustedRequestHosts,
+  trustedRequestOrigins,
   type AuthRequest,
   validateRequestHost,
   validateRequestOrigin,
@@ -145,14 +146,64 @@ describe("trusted request hosts", () => {
   });
 });
 
+describe("trustedRequestOrigins", () => {
+  const env = { PAODO_TRUSTED_HOSTS: "ui.example.com", WORKSPACE_API_DOMAIN: "api.example.com" };
+
+  it("trusts only the declared public UI hostnames in production", () => {
+    const origins = trustedRequestOrigins(env, false);
+    expect([...origins]).toEqual(["ui.example.com"]);
+  });
+
+  it("adds loopback in dev, where it is the UI's own origin", () => {
+    const origins = trustedRequestOrigins(env, true);
+    expect(origins.has("localhost")).toBe(true);
+    expect(origins.has("127.0.0.1")).toBe(true);
+    expect(origins.has("::1")).toBe(true);
+  });
+
+  it("trusts loopback on a production build that declares no public hostname", () => {
+    expect([...trustedRequestOrigins({}, false)]).toEqual(["localhost", "127.0.0.1", "::1"]);
+  });
+
+  it("drops loopback in the same edit that declares a public hostname", () => {
+    expect(trustedRequestOrigins({ PAODO_TRUSTED_HOSTS: "ui.example.com" }, false).has("localhost")).toBe(false);
+  });
+
+  // Each is required for Host validation and each would be a cross-site handshake if trusted here.
+  it("never inherits the host-only entries that make trustedRequestHosts unsafe as an origin list", () => {
+    const hosts = trustedRequestHosts(env);
+    const origins = trustedRequestOrigins(env, false);
+    for (const hostOnly of ["localhost", "127.0.0.1", "::1", "app", "api.example.com"]) {
+      expect(hosts.has(hostOnly)).toBe(true);
+      expect(origins.has(hostOnly)).toBe(false);
+    }
+  });
+
+  it("fails startup configuration closed when an entry is malformed", () => {
+    expect(() => trustedRequestOrigins({ PAODO_TRUSTED_HOSTS: "bad.example/path" }, false)).toThrow(
+      "invalid trusted origin hostname",
+    );
+  });
+});
+
 describe("validateRequestOrigin (cross-site WebSocket hijacking)", () => {
-  const trusted = trustedRequestHosts({ PAODO_TRUSTED_HOSTS: "ui.example.com" });
+  const env = { PAODO_TRUSTED_HOSTS: "ui.example.com" };
+  const trusted = trustedRequestOrigins(env, false);
 
   it("accepts a handshake opened by a page on a trusted host, whatever its port or case", () => {
     expect(validateRequestOrigin("https://ui.example.com", trusted)).toBe(true);
     expect(validateRequestOrigin("https://UI.Example.com:8443", trusted)).toBe(true);
-    expect(validateRequestOrigin("http://localhost:3000", trusted)).toBe(true);
-    expect(validateRequestOrigin("http://[::1]:3000", trusted)).toBe(true);
+  });
+
+  // Otherwise any page on the user's own machine opens a socket on cached Basic credentials.
+  it("accepts the dev server's own origin only in dev", () => {
+    const inDev = trustedRequestOrigins(env, true);
+    expect(validateRequestOrigin("http://localhost:3000", inDev)).toBe(true);
+    expect(validateRequestOrigin("http://[::1]:3000", inDev)).toBe(true);
+    expect(validateRequestOrigin("http://localhost:3000", trusted)).toBe(false);
+    expect(validateRequestOrigin("http://localhost:8080", trusted)).toBe(false);
+    expect(validateRequestOrigin("http://127.0.0.1:8080", trusted)).toBe(false);
+    expect(validateRequestOrigin("http://[::1]:3000", trusted)).toBe(false);
   });
 
   it("rejects a handshake opened by any other page", () => {

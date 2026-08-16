@@ -55,6 +55,7 @@ import {
   getClientIp,
   isCsrf,
   trustedRequestHosts,
+  trustedRequestOrigins,
   apiRequestHost,
   type AuthResult,
   validateRequestHost,
@@ -101,9 +102,11 @@ try {
 const verifyWsSessionCookie = uiAuth.mode === "basic" ? verifySessionCookie : () => false;
 
 let allowedRequestHosts: ReadonlySet<string>;
+let allowedRequestOrigins: ReadonlySet<string>;
 let apiHost: string | null;
 try {
   allowedRequestHosts = trustedRequestHosts();
+  allowedRequestOrigins = trustedRequestOrigins();
   apiHost = apiRequestHost();
 } catch (err) {
   log.fatal(
@@ -366,7 +369,7 @@ httpServer.on("upgrade", (req, socket, head) => {
     }
     // Before authentication, because the credential is the problem here: a handshake carries it
     // whoever opened the page, and an accepted socket is readable by that page. See httpAuth.ts.
-    if (!validateRequestOrigin(req.headers.origin, allowedRequestHosts)) {
+    if (!validateRequestOrigin(req.headers.origin, allowedRequestOrigins)) {
       auditWsRejection("request_origin_rejected", "request origin rejected");
       socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
       socket.destroy();

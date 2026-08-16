@@ -5,7 +5,9 @@ import { ChatOpenAI } from "@langchain/openai";
 import { ChatAnthropic } from "@langchain/anthropic";
 import type { LLMProviderConfig } from "./interfaces";
 import { createModelGateway, type ModelCallObserver, type ModelGateway } from "./modelGateway";
-import { mistralReasoningConfig } from "./mistralProtocol";
+import { createMistralChatModel, mistralRequestConfig } from "./mistralProtocol";
+import { providerPacer } from "./rateLimit/providerPacer";
+import { parseRateLimitHeaders } from "./rateLimit/rateLimitHeaders";
 import { THINKING_OFF_EFFORT, type ReasoningEffort } from "../models/llmSelection";
 import { listModels } from "../models/registry";
 import { firstAvailableSelection, type ModelSelection, type ModelVocabulary } from "../models/selection";
@@ -55,12 +57,39 @@ interface ProviderDescriptor extends ProviderMetadata {
    * Named per provider rather than derived from the id, so the var is greppable from the registry.
    */
   availabilityEnv: string;
-  build: (config: LLMProviderConfig) => ChatOpenAI | ChatAnthropic;
+  build: (config: LLMProviderConfig, context: ModelBuildContext) => ChatOpenAI | ChatAnthropic;
+}
+
+/** Per-run information providers may translate into their own request fields. */
+export interface ModelBuildContext {
+  /** Stable for one persisted conversation; contains no prompt content or credentials. */
+  cacheScopeId?: string;
 }
 
 // Retries belong to us, not the SDK. Left alone, LangChain's AsyncCaller silently retries 6 times
 // with backoff, hiding the refusals the gateway has to pace around. Every build spreads this.
 const NO_SDK_RETRY = { maxRetries: 0 } as const;
+
+/**
+ * A fetch that reports every response's rate-limit headers to the pacer.
+ *
+ * This exists because LangChain surfaces no headers on a streaming call, and the headers are the
+ * only place a provider says what its ceilings are — so the alternative is hard-coding numbers that
+ * go stale the moment a customer's support ticket raises them.
+ *
+ * Reads headers only. It never buffers, inspects or delays a body, so streaming is untouched.
+ */
+function pacedFetch(provider: string, model: string) {
+  return async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+    const response = await fetch(input as RequestInfo, init);
+    try {
+      providerPacer.settle({ provider, model }, parseRateLimitHeaders(response.headers));
+    } catch {
+      // Accounting must never be the reason a model call fails.
+    }
+    return response;
+  };
+}
 
 // The single source of truth for provider support. Adding one means an entry here plus its models in
 // lib/models/registry.ts — nothing else in the agent layer changes, and nothing in .env.
@@ -75,11 +104,12 @@ const PROVIDERS: Record<string, ProviderDescriptor> = {
         apiKey: config.apiKey,
         ...NO_SDK_RETRY,
         ...anthropicThinkingConfig(config.model, config.reasoningEffort),
-        ...(config.anthropicCacheTtl1h && {
-          clientOptions: {
+        clientOptions: {
+          fetch: pacedFetch("anthropic", config.model),
+          ...(config.anthropicCacheTtl1h && {
             defaultHeaders: { "anthropic-beta": "prompt-caching-scope-2026-01-05" },
-          },
-        }),
+          }),
+        },
       }),
   },
   openai: {
@@ -98,6 +128,7 @@ const PROVIDERS: Record<string, ProviderDescriptor> = {
         ...NO_SDK_RETRY,
         useResponsesApi: true,
         reasoning: effort === "none" ? { effort } : { effort, summary: "auto" },
+        configuration: { fetch: pacedFetch("openai", config.model) },
       });
     },
   },
@@ -112,6 +143,7 @@ const PROVIDERS: Record<string, ProviderDescriptor> = {
         configuration: {
           baseURL: "https://api.deepseek.com/v1",
           apiKey: config.apiKey,
+          fetch: pacedFetch("deepseek", config.model),
         },
       }),
   },
@@ -128,6 +160,7 @@ const PROVIDERS: Record<string, ProviderDescriptor> = {
         configuration: {
           baseURL: "https://api.moonshot.ai/v1",
           apiKey: config.apiKey,
+          fetch: pacedFetch("moonshot", config.model),
         },
         // modelKwargs, not the typed `reasoningEffort`: that field is OpenAI's union, which has no
         // "max" — Kimi's strongest level. modelKwargs is spread verbatim into the request body.
@@ -140,15 +173,16 @@ const PROVIDERS: Record<string, ProviderDescriptor> = {
     supportsPromptCaching: false,
     // Medium exposes a simple on/off checkbox: none disables reasoning, high enables it.
     reasoningEfforts: [THINKING_OFF_EFFORT, "high"],
-    build: (config) =>
-      new ChatOpenAI({
+    build: (config, context) =>
+      createMistralChatModel({
         model: config.model,
         ...NO_SDK_RETRY,
         configuration: {
           baseURL: "https://api.mistral.ai/v1",
           apiKey: config.apiKey,
+          fetch: pacedFetch("mistral", config.model),
         },
-        ...mistralReasoningConfig(config.model, config.reasoningEffort),
+        ...mistralRequestConfig(config.model, config.reasoningEffort, context.cacheScopeId),
       }),
   },
 };
@@ -162,7 +196,7 @@ const PROVIDERS: Record<string, ProviderDescriptor> = {
  * reasoning fields) stays directly assertable, which is a claim about the SDK object and cannot be
  * made through an interface that deliberately hides it.
  */
-export function buildChatModel(config: LLMProviderConfig): ChatOpenAI | ChatAnthropic {
+export function buildChatModel(config: LLMProviderConfig, context: ModelBuildContext = {}): ChatOpenAI | ChatAnthropic {
   const descriptor = PROVIDERS[config.provider];
   // Unknown providers fail loudly here rather than silently resolving to another vendor's builder:
   // the API validates provider on write, so reaching this means a retired provider is still stored.
@@ -170,7 +204,7 @@ export function buildChatModel(config: LLMProviderConfig): ChatOpenAI | ChatAnth
     throw new Error(`unsupported LLM provider "${config.provider}" (supported: ${SUPPORTED_PROVIDERS.join(", ")})`);
   }
   if (!config.model) throw new Error(`no model selected for provider "${config.provider}"`);
-  return descriptor.build(config);
+  return descriptor.build(config, context);
 }
 
 /**
@@ -180,8 +214,14 @@ export function buildChatModel(config: LLMProviderConfig): ChatOpenAI | ChatAnth
  * true of every model call belongs — so a provider added above cannot arrive with its own
  * accounting, and a new call site cannot bypass it.
  */
-export function buildModel(config: LLMProviderConfig, options: { observe?: ModelCallObserver } = {}): ModelGateway {
-  return createModelGateway(buildChatModel(config), {
+export function buildModel(
+  config: LLMProviderConfig,
+  options: { observe?: ModelCallObserver; cacheScopeId?: string } = {},
+): ModelGateway {
+  const context: ModelBuildContext = {
+    ...(options.cacheScopeId ? { cacheScopeId: options.cacheScopeId } : {}),
+  };
+  return createModelGateway(buildChatModel(config, context), {
     provider: config.provider,
     model: config.model,
     ...(options.observe ? { observe: options.observe } : {}),

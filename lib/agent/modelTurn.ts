@@ -5,7 +5,7 @@ import type { AIMessageChunk, BaseMessage } from "@langchain/core/messages";
 import type { Logger } from "pino";
 import { throttleLog } from "../infra/logThrottle";
 import type { AgentEvent } from "./runner";
-import type { ModelGateway, ModelUsage } from "./modelGateway";
+import type { ModelGateway, ModelStream, ModelUsage } from "./modelGateway";
 import {
   mistralReplayContent,
   mistralThinkingText,
@@ -19,6 +19,9 @@ export type ResolvedToolCall = { id: string; name: string; args: Record<string, 
 export type TurnEvent =
   | { type: "token"; content: string }
   | { type: "reasoning"; content: string }
+  // Emitted while the call is still queued behind a provider's rate limit, so a slow turn is
+  // distinguishable from a stalled one.
+  | { type: "paced"; provider: string; model: string; waitMs: number; queueDepth: number }
   // Measured usage, not the raw accumulated chunk: the runner persists coalesced text instead, and
   // handing it the chunk invited every consumer to do its own token arithmetic.
   | {
@@ -109,6 +112,63 @@ function assembleToolCalls(partials: PartialToolCall[], provider: string): Resol
     });
 }
 
+/**
+ * Open the stream, surfacing any rate-limit wait while it happens.
+ *
+ * The wait is inside the awaited call, where a generator cannot yield, so the gateway hands notices
+ * to a callback and they are drained here. Without this a queued run goes silent for minutes and the
+ * UI cannot tell it apart from a hung one.
+ */
+async function* openStream(
+  model: ModelGateway,
+  messages: BaseMessage[],
+  signal: AbortSignal | undefined,
+): AsyncGenerator<TurnEvent, ModelStream> {
+  const pending: TurnEvent[] = [];
+  let wake: (() => void) | null = null;
+  let done = false;
+
+  const opening = model.stream(messages, {
+    stage: "model_turn",
+    signal,
+    onPaced: ({ provider, model: id, waitMs, queueDepth }) => {
+      pending.push({ type: "paced", provider, model: id, waitMs, queueDepth });
+      wake?.();
+    },
+  });
+  const settled = opening.then(
+    (stream) => {
+      done = true;
+      wake?.();
+      return stream;
+    },
+    (err) => {
+      done = true;
+      wake?.();
+      throw err;
+    },
+  );
+  // A consumer that abandons this generator on a paced notice never reaches the await below, leaving
+  // this rejection unread — and server.ts turns an unhandled rejection into a process exit.
+  settled.catch(() => {});
+
+  while (!done) {
+    if (pending.length) {
+      yield* pending.splice(0);
+      continue;
+    }
+    // The re-check inside closes the window where the call settles between the loop test and this
+    // registration, which would otherwise park the turn on a promise nothing resolves.
+    await new Promise<void>((resolve) => {
+      wake = resolve;
+      if (done || pending.length) resolve();
+    });
+    wake = null;
+  }
+  yield* pending.splice(0);
+  return await settled;
+}
+
 export async function* streamModelTurn(
   modelWithTools: ModelGateway,
   messages: BaseMessage[],
@@ -120,7 +180,7 @@ export async function* streamModelTurn(
   let fullText = "";
   let fullReasoning = "";
   const startedAt = Date.now();
-  const call = await modelWithTools.stream(messages, { stage: "model_turn", signal });
+  const call = yield* openStream(modelWithTools, messages, signal);
   let timeToFirstTokenMs: number | null = null;
 
   for await (const chunk of call.chunks) {

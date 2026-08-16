@@ -343,6 +343,19 @@ describe("applyDiscreteEvent", () => {
       { role: "error", content: "boom" },
     ]);
   });
+
+  // Unlike those two, a rate-limit wait describes right now rather than something that happened. A
+  // 30-turn run on a throttled model would otherwise leave 30 notices behind it, so it is rendered
+  // from transient hook state and must never reach the transcript.
+  it("paced leaves no trace in the transcript, however often it arrives", () => {
+    const paced = { type: "paced", provider: "mistral", model: "mistral-large-latest", waitMs: 15_000, queueDepth: 2 };
+    const start = state([{ role: "assistant", content: "answer" }]);
+
+    let next = start;
+    for (let i = 0; i < 30; i++) next = applyDiscreteEvent(next, paced as never);
+
+    expect(next.messages).toEqual([{ role: "assistant", content: "answer" }]);
+  });
 });
 
 // A dropped viewer connection is transient: the run is server-owned and keeps going, so the notice

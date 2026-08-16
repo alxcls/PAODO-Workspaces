@@ -130,6 +130,7 @@ async function runCalleeTurn(
   for await (const event of run(messages, input, callee.dir, callee.id, {
     signal,
     maxIterations: callee.maxIterations,
+    conversationId,
     store: opts.store,
     containers: opts.containers,
   })) {

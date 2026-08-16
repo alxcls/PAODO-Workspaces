@@ -97,6 +97,26 @@ describe("runAgent — provider-specific history compatibility", () => {
     expect((messages[0] as AIMessage).tool_calls![0].id).toBe("toolu_01A09q9rDJmwvLpPCJKtxpvB");
     expect((messages[1] as ToolMessage).tool_call_id).toBe("toolu_01A09q9rDJmwvLpPCJKtxpvB");
   });
+
+  it("passes the persisted conversation id to provider construction as the cache scope", async () => {
+    const delegate = makeBuildTools([[new AIMessageChunk({ content: "done" })]], "command ran", "mistral");
+    let receivedDeps: Parameters<typeof import("./buildTools").buildTools>[3];
+    const buildAgentTools = ((...args: Parameters<typeof import("./buildTools").buildTools>) => {
+      receivedDeps = args[3];
+      return delegate();
+    }) as typeof import("./buildTools").buildTools;
+
+    for await (const _ of runAgent([], "continue", "/tmp/ws", "ws-1", {
+      ...noopDeps,
+      conversationId: "conversation-42",
+      loadConfig: () => ({ provider: "mistral", model: "mistral-medium-latest", apiKey: "sk" }) as never,
+      buildAgentTools,
+    })) {
+      // drain
+    }
+
+    expect(receivedDeps).toMatchObject({ cacheScopeId: "conversation-42" });
+  });
 });
 
 // The real production workspace_restore handler, so runner-dispatch tests exercise the same code

@@ -4,6 +4,8 @@ import { describe, it, expect } from "vitest";
 import { AIMessage, AIMessageChunk, HumanMessage, ToolMessage, type BaseMessage } from "@langchain/core/messages";
 import { createModelGateway, usageTokens, NO_USAGE, type ModelCallRecord } from "./modelGateway";
 import { ProviderConcurrency } from "./providerConcurrency";
+import { NOTICE_THRESHOLD_MS, ProviderPacer } from "./rateLimit/providerPacer";
+import { MAX_ATTEMPTS, RateLimitExhaustedError } from "./rateLimit/retryPolicy";
 
 function chunk(content: string, usage?: { input: number; output: number; reasoning?: number }): AIMessageChunk {
   return new AIMessageChunk({
@@ -47,13 +49,28 @@ function recordingGateway(chunks: AIMessageChunk[], chatOverride?: unknown, prov
   const records: ModelCallRecord[] = [];
   const chat = (chatOverride ?? fakeChat(chunks)) as ReturnType<typeof fakeChat>;
   const concurrency = new ProviderConcurrency();
+  // Its own pacer, on its own clock: the shared singleton would carry a bucket drained by one test
+  // into the next, and real backoff would make a 429 test take minutes. The fake sleep must advance
+  // the clock it shares with the pacer, or a wait never elapses and the admission loop spins.
+  const slept: number[] = [];
+  let clock = 1_700_000_000_000;
+  const pacer = new ProviderPacer({
+    now: () => clock,
+    sleep: async (ms) => {
+      await Promise.resolve();
+      slept.push(ms);
+      clock += ms;
+    },
+    random: () => 0.5,
+  });
   const gateway = createModelGateway(chat as never, {
     provider,
     model: "mistral-medium-latest",
     observe: (record) => records.push(record),
     concurrency,
+    pacer,
   });
-  return { gateway, records, chat, concurrency };
+  return { gateway, records, chat, concurrency, pacer, slept };
 }
 
 const MESSAGES = [new HumanMessage("hi")];
@@ -305,19 +322,114 @@ describe("ModelGateway — concurrency accounting", () => {
   it("releases the slot when the request fails before any stream exists", async () => {
     const failing = {
       stream: async () => {
-        throw new Error("429 Too Many Requests");
+        throw new Error("500 Internal Server Error");
       },
       invoke: async () => {
-        throw new Error("429 Too Many Requests");
+        throw new Error("500 Internal Server Error");
       },
     };
     const { gateway, records, concurrency } = recordingGateway([], failing);
 
-    await expect(gateway.stream(MESSAGES, { stage: "model_turn" })).rejects.toThrow(/429/);
-    await expect(gateway.invoke(MESSAGES, { stage: "compaction" })).rejects.toThrow(/429/);
+    await expect(gateway.stream(MESSAGES, { stage: "model_turn" })).rejects.toThrow(/500/);
+    await expect(gateway.invoke(MESSAGES, { stage: "compaction" })).rejects.toThrow(/500/);
 
     expect(concurrency.snapshot("mistral")).toMatchObject({ active: 0, total: 2 });
     expect(records).toHaveLength(2);
     expect(records.every((r) => r.emitted === false && r.usage === NO_USAGE)).toBe(true);
+    // Nothing rate-limited happened, so nothing should have been retried or waited on.
+    expect(records.every((r) => r.attempts === 1 && r.waitedMs === 0)).toBe(true);
+  });
+});
+
+// The whole point of the pacing layer: a throttled provider must slow a run down, not end it. These
+// assert the gateway's half — that a refusal nobody saw is retried, and one they saw is not.
+describe("ModelGateway — rate limit retry", () => {
+  const rateLimited = () => Object.assign(new Error("Requests rate limit exceeded"), { status: 429 });
+
+  it("retries a 429 that arrived before any chunk, then succeeds", async () => {
+    let attempts = 0;
+    const notices: Array<{ attempt: number; waitMs: number }> = [];
+    const flaky = {
+      stream: async () => {
+        attempts += 1;
+        if (attempts < 3) throw rateLimited();
+        return (async function* () {
+          yield chunk("ok", { input: 5, output: 2 });
+        })();
+      },
+      invoke: async () => chunk("ok"),
+    };
+    const { gateway, records, slept } = recordingGateway([], flaky);
+
+    const call = await gateway.stream(MESSAGES, {
+      stage: "model_turn",
+      onPaced: ({ waitMs }) => notices.push({ attempt: attempts, waitMs }),
+    });
+    for await (const _ of call.chunks) {
+      // drain
+    }
+
+    expect(attempts).toBe(3);
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({ attempts: 3, emitted: true });
+    expect(records[0].waitedMs).toBeGreaterThan(0);
+    // The first notice is emitted directly after the cold 429. No ceiling existed before that call,
+    // so acquire() could not have announced an admission wait yet.
+    expect(notices[0]).toMatchObject({ attempt: 1 });
+    expect(notices[0].waitMs).toBeGreaterThanOrEqual(NOTICE_THRESHOLD_MS);
+    // At least one wait per refusal. Some passes add a pacing wait on top, once the refusals have
+    // taught the pacer a ceiling — the widening of the backoff itself is asserted in the pacer's
+    // own tests, where it is not tangled up with admission.
+    expect(slept.length).toBeGreaterThanOrEqual(2);
+  });
+
+  // Past the first chunk a retry would replay text the user has already read, so it must not happen.
+  it("rethrows a failure that arrives after the consumer has seen output", async () => {
+    let attempts = 0;
+    const breaksMidStream = {
+      stream: async () => {
+        attempts += 1;
+        return (async function* () {
+          yield chunk("partial");
+          throw rateLimited();
+        })();
+      },
+      invoke: async () => chunk("ok"),
+    };
+    const { gateway, records } = recordingGateway([], breaksMidStream);
+
+    const call = await gateway.stream(MESSAGES, { stage: "model_turn" });
+    await expect(
+      (async () => {
+        for await (const _ of call.chunks) {
+          // drain until it throws
+        }
+      })(),
+    ).rejects.toThrow(/rate limit/);
+
+    expect(attempts).toBe(1);
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({ attempts: 1, emitted: true, partial: true });
+  });
+
+  // A refusal that never clears is a cap, not throttling. Giving up beats waiting out the month,
+  // and the call still has to appear in the ledger — it is the most expensive one of the run.
+  it("gives up with a named error, and still reports the call", async () => {
+    const alwaysRefuses = {
+      stream: async () => {
+        throw rateLimited();
+      },
+      invoke: async () => {
+        throw rateLimited();
+      },
+    };
+    const { gateway, records, concurrency } = recordingGateway([], alwaysRefuses);
+
+    await expect(gateway.stream(MESSAGES, { stage: "model_turn" })).rejects.toThrow(RateLimitExhaustedError);
+
+    expect(records).toHaveLength(1);
+    expect(records[0].attempts).toBe(MAX_ATTEMPTS);
+    expect(records[0].waitedMs).toBeGreaterThan(0);
+    expect(concurrency.snapshot("mistral").active).toBe(0);
   });
 });

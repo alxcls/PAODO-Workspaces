@@ -11,6 +11,7 @@ import {
   providerFailureMessage,
   reportProviderFailure,
 } from "./providerFailure";
+import { RateLimitExhaustedError } from "./rateLimit/retryPolicy";
 
 beforeEach(() => resetLogThrottle());
 
@@ -152,6 +153,29 @@ describe("classifyProviderFailure — rate limiting", () => {
   it("does not end the run permanently, unlike every other classified cause", () => {
     expect(isTerminalProviderCode("PROVIDER_RATE_LIMITED")).toBe(false);
     expect(TERMINAL_PROVIDER_CODES).not.toContain("PROVIDER_RATE_LIMITED");
+  });
+
+  // Billing-flavoured 429s do not get a speculative special case. They take the same bounded retry
+  // path as every other 429; the provider status, rather than wording we maintain, owns the meaning.
+  it.each([
+    ["Mistral's per-model monthly tokens", { status: 429, message: "Monthly token limit reached for this model" }],
+    ["a workspace spend limit", { status: 429, message: "Spend limit exceeded for this workspace" }],
+    ["a usage limit", { status: 429, message: "Usage limit reached" }],
+    ["a period-scoped quota", { status: 429, message: "Quota exceeded for the month" }],
+  ])("treats %s as an ordinary bounded 429", (_label, error) => {
+    const failure = classifyProviderFailure(raw(error as Record<string, unknown>));
+    expect(failure?.failureCode).toBe("PROVIDER_RATE_LIMITED");
+    expect(failure?.retryable).toBe(true);
+  });
+
+  it("keeps retry exhaustion neutral instead of inventing a billing diagnosis", () => {
+    const cause = raw({ status: 429, message: "Requests rate limit exceeded" });
+    const exhausted = new RateLimitExhaustedError("mistral", "mistral-large-latest", 8, 420_000, cause);
+    const failure = classifyProviderFailure(exhausted);
+
+    expect(failure?.failureCode).toBe("PROVIDER_RATE_LIMITED");
+    expect(failure?.providerMessage).toMatch(/retry budget/i);
+    expect(failure?.providerMessage).not.toMatch(/monthly|spend|billing/i);
   });
 });
 

@@ -57,6 +57,9 @@ export type AgentEvent =
   // `meta` is set only for call_agent: a deep-link to the callee's persisted session.
   | { type: "tool_result"; name: string; id?: string; result: string; meta?: CallAgentMeta }
   | { type: "error"; message: string; code?: AgentErrorCode }
+  // The run is alive but waiting on a provider's rate limit. Transient: it exists so a paced run
+  // reads as slow rather than frozen, and it is replaced by the next real event, never kept.
+  | { type: "paced"; provider: string; model: string; waitMs: number; queueDepth: number }
   | { type: "limit_reached" }
   | { type: "done" }
   | {
@@ -78,6 +81,8 @@ export type AgentEvent =
 export type RunAgentOptions = {
   signal?: AbortSignal;
   maxIterations?: number;
+  /** Persisted conversation id; stable across every ReAct turn and later runs in the same chat. */
+  conversationId?: string;
   /** Override WebSocket notification sender — defaults to sendToWorkspace. Inject for testing. */
   notify?: (msg: object) => void;
   /** Override container warm-up — defaults to ensureContainer. Inject for testing. */
@@ -147,6 +152,7 @@ export async function* runAgent(
   {
     signal,
     maxIterations = 30,
+    conversationId,
     notify,
     warmContainer,
     loadConfig,
@@ -199,6 +205,7 @@ export async function* runAgent(
     containers: resolvedContainers,
     store,
     observe: observeModelCall,
+    cacheScopeId: conversationId,
   });
   const signalHandlers: Record<string, PostDispatchFn> = injectedHandlers ?? builtHandlers ?? {};
   const typedToolMap = toolMap as Record<string, RunnerTool>;

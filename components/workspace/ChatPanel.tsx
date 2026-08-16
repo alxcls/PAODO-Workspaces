@@ -5,8 +5,31 @@ import { useState, useRef, useEffect } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import TokenUsageLine from "@/components/usage/TokenUsageLine";
-import { useAgentStream, toolLabel } from "@/lib/client/hooks/useAgentStream";
+import { useAgentStream, toolLabel, type PacedState } from "@/lib/client/hooks/useAgentStream";
 import type { InitialConversation } from "@/lib/client/hooks/useConversations";
+
+// Borrows the tool-row shape on purpose: a rate-limit wait is work being done to us, so it reads as
+// a named step rather than a stalled agent. The queue count says "you are behind someone else".
+function PacedRow({ provider, endsAt, queueDepth }: PacedState) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const tick = setInterval(() => setNow(Date.now()), 1_000);
+    return () => clearInterval(tick);
+  }, [endsAt]);
+
+  const seconds = Math.max(1, Math.round(Math.max(endsAt - now, 0) / 1000));
+  const behind = queueDepth > 0 ? `, queued behind ${queueDepth} ${queueDepth === 1 ? "run" : "runs"}` : "";
+  return (
+    <div className="font-mono text-[12.5px] leading-[1.4] text-primary-2 px-0.5 mb-1.5">
+      <span className="inline-block w-2 h-2 border-[1.5px] border-primary-2 border-t-transparent rounded-full animate-[tool-spin_0.7s_linear_infinite] align-middle mr-0.5" />{" "}
+      <b>rate limiting</b>
+      <span className="text-text-3">
+        {" "}
+        waiting on {provider} — about {seconds}s{behind}
+      </span>
+    </div>
+  );
+}
 
 const mdComponents: Components = {
   table: ({ node: _n, ...props }) => (
@@ -56,8 +79,19 @@ export default function ChatPanel({
   // always re-fetch — the payload can go stale once the conversation is used.
   const consumedInitialRef = useRef<string | null>(null);
 
-  const { messages, streaming, pendingTools, sendMessage, attachLive, loadConversation, hydrate, reset, detach, stop } =
-    useAgentStream(workspaceId, conversationId, { onTurnComplete: onAgentTurnComplete });
+  const {
+    messages,
+    streaming,
+    pendingTools,
+    paced,
+    sendMessage,
+    attachLive,
+    loadConversation,
+    hydrate,
+    reset,
+    detach,
+    stop,
+  } = useAgentStream(workspaceId, conversationId, { onTurnComplete: onAgentTurnComplete });
 
   useEffect(() => {
     if (!pinnedRef.current) return;
@@ -237,15 +271,21 @@ export default function ChatPanel({
           );
         })}
 
-        {streaming && pendingTools === 0 && (
-          <div className="flex justify-start">
-            <div className="bubble-agent md-prose typing">
-              <span />
-              <span />
-              <span />
+        {/* A throttled model holds the turn for minutes, so the dots would read as a hang. The paced
+            row carries its own spinner, so the run still looks alive while it names the culprit. */}
+        {streaming &&
+          pendingTools === 0 &&
+          (paced ? (
+            <PacedRow {...paced} />
+          ) : (
+            <div className="flex justify-start">
+              <div className="bubble-agent md-prose typing">
+                <span />
+                <span />
+                <span />
+              </div>
             </div>
-          </div>
-        )}
+          ))}
 
         <div ref={bottomRef} />
       </div>

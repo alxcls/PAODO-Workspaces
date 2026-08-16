@@ -38,6 +38,20 @@ function params(
 }
 
 describe("runBroker", () => {
+  it("pins the provider cache scope to the persisted conversation", async () => {
+    let received: RunAgentOptions | undefined;
+    const run = async function* (_m: unknown, _u: unknown, _d: unknown, _id: unknown, options: RunAgentOptions) {
+      received = options;
+      yield { type: "done" } as AgentEvent;
+    } as unknown as typeof import("./runner").runAgent;
+    const p = params(run, { runOptions: { conversationId: "wrong-conversation" } });
+
+    broker.startRun(p);
+    await tick();
+
+    expect(received?.conversationId).toBe(p.conversationId);
+  });
+
   it("replays buffered events to a late subscriber, then streams live ones", async () => {
     const gate = deferred();
     const run = async function* () {

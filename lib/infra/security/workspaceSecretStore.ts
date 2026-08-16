@@ -1,37 +1,29 @@
-// Per-workspace secret store. Secret values must stay recoverable (the proxy injects them), so
-// they are stored reversibly — but encrypted at rest (AES-256-GCM, secretsEncryption.ts) so
-// backups/snapshots of data/ don't expose plaintext. Legacy plaintext files are migrated to the
-// encrypted envelope on first load.
+// Per-workspace view of the proxy-injection vault. Secret values must stay recoverable because the
+// proxy injects them. This vault and its master key are independent from the provider-key pair, so
+// the sidecar can decrypt exactly this credential class and no other.
 // The values are never exposed through the API — only metadata (name, allowed hosts) is returned.
 // Each secret gets a stable opaque proxy token (e.g. __pxy_wsId_NAME__) injected into the
 // container environment instead of the real value. The credential proxy swaps the token for
 // the real value in outbound HTTPS headers.
-import { readFileSync } from "fs";
 import { createHash } from "crypto";
-import path from "path";
-import { WORKSPACES_ROOT } from "../paths";
-import { atomicSaveJson } from "../jsonPersist";
-import { createAuditLogger, createLogger } from "../logger";
-import { isEncEnvelope, encryptToEnvelope, decryptFromEnvelope } from "./secretsEncryption";
+import { createAuditLogger } from "../logger";
+import {
+  WORKSPACE_SECRET_VAULT_FILE,
+  assertWorkspaceSecretVaultAvailable,
+  commitWorkspaceSecrets,
+  reloadWorkspaceSecretVault,
+  workspaceSecretRecords,
+  type VaultWorkspaceSecretEntry,
+  type VaultWorkspaceSecrets,
+} from "./workspaceSecretVault";
 
-const log = createLogger("secretStore");
 const audit = createAuditLogger("secretStore");
 
-const FILE = path.join(WORKSPACES_ROOT, ".workspace-secrets.json");
 // Exposed so the credential-proxy sidecar (a separate process) can watch it for changes.
-export const SECRET_STORE_FILE = FILE;
+export const SECRET_STORE_FILE = WORKSPACE_SECRET_VAULT_FILE;
 
-interface SecretEntry {
-  value: string;
-  createdAt: string;
-  // Hosts the value may be injected into (e.g. ["api.openai.com", "github.com"]). The proxy only
-  // swaps the token for the real value on requests to these hosts; every other host is a plain
-  // tunnel. A secret with no hosts configured is never injected (nothing to intercept).
-  domains?: string[]; // present on new entries; legacy entries used singular `domain` below
-  domain?: string;
-}
-
-type Store = Record<string, Record<string, SecretEntry>>;
+type SecretEntry = VaultWorkspaceSecretEntry;
+type Store = VaultWorkspaceSecrets;
 
 // A domain and the tokens the proxy may inject on requests to that domain.
 export interface DomainRule {
@@ -50,49 +42,12 @@ export function normalizeDomain(input: string): string {
     .replace(/\.$/, "");
 }
 
-const g = global as typeof global & { _workspaceSecrets?: Store };
-let migrateLegacy = false;
-let initialLoadError: unknown = null;
-if (!g._workspaceSecrets) {
-  g._workspaceSecrets = {};
-  try {
-    const parsed: unknown = JSON.parse(readFileSync(FILE, "utf-8"));
-    const encrypted = isEncEnvelope(parsed);
-    const loaded = encrypted ? (JSON.parse(decryptFromEnvelope(parsed)) as Store) : (parsed as Store);
-    // Validate/coerce before exposing the loaded object globally. A malformed legacy or decrypted
-    // payload must follow the same production-fatal path as bad JSON/authentication, not throw at
-    // module evaluation before server.ts can emit the dedicated fatal record.
-    upgradeStoreDomains(loaded);
-    g._workspaceSecrets = loaded;
-    if (!encrypted) {
-      // Legacy plaintext store from before encryption at rest — load it, then re-save encrypted
-      // below so the plaintext doesn't linger on disk until the next mutation.
-      migrateLegacy = true;
-    }
-  } catch (err) {
-    // ENOENT is the normal first-run case. Anything else (tampered/corrupt ciphertext, wrong
-    // key) fails closed: start empty rather than crash; the next setSecret overwrites the file.
-    // The error log is the recovery signal.
-    if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
-      initialLoadError = err;
-      log.error(
-        {
-          event: "secret_store_load_failed",
-          outcome: "empty_secret_store_used",
-          err,
-          filePath: FILE,
-        },
-        "failed to load secret store — starting empty",
-      );
-    }
-  }
-}
-const store = g._workspaceSecrets;
+const store: Store = workspaceSecretRecords();
 
 /** Production startup calls this before accepting requests to prevent an empty fallback from
  * overwriting an existing store that could not be read or decrypted. */
 export function assertSecretStoreAvailable(): void {
-  if (initialLoadError) throw initialLoadError;
+  assertWorkspaceSecretVaultAvailable();
 }
 
 function sanitizeDomains(domains: string[]): string[] {
@@ -107,68 +62,9 @@ function sanitizeDomains(domains: string[]): string[] {
   return out.sort();
 }
 
-function coerceEntryDomains(entry: SecretEntry): string[] {
-  if (entry.domains?.length) {
-    entry.domains = sanitizeDomains(entry.domains);
-    if (entry.domains.length) return entry.domains;
-  }
-  const legacy = entry.domain ? [entry.domain] : [];
-  const sanitized = sanitizeDomains(legacy);
-  entry.domains = sanitized;
-  delete entry.domain;
-  return sanitized;
+function save(next: Store, context: { operation: string; wsId?: string; name?: string }): void {
+  commitWorkspaceSecrets(next, context);
 }
-
-function upgradeStoreDomains(target: Store): void {
-  for (const ws of Object.values(target)) {
-    for (const entry of Object.values(ws)) {
-      coerceEntryDomains(entry);
-    }
-  }
-}
-
-function save(context: { operation: string; wsId?: string; name?: string }) {
-  try {
-    atomicSaveJson(FILE, encryptToEnvelope(JSON.stringify(store)));
-  } catch (err) {
-    log.error(
-      {
-        event: "secret_store_save_failed",
-        outcome: "secret_change_not_persisted",
-        err,
-        filePath: FILE,
-        ...context,
-      },
-      "failed to save secret store",
-    );
-    throw err;
-  }
-}
-
-if (migrateLegacy) {
-  let migrationPrepared = false;
-  try {
-    upgradeStoreDomains(store);
-    migrationPrepared = true;
-    save({ operation: "migrate_legacy_store" });
-    audit.info({ event: "secret_store_encrypted" }, "migrated plaintext secret store to encrypted format");
-  } catch (err) {
-    // Once preparation succeeded, save() owns the detailed persistence error. A malformed legacy
-    // structure can fail before save() is reached, so retain a distinct record for that case.
-    if (!migrationPrepared) {
-      log.error(
-        {
-          event: "secret_store_migration_failed",
-          outcome: "legacy_store_not_migrated",
-          err,
-          filePath: FILE,
-        },
-        "failed to prepare legacy secret store migration",
-      );
-    }
-  }
-}
-upgradeStoreDomains(store);
 
 // Versioned opaque values placed in the container instead of real secret values.  They must be
 // safe to pass to common CLIs as well as HTTP clients: a surprising number validate `--token`
@@ -225,27 +121,27 @@ export const RESERVED_SECRET_NAMES: ReadonlySet<string> = new Set([
 ]);
 
 export function setSecret(wsId: string, name: string, value: string, domains: string[]): void {
-  if (!store[wsId]) store[wsId] = {};
+  const next = structuredClone(store);
+  if (!next[wsId]) next[wsId] = {};
   const sanitized = sanitizeDomains(domains);
-  store[wsId][name] = { value, createdAt: new Date().toISOString(), domains: sanitized };
-  save({ operation: "set_secret", wsId, name });
+  next[wsId][name] = { value, createdAt: new Date().toISOString(), domains: sanitized } satisfies SecretEntry;
+  save(next, { operation: "set_secret", wsId, name });
   audit.info({ wsId, name, event: "workspace_secret_set" }, "secret set");
 }
 
 export function deleteSecret(wsId: string, name: string): boolean {
   if (!store[wsId]?.[name]) return false;
-  delete store[wsId][name];
-  if (Object.keys(store[wsId]).length === 0) delete store[wsId];
-  save({ operation: "delete_secret", wsId, name });
+  const next = structuredClone(store);
+  delete next[wsId][name];
+  if (Object.keys(next[wsId]).length === 0) delete next[wsId];
+  save(next, { operation: "delete_secret", wsId, name });
   audit.info({ wsId, name, event: "workspace_secret_deleted" }, "secret deleted");
   return true;
 }
 
 export function listSecretMeta(wsId: string): { name: string; createdAt: string; domains: string[] }[] {
   const ws = store[wsId] ?? {};
-  // Entries are already normalized to `domains` by upgradeStoreDomains at load/reload/migrate, so
-  // read the field directly rather than re-coercing on every read.
-  return Object.entries(ws).map(([name, e]) => ({ name, createdAt: e.createdAt, domains: e.domains ?? [] }));
+  return Object.entries(ws).map(([name, e]) => ({ name, createdAt: e.createdAt, domains: e.domains }));
 }
 
 // Pick which secret should back git/gh auth for github.com. Selection is keyed off the scoped
@@ -271,7 +167,7 @@ export function getWorkspaceRules(wsId: string): DomainRule[] {
   const ws = store[wsId] ?? {};
   const byDomain = new Map<string, Map<string, string>>();
   for (const [name, entry] of Object.entries(ws)) {
-    for (const domain of entry.domains ?? []) {
+    for (const domain of entry.domains) {
       if (!domain) continue;
       let tokenMap = byDomain.get(domain);
       if (!tokenMap) {
@@ -286,8 +182,9 @@ export function getWorkspaceRules(wsId: string): DomainRule[] {
 
 export function deleteAllForWorkspace(wsId: string): void {
   if (!store[wsId]) return;
-  delete store[wsId];
-  save({ operation: "delete_workspace_secrets", wsId });
+  const next = structuredClone(store);
+  delete next[wsId];
+  save(next, { operation: "delete_workspace_secrets", wsId });
   audit.info({ wsId, event: "workspace_secrets_deleted" }, "all secrets deleted for workspace");
 }
 
@@ -297,29 +194,9 @@ export function listSecretWorkspaceIds(): string[] {
   return Object.keys(store);
 }
 
-// Re-read the on-disk secret store into memory. The credential-proxy sidecar runs in a separate
-// process from the app that writes this file, so it reloads on file change to keep injected values
-// current. Mutates `store` in place (it is a fixed reference). Failures fail closed: a missing file
-// is the normal empty case; a corrupt/tampered envelope leaves an empty store rather than throwing.
+// Re-read the workspace-secret vault into memory. The credential-proxy sidecar runs separately from
+// the app that writes it, so it reloads on file change to keep injected values current. Failures fail
+// closed: a missing or unreadable vault clears every live injection rule.
 export function reloadSecretStore(): void {
-  let next: Store = {};
-  try {
-    const parsed: unknown = JSON.parse(readFileSync(FILE, "utf-8"));
-    next = isEncEnvelope(parsed) ? (JSON.parse(decryptFromEnvelope(parsed)) as Store) : (parsed as Store);
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
-      log.error(
-        {
-          event: "secret_store_reload_failed",
-          outcome: "proxy_rules_cleared",
-          err,
-          filePath: FILE,
-        },
-        "failed to reload secret store",
-      );
-    }
-  }
-  upgradeStoreDomains(next);
-  for (const k of Object.keys(store)) delete store[k];
-  Object.assign(store, next);
+  reloadWorkspaceSecretVault();
 }

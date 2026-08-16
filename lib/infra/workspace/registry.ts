@@ -320,6 +320,69 @@ export class WorkspaceStore implements IWorkspaceStore {
     audit.info({ wsId: id, enabled, event: "workspace_internet_access_toggled" }, "internet access toggled");
     return true;
   }
+
+  /**
+   * Clear the stored model choice of every workspace pointed at a provider outside `allowed`, and
+   * report what was cleared.
+   *
+   * The workspace half of the withdrawal purgeProviderKeysExcept starts. Switching a provider off
+   * destroys its API key, so a workspace still naming it cannot run at all — and nothing said so
+   * where the choice is made: the picker rendered the withdrawn provider as an ordinary selection
+   * (it is a stored value, not a catalog entry) and the failure only surfaced in the transcript, on
+   * send. Clearing the three fields returns the workspace to "never picked", which
+   * currentModelSelection already resolves to a provider the deployment does offer — so it runs
+   * again without anyone editing it.
+   *
+   * The withdrawn choice is NOT kept for a later re-enable. The key it depended on is gone for good,
+   * and a selection nothing in the app will honour is worse than none; the audit line is what makes
+   * the previous provider recoverable afterwards.
+   *
+   * Takes the allowed list rather than reading .env, for the reason purgeProviderKeysExcept does:
+   * which providers exist and which var governs each is the provider registry's knowledge, and that
+   * module pulls the LLM SDKs an infra store must not drag in.
+   */
+  clearWithdrawnLlmSelections(allowed: readonly string[]): Array<{ workspaceId: string; provider: string }> {
+    const offered = new Set(allowed);
+    const stranded = this.listWorkspaces().filter((ws) => ws.llmProvider && !offered.has(ws.llmProvider));
+    if (stranded.length === 0) return [];
+    const cleared = stranded.map((ws) => ({ workspaceId: ws.id, provider: ws.llmProvider as string }));
+    for (const ws of stranded) {
+      ws.llmProvider = undefined;
+      ws.llmModel = undefined;
+      ws.reasoningEffort = undefined;
+    }
+    try {
+      this.save();
+    } catch (err) {
+      // Same divergence saveUpdate reports, stated for the batch: the live objects are cleared but
+      // disk still names the withdrawn providers. The caller is startup, which refuses to serve on
+      // this — so the mismatch never outlives the process.
+      log.error(
+        {
+          event: "workspace_registry_save_failed",
+          outcome: "withdrawn_llm_selections_cleared_in_memory_only",
+          err,
+          operation: "clear_withdrawn_llm_selections",
+          workspaceIds: cleared.map((entry) => entry.workspaceId),
+          filePath: REGISTRY_FILE,
+        },
+        "failed to save workspace registry after clearing withdrawn model selections",
+      );
+      throw err;
+    }
+    for (const { workspaceId, provider } of cleared) {
+      audit.warn(
+        {
+          event: "workspace_llm_selection_cleared",
+          outcome: "model_selection_reset_to_default",
+          workspaceId,
+          provider,
+        },
+        "provider withdrawn by configuration — the workspace's model selection was cleared",
+      );
+    }
+    return cleared;
+  }
 }
 
 // ---- Default production singleton ----
@@ -356,4 +419,3 @@ export const defaultWorkspaceStore = new WorkspaceStore({
   load: defaultLoad,
   initRepo: (id, dir) => defaultWorkspaceVersioning.initRepo(id, dir),
 });
-

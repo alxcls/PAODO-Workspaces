@@ -1,7 +1,5 @@
-// Types for a workspace skill definition — one JSON file per skill under
-// data/<workspace-name>/.skills/. A skill is a named action with a typed input
-// (`input`) and a typed output (`output`), both expressed as JSON Schema.
-// The platform enforces both sides of the contract in executeSkill.
+// Workspace skill definitions — one JSON file per skill under data/<workspace-name>/.skills/. A
+// skill is a named action with JSON Schema input and output, both enforced in executeSkill.
 
 /** Loose JSON Schema shape — we validate with ajv at runtime, not at the type level. */
 export interface SkillSchema {
@@ -51,9 +49,13 @@ export type SkillErrorCode =
   | "CANCELLED"
   | "CAPACITY_REACHED"
   | "INFRASTRUCTURE_UNAVAILABLE"
-  // The callee's LLM provider account has no credit left. Distinct from EXECUTION_ERROR because
-  // nothing the caller does — different args, a retry, another skill on the same callee — changes it.
+  // The callee cannot reach a working model, and no retry the caller makes changes that — only an
+  // operator can. Mirrors TERMINAL_PROVIDER_CODES; a retryable cause stays EXECUTION_ERROR.
   | "PROVIDER_CREDIT_EXHAUSTED"
+  | "PROVIDER_KEY_INVALID"
+  | "PROVIDER_KEY_MISSING"
+  | "MODEL_UNAVAILABLE"
+  | "PROVIDER_UNAVAILABLE"
   | "EXECUTION_ERROR";
 
 /**

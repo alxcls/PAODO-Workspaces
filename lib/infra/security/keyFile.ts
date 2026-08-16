@@ -1,5 +1,5 @@
 // Generate a host-only secret key and persist it with owner-only permissions (0600). Centralized
-// so every place that mints an at-rest key file (the proxy HMAC key, the secrets-encryption key)
+// so every place that mints an at-rest key file (proxy HMAC and both vault-encryption keys)
 // gets the restrictive mode bits right — a missed chmod on any of them would leak the key to other
 // host users. Callers own the read/caching/"regenerate on corrupt" policy around it, which differs
 // between the startup-provisioned proxy key and the lazily-provisioned secrets key.

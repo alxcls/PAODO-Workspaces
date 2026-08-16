@@ -1,17 +1,11 @@
-// Context compaction primitives, driven by the `compact_context` tool signal in the runner.
-// The runner is the only owner of the live `messages` array, so all surgery happens here,
-// AFTER a turn fully commits — that keeps every tool_call paired with its tool_result
-// (Anthropic's hard invariant) since we only ever keep or wipe complete turns.
-//
-// Two primitives compose three agent-chosen levels:
-//   light  — strip re-derivable tool output in place (no LLM call, no deletion)
-//   medium — strip + summarize the old portion, keep recent turns verbatim
-//   hard   — summarize everything into a single brief: a clean slate
+// Context compaction, driven by the `compact_context` tool signal. Runs AFTER a turn fully commits,
+// so every tool_call keeps its tool_result: levels light/medium/hard only keep or wipe whole turns.
 
 import { AIMessage, HumanMessage, ToolMessage } from "@langchain/core/messages";
 import type { BaseMessage } from "@langchain/core/messages";
-import type { BaseChatModel } from "@langchain/core/language_models/chat_models";
+import { contentToText } from "@/lib/transcript/content";
 import { createLogger } from "../infra/logger";
+import type { ModelGateway } from "./modelGateway";
 
 const log = createLogger("compact");
 
@@ -19,9 +13,8 @@ export type CompactLevel = "light" | "medium" | "hard";
 
 export const CLEARED = "[content cleared to save context]";
 
-// Tools whose output is bulky and trivially re-derivable (re-read the file, re-run the search).
-// Stripping these is the cheap win against O(n²) compounding. Deliberately excludes todo_write
-// (the agent's live checklist), compact_context (carries next_step), and call_agent/list_agents.
+// Bulky and trivially re-derivable output — the cheap win against O(n²) compounding. Excludes
+// todo_write (live checklist), compact_context (carries next_step), and call_agent/list_agents.
 export const STRIPPABLE_TOOLS = new Set<string>(["file_read", "glob", "list_directory", "http_get", "execute_command"]);
 
 // How many trailing messages medium tries to keep verbatim before snapping to a turn boundary.
@@ -57,27 +50,20 @@ export function stripToolOutputs(messages: BaseMessage[]): void {
   }
 }
 
-// One tool-less LLM turn that condenses the given history into a brief.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function summarizeHistory(model: any, history: BaseMessage[], nextStep: string): Promise<string> {
-  const res = await model.invoke([
-    ...history,
-    new HumanMessage(`${COMPACT_PROMPT}\n\nThe next step after this summary is: ${nextStep}`),
-  ]);
-  const content = res?.content;
-  if (typeof content === "string") return content;
-  if (Array.isArray(content)) {
-    return content
-      .map((b: unknown) => (b && typeof b === "object" && "text" in b ? (b as { text: string }).text : ""))
-      .join("");
-  }
-  return String(content ?? "");
+// One tool-less LLM turn condensing history into a brief. It sends the whole conversation, so it is
+// routinely the app's largest request — and went unmeasured until it came through the gateway.
+async function summarizeHistory(model: ModelGateway, history: BaseMessage[], nextStep: string): Promise<string> {
+  const { message } = await model.invoke(
+    [...history, new HumanMessage(`${COMPACT_PROMPT}\n\nThe next step after this summary is: ${nextStep}`)],
+    { stage: "compaction" },
+  );
+  return contentToText(message.content);
 }
 
 // Applies the chosen level to `messages` IN PLACE (splice preserves the array reference the
 // runner and the route layer both hold). messages[0] is the SystemMessage and is always kept.
 export async function applyCompaction(
-  model: BaseChatModel,
+  model: ModelGateway,
   messages: BaseMessage[],
   level: CompactLevel,
   nextStep: string,
@@ -100,10 +86,8 @@ export async function applyCompaction(
     return;
   }
 
-  // medium: summarize the head, keep a recent verbatim tail. Snap the tail boundary forward to
-  // the next AIMessage so the spliced sequence is [system, Human(summary), AIMessage, …] —
-  // clean user→assistant alternation, and an AIMessage's tool_calls keep their following
-  // ToolMessages (which sit in the tail). Strip the kept tail too, for extra savings.
+  // medium: summarize the head, keep a verbatim tail. The boundary snaps forward to the next
+  // AIMessage for clean alternation, and so its tool_calls keep the ToolMessages that follow.
   let cut = Math.max(1, messages.length - KEEP_RECENT);
   while (cut < messages.length && !(messages[cut] instanceof AIMessage)) cut++;
 

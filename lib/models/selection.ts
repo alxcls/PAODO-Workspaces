@@ -7,8 +7,8 @@
 // server-only modules (lib/agent/buildModel.ts pulls the LLM SDKs), so instead of importing them this
 // module takes the selected provider's vocabulary as data — the server reads it from the registry, the
 // client from GET /api/models, which serves that same registry. Nothing here imports at runtime beyond
-// DEFAULT_LLM, itself a plain const in a type-only module.
-import { DEFAULT_LLM, type ReasoningEffort } from "@/lib/models/llmSelection";
+// NO_DIAL_EFFORT, itself a plain const in a type-only module.
+import { NO_DIAL_EFFORT, type ReasoningEffort } from "@/lib/models/llmSelection";
 
 /** What the selected provider accepts. Empty `reasoningEfforts` means the provider has no effort dial. */
 export interface ModelVocabulary {
@@ -62,6 +62,36 @@ export function defaultEffortFor(vocabulary: ModelVocabulary): ReasoningEffort {
 }
 
 /**
+ * The selection a workspace that has never picked one runs and displays: the first available
+ * provider, its first model, that provider's default effort.
+ *
+ * `providers` arrives already filtered and already ordered by the caller — availability is an .env
+ * question, and answering it needs the provider registry, which pulls the LLM SDKs and cannot be
+ * imported here (see this module's header). So the rule lives here, where it is testable and safe to
+ * import from a client component, and the environment lookup stays in lib/agent/buildModel.ts.
+ *
+ * All three fields are empty when nothing is available — a deployment that has switched every
+ * provider off. Startup no longer refuses in that state (it cannot: keys are entered in the app, so
+ * refusing to boot would make the screen that fixes it unreachable), so this is a state the running
+ * app has to render. An empty picker and a run that stops naming the reason are both truthful.
+ */
+export function firstAvailableSelection(
+  providers: readonly string[],
+  vocabularyFor: (provider: string) => ModelVocabulary,
+): ModelSelection {
+  const [provider] = providers;
+  if (!provider) return { provider: "", model: "", reasoningEffort: NO_DIAL_EFFORT };
+  const vocabulary = vocabularyFor(provider);
+  return {
+    provider,
+    model: defaultModelFor(vocabulary),
+    // A provider with no dial stores the uniform placeholder rather than a level it would reject —
+    // defaultEffortFor has nothing to return from an empty list.
+    reasoningEffort: vocabulary.reasoningEfforts.length > 0 ? defaultEffortFor(vocabulary) : NO_DIAL_EFFORT,
+  };
+}
+
+/**
  * Completes a partial model choice against the current selection and the chosen provider's vocabulary.
  *
  * Resolution is per field, so any subset works. An omitted provider keeps the current one. An omitted
@@ -90,9 +120,9 @@ export function resolveModelSelection(
   const modelChanged = model !== current.model;
 
   if (vocabulary.reasoningEfforts.length === 0) {
-    // The stored value is a placeholder the agent never sends. Overwriting it with the default keeps
-    // every no-dial provider reading the same rather than preserving whatever the last one used.
-    return { provider, model, reasoningEffort: DEFAULT_LLM.reasoningEffort };
+    // The stored value is a placeholder the agent never sends. Overwriting it keeps every no-dial
+    // provider reading the same rather than preserving whatever the last one used.
+    return { provider, model, reasoningEffort: NO_DIAL_EFFORT };
   }
 
   const reasoningEffort =

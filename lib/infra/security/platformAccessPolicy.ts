@@ -5,6 +5,11 @@
 // route. DELETE on a workspace is irreversible and takes its directory with it.
 // /api/settings/cli-access is deliberately absent: it mints and rotates the very token used to
 // authenticate here, so a leaked key must not be able to renew itself.
+// /api/settings/provider-keys is absent for the neighbouring reason: PUT and DELETE there decide
+// which account the deployment's model spend is billed to, so a leaked key must not be able to
+// redirect it or destroy the working one. Its GET is absent too — not because status is sensitive,
+// but because that response carries each key's masked last characters, which the plain `hasKey` flag
+// on /api/models below deliberately does not.
 
 /**
  * A rule for a route under one workspace: `/api/workspaces/<id>/<suffix>`, or the workspace itself
@@ -26,8 +31,9 @@ const RULES: ReadonlyArray<{
   // The provider/model/effort catalog. Read-only and workspace-independent, and the counterpart to the
   // coherence rules on workspace PATCH: a caller that must send a model the provider actually serves
   // needs somewhere to read the valid combinations rather than discovering them through rejections.
-  // Discloses which providers have an API key set in .env, which is what makes the list useful — it
-  // offers only providers that can authenticate.
+  // Now lists every provider this deployment offers, keyed or not, and reports which can authenticate
+  // as a `hasKey` boolean — so a caller can tell "this model is not served" from "nobody has paid for
+  // this provider yet" without either being discovered through a failed run.
   { method: "GET", pathname: /^\/api\/models$/ },
   { method: "GET", pathname: /^\/api\/workspaces$/ },
   { method: "POST", pathname: /^\/api\/workspaces$/ },

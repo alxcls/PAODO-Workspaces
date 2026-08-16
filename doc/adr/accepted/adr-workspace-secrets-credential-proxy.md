@@ -14,20 +14,21 @@ installs and clones (pypi, apt, github) must keep working; no new datastore (met
 host); shared runtime state must survive the Next.js route/custom-server module split (held on
 `global`).
 
-This is a leak-resistance measure, not a vault — see Consequences.
+This is a leak-resistance measure, not a hardened external secrets manager — see Consequences.
 
 Decision
 
 A transparent, per-workspace **credential proxy** swaps opaque tokens for real values on outbound
 HTTPS. The container never receives a plaintext secret.
 
-1. Tokens in the container, values encrypted on the host. Each secret (name, value, target domain)
-   is stored in `data/.workspace-secrets.json`, AES-256-GCM encrypted at rest
-   (`secretsEncryption.ts`) under a host-only 32-byte key (`data/.proxy-ca/secrets-enc.key`, `0600`,
-   self-provisioned on first use; legacy plaintext migrates on load; corrupt file fails closed to an
-   empty store). The container gets an opaque token per secret, `__pxy_<wsId>_<NAME>__`, as env var
-   `<NAME>`. The API and system prompt only ever expose metadata, never the value.
-   `workspaceSecretStore.ts`.
+1. Tokens in the container, values encrypted on the host. Workspace secrets and provider API keys
+   occupy independent AES-256-GCM vaults protected by independent self-provisioned 32-byte master
+   keys (`0600`). Workspace data and all four credential components use separate storage roots.
+   Docker maps them to `workspaces`, `provider-vault`, `provider-key`, `workspace-secret-vault`, and
+   `workspace-secret-key` volumes. A plaintext, malformed, corrupt, or wrongly keyed vault is
+   rejected; this greenfield format has no legacy migration.
+   The container gets a stable opaque token per workspace secret as env var `<NAME>`. The API and
+   system prompt only ever expose metadata, never the value. `workspaceSecretStore.ts`.
 
 2. The proxy is the container's sole egress. Containers launch with `HTTP(S)_PROXY` pointing at
    `host.docker.internal:9998` (`CREDENTIAL_PROXY_PORT`). The proxy URL carries the workspace id as
@@ -65,6 +66,11 @@ HTTPS. The container never receives a plaintext secret.
    when the secret set changes, the container is recreated so its env reflects it. Deleting a
    workspace clears its secrets and rules.
 
+9. Sidecar boundary. `credproxy` is built from a dedicated multi-stage Dockerfile. Its runtime image
+   contains one bundled proxy entry point and only `pino`/`node-forge`, not the app, Next.js,
+   provider SDKs or Docker tooling. Its root filesystem is read-only, with a small no-exec `/tmp`.
+   It mounts the workspace-secret vault/key read-only and never mounts the provider vault/key.
+
 Consequences
 
 Enables
@@ -72,12 +78,15 @@ Enables
 - Agents call third-party services with a credential they never possess; a careless or literal-echo
   leak exposes only the opaque token.
 - Each secret is scoped to exactly one host; a key for one API is never injected elsewhere.
-- No new datastore; encryption protects backups/snapshots.
+- No new service; an encrypted-vault snapshot without its separately stored matching key does not
+  reveal credentials, and a workspace-data backup contains no credential material.
 
 Costs / risks
 
-- The proxy is a MITM for configured domains: the CA key and encryption key on the host are now
-  sensitive assets (`0600`).
+- The proxy is a MITM for configured domains: the CA key and workspace-secret master key on the host
+  are sensitive assets (`0600`). The sidecar can decrypt workspace-injected secrets by design, but
+  its image, mounts and key material do not provide access to provider API keys. Sandbox containers
+  can access neither vault nor either real secret value.
 - A single shared process on every container's egress (bounded 64 KB header / 10 MB body reads guard
   against OOM); `destinationGuard` is load-bearing platform-wide — treat changes as security-critical.
 - Does NOT stop: an attacker with host access (keys live there); exfiltration via an upstream the
@@ -99,6 +108,7 @@ Notes
 
 - PRD: doc/prd/accepted/prd-workspace-third-party-api-keys.md (Shipped).
 - Impl: lib/infra/proxy/{credentialProxy,proxyCA,destinationGuard,index}.ts,
-  lib/infra/security/{workspaceSecretStore,secretsEncryption}.ts, containerManager.ts, server.ts.
+  lib/infra/security/{providerKeyVault,workspaceSecretVault,workspaceSecretStore,vaultEncryption}.ts,
+  containerManager.ts, proxyEntry.ts, server.ts, Dockerfile.credproxy.
 - Related: adr-container-per-workspace-sandbox,
   adr-metadata-storage-json-vs-db, adr-single-instance-in-process-state.

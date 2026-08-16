@@ -2,10 +2,9 @@
 // covers exactly the supported providers, listModels reflects it, an unknown provider yields an
 // empty list, and every listed model has a matching pricing entry so its usage cost resolves.
 import { describe, it, expect } from "vitest";
-import { AVAILABLE_MODELS, listModels } from "./registry";
+import { AVAILABLE_MODELS, listModels, offeredModelIds } from "./registry";
 import { getRate } from "./pricing";
 import { SUPPORTED_PROVIDERS, getProviderMetadata } from "@/lib/agent/buildModel";
-import { DEFAULT_LLM } from "@/lib/models/llmSelection";
 
 describe("models catalog", () => {
   it("lists a provider's models from the curated catalog", () => {
@@ -13,6 +12,7 @@ describe("models catalog", () => {
     // Order matters for deepseek: the first entry is what a bare provider choice resolves to.
     expect(listModels("deepseek")).toEqual(["deepseek-v4-flash", "deepseek-v4-pro"]);
     expect(listModels("moonshot")).toContain("kimi-k3");
+    expect(listModels("mistral")).toEqual(["codestral-latest", "mistral-large-latest", "mistral-medium-latest"]);
   });
 
   it("returns an empty list for an unknown provider", () => {
@@ -25,8 +25,12 @@ describe("models catalog", () => {
     }
   });
 
-  it("offers the default model in its provider's list", () => {
-    expect(listModels(DEFAULT_LLM.provider)).toContain(DEFAULT_LLM.model);
+  // Every supported provider must serve at least one model: the fallback selection is the first
+  // available provider's first model, so an empty list would resolve to no model at all.
+  it("offers at least one model for every supported provider", () => {
+    for (const provider of SUPPORTED_PROVIDERS) {
+      expect(listModels(provider).length, `no models for ${provider}`).toBeGreaterThan(0);
+    }
   });
 
   it("exposes each provider's accepted reasoning-effort levels; empty hides the control", () => {
@@ -43,13 +47,13 @@ describe("models catalog", () => {
     expect(getProviderMetadata("deepseek").reasoningEfforts).toEqual([]);
     // Kimi K3 accepts low|high|max — no medium, and it always thinks, so none/minimal aren't offered.
     expect(getProviderMetadata("moonshot").reasoningEfforts).toEqual(["low", "high", "max"]);
+    // Medium exposes one binary choice: off or Mistral's supported high reasoning mode.
+    expect(getProviderMetadata("mistral").reasoningEfforts).toEqual(["none", "high"]);
   });
 
   it("has a resolvable price for every offered model", () => {
-    for (const models of Object.values(AVAILABLE_MODELS)) {
-      for (const model of models) {
-        expect(getRate(model), `missing pricing for ${model}`).toBeDefined();
-      }
+    for (const model of offeredModelIds()) {
+      expect(getRate(model), `missing pricing for ${model}`).toBeDefined();
     }
   });
 });

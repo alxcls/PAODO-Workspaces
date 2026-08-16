@@ -1,10 +1,9 @@
-// Assembles the full agent tool set and binds it to the configured LLM.
-// Provider/model/effort come from the workspace's stored selection (see loadAgentConfig below),
-// falling back to DEFAULT_LLM; .env supplies only the provider API keys.
-// Concrete infra dependencies are wired here and injected into tool constructors — tools
-// themselves only depend on the ContainerRunner interface defined in interfaces.ts.
+// Assembles the agent tool set and binds it to the configured model. The composition root: concrete
+// infra is wired here and injected, so tools depend only on the interfaces in interfaces.ts.
 
-import { buildModel, providerApiKeyEnv } from "./buildModel";
+import { buildModel, defaultModelSelection } from "./buildModel";
+import type { ModelCallObserver } from "./modelGateway";
+import { getProviderKey } from "../infra/security/providerKeyStore";
 import { applyCompaction, type CompactLevel } from "./compact";
 import { classifyToolStatus } from "./toolUtils";
 import type { PostDispatchFn } from "./interfaces";
@@ -42,7 +41,6 @@ import type {
   IWorkspaceLookup,
 } from "../infra/interfaces";
 import type { AgentConfig, PrivilegedRunner, StreamingExecFn, BackgroundExecFn } from "./interfaces";
-import { DEFAULT_LLM } from "../models/llmSelection";
 
 function makeContainerRunner(workspaceId: string, workspaceDir: string, containers: IContainerExec): PrivilegedRunner {
   return {
@@ -63,30 +61,26 @@ function makeBackgroundExecFn(
   return (command) => containers.startBackground(workspaceId, workspaceDir, command);
 }
 
-// Resolves the LLM config for a run. Provider / model / reasoning effort come from the workspace's
-// stored selection (chosen in the UI), falling back to DEFAULT_LLM when the workspace hasn't picked.
-// .env supplies ONLY the provider API keys (+ the anthropic cache flag) — never the model choice.
-// Called with no workspaceId in a few provider-agnostic spots (e.g. building a system prompt), where
-// the defaults are fine.
+// Resolves the LLM config for a run from the workspace's stored selection, falling back to the first
+// available provider so a run never lands on one .env switched off. Some callers pass no workspaceId.
 export function loadAgentConfig(workspaceId?: string): AgentConfig {
   const ws = workspaceId ? defaultWorkspaceStore.getWorkspace(workspaceId) : undefined;
-  const provider = ws?.llmProvider ?? DEFAULT_LLM.provider;
-  const model = ws?.llmModel ?? DEFAULT_LLM.model;
-  const reasoningEffort = ws?.reasoningEffort ?? DEFAULT_LLM.reasoningEffort;
-  // The key comes from the env var the provider's registry entry declares, so a new provider needs no
-  // change here. Undefined for an unknown provider — buildModel rejects it with a clear error.
-  const apiKeyEnv = providerApiKeyEnv(provider);
+  const fallback = defaultModelSelection();
+  const provider = ws?.llmProvider ?? fallback.provider;
+  const model = ws?.llmModel ?? fallback.model;
+  const reasoningEffort = ws?.reasoningEffort ?? fallback.reasoningEffort;
   return {
     provider,
     reasoningEffort,
     model,
-    apiKey: apiKeyEnv ? process.env[apiKeyEnv] : undefined,
+    // Entered in the app, not .env. Undefined when unset for this provider; runAgent's preflight
+    // catches that and names the provider, rather than letting the SDK throw about a missing key.
+    apiKey: getProviderKey(provider),
     graphEnabled: process.env.GRAPH_ENABLED !== "false",
     internetAccess: ws ? (ws.internetAccess ?? true) : false,
     anthropicCacheTtl1h: process.env.ANTHROPIC_CACHE_TTL_1H === "true",
-    // 5 minutes, not 1: a quiet command is usually a slow one (npm install, docker pull, a test suite
-    // that only prints at the end), not a hung one. The max-runtime guard below is what bounds a
-    // genuinely stuck command.
+    // 5 minutes, not 1: a quiet command is usually slow (npm install, a test suite that prints at the
+    // end), not hung. The max-runtime guard below is what bounds a genuinely stuck one.
     silenceTimeoutMs: parseInt(process.env.EXEC_SILENCE_TIMEOUT_MS ?? "", 10) || 5 * 60_000,
     maxTimeoutMs: parseInt(process.env.EXEC_MAX_TIMEOUT_MS ?? "", 10) || 30 * 60_000,
     skillInputMaxRetries: parseInt(process.env.SKILL_INPUT_MAX_RETRIES ?? "", 10) || 2,
@@ -99,12 +93,23 @@ export function buildTools(
   workspaceId: string,
   workspaceDir: string,
   config: AgentConfig,
-  deps: { containers?: IContainerManager; store?: IWorkspaceLookup; versioning?: IAgentWorkspaceVersioning } = {},
+  deps: {
+    containers?: IContainerManager;
+    store?: IWorkspaceLookup;
+    versioning?: IAgentWorkspaceVersioning;
+    /** Notified once per model call. Left out, the gateway only logs — nothing persists compaction. */
+    observe?: ModelCallObserver;
+    /** Stable conversation scope used by providers with explicit prefix-cache keys. */
+    cacheScopeId?: string;
+  } = {},
 ) {
   const containers = deps.containers ?? defaultContainerManager;
   const store = deps.store ?? defaultWorkspaceStore;
   const versioning = deps.versioning ?? getVersioning();
-  const model = buildModel(config);
+  const model = buildModel(config, {
+    ...(deps.observe ? { observe: deps.observe } : {}),
+    ...(deps.cacheScopeId ? { cacheScopeId: deps.cacheScopeId } : {}),
+  });
   const runner = makeContainerRunner(workspaceId, workspaceDir, containers);
   const streamExec = makeStreamingExecFn(workspaceId, workspaceDir, containers);
   const backgroundExec = makeBackgroundExecFn(workspaceId, workspaceDir, containers);
@@ -114,9 +119,8 @@ export function buildTools(
   const tools = [
     new ExecCommandTool(streamExec, backgroundExec, broadcast, config, workspaceDir, openOutputSink),
     new StopTaskTool(workspaceId, containers),
-    // apt_install and http_get are both entirely internet-dependent and non-functional when this
-    // workspace's network has no route out — dropped from the bound tool list (not just left to
-    // error) so the model can't even attempt them, matching the network-layer boundary.
+    // apt_install and http_get need a route out. Dropped from the bound list rather than left to
+    // error, so the model cannot even attempt them when the workspace has no network.
     ...(config.internetAccess ? [new AptInstallTool(runner)] : []),
     new FileReadTool(runner),
     new FileEditTool(runner, workspaceDir, broadcast),
@@ -154,11 +158,8 @@ export function buildTools(
   return { modelWithTools, model, toolMap, signalHandlers: buildSignalHandlers() };
 }
 
-// Signal handlers run after a tool turn settles. Adding an entry here is the ONLY change needed
-// when a new signal tool is introduced — runAgent dispatches generically via this map and never
-// changes. Exported (and closure-free — all state arrives via ctx) so it can be unit-tested
-// directly rather than through a hand-mirrored copy. Per the PostDispatchFn contract, every
-// handler catches and logs its own errors so a side-effect failure never aborts the run.
+// Signal handlers run after a tool turn settles; a new signal tool needs only an entry here. Closure-
+// free so it is directly testable, and each handler catches its own errors per the PostDispatchFn contract.
 export function buildSignalHandlers(): Record<string, PostDispatchFn> {
   return {
     workspace_restore: async (args, resultStr, ctx) => {

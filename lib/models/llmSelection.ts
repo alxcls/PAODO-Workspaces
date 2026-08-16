@@ -14,16 +14,24 @@
 export type ReasoningEffort = "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 
 // Per-workspace LLM selection: provider + model + reasoning effort are chosen in the UI and stored on
-// the workspace record (not in .env). When a workspace has made no choice, the agent falls back to
-// DEFAULT_LLM. .env carries only the provider API keys.
-export interface WorkspaceLlmSelection {
-  provider: string;
-  model: string;
-  reasoningEffort: ReasoningEffort;
-}
+// the workspace record (not in .env). A workspace that has made no choice gets defaultModelSelection()
+// (lib/agent/buildModel.ts) — the first provider .env leaves switched on, not a hardcoded one.
+// There is deliberately no default-selection constant here: one would have to be kept in sync with
+// what .env actually allows, and would name a provider the deployment may have switched off.
+//
+// Note this is about the CHOICE, not about whether it can run. Whether the chosen provider has an API
+// key is a separate question, answered from the encrypted key store at the start of a run.
+//
+// The reasoning effort stored for a provider that has no effort dial. Never sent to the provider —
+// the field is not nullable, so it holds one uniform value instead of whatever the last dial-having
+// provider was left on.
+export const NO_DIAL_EFFORT: ReasoningEffort = "low";
 
-export const DEFAULT_LLM: WorkspaceLlmSelection = {
-  provider: "deepseek",
-  model: "deepseek-v4-flash",
-  reasoningEffort: "low",
-};
+/**
+ * How "thinking off" is stored: a `toggle` provider with its box unchecked runs at effort "none".
+ *
+ * This is why a `toggle` provider must offer "none" in its reasoningEfforts — there would
+ * otherwise be no storable representation of the unchecked state. lib/models/registry.test.ts
+ * asserts that invariant across every provider so a future model can't quietly violate it.
+ */
+export const THINKING_OFF_EFFORT: ReasoningEffort = "none";

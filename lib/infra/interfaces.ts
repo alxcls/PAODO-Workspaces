@@ -32,6 +32,11 @@ export interface IWorkspaceStore extends IWorkspaceCatalog {
   setWorkspaceDescription(id: string, description: string): boolean;
   setWorkspaceLlm(id: string, sel: { provider: string; model: string; reasoningEffort: ReasoningEffort }): boolean;
   setWorkspaceInternetAccess(id: string, enabled: boolean): boolean;
+  /**
+   * Clear the stored model choice of every workspace pointed at a provider outside `allowed`, and
+   * report what was cleared. Startup's counterpart to purgeProviderKeysExcept.
+   */
+  clearWithdrawnLlmSelections(allowed: readonly string[]): Array<{ workspaceId: string; provider: string }>;
 }
 
 export interface HistoryEntry {
@@ -142,7 +147,12 @@ export interface OutputSink {
 
 /** Foreground command execution inside a workspace container. */
 export interface IContainerExec {
-  exec(workspaceId: string, workspaceDir: string, cmdArgs: string[], opts?: { stdin?: DockerStdin }): Promise<DockerResult>;
+  exec(
+    workspaceId: string,
+    workspaceDir: string,
+    cmdArgs: string[],
+    opts?: { stdin?: DockerStdin },
+  ): Promise<DockerResult>;
   execStreaming(
     workspaceId: string,
     workspaceDir: string,

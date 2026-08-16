@@ -1,19 +1,23 @@
 // runAgent must leave conversation history consistent when an aborted request
 // abandons the streaming generator mid tool-call turn.
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { AIMessage, AIMessageChunk, ToolMessage, type BaseMessage } from "@langchain/core/messages";
 import { runAgent, classifyToolStatus, type AgentEvent } from "./runner";
 import { buildSignalHandlers } from "./buildTools";
+import { SUPPORTED_PROVIDERS, providerAvailabilityEnv } from "./buildModel";
+import { usageTokens } from "./modelGateway";
+import { prepareMistralMessages } from "./mistralProtocol";
 
-// runAgent mutates the conversation history (the messages array) in place. When a request is aborted
-// (the user hits escape) the SSE consumer stops pulling and the generator is abandoned via
-// `.return()` at whatever `yield` it is suspended on. The invariant these tests pin: at every
-// such suspension point, history is either missing the whole tool-call turn or has it complete
-// — never an AIMessage whose tool_calls lack their matching ToolMessages, which OpenAI rejects
-// on the next request with "An assistant message with 'tool_calls' must be followed by tool
-// messages". runAgent guarantees this by committing the AIMessage and all its ToolMessages in
-// one synchronous block, so these tests fail if that commit is ever made non-atomic again.
+// Every test below runs on "deepseek", and runAgent refuses a switched-off provider. Pinning the
+// availability vars keeps a developer's own shell from failing the whole file at preflight.
+beforeEach(() => {
+  for (const provider of SUPPORTED_PROVIDERS) vi.stubEnv(providerAvailabilityEnv(provider)!, "true");
+});
+afterEach(() => vi.unstubAllEnvs());
+
+// An abort abandons the generator at whatever yield it is suspended on. The invariant: history then
+// holds the whole tool-call turn or none of it, never tool_calls without their ToolMessages.
 
 type Chunk = AIMessageChunk;
 
@@ -31,16 +35,26 @@ function hasUnansweredToolCalls(messages: BaseMessage[]): boolean {
   });
 }
 
-// A fake model whose stream replays a scripted sequence of chunks per turn. Each turn either
-// emits tool calls (with tool_call_chunks) or plain text (final answer).
-function makeBuildTools(turns: Chunk[][], executeResult = "command ran") {
+// A fake gateway replaying scripted chunks per turn — tool calls or plain text. Returns a real
+// ModelStream handle, accumulating as it goes so usage is only correct after the loop, as in production.
+function makeBuildTools(turns: Chunk[][], executeResult = "command ran", provider = "deepseek") {
   let turn = 0;
   const modelWithTools = {
-    stream: async (_messages: BaseMessage[], _opts: { signal?: AbortSignal }) => {
+    provider,
+    model: "test-model",
+    stream: async (_messages: BaseMessage[], _call: { stage: string; signal?: AbortSignal }) => {
       const chunks = turns[turn++] ?? [];
-      return (async function* () {
-        for (const c of chunks) yield c;
-      })();
+      let accumulated: Chunk | null = null;
+      return {
+        chunks: (async function* () {
+          for (const c of chunks) {
+            accumulated = accumulated ? accumulated.concat(c) : c;
+            yield c;
+          }
+        })(),
+        accumulated: () => accumulated,
+        usage: () => usageTokens(accumulated),
+      };
     },
   };
   const toolMap = {
@@ -49,6 +63,61 @@ function makeBuildTools(turns: Chunk[][], executeResult = "command ran") {
   };
   return () => ({ modelWithTools, model: modelWithTools, toolMap, signalHandlers: {} }) as never;
 }
+
+describe("runAgent — provider-specific history compatibility", () => {
+  const history = (id: string): BaseMessage[] => [
+    new AIMessage({ content: "", tool_calls: [{ id, name: "execute_command", args: { cmd: "true" } }] }),
+    new ToolMessage({ tool_call_id: id, content: "done" }),
+  ];
+
+  it("keeps native ids for providers that accept them", async () => {
+    const messages = history("call_native_openai_id");
+    const buildAgentTools = makeBuildTools([[new AIMessageChunk({ content: "done" })]]);
+
+    for await (const _ of runAgent(messages, "continue", "/tmp/ws", "ws-1", { ...noopDeps, buildAgentTools })) {
+      // drain
+    }
+
+    expect((messages[0] as AIMessage).tool_calls![0].id).toBe("call_native_openai_id");
+    expect((messages[1] as ToolMessage).tool_call_id).toBe("call_native_openai_id");
+  });
+
+  it("leaves canonical ids unchanged for Mistral because its gateway adapts only the outbound copy", async () => {
+    const messages = history("toolu_01A09q9rDJmwvLpPCJKtxpvB");
+    const buildAgentTools = makeBuildTools([[new AIMessageChunk({ content: "done" })]], "command ran", "mistral");
+
+    for await (const _ of runAgent(messages, "continue", "/tmp/ws", "ws-1", {
+      ...noopDeps,
+      loadConfig: () => ({ provider: "mistral", model: "mistral-medium-latest", apiKey: "sk" }) as never,
+      buildAgentTools,
+    })) {
+      // drain
+    }
+
+    expect((messages[0] as AIMessage).tool_calls![0].id).toBe("toolu_01A09q9rDJmwvLpPCJKtxpvB");
+    expect((messages[1] as ToolMessage).tool_call_id).toBe("toolu_01A09q9rDJmwvLpPCJKtxpvB");
+  });
+
+  it("passes the persisted conversation id to provider construction as the cache scope", async () => {
+    const delegate = makeBuildTools([[new AIMessageChunk({ content: "done" })]], "command ran", "mistral");
+    let receivedDeps: Parameters<typeof import("./buildTools").buildTools>[3];
+    const buildAgentTools = ((...args: Parameters<typeof import("./buildTools").buildTools>) => {
+      receivedDeps = args[3];
+      return delegate();
+    }) as typeof import("./buildTools").buildTools;
+
+    for await (const _ of runAgent([], "continue", "/tmp/ws", "ws-1", {
+      ...noopDeps,
+      conversationId: "conversation-42",
+      loadConfig: () => ({ provider: "mistral", model: "mistral-medium-latest", apiKey: "sk" }) as never,
+      buildAgentTools,
+    })) {
+      // drain
+    }
+
+    expect(receivedDeps).toMatchObject({ cacheScopeId: "conversation-42" });
+  });
+});
 
 // The real production workspace_restore handler, so runner-dispatch tests exercise the same code
 // path the app runs (no hand-mirrored copy that can silently drift out of sync).
@@ -79,7 +148,9 @@ function namedToolCallChunk(name: string, id: string, args: string): Chunk {
 const noopDeps = {
   notify: () => {},
   warmContainer: () => {},
-  loadConfig: () => ({}) as never,
+  // A runnable config: an offered provider with a key. runAgent's preflight stops any run that lacks
+  // either, so a config without them would end every test below at the first yield.
+  loadConfig: () => ({ provider: "deepseek", model: "deepseek-v4-flash", apiKey: "sk-test" }) as never,
   containers: {} as never,
   store: {} as never,
 };
@@ -205,9 +276,8 @@ describe("runAgent — history stays consistent across aborts", () => {
   });
 
   it("names the empty provider account when the model refuses, instead of leaking the raw error", async () => {
-    // What 20 workspaces on one dry DeepSeek key produced: the run ends on the first turn, and
-    // `String(err)` alone ("Error: 402 Insufficient Balance") never says whose account, or that no
-    // retry can get past it.
+    // What 20 workspaces on one dry DeepSeek key produced. `String(err)` alone never says whose
+    // account it was, or that no retry can get past it.
     const buildAgentTools = () =>
       ({
         modelWithTools: {
@@ -223,7 +293,7 @@ describe("runAgent — history stays consistent across aborts", () => {
 
     for await (const event of runAgent([], "do work", "/tmp/ws", "ws-1", {
       ...noopDeps,
-      loadConfig: () => ({ provider: "deepseek", model: "deepseek-chat" }) as never,
+      loadConfig: () => ({ provider: "deepseek", model: "deepseek-v4-flash", apiKey: "sk-test" }) as never,
       buildAgentTools,
     })) {
       events.push(event);
@@ -237,11 +307,8 @@ describe("runAgent — history stays consistent across aborts", () => {
 
   it("persists a reasoning-model tool turn as coalesced text, not raw streamed blocks", async () => {
     const messages: BaseMessage[] = [];
-    // A Claude/OpenAI extended-thinking chunk: content is an array of provider blocks (a signed
-    // `thinking` block + a text block) alongside the tool call. Persisting this raw array froze
-    // streaming-only blocks (`thinking`, `input_json_delta`) into history, which a later request
-    // rejected with `unknown variant 'thinking', expected 'text'`. The tool turn must instead be
-    // saved as the coalesced text string.
+    // An extended-thinking chunk, whose content is provider blocks. Persisting the raw array froze
+    // streaming-only blocks into history, which a later request rejected. Save coalesced text instead.
     const reasoningToolChunk = new AIMessageChunk({
       content: [
         { index: 0, type: "thinking", thinking: "I should list the files.", signature: "sig" },
@@ -263,6 +330,55 @@ describe("runAgent — history stays consistent across aborts", () => {
     expect(toolTurn!.content).toBe("Let me list the files.");
     // No streaming-only artifact survives into persisted history.
     expect(JSON.stringify(messages)).not.toMatch(/thinking|input_json_delta/);
+  });
+
+  it("keeps Mistral reasoning private while restoring it for the next provider request", async () => {
+    const messages: BaseMessage[] = [];
+    const reasoningToolChunk = new AIMessageChunk({
+      content: [
+        {
+          index: 0,
+          type: "thinking",
+          thinking: [
+            { type: "text", text: "I should " },
+            { type: "text", text: "list the files." },
+          ],
+        },
+        { index: 1, type: "text", text: "Let me list the files." },
+      ] as never,
+      tool_call_chunks: [
+        { index: 2, id: "abc123XYZ", name: "execute_command", args: '{"cmd":"ls"}', type: "tool_call_chunk" },
+      ],
+    });
+    const buildAgentTools = makeBuildTools(
+      [[reasoningToolChunk], [new AIMessageChunk({ content: "done" })]],
+      "command ran",
+      "mistral",
+    );
+    const events: AgentEvent[] = [];
+
+    for await (const event of runAgent(messages, "list files", "/tmp/ws", "ws-1", {
+      ...noopDeps,
+      loadConfig: () => ({ provider: "mistral", model: "mistral-medium-latest", apiKey: "sk" }) as never,
+      buildAgentTools,
+    })) {
+      events.push(event);
+    }
+
+    const toolTurnIndex = messages.findIndex(
+      (message) => message instanceof AIMessage && (message.tool_calls?.length ?? 0) > 0,
+    );
+    const toolTurn = messages[toolTurnIndex] as AIMessage;
+    const outbound = prepareMistralMessages(messages)[toolTurnIndex] as AIMessage;
+
+    expect(toolTurn.content).toBe("Let me list the files.");
+    expect(outbound.content).toEqual([
+      { type: "thinking", thinking: [{ type: "text", text: "I should list the files." }] },
+      { type: "text", text: "Let me list the files." },
+    ]);
+    expect(events.filter((event) => event.type === "reasoning").map((event) => event.content)).toEqual([
+      "I should list the files.",
+    ]);
   });
 });
 
@@ -439,9 +555,8 @@ describe("classifyToolStatus", () => {
   });
 });
 
-// Direct coverage of the production handlers (vs. only through runner dispatch). Pins the
-// PostDispatchFn contract: each handler catches and logs its own errors so a side-effect failure
-// never escapes into the run loop.
+// Direct coverage of the production handlers, pinning the PostDispatchFn contract: each catches and
+// logs its own errors, so a side-effect failure never escapes into the run loop.
 describe("buildSignalHandlers", () => {
   function makeCtx(
     over: Partial<import("./interfaces").PostDispatchContext> = {},
@@ -526,5 +641,206 @@ describe("buildSignalHandlers", () => {
     await expect(
       buildSignalHandlers().compact_context({ level: "hard", next_step: "carry on" }, "ok", ctx),
     ).resolves.toBeUndefined();
+  });
+});
+
+// The BYOK failure path. "No key" is the state every deployment starts in, so it must end the run
+// with something the operator can act on, before anything is spent or started.
+describe("runAgent — refuses to start without a usable provider", () => {
+  // Anything reaching this means the preflight ran too late: buildTools constructs the provider
+  // client, and runAgent pre-warms a container on the way past.
+  const explode = () => {
+    throw new Error("built the model despite having no usable provider");
+  };
+
+  async function collect(config: Record<string, unknown>) {
+    const events: AgentEvent[] = [];
+    for await (const event of runAgent([], "do work", "/tmp/ws", "ws-1", {
+      ...noopDeps,
+      loadConfig: () => config as never,
+      buildAgentTools: explode as never,
+      warmContainer: explode,
+    })) {
+      events.push(event);
+    }
+    return events;
+  }
+
+  it("stops with a message naming the provider when no key is set", async () => {
+    const events = await collect({ provider: "deepseek", model: "deepseek-v4-flash" });
+
+    expect(events).toEqual([
+      { type: "error", code: "PROVIDER_KEY_MISSING", message: expect.stringContaining("No API key set for deepseek") },
+      { type: "done" },
+    ]);
+  });
+
+  it("blames the switch, not the key, for a provider this deployment withdrew", async () => {
+    vi.stubEnv("DEEPSEEK_AVAILABLE", "false");
+
+    const events = await collect({ provider: "deepseek", model: "deepseek-v4-flash" });
+
+    expect(events[0]).toMatchObject({ type: "error", code: "PROVIDER_UNAVAILABLE" });
+  });
+
+  it("stops a retired model and requires an explicit UI choice", async () => {
+    const events = await collect({ provider: "mistral", model: "mistral-small-2603", apiKey: "sk" });
+
+    expect(events).toEqual([
+      {
+        type: "error",
+        code: "MODEL_UNAVAILABLE",
+        message: expect.stringContaining("choose a current model"),
+      },
+      { type: "done" },
+    ]);
+  });
+
+  // Closing the stream properly matters as much as the message: the SSE consumer and runBroker both
+  // key off `done`, and a generator that just returns leaves the run showing as still working.
+  it("always closes the stream with done", async () => {
+    const events = await collect({ provider: "deepseek", model: "deepseek-v4-flash" });
+    expect(events.at(-1)).toEqual({ type: "done" });
+  });
+
+  it("leaves the conversation history untouched", async () => {
+    // Not even the user's message is appended: nothing happened, so replaying this conversation
+    // later must not show a turn that never ran.
+    const messages: BaseMessage[] = [];
+    for await (const _ of runAgent(messages, "do work", "/tmp/ws", "ws-1", {
+      ...noopDeps,
+      loadConfig: () => ({ provider: "deepseek", model: "deepseek-v4-flash" }) as never,
+      buildAgentTools: explode as never,
+      warmContainer: explode,
+    })) {
+      // drain
+    }
+    expect(messages).toEqual([]);
+  });
+
+  it("runs normally the moment a key is present", async () => {
+    // The same config that failed above, plus a key — so the preflight is what differed, not the
+    // surrounding setup.
+    const buildAgentTools = makeBuildTools([[new AIMessageChunk({ content: "hello" })]]);
+    const events: AgentEvent[] = [];
+    for await (const event of runAgent([], "do work", "/tmp/ws", "ws-1", {
+      ...noopDeps,
+      loadConfig: () => ({ provider: "deepseek", model: "deepseek-v4-flash", apiKey: "sk" }) as never,
+      buildAgentTools,
+    })) {
+      events.push(event);
+    }
+    expect(events.some((e) => e.type === "error")).toBe(false);
+  });
+});
+
+// Compaction is fired from a signal handler, which cannot yield into the run's event stream. Its
+// cost used to be spent and then dropped; these pin the route that now carries it to the ledger.
+describe("runAgent — compaction cost reaches the usage ledger", () => {
+  const COMPACTION_USAGE = {
+    inputTokensTotal: 40_000,
+    inputTokensCacheRead: 0,
+    inputTokensCacheWrite: 0,
+    outputTokensTotal: 300,
+    outputTokensReasoning: 0,
+  };
+
+  // Mirrors buildTools: the model it hands back reports through `deps.observe`, and the compaction
+  // handler is what spends. The runner supplies the observer, so a double must accept one.
+  function buildToolsThatCompacts(turns: Chunk[][], compactions = 1) {
+    let turn = 0;
+    const modelWithTools = {
+      stream: async () => {
+        const chunks = turns[turn++] ?? [];
+        let accumulated: Chunk | null = null;
+        return {
+          chunks: (async function* () {
+            for (const c of chunks) {
+              accumulated = accumulated ? accumulated.concat(c) : c;
+              yield c;
+            }
+          })(),
+          accumulated: () => accumulated,
+          usage: () => usageTokens(accumulated),
+          emitted: () => accumulated !== null,
+        };
+      },
+    };
+    return ((_w: string, _d: string, _c: unknown, deps: { observe?: (r: unknown) => void }) => ({
+      modelWithTools,
+      model: modelWithTools,
+      toolMap: { compact_context: { invoke: async () => "[Context compacted: hard.] Next step: go" } },
+      signalHandlers: {
+        compact_context: async () => {
+          for (let i = 0; i < compactions; i++) {
+            deps.observe?.({
+              provider: "deepseek",
+              model: "deepseek-v4-flash",
+              stage: "compaction",
+              usage: COMPACTION_USAGE,
+              durationMs: 12,
+              partial: false,
+              emitted: true,
+              concurrent: 1,
+            });
+          }
+        },
+      },
+    })) as never;
+  }
+
+  const compactCallChunk = () =>
+    new AIMessageChunk({
+      content: "",
+      tool_call_chunks: [
+        {
+          index: 0,
+          id: "call_c1",
+          name: "compact_context",
+          args: '{"level":"hard","next_step":"go"}',
+          type: "tool_call_chunk",
+        },
+      ],
+    });
+
+  async function runWithCompaction(compactions = 1): Promise<AgentEvent[]> {
+    const events: AgentEvent[] = [];
+    for await (const event of runAgent([], "do work", "/tmp/ws", "ws-1", {
+      ...noopDeps,
+      buildAgentTools: buildToolsThatCompacts(
+        [[compactCallChunk()], [new AIMessageChunk({ content: "done" })]],
+        compactions,
+      ),
+    })) {
+      events.push(event);
+    }
+    return events;
+  }
+
+  const usageEvents = (events: AgentEvent[]) => events.filter((e) => e.type === "turn_usage");
+
+  it("emits the summary request as its own usage row", async () => {
+    const rows = usageEvents(await runWithCompaction());
+    const compaction = rows.filter((r) => r.inputTokensTotal === COMPACTION_USAGE.inputTokensTotal);
+
+    expect(compaction).toHaveLength(1);
+    expect(compaction[0]).toMatchObject({ ...COMPACTION_USAGE, model: "deepseek-v4-flash", toolCalls: [] });
+  });
+
+  // A shared turnId would make the second row an update of the first, and the dashboard would show
+  // one compaction where two were paid for.
+  it("gives every compaction its own turn id, including the turn that triggered it", async () => {
+    const rows = usageEvents(await runWithCompaction(2));
+    const ids = rows.map((r) => r.turnId);
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(rows.filter((r) => r.inputTokensTotal === COMPACTION_USAGE.inputTokensTotal)).toHaveLength(2);
+  });
+
+  it("leaves the triggering turn's own row untouched", async () => {
+    const rows = usageEvents(await runWithCompaction());
+    const toolTurn = rows.find((r) => r.toolCalls.some((tc) => tc.name === "compact_context"));
+
+    expect(toolTurn).toBeDefined();
+    expect(toolTurn!.inputTokensTotal).not.toBe(COMPACTION_USAGE.inputTokensTotal);
   });
 });

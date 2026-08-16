@@ -55,17 +55,19 @@ _Demo video of PAODO in action_ :
 
 ## Quick start
 
-**Requirements:** Node.js 20+, [Docker](https://docs.docker.com/get-docker/) (running), and an OpenAI, Anthropic, or DeepSeek API key.
+**Requirements:** Node.js 20+, [Docker](https://docs.docker.com/get-docker/) (running), and an API key for at least one supported provider (OpenAI, Anthropic, DeepSeek, Moonshot, or Mistral). The key goes into the app, not into a file — see below.
 
 ```bash
 git clone https://github.com/alxcls/PAODO-Workspaces.git
 cd PAODO-Workspaces
 npm install
-cp .env.example .env          # set the API key for your provider
+cp .env.example .env          # set USERNAME and PASSWORD
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000). The workspace Docker image is built automatically on first run.
+Open [http://localhost:3000](http://localhost:3000), then add your provider API key under the gear icon → **Settings → Provider API keys**. Provider keys and per-workspace third-party secrets live in independent encrypted vaults with independent master keys, outside workspace data. Until a key is set, a workspace stops at the start of its conversation and names the provider it needs one for.
+
+The workspace Docker image is built automatically on first run.
 
 For VPS deployment, see the [deploy guide](deploy/README.md).
 
@@ -83,6 +85,13 @@ using defined input/output contracts. See [Triggers and operations](doc/trigger-
 Every sandboxed tool call — file ops, glob, shell, package installs — runs inside a per-workspace Docker container (`ws_<id>`) as a restricted non-root user, with only that workspace's directory mounted. Containers start on demand and stop after an idle timeout.
 
 Workspace metadata and network configuration are stored as JSON files under `data/`.
+
+Recoverable credentials use four storage boundaries: provider vault/key and workspace-secret
+vault/key. Docker Compose keeps each in a named volume separate from `workspaces`; local development
+uses four ignored `.paodo-…` directories. The credential proxy receives only the workspace-secret
+pair, so it cannot decrypt provider API keys. A workspace-data backup contains none of them. Treat
+each vault as sensitive encrypted material, keep its key backup elsewhere, and transfer neither half
+for a credential-free handoff. This greenfield format deliberately has no legacy-vault migration.
 
 For the full architecture, see [`doc/`](doc/).
 

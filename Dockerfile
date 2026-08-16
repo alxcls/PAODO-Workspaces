@@ -41,7 +41,6 @@ COPY public/ ./public/
 
 # Source files needed at runtime by tsx
 COPY server.ts ./
-COPY proxyEntry.ts ./
 COPY next.config.ts ./
 COPY tsconfig.json ./
 COPY Dockerfile.workspace ./
@@ -50,7 +49,12 @@ COPY app/ ./app/
 COPY components/ ./components/
 COPY scripts/ ./scripts/
 
-RUN mkdir -p /app/data && \
+RUN mkdir -p \
+      /app/data \
+      /app/provider-vault \
+      /app/provider-key \
+      /app/workspace-secret-vault \
+      /app/workspace-secret-key && \
     chown -R node:node /app
 USER node
 

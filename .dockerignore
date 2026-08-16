@@ -8,3 +8,10 @@ Dockerfile
 **/*.test.ts
 **/*.integration.test.ts
 e2e
+.paodo-provider-vault
+.paodo-provider-key
+.paodo-workspace-secret-vault
+.paodo-workspace-secret-key
+# Never send unused legacy credential artifacts to either Docker build context.
+.paodo-secret-vault
+.paodo-secret-key

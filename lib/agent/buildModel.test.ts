@@ -1,14 +1,15 @@
-// The Anthropic thinking API split by model generation: newer models (Opus 4.7+, Sonnet 5) reject
-// the legacy thinking:{type:"enabled", budget_tokens} shape with a 400 and require adaptive thinking
-// + output_config.effort; older models (Haiku 4.5) still take the legacy budget and reject effort.
+// The Anthropic thinking API split by model generation: newer models 400 on the legacy budget shape
+// and need adaptive thinking + effort; older ones still take the legacy budget and reject effort.
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import type { ChatOpenAI } from "@langchain/openai";
 import {
   anthropicThinkingConfig,
+  availableProviders,
+  buildChatModel,
   buildModel,
-  configuredProviders,
-  hasConfiguredProviderApiKey,
+  defaultModelSelection,
   SUPPORTED_PROVIDERS,
-  providerApiKeyEnv,
+  providerAvailabilityEnv,
 } from "./buildModel";
 import type { LLMProviderConfig } from "./interfaces";
 
@@ -53,10 +54,9 @@ describe("anthropicThinkingConfig", () => {
   });
 });
 
-// The builders are the single point where a config becomes a real client, so these assert that the
-// selected model/key actually reach the SDK. Every provider's key env var is cleared first: the SDKs
-// fall back to process.env on their own, which would mask a builder that never wired the key through.
-describe("buildModel", () => {
+// Where a config becomes a real client, so these assert the model/key actually reach the SDK.
+// Targets buildChatModel: these are claims about vendor fields the ModelGateway deliberately hides.
+describe("buildChatModel", () => {
   const config = (over: Partial<LLMProviderConfig>): LLMProviderConfig => ({
     provider: "openai",
     model: "gpt-5.5",
@@ -66,11 +66,14 @@ describe("buildModel", () => {
     ...over,
   });
 
+  // The SDKs fall back to these on their own when passed no apiKey. A developer's shell still exports
+  // them, and a build that picked one up would pass these assertions while proving nothing.
+  const SDK_FALLBACK_ENV = ["OPENAI_API_KEY", "ANTHROPIC_API_KEY"];
+
   let saved: Record<string, string | undefined>;
   beforeEach(() => {
     saved = {};
-    for (const p of SUPPORTED_PROVIDERS) {
-      const env = providerApiKeyEnv(p)!;
+    for (const env of SDK_FALLBACK_ENV) {
       saved[env] = process.env[env];
       delete process.env[env];
     }
@@ -87,8 +90,9 @@ describe("buildModel", () => {
     ["openai", "gpt-5.5"],
     ["deepseek", "deepseek-v4-pro"],
     ["moonshot", "kimi-k3"],
+    ["mistral", "mistral-medium-latest"],
   ])("wires the selected model and key into the %s client", (provider, model) => {
-    const m = buildModel(config({ provider, model, apiKey: `key-${provider}` })) as unknown as {
+    const m = buildChatModel(config({ provider, model, apiKey: `key-${provider}` })) as unknown as {
       model: string;
       apiKey: string;
     };
@@ -96,59 +100,214 @@ describe("buildModel", () => {
     expect(m.apiKey).toBe(`key-${provider}`);
   });
 
-  // Kimi's strongest effort is "max", which OpenAI's effort union doesn't have — so it can't ride the
-  // typed `reasoningEffort` field and goes through modelKwargs instead. If that ever regresses to the
-  // typed field, "max" would be dropped or rejected and every turn would silently run at a lower
-  // effort, so assert the raw request field carries the value the workspace picked.
+  // These share OpenAI's client class, so a dropped `configuration` silently sends this vendor's key
+  // to api.openai.com. Asserted on `clientConfig` because the `client` itself is built lazily.
+  it.each([
+    ["deepseek", "deepseek-v4-pro", "https://api.deepseek.com/v1"],
+    ["moonshot", "kimi-k3", "https://api.moonshot.ai/v1"],
+    ["mistral", "mistral-medium-latest", "https://api.mistral.ai/v1"],
+  ])("points %s at its own endpoint, never another vendor's", (provider, model, baseURL) => {
+    const m = buildChatModel(config({ provider, model, apiKey: `key-${provider}` })) as unknown as {
+      clientConfig: { baseURL?: string; apiKey?: string };
+    };
+    expect(m.clientConfig.baseURL).toBe(baseURL);
+    expect(m.clientConfig.apiKey).toBe(`key-${provider}`);
+  });
+
+  // OpenAI itself is the one provider that must NOT carry an override: it talks to the SDK default.
+  // Pinned separately because the assertion is the absence of a value, which no table row expresses.
+  it("leaves openai on the SDK's default endpoint", () => {
+    const m = buildChatModel(config({ provider: "openai" })) as unknown as {
+      clientConfig: { baseURL?: string };
+    };
+    expect(m.clientConfig.baseURL).toBeUndefined();
+  });
+
+  // Kimi's "max" is absent from OpenAI's effort union, so it rides modelKwargs. A regression to the
+  // typed field would silently drop it and run every turn at a lower effort.
   it("passes the Kimi reasoning effort through as a raw reasoning_effort request field", () => {
-    const m = buildModel(config({ provider: "moonshot", model: "kimi-k3", reasoningEffort: "max" })) as unknown as {
+    const m = buildChatModel(config({ provider: "moonshot", model: "kimi-k3", reasoningEffort: "max" })) as unknown as {
       modelKwargs: Record<string, unknown>;
     };
     expect(m.modelKwargs).toEqual({ reasoning_effort: "max" });
   });
 
+  it.each([
+    ["high", { reasoning_effort: "high" }],
+    ["none", undefined],
+  ])("maps the Mistral Medium thinking checkbox value %s", (reasoningEffort, expected) => {
+    const m = buildChatModel(
+      config({ provider: "mistral", model: "mistral-medium-latest", reasoningEffort: reasoningEffort as never }),
+    ) as unknown as { modelKwargs?: Record<string, unknown> };
+    expect(m.modelKwargs?.reasoning_effort).toBe(expected?.reasoning_effort);
+  });
+
+  it.each(["codestral-latest", "mistral-large-latest"])(
+    "does not send reasoning_effort to %s, which does not support it",
+    (model) => {
+      const m = buildChatModel(config({ provider: "mistral", model, reasoningEffort: "high" })) as unknown as {
+        modelKwargs?: Record<string, unknown>;
+      };
+      expect(m.modelKwargs ?? {}).not.toHaveProperty("reasoning_effort");
+    },
+  );
+
+  // Asserted on the request body, not on modelKwargs: ChatOpenAI writes prompt_cache_key from its
+  // typed field AFTER spreading modelKwargs, so a key parked in modelKwargs is overwritten with
+  // undefined and never sent — a constructor-shaped assertion passes while nothing is ever cached.
+  it("sends a stable Mistral prompt cache key without dropping reasoning configuration", () => {
+    const m = buildChatModel(config({ provider: "mistral", model: "mistral-medium-latest", reasoningEffort: "high" }), {
+      cacheScopeId: "conversation-42",
+    }) as ChatOpenAI;
+
+    expect(m.invocationParams({})).toMatchObject({
+      reasoning_effort: "high",
+      prompt_cache_key: "conversation-42",
+    });
+
+    const quiet = buildChatModel(
+      config({ provider: "mistral", model: "mistral-medium-latest", reasoningEffort: "none" }),
+      { cacheScopeId: "conversation-42" },
+    ) as ChatOpenAI;
+    const quietParams = quiet.invocationParams({}) as Record<string, unknown>;
+    expect(quietParams.prompt_cache_key).toBe("conversation-42");
+    expect(quietParams.reasoning_effort).toBeUndefined();
+  });
+
+  it.each([
+    ["openai", "gpt-5.5"],
+    ["anthropic", "claude-haiku-4-5"],
+    ["deepseek", "deepseek-v4-pro"],
+    ["moonshot", "kimi-k3"],
+  ])("does not leak the Mistral prompt cache key to %s", (provider, model) => {
+    const m = buildChatModel(config({ provider, model }), {
+      cacheScopeId: "conversation-42",
+    }) as unknown as { modelKwargs?: Record<string, unknown>; promptCacheKey?: string };
+
+    expect(m.modelKwargs ?? {}).not.toHaveProperty("prompt_cache_key");
+    expect(m.promptCacheKey).toBeUndefined();
+  });
+
   it("rejects an unregistered provider instead of falling back to another vendor's builder", () => {
-    expect(() => buildModel(config({ provider: "retired-vendor" }))).toThrow(/unsupported LLM provider/);
+    expect(() => buildChatModel(config({ provider: "retired-vendor" }))).toThrow(/unsupported LLM provider/);
   });
 
   it("rejects a config with no model rather than constructing an unusable client", () => {
-    expect(() => buildModel(config({ model: "" }))).toThrow(/no model selected/);
+    expect(() => buildChatModel(config({ model: "" }))).toThrow(/no model selected/);
+  });
+
+  // The seam itself: a buildModel handing back a bare SDK client would route the app around every
+  // cross-cutting concern while still typechecking. Identity matters too — it is the policy key.
+  it("hands callers a gateway rather than the vendor client", () => {
+    const gateway = buildModel(config({ provider: "mistral", model: "mistral-medium-latest" }));
+    expect(gateway.provider).toBe("mistral");
+    expect(gateway.model).toBe("mistral-medium-latest");
+    expect(typeof gateway.stream).toBe("function");
+    expect(typeof gateway.invoke).toBe("function");
+    // No vendor internals reachable through it — the tests above had to unwrap for a reason.
+    expect(gateway).not.toHaveProperty("clientConfig");
+    expect(gateway).not.toHaveProperty("apiKey");
+  });
+
+  it("keeps provider identity across bindTools, so bound and bare calls share one policy", () => {
+    const gateway = buildModel(config({ provider: "mistral", model: "mistral-medium-latest" })).bindTools([]);
+    expect(gateway.provider).toBe("mistral");
+    expect(gateway.model).toBe("mistral-medium-latest");
+  });
+
+  // Iterates the registry rather than naming providers: a sixth entry that forgets NO_SDK_RETRY fails
+  // here, instead of silently retrying 6 times behind whatever pacing the gateway applies.
+  it("disables SDK-level retries on every provider", () => {
+    for (const provider of SUPPORTED_PROVIDERS) {
+      const chat = buildChatModel(config({ provider, model: "test-model" }));
+      const { caller } = chat as unknown as { caller: { maxRetries: number } };
+      expect(caller.maxRetries, `${provider} must not retry on its own`).toBe(0);
+    }
   });
 });
 
-describe("configuredProviders", () => {
-  it("lists only providers whose key is set, so the picker can't offer an unauthenticated one", () => {
-    expect(configuredProviders({ ANTHROPIC_API_KEY: "sk-ant", DEEPSEEK_API_KEY: "sk-ds" })).toEqual([
-      "anthropic",
-      "deepseek",
-    ]);
+// Availability is the ONLY question .env answers about a provider. Keys are entered in the app, so
+// the assertions below say nothing about them — the function no longer knows they exist.
+describe("availableProviders", () => {
+  it("offers every supported provider when nothing is switched off", () => {
+    // Not a hand-listed expectation: adding a provider must extend this automatically, or the test
+    // quietly stops covering the newest one.
+    expect(availableProviders({})).toEqual(SUPPORTED_PROVIDERS);
   });
 
-  it("treats blank and whitespace-only keys as unset", () => {
-    expect(configuredProviders({ OPENAI_API_KEY: " ", ANTHROPIC_API_KEY: "", DEEPSEEK_API_KEY: "\t" })).toEqual([]);
+  it("offers a provider that has no API key, so a fresh deployment has something to pick", () => {
+    // The bug this replaces: requiring a key here meant a deployment with none served an empty
+    // picker, and the keys can only be entered through that picker's own settings modal.
+    expect(availableProviders({})).toContain("anthropic");
   });
 
-  it("returns a subset of the supported providers", () => {
-    // Env built from the registry rather than a hand-listed set, so adding a provider can't leave
-    // this asserting a stale list.
-    const all = configuredProviders(Object.fromEntries(SUPPORTED_PROVIDERS.map((p) => [providerApiKeyEnv(p)!, "k"])));
-    expect(all).toEqual(SUPPORTED_PROVIDERS);
+  it("drops a provider .env switched off", () => {
+    expect(availableProviders({ ANTHROPIC_AVAILABLE: "false" })).not.toContain("anthropic");
+  });
+
+  it("keeps a provider whose availability var is unset, blank, or true", () => {
+    // Opt-out: an .env written before the switch existed must keep every provider standing.
+    for (const env of [{}, { DEEPSEEK_AVAILABLE: "" }, { DEEPSEEK_AVAILABLE: "true" }]) {
+      expect(availableProviders(env)).toContain("deepseek");
+    }
+  });
+
+  it("reads the switch case-insensitively, trimmed, and in the lowercase spelling", () => {
+    expect(availableProviders({ OPENAI_AVAILABLE: "False" })).not.toContain("openai");
+    expect(availableProviders({ OPENAI_AVAILABLE: " false " })).not.toContain("openai");
+    expect(availableProviders({ openai_available: "false" })).not.toContain("openai");
+  });
+
+  it("ignores a value that is neither true nor false rather than guessing it meant off", () => {
+    // Only the literal "false" disables, matching GRAPH_ENABLED. A typo leaves the provider offered,
+    // which fails visibly in the picker rather than making a provider vanish for an unreadable reason.
+    expect(availableProviders({ OPENAI_AVAILABLE: "no" })).toContain("openai");
+  });
+
+  it("returns nothing when every provider is switched off", () => {
+    const allOff = Object.fromEntries(SUPPORTED_PROVIDERS.map((p) => [providerAvailabilityEnv(p)!, "false"]));
+    expect(availableProviders(allOff)).toEqual([]);
   });
 });
 
-describe("hasConfiguredProviderApiKey", () => {
-  it("returns false when every supported provider key is absent or blank", () => {
-    expect(hasConfiguredProviderApiKey({})).toBe(false);
-    expect(
-      hasConfiguredProviderApiKey({
-        OPENAI_API_KEY: " ",
-        ANTHROPIC_API_KEY: "",
-        DEEPSEEK_API_KEY: "\t",
-      }),
-    ).toBe(false);
+describe("defaultModelSelection", () => {
+  // Every case switches providers off rather than keying them on, because that is now the only lever.
+  const only = (provider: string) =>
+    Object.fromEntries(
+      SUPPORTED_PROVIDERS.filter((p) => p !== provider).map((p) => [providerAvailabilityEnv(p)!, "false"]),
+    );
+
+  it("takes the first available provider's first model", () => {
+    expect(defaultModelSelection(only("deepseek"))).toEqual({
+      provider: "deepseek",
+      model: "deepseek-v4-flash",
+      // No effort dial, so the stored value is the uniform placeholder the agent never sends.
+      reasoningEffort: "low",
+    });
   });
 
-  it("returns true when any supported provider key is configured", () => {
-    expect(hasConfiguredProviderApiKey({ OPENAI_API_KEY: "sk-test" })).toBe(true);
+  it("takes the provider's default effort when it has a dial", () => {
+    expect(defaultModelSelection(only("anthropic"))).toEqual({
+      provider: "anthropic",
+      model: "claude-haiku-4-5",
+      reasoningEffort: "low",
+    });
+  });
+
+  it("skips a provider switched off in favour of the next one offered", () => {
+    expect(defaultModelSelection({ ANTHROPIC_AVAILABLE: "false" }).provider).toBe("openai");
+  });
+
+  // No longer a hypothetical corner: with keys out of .env, a deployment that switches everything
+  // off still starts, and this is what its workspaces report until something is switched back on.
+  it("returns empty fields when every provider is switched off", () => {
+    const allOff = Object.fromEntries(SUPPORTED_PROVIDERS.map((p) => [providerAvailabilityEnv(p)!, "false"]));
+    expect(defaultModelSelection(allOff)).toEqual({ provider: "", model: "", reasoningEffort: "low" });
+  });
+
+  it("picks a provider that has no API key rather than skipping to a keyed one", () => {
+    // Deliberate: the picker shows a real default from first boot, and the missing key is reported at
+    // conversation start where it names the fix. Hiding it would show an empty picker instead.
+    expect(defaultModelSelection({}).provider).toBe(SUPPORTED_PROVIDERS[0]);
   });
 });

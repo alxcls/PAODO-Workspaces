@@ -10,7 +10,7 @@ import ModelBlock from "@/components/home/ModelBlock";
 import EnvVarsBlock from "@/components/home/EnvVarsBlock";
 import McpBlock from "@/components/home/McpBlock";
 import InternetAccessBlock from "@/components/home/InternetAccessBlock";
-import CliAccessModal from "@/components/settings/CliAccessModal";
+import SettingsModal from "@/components/settings/SettingsModal";
 import TopBar from "@/components/layout/TopBar";
 import { useWorkspaces } from "@/lib/client/hooks/useWorkspaces";
 import { useWorkspaceDescription } from "@/lib/client/hooks/useWorkspaceDescription";
@@ -45,6 +45,13 @@ export default function HomePage() {
   const [renameDraft, setRenameDraft] = useState("");
   const [renameError, setRenameError] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
+  // Bumped when Settings closes, to re-read the model catalog. Provider API keys are edited in there,
+  // and `hasKey` is what decides whether ModelBlock warns that this workspace cannot run — so adding
+  // or removing a key from the modal invalidates a catalog that was read when the page loaded.
+  // Closing is the trigger rather than each individual save: the modal covers the block, so the
+  // warning is only observable once it is shut, and one read on close costs less than tracking which
+  // section changed.
+  const [catalogVersion, setCatalogVersion] = useState(0);
 
   const selected = workspaces.find((w) => w.id === selectedId);
 
@@ -173,7 +180,13 @@ export default function HomePage() {
           </div>
         }
       />
-      <CliAccessModal open={showSettings} onClose={() => setShowSettings(false)} />
+      <SettingsModal
+        open={showSettings}
+        onClose={() => {
+          setShowSettings(false);
+          setCatalogVersion((version) => version + 1);
+        }}
+      />
 
       <div className="flex flex-1 min-h-0 bg-bg">
         {/* Sidebar */}
@@ -353,7 +366,7 @@ export default function HomePage() {
               <ApiAccessBlock key={`api-${selected.id}`} wsId={selected.id} />
               <McpBlock key={`mcp-${selected.id}`} wsId={selected.id} />
               <AgentLoopBlock key={`loop-${selected.id}`} wsId={selected.id} />
-              <ModelBlock key={`model-${selected.id}`} wsId={selected.id} />
+              <ModelBlock key={`model-${selected.id}`} wsId={selected.id} catalogVersion={catalogVersion} />
               <InternetAccessBlock
                 key={`net-${selected.id}`}
                 enabled={internetAccess}

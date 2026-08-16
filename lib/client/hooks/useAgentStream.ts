@@ -46,6 +46,16 @@ const RECONNECT_DELAYS_MS = [2_000, 4_000, 8_000];
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+/** A rate-limit wait in progress, surfaced in place of the thinking bubble. */
+export interface PacedState {
+  provider: string;
+  model: string;
+  waitMs: number;
+  queueDepth: number;
+  /** When the wait is expected to end, so the row can count down instead of showing a frozen number. */
+  endsAt: number;
+}
+
 interface ConversationSnapshot {
   transcript: Message[];
   running: boolean;
@@ -60,6 +70,9 @@ export function useAgentStream(workspaceId: string, conversationId: string | nul
   // sent into that window would only earn a 409 and strand the user's bubble.
   const [reconnecting, setReconnecting] = useState(false);
   const [pendingTools, setPendingTools] = useState(0);
+  // Why the run has gone quiet, when it has. Transient state rather than a transcript entry: a
+  // 30-turn run on a throttled model would otherwise leave 30 permanent notices behind it.
+  const [paced, setPaced] = useState<PacedState | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   // Bumped by detach() so an in-flight reconnect loop can tell that the viewer moved on (tab
   // switch, conversation change) and stop rebuilding a transcript nobody is looking at.
@@ -68,6 +81,18 @@ export function useAgentStream(workspaceId: string, conversationId: string | nul
   const pendingReasoningRef = useRef<string | null>(null);
   const tokenRafRef = useRef<number | null>(null);
   const reasoningRafRef = useRef<number | null>(null);
+
+  // A paced notice describes admission, not the provider's subsequent inference time. Once its
+  // deadline passes, return to the ordinary thinking indicator even if Mistral has not emitted its
+  // first visible token yet. A newer notice replaces the object and therefore owns a fresh timer.
+  useEffect(() => {
+    if (!paced) return;
+    const timer = setTimeout(
+      () => setPaced((current) => (current === paced ? null : current)),
+      Math.max(0, paced.endsAt - Date.now()),
+    );
+    return () => clearTimeout(timer);
+  }, [paced]);
 
   // Single source of truth for the rendered transcript; setMessages only mirrors it for rendering.
   const transcriptRef = useRef<TranscriptState>(emptyTranscript());
@@ -173,6 +198,7 @@ export function useAgentStream(workspaceId: string, conversationId: string | nul
         for await (const event of parseSseStream<AgentEvent>(res.body)) {
           if (event.type === "token") {
             assistantContent += event.content;
+            setPaced(null);
             pendingTokenRef.current = assistantContent;
             if (!tokenRafRef.current) {
               tokenRafRef.current = requestAnimationFrame(() => {
@@ -182,6 +208,9 @@ export function useAgentStream(workspaceId: string, conversationId: string | nul
             }
           } else if (event.type === "reasoning") {
             reasoningContent += event.content;
+            // Mistral often reasons before emitting prose or a tool call. That is real provider
+            // activity, so a completed rate-limit countdown must not remain on screen over it.
+            setPaced(null);
             pendingReasoningRef.current = reasoningContent;
             if (!reasoningRafRef.current) {
               reasoningRafRef.current = requestAnimationFrame(() => {
@@ -189,6 +218,16 @@ export function useAgentStream(workspaceId: string, conversationId: string | nul
                 flushReasoning();
               });
             }
+          } else if (event.type === "paced") {
+            // Never committed to the transcript — it describes right now, and the next real event
+            // means the wait is over.
+            setPaced({
+              provider: event.provider,
+              model: event.model,
+              waitMs: event.waitMs,
+              queueDepth: event.queueDepth,
+              endsAt: Date.now() + event.waitMs,
+            });
           } else if (event.type === "tool_start") {
             // Network events can beat the next animation frame. Commit the model's preamble before
             // adding its tool row so the completed usage badge can precede the whole group.
@@ -196,6 +235,7 @@ export function useAgentStream(workspaceId: string, conversationId: string | nul
             flushReasoning();
             assistantContent = "";
             reasoningContent = "";
+            setPaced(null);
             setPendingTools((n) => n + 1);
             commit(applyDiscreteEvent(transcriptRef.current, event));
           } else if (event.type === "tool_result") {
@@ -246,6 +286,7 @@ export function useAgentStream(workspaceId: string, conversationId: string | nul
         abortRef.current = null;
         setStreaming(false);
         setPendingTools(0);
+        setPaced(null);
         if (!wasAborted) onTurnCompleteRef.current?.();
       }
       return outcome;
@@ -368,6 +409,7 @@ export function useAgentStream(workspaceId: string, conversationId: string | nul
     messages,
     streaming: streaming || reconnecting,
     pendingTools,
+    paced,
     sendMessage,
     attachLive,
     loadConversation,

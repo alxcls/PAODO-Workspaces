@@ -27,7 +27,21 @@ import { WebSocketServer } from "ws";
 import { getStore, getContainers, getVersioning, getCredentialProxy } from "./lib/infra/services";
 import { ensureCA } from "./lib/infra/proxy/proxyCA";
 import { WORKSPACES_ROOT } from "./lib/infra/paths";
-import { assertSecretStoreAvailable, getWorkspaceRules } from "./lib/infra/security/workspaceSecretStore";
+import { getWorkspaceRules } from "./lib/infra/security/workspaceSecretStore";
+import { getSecretsEncKey } from "./lib/infra/security/secretsEncryption";
+import { getProviderVaultKey } from "./lib/infra/security/providerKeyEncryption";
+import { assertProviderVaultAvailable, PROVIDER_VAULT_FILE } from "./lib/infra/security/providerKeyVault";
+import {
+  assertWorkspaceSecretVaultAvailable,
+  WORKSPACE_SECRET_VAULT_FILE,
+} from "./lib/infra/security/workspaceSecretVault";
+import {
+  PROVIDER_VAULT_KEY_FILE,
+  PROVIDER_VAULT_ROOT,
+  WORKSPACE_SECRET_VAULT_KEY_FILE,
+  WORKSPACE_SECRET_VAULT_ROOT,
+  assertSecretStorageSeparated,
+} from "./lib/infra/security/secretVaultPaths";
 import { setTodos } from "./lib/todos/store";
 import { loadIndex } from "./lib/conversations/store";
 import { addConnection, removeConnection, getConnectionCount } from "./lib/infra/realtime/wsHub";
@@ -39,15 +53,19 @@ import {
   checkWsAuth,
   getClientIp,
   isCsrf,
+  trustedRequestHosts,
   type AuthResult,
+  validateRequestHost,
 } from "./lib/infra/security/httpAuth";
 import { mintSessionCookie, sessionCookieNeedsRefresh, verifySessionCookie } from "./lib/infra/security/wsSession";
 import { buildSecurityHeaders } from "./lib/infra/security/securityHeaders";
 import { startScheduler, stopScheduler } from "./lib/infra/schedules/scheduler";
 import { startProxyReconciler, stopProxyReconciler } from "./lib/infra/docker/proxyReconciler";
 import { startUploadSweeper, stopUploadSweeper } from "./lib/uploads/sweeper";
+import { startPriceRefresher, stopPriceRefresher } from "./lib/models/priceRefresher";
 import { checkApiRateLimit } from "./lib/infra/security/rateLimit";
-import { hasConfiguredProviderApiKey } from "./lib/agent/buildModel";
+import { availableProviders } from "./lib/agent/buildModel";
+import { purgeProviderKeysExcept } from "./lib/infra/security/providerKeyStore";
 import { assertDataRootAvailable, assertWorkspaceRegistryAvailable } from "./lib/infra/startupChecks";
 import { appDataDb, PAODO_DB_FILE } from "./lib/data/database";
 import { validate as validateCredential } from "./lib/infra/security/credentialStore";
@@ -61,6 +79,17 @@ const port = Number(rawPort);
 const UI_USER = process.env.USERNAME ?? "";
 const UI_PASS = process.env.PASSWORD ?? "";
 const credentials = { user: UI_USER, pass: UI_PASS };
+
+let allowedRequestHosts: ReadonlySet<string>;
+try {
+  allowedRequestHosts = trustedRequestHosts();
+} catch (err) {
+  log.fatal(
+    { event: "startup_trusted_hosts_invalid", outcome: "process_exit", err },
+    "trusted HTTP hostname configuration is invalid — refusing to start",
+  );
+  exitAfterLogs(1);
+}
 
 log.info(
   {
@@ -202,6 +231,16 @@ httpServer.on("request", (req, res) => {
   };
 
   const ip = getClientIp(req);
+  const hostValidation = validateRequestHost(req.headers, allowedRequestHosts);
+  if (!hostValidation.ok) {
+    auditRejection(
+      "request_host_rejected",
+      { ip, method, pathname, reason: hostValidation.reason, requestId },
+      "request host rejected",
+    );
+    reject(421, "INVALID_REQUEST", "Misdirected Request");
+    return;
+  }
   if (pathname.startsWith("/api/")) {
     const rl = checkApiRateLimit(ip, method, pathname);
     if (!rl.ok) {
@@ -271,7 +310,6 @@ httpServer.on("upgrade", (req, socket, head) => {
   if (pathname === "/ws") {
     const requestId = randomUUID();
     const wsIp = getClientIp(req);
-    const wsAuthResult = authenticateWs(wsIp, req);
     // Same throttle as the HTTP rejections, and the same reason: an upgrade is just as cheap to
     // repeat. The window is shared with the HTTP path — one flood, one line, whichever door it uses.
     const auditWsRejection = (event: string, msg: string) => {
@@ -280,6 +318,14 @@ httpServer.on("upgrade", (req, socket, head) => {
         audit.warn({ ip: wsIp, requestId, transport: "websocket", event, suppressed }, msg);
       }
     };
+    const hostValidation = validateRequestHost(req.headers, allowedRequestHosts);
+    if (!hostValidation.ok) {
+      auditWsRejection("request_host_rejected", "request host rejected");
+      socket.write("HTTP/1.1 421 Misdirected Request\r\n\r\n");
+      socket.destroy();
+      return;
+    }
+    const wsAuthResult = authenticateWs(wsIp, req);
     if (wsAuthResult === "blocked") {
       auditWsRejection("auth_blocked", "auth blocked");
       socket.write("HTTP/1.1 429 Too Many Requests\r\nRetry-After: 60\r\n\r\n");
@@ -375,13 +421,10 @@ if (!UI_USER || !UI_PASS) {
   exitAfterLogs(1);
 }
 
-if (!hasConfiguredProviderApiKey() && !dev) {
-  log.fatal(
-    { event: "startup_llm_api_keys_missing", outcome: "process_exit" },
-    "At least one LLM provider API key must be set in production — refusing to start.",
-  );
-  exitAfterLogs(1);
-}
+// There is deliberately NO startup gate on LLM provider keys. Keys are entered in the app
+// (Settings → Provider API keys), so a fresh deployment has none by definition — refusing to start
+// would make the very screen that fixes it unreachable. A workspace with no usable provider fails at
+// the start of its conversation instead, naming the provider and the fix (lib/agent/providerFailure.ts).
 
 try {
   assertDataRootAvailable(WORKSPACES_ROOT);
@@ -389,6 +432,33 @@ try {
   log.fatal(
     { event: "startup_data_root_unavailable", outcome: "process_exit", err, dataRoot: WORKSPACES_ROOT },
     "workspace data root is unavailable or not writable — refusing to start",
+  );
+  exitAfterLogs(1);
+}
+
+// Provision both recoverable-secret boundaries before creating the proxy CA. Seeing the CA is the
+// sidecar's startup barrier, so its workspace-secret vault/key are ready before it proceeds. The
+// provider vault/key are app-only and are never mounted into that sidecar.
+try {
+  assertSecretStorageSeparated(WORKSPACES_ROOT);
+  assertDataRootAvailable(PROVIDER_VAULT_ROOT);
+  assertDataRootAvailable(path.dirname(PROVIDER_VAULT_KEY_FILE));
+  assertDataRootAvailable(WORKSPACE_SECRET_VAULT_ROOT);
+  assertDataRootAvailable(path.dirname(WORKSPACE_SECRET_VAULT_KEY_FILE));
+  getProviderVaultKey();
+  getSecretsEncKey();
+} catch (err) {
+  log.fatal(
+    {
+      event: "startup_secret_vault_storage_unavailable",
+      outcome: "process_exit",
+      err,
+      providerVaultRoot: PROVIDER_VAULT_ROOT,
+      providerKeyFile: PROVIDER_VAULT_KEY_FILE,
+      workspaceSecretVaultRoot: WORKSPACE_SECRET_VAULT_ROOT,
+      workspaceSecretKeyFile: WORKSPACE_SECRET_VAULT_KEY_FILE,
+    },
+    "provider or workspace-secret vault storage is unavailable — refusing to start",
   );
   exitAfterLogs(1);
 }
@@ -409,18 +479,68 @@ if (!dev) {
     exitAfterLogs(1);
   }
   try {
-    assertSecretStoreAvailable();
+    assertProviderVaultAvailable();
   } catch (err) {
     log.fatal(
       {
-        event: "startup_secret_store_unavailable",
+        event: "startup_provider_vault_unavailable",
         outcome: "process_exit",
         err,
-        filePath: path.join(WORKSPACES_ROOT, ".workspace-secrets.json"),
+        filePath: PROVIDER_VAULT_FILE,
       },
-      "existing workspace secret store could not be read or decrypted — refusing to start",
+      "existing encrypted provider vault could not be read safely — refusing to start",
     );
     exitAfterLogs(1);
+  }
+  try {
+    assertWorkspaceSecretVaultAvailable();
+  } catch (err) {
+    log.fatal(
+      {
+        event: "startup_workspace_secret_vault_unavailable",
+        outcome: "process_exit",
+        err,
+        filePath: WORKSPACE_SECRET_VAULT_FILE,
+      },
+      "existing encrypted workspace-secret vault could not be read safely — refusing to start",
+    );
+    exitAfterLogs(1);
+  }
+}
+
+// Withdrawing a provider destroys its key, and this is where that happens: availability is read from
+// .env, so it can only change across a restart. Running it before the server listens means no request
+// and no scheduled run can spend on a provider the operator has just switched off.
+//
+// DESTRUCTIVE. Setting <PROVIDER>_AVAILABLE=false and restarting deletes that provider's stored key
+// for good; switching it back on does not bring it back. That is what makes the switch mean "nobody
+// can spend on this" rather than merely "hidden from the picker", and each deletion is audit-logged.
+{
+  const offered = availableProviders();
+  const purged = purgeProviderKeysExcept(offered);
+  if (purged.length) {
+    log.warn(
+      { event: "startup_provider_keys_purged", outcome: "stored_keys_destroyed", providers: purged },
+      "deleted the stored API keys of providers this deployment has switched off",
+    );
+  }
+  // A workspace already set to a provider this deployment has just switched off keeps a selection
+  // nothing can honour — its key was destroyed a line ago — and the picker has no way to show that:
+  // a withdrawn provider is absent from the catalog, so the row renders like any other and the run
+  // fails on send. Clearing the selection here returns those workspaces to the default provider,
+  // which is one .env does offer. Same restart-scoped reasoning as the purge: availability can only
+  // change across a boot, so a sweep before the server listens leaves no window where a request or
+  // a scheduled run reaches a stranded workspace.
+  const stranded = getStore().clearWithdrawnLlmSelections(offered);
+  if (stranded.length) {
+    log.warn(
+      {
+        event: "startup_withdrawn_llm_selections_cleared",
+        outcome: "workspaces_reset_to_default_model",
+        workspaces: stranded,
+      },
+      "cleared the model selection of workspaces set to a provider this deployment has switched off",
+    );
   }
 }
 
@@ -503,6 +623,9 @@ assertGitAvailable()
     startScheduler();
     // Reclaim upload temp files orphaned by a process kill mid-upload.
     startUploadSweeper();
+    // Keep LLM rates current without a redeploy. A turn's cost is frozen when it is written, so a
+    // stale rate is permanently wrong in the database rather than a display bug — see priceRefresher.
+    startPriceRefresher();
   })
   .catch((err) => fatal("startup", err));
 
@@ -539,6 +662,7 @@ function shutdown(signal: NodeJS.Signals) {
     stopScheduler();
     stopProxyReconciler();
     stopUploadSweeper();
+    stopPriceRefresher();
     stopAllWatchers();
   } catch (err) {
     failShutdown(err);

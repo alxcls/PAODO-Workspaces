@@ -2,7 +2,7 @@
 // because the picker calls the two primitives on their own — a change that suits the server but breaks
 // carryOverEffort in isolation would otherwise only surface in the UI.
 import { describe, it, expect } from "vitest";
-import { defaultEffortFor, defaultModelFor, resolveModelSelection } from "./selection";
+import { defaultEffortFor, defaultModelFor, firstAvailableSelection, resolveModelSelection } from "./selection";
 import type { ModelVocabulary } from "./selection";
 
 const OPENAI: ModelVocabulary = {
@@ -45,6 +45,49 @@ describe("defaultEffortFor", () => {
   // "none" turns reasoning off entirely, so first-in-the-list is not a safe rule on its own.
   it("skips none rather than defaulting a provider to no reasoning at all", () => {
     expect(defaultEffortFor({ models: [], reasoningEfforts: ["none", "medium"] })).toBe("medium");
+  });
+});
+
+// The rule on its own, fed vocabularies directly. What .env makes available is buildModel's job
+// (defaultModelSelection), tested there against the real registry; these pin the edges that an
+// env-driven test cannot reach — an empty list, and a provider serving no models.
+describe("firstAvailableSelection", () => {
+  const vocabularies: Record<string, ModelVocabulary> = {
+    first: { models: ["first-a", "first-b"], reasoningEfforts: ["low", "high"] },
+    second: { models: ["second-a"], reasoningEfforts: [] },
+    barren: { models: [], reasoningEfforts: [] },
+  };
+  const lookup = (provider: string) => vocabularies[provider] ?? { models: [], reasoningEfforts: [] };
+
+  it("takes the first provider offered, ignoring the rest", () => {
+    expect(firstAvailableSelection(["first", "second"], lookup)).toEqual({
+      provider: "first",
+      model: "first-a",
+      reasoningEffort: "low",
+    });
+  });
+
+  it("stores the uniform placeholder for a provider with no effort dial", () => {
+    // defaultEffortFor has nothing to return from an empty list, so the guard is not decoration.
+    expect(firstAvailableSelection(["second"], lookup)).toEqual({
+      provider: "second",
+      model: "second-a",
+      reasoningEffort: "low",
+    });
+  });
+
+  it("returns empty fields when nothing is available", () => {
+    expect(firstAvailableSelection([], lookup)).toEqual({ provider: "", model: "", reasoningEffort: "low" });
+  });
+
+  // Not reachable today — registry.test.ts asserts every provider serves a model — but the caller
+  // stores whatever comes back, so an empty model must not become an undefined one.
+  it("reports an empty model rather than undefined for a provider serving none", () => {
+    expect(firstAvailableSelection(["barren"], lookup)).toEqual({
+      provider: "barren",
+      model: "",
+      reasoningEffort: "low",
+    });
   });
 });
 

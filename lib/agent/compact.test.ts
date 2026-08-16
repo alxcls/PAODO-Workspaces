@@ -1,14 +1,14 @@
-// Compaction must leave conversation history valid for the next model request: messages[0]
-// stays the system message, every kept tool_call keeps its matching tool_result (no orphans),
-// and roles alternate cleanly after a summary is spliced in.
+// Compaction must leave history valid for the next request: messages[0] stays the system message,
+// every kept tool_call keeps its tool_result, and roles alternate after a summary is spliced in.
 
 import { describe, it, expect } from "vitest";
 import { SystemMessage, HumanMessage, AIMessage, ToolMessage, type BaseMessage } from "@langchain/core/messages";
 import { applyCompaction, stripToolOutputs, CLEARED, STRIPPABLE_TOOLS } from "./compact";
+import { NO_USAGE } from "./modelGateway";
 
-// A tool-less model stub whose invoke returns a fixed brief — exercises summarize paths without
-// a network call.
-const fakeModel = { invoke: async () => new AIMessage("BRIEF") } as never;
+// A gateway stub returning a fixed brief, so summarize paths run without a network call. Shaped as
+// a ModelGateway invocation because compaction now goes through the gateway like every other call.
+const fakeModel = { invoke: async () => ({ message: new AIMessage("BRIEF"), usage: NO_USAGE }) } as never;
 
 // Builds a realistic history: system, a user turn, then two work turns each = an AIMessage with
 // one tool_call followed by its ToolMessage, then the compact_context turn (ai + ack).

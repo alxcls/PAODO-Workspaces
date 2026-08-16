@@ -5,10 +5,9 @@
 // Instead this minimal process runs ONLY the proxy: the app attaches THIS container (never itself)
 // to each workspace network, so port 9998 is the sole thing a workspace can reach.
 //
-// It shares no IPC with the app: it reads the same on-disk CA material and encrypted secret store
-// from the read-only `workspaces` volume, and reloads rules when the secret file changes. The app
-// owns CA generation (server.ts), so this side only ever loads it — never writes to the RO mount.
-import "dotenv/config";
+// It shares no IPC with the app: it reads CA material from the read-only `workspaces` volume and the
+// encrypted vault plus master key from their own read-only mounts. It reloads rules when the vault
+// changes. The app owns all generation and writes; this side only loads existing material.
 import * as fs from "fs";
 import * as path from "path";
 import { createLogger, exitAfterLogs } from "./lib/infra/logger";
@@ -37,8 +36,8 @@ function fatal(reason: string, err: unknown): never {
 
 function fatalSecretStore(err: unknown): never {
   log.fatal(
-    { event: "startup_secret_store_unavailable", outcome: "process_exit", err, filePath: SECRET_STORE_FILE },
-    "existing workspace secret store could not be read or decrypted — refusing to start credential proxy",
+    { event: "startup_secret_vault_unavailable", outcome: "process_exit", err, filePath: SECRET_STORE_FILE },
+    "existing encrypted workspace-secret vault could not be read safely — refusing to start credential proxy",
   );
   exitAfterLogs(1);
 }

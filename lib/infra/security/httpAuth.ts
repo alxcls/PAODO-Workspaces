@@ -1,27 +1,19 @@
-// Request authentication and CSRF logic for the custom HTTP server (server.ts).
-//
-// Kept out of server.ts so the security-critical pieces — timing-safe Basic-Auth comparison,
-// failure-based blocking and the CSRF guard — are unit-testable in
-// isolation rather than welded to the process entry point. server.ts is a thin adapter that
-// extracts primitives off the Node request and calls these functions.
+/**
+ * Request authentication and CSRF logic for the custom HTTP server (server.ts).
+ *
+ * Kept out of server.ts so the security-critical pieces — failure-based blocking, the platform-token
+ * route gate and the CSRF guard — are unit-testable in isolation rather than welded to the process
+ * entry point. server.ts is a thin adapter that extracts primitives off the Node request.
+ *
+ * How a browser proves who it is belongs to uiAuth.ts, not here: this module takes a
+ * UiAuthenticator and never learns whether the deployment runs on a shared password or behind an
+ * identity-aware proxy.
+ */
 import type { IncomingMessage } from "http";
-import { timingSafeEqual } from "crypto";
 import { isPlatformRouteAllowed } from "./platformAccessPolicy";
+import type { UiAuthenticator } from "./uiAuth";
 
-// Constant-time string comparison. Used for the Basic-Auth username/password so a byte-by-byte
-// timing difference can't be measured to recover the secret.
-export function safeEqual(a: string, b: string): boolean {
-  const aBuf = Buffer.from(a);
-  const bBuf = Buffer.from(b);
-  if (aBuf.byteLength !== bBuf.byteLength) {
-    // dummy compare to avoid length-based timing oracle
-    timingSafeEqual(Buffer.alloc(1), Buffer.alloc(1));
-    return false;
-  }
-  return timingSafeEqual(aBuf, bBuf);
-}
-
-// Tracks per-IP Basic-Auth failures and blocks an IP once it exceeds `max` failures within
+// Tracks per-IP credential failures and blocks an IP once it exceeds `max` failures within
 // `windowMs`. In-memory, reset when the window elapses. A successful auth clears the IP.
 export class AuthFailureTracker {
   private failures = new Map<string, { count: number; resetAt: number }>();
@@ -62,11 +54,10 @@ const PUBLIC_API_RE = /^\/api\/workspaces\/[^/]+\/agent$/;
 const PUBLIC_MCP_RE = /^\/api\/workspaces\/[^/]+\/mcp$/;
 const MUTATING_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
-// "ok" means Basic UI credentials were verified; "platform" means an instance token was verified
-// for this exact method/path. "exempt" is reserved for agent/MCP routes that validate their own
-// credential inside the route. Only "ok" may mint a browser session cookie.
+// "ok" means the deployment's UI credential was verified; "platform" means an instance token was
+// verified for this exact method/path. "exempt" is reserved for agent/MCP routes that validate their
+// own credential inside the route. Only "ok" may mint a browser session cookie.
 export type AuthResult = "ok" | "platform" | "exempt" | "challenge" | "unauthorized" | "blocked";
-export type AuthCredentials = { user: string; pass: string };
 // Takes only the secret: the platform credential is instance-wide, and the route allowlist decides
 // what it may reach.
 export type PlatformTokenValidator = (plain: string) => boolean;
@@ -170,17 +161,34 @@ export function validateRequestHost(
   return { ok: true, hostname };
 }
 
-// The primitives checkAuth/isCsrf need off a request — extracted so the core logic never touches
-// Node's http types and can be unit-tested with plain objects.
-export type AuthRequest = { method: string; pathname: string; authorization: string; cookie: string };
+/**
+ * The primitives checkAuth/isCsrf need off a request — extracted so the core logic never touches
+ * Node's http types and can be unit-tested with plain objects. `assertion` is the raw value of the
+ * header the configured UI mode reads, empty in every mode that reads none.
+ */
+export type AuthRequest = {
+  method: string;
+  pathname: string;
+  authorization: string;
+  cookie: string;
+  assertion: string;
+};
 
-export function authRequestFromIncoming(req: IncomingMessage): AuthRequest {
+// A repeated assertion header is treated as absent. Node joins duplicates into one comma-separated
+// value (only set-cookie becomes an array), and a JWS holds no comma — either shape means two senders.
+function singleAssertion(value: string | string[] | undefined): string {
+  if (typeof value !== "string" || value.includes(",")) return "";
+  return value;
+}
+
+export function authRequestFromIncoming(req: IncomingMessage, assertionHeader: string | null = null): AuthRequest {
   const url = new URL(req.url ?? "/", "http://localhost");
   return {
     method: req.method ?? "GET",
     pathname: url.pathname,
     authorization: req.headers["authorization"] ?? "",
     cookie: req.headers["cookie"] ?? "",
+    assertion: assertionHeader ? singleAssertion(req.headers[assertionHeader]) : "",
   };
 }
 
@@ -200,16 +208,13 @@ export function getClientIp(req: IncomingMessage): string {
 export function checkAuth(
   ip: string,
   req: AuthRequest,
-  credentials: AuthCredentials,
+  ui: UiAuthenticator,
   tracker: AuthFailureTracker,
   validatePlatformToken: PlatformTokenValidator = () => false,
 ): AuthResult {
-  // Must reject before the comparison below: safeEqual("", "") is true, so `Basic Og==` would
-  // authenticate against unset credentials. server.ts also refuses to boot without them.
-  if (!credentials.user || !credentials.pass) return "unauthorized";
   if (tracker.isBlocked(ip)) return "blocked";
 
-  // The agent endpoint authenticates via Bearer API key — exempt it from basic auth.
+  // The agent endpoint authenticates via Bearer API key — exempt it from the UI credential.
   if (req.method === "POST" && PUBLIC_API_RE.test(req.pathname)) return "exempt";
   // The Workspace MCP endpoint authenticates via its own Bearer secret — exempt all methods.
   if (PUBLIC_MCP_RE.test(req.pathname)) return "exempt";
@@ -228,7 +233,7 @@ export function checkAuth(
     // Authorization second, and deliberately NOT a tracked failure. Default-deny: a route with no
     // mapped permission never accepts the platform credential, so adding a UI route cannot silently
     // create a programmatic capability. Counting these would be wrong and actively harmful — the
-    // tracker is shared with the UI's Basic auth, so a misconfigured script polling an unshared route
+    // tracker is shared with the UI credential, so a misconfigured script polling an unshared route
     // would lock its own operator out of the web interface after five requests.
     if (!isPlatformRouteAllowed(req.method, req.pathname)) return "unauthorized";
 
@@ -236,45 +241,40 @@ export function checkAuth(
     return "platform";
   }
 
-  if (!auth.startsWith("Basic ")) {
-    // No credentials sent — normal browser challenge-response handshake, not an attack
-    return "challenge";
-  }
-
-  const decoded = Buffer.from(auth.slice(6), "base64").toString();
-  const colon = decoded.indexOf(":");
-  if (colon === -1) {
+  const outcome = ui.verify(req);
+  // "absent" is the normal unauthenticated first request, not an attack, so it never counts toward
+  // the lockout — only a credential that was offered and rejected does.
+  if (outcome === "absent") return "challenge";
+  if (outcome === "invalid") {
     tracker.recordFailure(ip);
     return "unauthorized";
   }
 
-  const userOk = safeEqual(decoded.slice(0, colon), credentials.user);
-  const passOk = safeEqual(decoded.slice(colon + 1), credentials.pass);
-
-  if (userOk && passOk) {
-    tracker.clear(ip);
-    return "ok";
-  }
-
-  tracker.recordFailure(ip);
-  return "unauthorized";
+  tracker.clear(ip);
+  return "ok";
 }
 
-// Auth for the /ws upgrade. Basic is tried first so Chrome and Firefox — which do reuse the cached
-// credentials on a same-origin handshake — keep authenticating exactly as before, and so a failed
-// Basic attempt still feeds the brute-force tracker. The session cookie is the fallback for browsers
-// that send no Authorization at all on an upgrade (WebKit); it is minted only after Basic succeeded
-// on an earlier HTTP request, so it proves the same thing one hop removed.
-//
-// Neither "platform" nor "exempt" is accepted here: those credentials are HTTP-only.
+/**
+ * Auth for the /ws upgrade. The configured mode is tried first, so a failed attempt still feeds the
+ * brute-force tracker, then `verifyCookie` runs as a fallback for the credential a browser cannot
+ * attach to a handshake.
+ *
+ * In `basic` mode that fallback is the minted session cookie: Chrome and Firefox reuse cached Basic
+ * credentials on a same-origin upgrade but WebKit does not, so the cookie — issued only after Basic
+ * succeeded on an earlier request — proves the same thing one hop removed. In `iap` mode server.ts
+ * passes a verifier that always fails: the proxy's own header or cookie is already checked above,
+ * and no session cookie is ever minted.
+ *
+ * Neither "platform" nor "exempt" is accepted here: those credentials are HTTP-only.
+ */
 export function checkWsAuth(
   ip: string,
   req: AuthRequest,
-  credentials: AuthCredentials,
+  ui: UiAuthenticator,
   tracker: AuthFailureTracker,
   verifyCookie: (cookieHeader: string) => boolean,
 ): AuthResult {
-  const result = checkAuth(ip, req, credentials, tracker);
+  const result = checkAuth(ip, req, ui, tracker);
   if (result === "ok" || result === "blocked") return result;
   return verifyCookie(req.cookie) ? "ok" : result;
 }

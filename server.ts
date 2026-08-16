@@ -58,6 +58,7 @@ import {
   validateRequestHost,
 } from "./lib/infra/security/httpAuth";
 import { mintSessionCookie, sessionCookieNeedsRefresh, verifySessionCookie } from "./lib/infra/security/wsSession";
+import { resolveUiAuth } from "./lib/infra/security/uiAuth";
 import { buildSecurityHeaders } from "./lib/infra/security/securityHeaders";
 import { startScheduler, stopScheduler } from "./lib/infra/schedules/scheduler";
 import { startProxyReconciler, stopProxyReconciler } from "./lib/infra/docker/proxyReconciler";
@@ -76,9 +77,25 @@ const dev = process.env.NODE_ENV !== "production";
 const rawPort = process.env.PORT ?? "3000";
 const port = Number(rawPort);
 
-const UI_USER = process.env.USERNAME ?? "";
-const UI_PASS = process.env.PASSWORD ?? "";
-const credentials = { user: UI_USER, pass: UI_PASS };
+/**
+ * How this deployment identifies a browser: a shared password, or an identity-aware proxy whose
+ * signed assertion the origin verifies. The two are mutually exclusive — see uiAuth.ts — and an
+ * unconfigured mode throws here so the process never serves a route it cannot guard.
+ */
+let uiAuth: import("./lib/infra/security/uiAuth").UiAuthenticator;
+try {
+  uiAuth = resolveUiAuth();
+} catch (err) {
+  log.fatal(
+    { event: "startup_credentials_missing", outcome: "process_exit", err },
+    "UI authentication is not configured — refusing to start. See .env.example.",
+  );
+  exitAfterLogs(1);
+}
+
+// In `iap` mode there is no session cookie to fall back to: the proxy's assertion rides the upgrade
+// and uiAuth already checked it, so accepting anything else here would only add a second door.
+const verifyWsSessionCookie = uiAuth.mode === "basic" ? verifySessionCookie : () => false;
 
 let allowedRequestHosts: ReadonlySet<string>;
 try {
@@ -126,15 +143,22 @@ let authLoggedOnce = false;
 // credential is instance-wide, so it takes no subject; which routes it may reach is decided by
 // platformAccessPolicy.ts inside checkAuth, not by the credential itself.
 function authenticate(ip: string, req: import("http").IncomingMessage): AuthResult {
-  return checkAuth(ip, authRequestFromIncoming(req), credentials, authFailures, (plain) =>
+  return checkAuth(ip, authRequestFromIncoming(req, uiAuth.assertionHeader), uiAuth, authFailures, (plain) =>
     validateCredential("platform", null, plain),
   );
 }
 
-// Same adapter for the /ws upgrade, which additionally accepts the session cookie because no browser
-// can put Basic credentials on a handshake and WebKit does not reuse the cached ones.
+// Same adapter for the /ws upgrade, which additionally consults a cookie because no browser can put
+// an Authorization header on a handshake and WebKit does not reuse cached Basic credentials either.
 function authenticateWs(ip: string, req: import("http").IncomingMessage): AuthResult {
-  return checkWsAuth(ip, authRequestFromIncoming(req), credentials, authFailures, verifySessionCookie);
+  const authRequest = authRequestFromIncoming(req, uiAuth.assertionHeader);
+  return checkWsAuth(ip, authRequest, uiAuth, authFailures, verifyWsSessionCookie);
+}
+
+// A mode with no challenge sends no header at all: behind an identity-aware proxy a browser prompt
+// cannot satisfy the 401, and naming a scheme would advertise one this deployment does not accept.
+function authenticateHeader(scheme: string | null): Record<string, string> {
+  return scheme ? { "WWW-Authenticate": scheme } : {};
 }
 
 function setSecurityHeaders(res: import("http").ServerResponse): void {
@@ -266,24 +290,26 @@ httpServer.on("request", (req, res) => {
   }
   if (authResult === "challenge") {
     audit.debug({ ip, requestId, event: "auth_challenge" }, "auth challenge");
-    reject(401, "UNAUTHORIZED", "Unauthorized", { "WWW-Authenticate": 'Basic realm="App"' });
+    reject(401, "UNAUTHORIZED", "Unauthorized", authenticateHeader(uiAuth.challenge));
     return;
   }
   if (authResult === "unauthorized") {
     auditRejection("auth_unauthorized", { ip, method, pathname, requestId }, "auth unauthorized");
-    const scheme = req.headers["authorization"]?.startsWith("Bearer ") ? 'Bearer realm="PAODO"' : 'Basic realm="App"';
-    reject(401, "UNAUTHORIZED", "Unauthorized", { "WWW-Authenticate": scheme });
+    const bearer = req.headers["authorization"]?.startsWith("Bearer ");
+    reject(401, "UNAUTHORIZED", "Unauthorized", authenticateHeader(bearer ? 'Bearer realm="PAODO"' : uiAuth.challenge));
     return;
   }
 
-  if (authResult === "ok" && req.headers["authorization"] && !authLoggedOnce) {
+  // No longer gated on an Authorization header: in `iap` mode a verified request carries none, and
+  // the gate meant the one "auth works" line never appeared for the mode that most needs proving.
+  if (authResult === "ok" && !authLoggedOnce) {
     authLoggedOnce = true;
-    audit.info({ requestId, event: "auth_ok" }, "auth configured and working");
+    audit.info({ requestId, event: "auth_ok", authMode: uiAuth.mode }, "auth configured and working");
   }
 
-  // Mint the /ws session cookie only for verified UI Basic credentials. Programmatic platform
-  // tokens and route-authenticated agent/MCP credentials must never become browser sessions.
-  if (authResult === "ok" && sessionCookieNeedsRefresh(req.headers["cookie"])) {
+  // Mint the /ws session cookie only in `basic` mode, and only for a verified UI credential.
+  // Programmatic platform tokens and route-authenticated agent/MCP credentials never become sessions.
+  if (uiAuth.mode === "basic" && authResult === "ok" && sessionCookieNeedsRefresh(req.headers["cookie"])) {
     res.setHeader("Set-Cookie", mintSessionCookie({ isProduction: process.env.NODE_ENV === "production" }));
   }
 
@@ -410,16 +436,6 @@ wss.on("connection", (ws, req) => {
     }
   });
 });
-
-// Unconditional by design. Gating this on NODE_ENV once meant a container flipped to debug logging
-// served every route unauthenticated.
-if (!UI_USER || !UI_PASS) {
-  log.fatal(
-    { event: "startup_credentials_missing", outcome: "process_exit" },
-    "USERNAME and PASSWORD must be set — refusing to start. Copy .env.example to .env and set both.",
-  );
-  exitAfterLogs(1);
-}
 
 // There is deliberately NO startup gate on LLM provider keys. Keys are entered in the app
 // (Settings → Provider API keys), so a fresh deployment has none by definition — refusing to start
@@ -613,6 +629,9 @@ assertGitAvailable()
       startProxyReconciler();
     }
   })
+  // Before the listener opens: in `iap` mode this fetches the provider's signing keys, and a failure
+  // must stop the boot rather than leave every request failing closed against an empty key set.
+  .then(() => uiAuth.prime())
   .then(() => app.prepare())
   .then(() => {
     httpServer.listen(port, () => {

@@ -10,8 +10,10 @@ function basic(user: string, pass: string): string {
   return "Basic " + Buffer.from(`${user}:${pass}`).toString("base64");
 }
 
-function input(partial: Partial<{ authorization: string; cookie: string; assertion: string }> = {}) {
-  return { authorization: "", cookie: "", assertion: "", ...partial };
+function input(
+  partial: Partial<{ authorization: string; cookie: string; assertion: string; isUpgrade: boolean }> = {},
+) {
+  return { authorization: "", cookie: "", assertion: "", isUpgrade: false, ...partial };
 }
 
 const IAP_ENV: UiAuthEnvironment = {
@@ -109,10 +111,20 @@ describe("resolveUiAuth", () => {
     expect(auth.verify(input({ assertion: "not.a.jwt" }))).toBe("invalid");
   });
 
-  it("falls back to the configured cookie, and only when one is configured", () => {
+  it("falls back to the configured cookie on the upgrade, and only when one is configured", () => {
     const withCookie = resolveUiAuth({ ...IAP_ENV, PAODO_IAP_COOKIE: "CF_Authorization" }, stubJwks);
-    expect(withCookie.verify(input({ cookie: "CF_Authorization=not.a.jwt" }))).toBe("invalid");
-    expect(withCookie.verify(input({ cookie: "other=not.a.jwt" }))).toBe("absent");
-    expect(resolveUiAuth(IAP_ENV, stubJwks).verify(input({ cookie: "CF_Authorization=not.a.jwt" }))).toBe("absent");
+    const onUpgrade = { isUpgrade: true, cookie: "CF_Authorization=not.a.jwt" };
+    expect(withCookie.verify(input(onUpgrade))).toBe("invalid");
+    expect(withCookie.verify(input({ ...onUpgrade, cookie: "other=not.a.jwt" }))).toBe("absent");
+    expect(resolveUiAuth(IAP_ENV, stubJwks).verify(input(onUpgrade))).toBe("absent");
+  });
+
+  it("never reads the cookie on an HTTP request, so the proxy's is not an ambient API credential", () => {
+    // A browser attaches it to a cross-site request as readily as a same-site one. Confined to the
+    // handshake, the CSRF guard is not the only thing standing between that and a mutation.
+    const withCookie = resolveUiAuth({ ...IAP_ENV, PAODO_IAP_COOKIE: "CF_Authorization" }, stubJwks);
+    expect(withCookie.verify(input({ cookie: "CF_Authorization=not.a.jwt" }))).toBe("absent");
+    // The header still authenticates on both, since only the proxy can set it.
+    expect(withCookie.verify(input({ assertion: "not.a.jwt" }))).toBe("invalid");
   });
 });

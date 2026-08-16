@@ -57,6 +57,7 @@ import {
   apiRequestHost,
   type AuthResult,
   validateRequestHost,
+  validateRequestOrigin,
 } from "./lib/infra/security/httpAuth";
 import { mintSessionCookie, sessionCookieNeedsRefresh, verifySessionCookie } from "./lib/infra/security/wsSession";
 import { resolveUiAuth } from "./lib/infra/security/uiAuth";
@@ -159,7 +160,7 @@ function authenticate(ip: string, req: import("http").IncomingMessage, hostname:
 // Same adapter for the /ws upgrade, which additionally consults a cookie because no browser can put
 // an Authorization header on a handshake and WebKit does not reuse cached Basic credentials either.
 function authenticateWs(ip: string, req: import("http").IncomingMessage, hostname: string): AuthResult {
-  const authRequest = authRequestFromIncoming(req, uiAuth.assertionHeader, hostname);
+  const authRequest = authRequestFromIncoming(req, uiAuth.assertionHeader, hostname, true);
   return checkWsAuth(ip, authRequest, uiAuth, authFailures, verifyWsSessionCookie, apiHost);
 }
 
@@ -304,7 +305,10 @@ httpServer.on("request", (req, res) => {
   if (authResult === "unauthorized") {
     auditRejection("auth_unauthorized", { ip, method, pathname, requestId }, "auth unauthorized");
     const bearer = req.headers["authorization"]?.startsWith("Bearer ");
-    reject(401, "UNAUTHORIZED", "Unauthorized", authenticateHeader(bearer ? 'Bearer realm="PAODO"' : uiAuth.challenge));
+    // No UI challenge on the public API host: the credential it names is refused there, and
+    // advertising it invites the confusion that made the password look like an identity on it.
+    const uiChallenge = hostValidation.hostname === apiHost ? null : uiAuth.challenge;
+    reject(401, "UNAUTHORIZED", "Unauthorized", authenticateHeader(bearer ? 'Bearer realm="PAODO"' : uiChallenge));
     return;
   }
 
@@ -356,6 +360,14 @@ httpServer.on("upgrade", (req, socket, head) => {
     if (!hostValidation.ok) {
       auditWsRejection("request_host_rejected", "request host rejected");
       socket.write("HTTP/1.1 421 Misdirected Request\r\n\r\n");
+      socket.destroy();
+      return;
+    }
+    // Before authentication, because the credential is the problem here: a handshake carries it
+    // whoever opened the page, and an accepted socket is readable by that page. See httpAuth.ts.
+    if (!validateRequestOrigin(req.headers.origin, allowedRequestHosts)) {
+      auditWsRejection("request_origin_rejected", "request origin rejected");
+      socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
       socket.destroy();
       return;
     }

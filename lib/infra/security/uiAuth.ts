@@ -17,8 +17,11 @@ export type UiAuthMode = "basic" | "iap";
 /** "absent" means no credential was offered (challenge); "invalid" means one was, and it failed. */
 export type UiAuthOutcome = "ok" | "absent" | "invalid";
 
-/** Only the fields an authenticator may read. Structural, so httpAuth.ts imports nothing from here. */
-export type UiAuthInput = { authorization: string; cookie: string; assertion: string };
+/**
+ * Only the fields an authenticator may read. Structural, so httpAuth.ts imports nothing from here.
+ * `isUpgrade` marks the /ws handshake, the one request a browser cannot put a header on.
+ */
+export type UiAuthInput = { authorization: string; cookie: string; assertion: string; isUpgrade: boolean };
 
 export type UiAuthenticator = {
   readonly mode: UiAuthMode;
@@ -87,10 +90,12 @@ export function iapAuthenticator(settings: IapSettings): UiAuthenticator {
      */
     challenge: null,
     prime: () => settings.policy.jwks.refresh(),
-    verify({ cookie, assertion }) {
-      // Fallback for the /ws upgrade, where some proxies set only the cookie. verify() has no path,
-      // so it is read everywhere: harmless, since a mutating /api call still faces the CSRF guard.
-      const token = assertion || (settings.cookie ? (readCookie(cookie, settings.cookie) ?? "") : "");
+    verify({ cookie, assertion, isUpgrade }) {
+      // The cookie is the /ws fallback only, for proxies that set no header on a handshake. Reading
+      // it on HTTP as well would make the proxy's cookie an ambient credential on every API route,
+      // leaving the CSRF guard as the only thing between a cross-site POST and a mutation.
+      const fallback = isUpgrade && settings.cookie ? (readCookie(cookie, settings.cookie) ?? "") : "";
+      const token = assertion || fallback;
       if (!token) return "absent";
       return verifyAssertion(token, settings.policy) ? "ok" : "invalid";
     },

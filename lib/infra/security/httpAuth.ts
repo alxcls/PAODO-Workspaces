@@ -11,6 +11,7 @@
  */
 import type { IncomingMessage } from "http";
 import { isPlatformRouteAllowed } from "./platformAccessPolicy";
+import { isLoopbackAddress } from "./rateLimit";
 import type { UiAuthenticator } from "./uiAuth";
 
 // Tracks per-IP credential failures and blocks an IP once it exceeds `max` failures within
@@ -177,10 +178,37 @@ export function validateRequestHost(
 }
 
 /**
+ * Reject a WebSocket upgrade that another site started. A handshake is not covered by the same-origin
+ * policy: the browser attaches whatever credential it holds for this host and, unlike a fetch, hands
+ * the calling page a readable channel — so without this check any page that knows a workspace id can
+ * silently read a live agent session. Origin is set by the browser and script cannot forge it.
+ *
+ * Absent is refused rather than waved through as a non-browser client, because nothing but a browser
+ * connects to /ws. `null` — what a sandboxed iframe sends — fails to parse and is refused with it.
+ */
+export function validateRequestOrigin(
+  origin: string | string[] | undefined,
+  trustedHosts: ReadonlySet<string>,
+): boolean {
+  const raw = singleHeader(origin);
+  if (!raw) return false;
+  let parsed: URL;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    return false;
+  }
+  const hostname = normalizeHostname(parsed.host);
+  return hostname !== null && trustedHosts.has(hostname);
+}
+
+/**
  * The primitives checkAuth/isCsrf need off a request — extracted so the core logic never touches
  * Node's http types and can be unit-tested with plain objects. `assertion` is the raw value of the
  * header the configured UI mode reads, empty in every mode that reads none. `hostname` is the
  * already-validated request host, used to refuse the UI credential on the API gateway host.
+ * `isUpgrade` tells a mode whether this is the /ws handshake, the one request that may fall back to
+ * a cookie — see uiAuth.ts.
  */
 export type AuthRequest = {
   method: string;
@@ -189,6 +217,7 @@ export type AuthRequest = {
   cookie: string;
   assertion: string;
   hostname: string;
+  isUpgrade: boolean;
 };
 
 // A repeated assertion header is treated as absent. Node joins duplicates into one comma-separated
@@ -202,6 +231,7 @@ export function authRequestFromIncoming(
   req: IncomingMessage,
   assertionHeader: string | null = null,
   hostname = "",
+  isUpgrade = false,
 ): AuthRequest {
   const url = new URL(req.url ?? "/", "http://localhost");
   return {
@@ -211,19 +241,30 @@ export function authRequestFromIncoming(
     cookie: req.headers["cookie"] ?? "",
     assertion: assertionHeader ? singleAssertion(req.headers[assertionHeader]) : "",
     hostname,
+    isUpgrade,
   };
 }
 
-// Extracts the client IP. Cloudflare sets cf-connecting-ip at its edge and overwrites whatever the
-// client sent, so it is the one forwarded address this deployment can trust; x-real-ip and
-// x-forwarded-for are set by nothing in the chain, which means a client picks their own value. That
-// matters because this address is written to the audit trail and keys the brute-force lockout: a
-// forgeable value is both a poisoned record and a lockout an attacker steps around by rotating a
-// header. Falls back to the socket peer (the Docker gateway in production — useless for attribution,
-// but never a lie). Distinct from realtime/clientIp.ts, which reads a NextRequest.
+/**
+ * Extracts the client IP. This address is written to the audit trail and keys the brute-force
+ * lockout, so a forgeable value is both a poisoned record and a lockout an attacker steps around by
+ * rotating a header. cf-connecting-ip is the only forwarded name read: x-real-ip and x-forwarded-for
+ * are set by nothing in the chain, so a caller picks their own value. Falls back to the socket peer
+ * (the Docker gateway in production — useless for attribution, but never a lie).
+ *
+ * REQUIRES a hop that overwrites cf-connecting-ip on every route it serves. Cloudflare does at its
+ * edge, and deploy/Caddyfile.workspace-api's forwardedHeaders snippet does for the public API host.
+ * A deployment fronted by anything else must strip and re-set it there too, or the caller chooses
+ * their own rate-limit bucket. A forwarded loopback address is refused outright — no edge sees a real
+ * client at one, and the limiter exempts loopback, so honouring it would waive every limit on demand.
+ *
+ * Distinct from realtime/clientIp.ts, which reads a NextRequest.
+ */
 export function getClientIp(req: IncomingMessage): string {
   const forwarded = req.headers["cf-connecting-ip"];
-  if (typeof forwarded === "string" && forwarded) return forwarded;
+  if (typeof forwarded === "string" && forwarded.trim() && !isLoopbackAddress(forwarded.trim())) {
+    return forwarded;
+  }
   return req.socket.remoteAddress ?? "unknown";
 }
 

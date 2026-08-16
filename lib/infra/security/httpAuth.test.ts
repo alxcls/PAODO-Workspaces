@@ -13,6 +13,7 @@ import {
   trustedRequestHosts,
   type AuthRequest,
   validateRequestHost,
+  validateRequestOrigin,
 } from "./httpAuth";
 import { basicAuthenticator, type UiAuthenticator } from "./uiAuth";
 
@@ -25,7 +26,16 @@ function basic(user: string, pass: string): string {
 }
 
 function req(partial: Partial<AuthRequest> = {}): AuthRequest {
-  return { method: "GET", pathname: "/", authorization: "", cookie: "", assertion: "", hostname: "", ...partial };
+  return {
+    method: "GET",
+    pathname: "/",
+    authorization: "",
+    cookie: "",
+    assertion: "",
+    hostname: "",
+    isUpgrade: false,
+    ...partial,
+  };
 }
 
 // A stand-in for any assertion-header mode, so checkAuth's contract is tested without a real JWKS.
@@ -132,6 +142,35 @@ describe("trusted request hosts", () => {
     expect(() => trustedRequestHosts({ PAODO_TRUSTED_HOSTS: "good.example,bad.example/path" })).toThrow(
       "invalid trusted hostname",
     );
+  });
+});
+
+describe("validateRequestOrigin (cross-site WebSocket hijacking)", () => {
+  const trusted = trustedRequestHosts({ PAODO_TRUSTED_HOSTS: "ui.example.com" });
+
+  it("accepts a handshake opened by a page on a trusted host, whatever its port or case", () => {
+    expect(validateRequestOrigin("https://ui.example.com", trusted)).toBe(true);
+    expect(validateRequestOrigin("https://UI.Example.com:8443", trusted)).toBe(true);
+    expect(validateRequestOrigin("http://localhost:3000", trusted)).toBe(true);
+    expect(validateRequestOrigin("http://[::1]:3000", trusted)).toBe(true);
+  });
+
+  it("rejects a handshake opened by any other page", () => {
+    expect(validateRequestOrigin("https://evil.example", trusted)).toBe(false);
+    // The prefix/suffix shapes a naive string comparison would let through.
+    expect(validateRequestOrigin("https://ui.example.com.evil.example", trusted)).toBe(false);
+    expect(validateRequestOrigin("https://evil.example/?x=ui.example.com", trusted)).toBe(false);
+  });
+
+  it("rejects an absent, duplicated, opaque or unparseable Origin", () => {
+    // Nothing but a browser connects to /ws, and browsers always send it — so absent fails closed
+    // rather than being waved through as a non-browser client the way the CSRF guard does.
+    expect(validateRequestOrigin(undefined, trusted)).toBe(false);
+    expect(validateRequestOrigin("", trusted)).toBe(false);
+    expect(validateRequestOrigin(["https://ui.example.com", "https://evil.example"], trusted)).toBe(false);
+    // "null" is what a sandboxed iframe sends; it is an opaque origin, not a trusted one.
+    expect(validateRequestOrigin("null", trusted)).toBe(false);
+    expect(validateRequestOrigin("ui.example.com", trusted)).toBe(false);
   });
 });
 
@@ -329,23 +368,44 @@ describe("checkAuth host-scoping (public API gateway)", () => {
   it("does not track the refused UI credential (all api.* traffic shares one gateway IP)", () => {
     const spy = vi.spyOn(tracker, "recordFailure");
     for (let attempt = 0; attempt < 10; attempt++) {
-      expect(checkAuth("ip", req({ hostname: API, authorization: basic("admin", "wrong") }), UI, tracker, () => false, API)).toBe(
-        "unauthorized",
-      );
+      expect(
+        checkAuth("ip", req({ hostname: API, authorization: basic("admin", "wrong") }), UI, tracker, () => false, API),
+      ).toBe("unauthorized");
     }
     expect(spy).not.toHaveBeenCalled();
   });
 
   it("leaves the machine paths on the API host working", () => {
     const validate = (token: string) => token === "cli_good";
-    expect(checkAuth("ip", req({ hostname: API, method: "POST", pathname: "/api/workspaces/ws1/agent" }), UI, tracker, validate, API)).toBe(
-      "exempt",
-    );
-    expect(checkAuth("ip", req({ hostname: API, method: "POST", pathname: "/api/workspaces/ws1/mcp" }), UI, tracker, validate, API)).toBe(
-      "exempt",
-    );
     expect(
-      checkAuth("ip", req({ hostname: API, method: "GET", pathname: "/api/workspaces", authorization: "Bearer cli_good" }), UI, tracker, validate, API),
+      checkAuth(
+        "ip",
+        req({ hostname: API, method: "POST", pathname: "/api/workspaces/ws1/agent" }),
+        UI,
+        tracker,
+        validate,
+        API,
+      ),
+    ).toBe("exempt");
+    expect(
+      checkAuth(
+        "ip",
+        req({ hostname: API, method: "POST", pathname: "/api/workspaces/ws1/mcp" }),
+        UI,
+        tracker,
+        validate,
+        API,
+      ),
+    ).toBe("exempt");
+    expect(
+      checkAuth(
+        "ip",
+        req({ hostname: API, method: "GET", pathname: "/api/workspaces", authorization: "Bearer cli_good" }),
+        UI,
+        tracker,
+        validate,
+        API,
+      ),
     ).toBe("platform");
   });
 
@@ -455,6 +515,7 @@ describe("authRequestFromIncoming / getClientIp", () => {
       } as never,
       null,
       "api.example.com",
+      true,
     );
     expect(r).toEqual({
       method: "POST",
@@ -463,12 +524,22 @@ describe("authRequestFromIncoming / getClientIp", () => {
       cookie: "a=1; b=2",
       assertion: "",
       hostname: "api.example.com",
+      isUpgrade: true,
     });
   });
 
-  it("defaults missing headers to empty strings and the host to empty rather than undefined", () => {
+  it("defaults missing headers to empty strings, and the host and upgrade flag to their safe values", () => {
+    // isUpgrade must default false: it is what lets a mode read a cookie, and only /ws may.
     const r = authRequestFromIncoming({ method: "GET", url: "/", headers: {} } as never);
-    expect(r).toEqual({ method: "GET", pathname: "/", authorization: "", cookie: "", assertion: "", hostname: "" });
+    expect(r).toEqual({
+      method: "GET",
+      pathname: "/",
+      authorization: "",
+      cookie: "",
+      assertion: "",
+      hostname: "",
+      isUpgrade: false,
+    });
   });
 
   it("reads the assertion only from the header the mode names, and ignores a repeated one", () => {
@@ -491,6 +562,15 @@ describe("authRequestFromIncoming / getClientIp", () => {
     ).toBe("9.9.9.9");
     expect(getClientIp({ headers: {}, socket: { remoteAddress: "1.2.3.4" } } as never)).toBe("1.2.3.4");
     expect(getClientIp({ headers: {}, socket: {} } as never)).toBe("unknown");
+  });
+
+  it("refuses a forwarded loopback address, which would waive every rate limit", () => {
+    // No edge sees a real client at a loopback address, and RateLimiter exempts one — so honouring
+    // this would let any caller opt out of every limit in the application with one header.
+    for (const spoofed of ["127.0.0.1", "::1", "::ffff:127.0.0.1", " 127.0.0.1 "]) {
+      const headers = { "cf-connecting-ip": spoofed };
+      expect(getClientIp({ headers, socket: { remoteAddress: "172.18.0.5" } } as never)).toBe("172.18.0.5");
+    }
   });
 
   it("ignores client-supplied forwarding headers", () => {

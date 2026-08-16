@@ -5,7 +5,7 @@ import type { BindToolsInput } from "@langchain/core/language_models/chat_models
 import { createLogger } from "../infra/logger";
 import { prepareMistralMessages } from "./mistralProtocol";
 import { providerConcurrency, type ProviderConcurrencyGate } from "./providerConcurrency";
-import { providerPacer, type PacerKey, type ProviderPacer } from "./rateLimit/providerPacer";
+import { NOTICE_THRESHOLD_MS, providerPacer, type PacerKey, type ProviderPacer } from "./rateLimit/providerPacer";
 import { RateLimitExhaustedError, RetryBudget } from "./rateLimit/retryPolicy";
 import { classifyProviderFailure, PROVIDER_RATE_LIMITED_CODE } from "./providerFailure";
 
@@ -239,6 +239,11 @@ export function createModelGateway(chat: BindableChatModel, options: ModelGatewa
         const backoff = pacer.penalize(pacerKey);
         if (!budget.canRetry(backoff)) {
           throw abandon(new RateLimitExhaustedError(provider, model, budget.attemptsMade, budget.waitedMs, err));
+        }
+        // This wait happens after admission, so acquire() cannot announce it. Surface it explicitly;
+        // otherwise the first cold 429 leaves the conversation looking frozen until the retry.
+        if (backoff >= NOTICE_THRESHOLD_MS) {
+          call.onPaced?.({ provider, model, waitMs: backoff, queueDepth: 0 });
         }
         budget.recordWait(backoff);
         await pacer.wait(backoff, call.signal);

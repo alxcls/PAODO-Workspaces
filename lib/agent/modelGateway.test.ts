@@ -4,7 +4,7 @@ import { describe, it, expect } from "vitest";
 import { AIMessage, AIMessageChunk, HumanMessage, ToolMessage, type BaseMessage } from "@langchain/core/messages";
 import { createModelGateway, usageTokens, NO_USAGE, type ModelCallRecord } from "./modelGateway";
 import { ProviderConcurrency } from "./providerConcurrency";
-import { ProviderPacer } from "./rateLimit/providerPacer";
+import { NOTICE_THRESHOLD_MS, ProviderPacer } from "./rateLimit/providerPacer";
 import { MAX_ATTEMPTS, RateLimitExhaustedError } from "./rateLimit/retryPolicy";
 
 function chunk(content: string, usage?: { input: number; output: number; reasoning?: number }): AIMessageChunk {
@@ -348,6 +348,7 @@ describe("ModelGateway — rate limit retry", () => {
 
   it("retries a 429 that arrived before any chunk, then succeeds", async () => {
     let attempts = 0;
+    const notices: Array<{ attempt: number; waitMs: number }> = [];
     const flaky = {
       stream: async () => {
         attempts += 1;
@@ -360,7 +361,10 @@ describe("ModelGateway — rate limit retry", () => {
     };
     const { gateway, records, slept } = recordingGateway([], flaky);
 
-    const call = await gateway.stream(MESSAGES, { stage: "model_turn" });
+    const call = await gateway.stream(MESSAGES, {
+      stage: "model_turn",
+      onPaced: ({ waitMs }) => notices.push({ attempt: attempts, waitMs }),
+    });
     for await (const _ of call.chunks) {
       // drain
     }
@@ -369,6 +373,10 @@ describe("ModelGateway — rate limit retry", () => {
     expect(records).toHaveLength(1);
     expect(records[0]).toMatchObject({ attempts: 3, emitted: true });
     expect(records[0].waitedMs).toBeGreaterThan(0);
+    // The first notice is emitted directly after the cold 429. No ceiling existed before that call,
+    // so acquire() could not have announced an admission wait yet.
+    expect(notices[0]).toMatchObject({ attempt: 1 });
+    expect(notices[0].waitMs).toBeGreaterThanOrEqual(NOTICE_THRESHOLD_MS);
     // At least one wait per refusal. Some passes add a pacing wait on top, once the refusals have
     // taught the pacer a ceiling — the widening of the backoff itself is asserted in the pacer's
     // own tests, where it is not tangled up with admission.

@@ -148,6 +148,9 @@ async function* openStream(
       throw err;
     },
   );
+  // A consumer that abandons this generator on a paced notice never reaches the await below, leaving
+  // this rejection unread — and server.ts turns an unhandled rejection into a process exit.
+  settled.catch(() => {});
 
   while (!done) {
     if (pending.length) {

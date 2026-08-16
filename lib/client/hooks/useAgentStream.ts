@@ -82,6 +82,18 @@ export function useAgentStream(workspaceId: string, conversationId: string | nul
   const tokenRafRef = useRef<number | null>(null);
   const reasoningRafRef = useRef<number | null>(null);
 
+  // A paced notice describes admission, not the provider's subsequent inference time. Once its
+  // deadline passes, return to the ordinary thinking indicator even if Mistral has not emitted its
+  // first visible token yet. A newer notice replaces the object and therefore owns a fresh timer.
+  useEffect(() => {
+    if (!paced) return;
+    const timer = setTimeout(
+      () => setPaced((current) => (current === paced ? null : current)),
+      Math.max(0, paced.endsAt - Date.now()),
+    );
+    return () => clearTimeout(timer);
+  }, [paced]);
+
   // Single source of truth for the rendered transcript; setMessages only mirrors it for rendering.
   const transcriptRef = useRef<TranscriptState>(emptyTranscript());
   const commit = useCallback((next: TranscriptState) => {
@@ -196,6 +208,9 @@ export function useAgentStream(workspaceId: string, conversationId: string | nul
             }
           } else if (event.type === "reasoning") {
             reasoningContent += event.content;
+            // Mistral often reasons before emitting prose or a tool call. That is real provider
+            // activity, so a completed rate-limit countdown must not remain on screen over it.
+            setPaced(null);
             pendingReasoningRef.current = reasoningContent;
             if (!reasoningRafRef.current) {
               reasoningRafRef.current = requestAnimationFrame(() => {

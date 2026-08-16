@@ -46,12 +46,14 @@ const RECONNECT_DELAYS_MS = [2_000, 4_000, 8_000];
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-/** A rate-limit wait in progress, surfaced under the thinking bubble. */
+/** A rate-limit wait in progress, surfaced in place of the thinking bubble. */
 export interface PacedState {
   provider: string;
   model: string;
   waitMs: number;
   queueDepth: number;
+  /** When the wait is expected to end, so the row can count down instead of showing a frozen number. */
+  endsAt: number;
 }
 
 interface ConversationSnapshot {
@@ -209,6 +211,7 @@ export function useAgentStream(workspaceId: string, conversationId: string | nul
               model: event.model,
               waitMs: event.waitMs,
               queueDepth: event.queueDepth,
+              endsAt: Date.now() + event.waitMs,
             });
           } else if (event.type === "tool_start") {
             // Network events can beat the next animation frame. Commit the model's preamble before

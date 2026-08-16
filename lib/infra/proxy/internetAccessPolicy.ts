@@ -7,23 +7,49 @@
 // workspaceSecretStore.ts exposes SECRET_STORE_FILE for proxyEntry.ts to poll. The app is the only
 // writer; the sidecar only ever reloads (the shared volume is mounted read-only there).
 import path from "path";
-import { readFileSync } from "fs";
+import { existsSync, readFileSync } from "fs";
 import { WORKSPACES_ROOT } from "../paths";
 import { atomicSaveJson, readJson } from "../jsonPersist";
 import { globalSingleton } from "../globalSingleton";
 import { createLogger } from "../logger";
 
 const log = createLogger("internetAccessPolicy");
-const FILE = path.join(WORKSPACES_ROOT, ".internet-access.json");
+// Lives inside .proxy-ca/ so the sidecar can mount that one directory rather than the whole
+// workspaces volume, which also holds the conversation database and every workspace's files.
+const FILE = path.join(WORKSPACES_ROOT, ".proxy-ca", "internet-access.json");
+const LEGACY_FILE = path.join(WORKSPACES_ROOT, ".internet-access.json");
 export const INTERNET_ACCESS_POLICY_FILE = FILE;
 
 // wsId -> enabled. Sparse: only "off" entries are ever written (see setInternetAccessPolicy), so an
 // absent key means enabled — the safe default, matching WorkspaceMetadata.internetAccess's default.
 type Store = Record<string, boolean>;
 
+// Promote the pre-move file on first load. Nothing regenerates this from the registry, so a
+// deployment that skipped it would silently switch every disabled workspace back on.
+function loadPolicy(): Store {
+  if (existsSync(FILE)) return readJson<Store>(FILE, {});
+  const legacy = readJson<Store>(LEGACY_FILE, {});
+  // Nothing to carry over, or we are the read-only sidecar (which cannot see the legacy path at
+  // all): either way there is no write to attempt. The app is the only writer.
+  if (Object.keys(legacy).length === 0) return legacy;
+  try {
+    atomicSaveJson(FILE, legacy);
+    log.info(
+      { event: "internet_access_policy_migrated", outcome: "policy_relocated", filePath: FILE },
+      "moved the internet-access policy into .proxy-ca",
+    );
+  } catch (err) {
+    log.error(
+      { event: "internet_access_policy_migration_failed", outcome: "policy_not_relocated", err, filePath: FILE },
+      "failed to move the internet-access policy — the sidecar will not see it until this succeeds",
+    );
+  }
+  return legacy;
+}
+
 // Fixed reference, shared across every module instance via globalSingleton — mutated in place
 // everywhere below (never reassigned) so all instances keep seeing the same state.
-const store: Store = globalSingleton<Store>("internetAccessPolicy", () => readJson<Store>(FILE, {}));
+const store: Store = globalSingleton<Store>("internetAccessPolicy", loadPolicy);
 
 export function setInternetAccessPolicy(wsId: string, enabled: boolean): void {
   if (enabled) delete store[wsId];

@@ -97,7 +97,15 @@ services:
       - NODE_ENV=production
       - LOG_LEVEL=${LOG_LEVEL:-info}
     volumes:
-      - workspaces:/app/data:ro
+      # Only .proxy-ca (CA, HMAC key, internet-access policy) — NOT the whole workspaces volume,
+      # which also holds the conversation database, the registry and every workspace's files. This
+      # is the one container the untrusted sandbox can reach, so it gets the two files it reads.
+      - type: volume
+        source: workspaces
+        target: /app/data/.proxy-ca
+        read_only: true
+        volume:
+          subpath: .proxy-ca
       - workspace-secret-vault:/app/workspace-secret-vault:ro
       - workspace-secret-key:/app/workspace-secret-key:ro
     depends_on:

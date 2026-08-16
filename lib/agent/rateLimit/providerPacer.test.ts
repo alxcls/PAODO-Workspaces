@@ -78,6 +78,35 @@ describe("ProviderPacer — admission", () => {
     expect(slept).toHaveLength(1);
   });
 
+  /**
+   * Measured on mistral-medium: an agent's context reaches 49,263 tokens by the twelfth turn against
+   * a 25,000/minute ceiling, and the provider still serves it. A gate that waits for a call to fit
+   * would wait forever, so it must send on a clear window instead of stalling the run to its
+   * deadline.
+   */
+  it("still admits a call whose context outgrew the whole per-minute allowance", async () => {
+    const MEDIUM = { provider: "mistral", model: "mistral-medium-latest" };
+    const { pacer, slept } = testPacer();
+    pacer.settle(MEDIUM, {
+      limitRequests: 50,
+      remainingRequests: 48,
+      limitTokens: 25_000,
+      remainingTokens: 25_000,
+      queryCost: 49_263,
+    });
+
+    const first = await pacer.acquire(MEDIUM);
+    expect(first.waitedMs).toBe(0);
+    first.release();
+
+    // Its own send now fills the window, so the next one waits it out rather than never leaving.
+    pacer.settle(MEDIUM, { remainingTokens: 0 });
+    const second = await pacer.acquire(MEDIUM);
+
+    expect(slept.length).toBeGreaterThan(0);
+    expect(second.waitedMs).toBeLessThan(120_000);
+  });
+
   it("uses a reported reset in preference to the learned recovery", async () => {
     const { pacer, slept, at } = testPacer();
     pacer.settle(HAIKU, { limitRequests: 10_000, remainingRequests: 0, resetAt: at() + 4_000 });
@@ -229,6 +258,13 @@ describe("ProviderPacer — learning", () => {
 
     expect(second).toBeGreaterThan(first);
     expect(third).toBeGreaterThan(second);
+  });
+
+  it("uses the provider's recorded Retry-After deadline for the immediate refusal backoff", () => {
+    const { pacer, at } = testPacer();
+    pacer.settle(LARGE, { resetAt: at() + 7_000 });
+
+    expect(pacer.penalize(LARGE)).toBe(7_000);
   });
 
   it("eases the recovery back down after a call that had to wait but went through", () => {

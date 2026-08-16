@@ -11,6 +11,7 @@ import {
   providerFailureMessage,
   reportProviderFailure,
 } from "./providerFailure";
+import { RateLimitExhaustedError } from "./rateLimit/retryPolicy";
 
 beforeEach(() => resetLogThrottle());
 
@@ -153,46 +154,28 @@ describe("classifyProviderFailure — rate limiting", () => {
     expect(isTerminalProviderCode("PROVIDER_RATE_LIMITED")).toBe(false);
     expect(TERMINAL_PROVIDER_CODES).not.toContain("PROVIDER_RATE_LIMITED");
   });
-});
 
-// A monthly token cap and a spend limit both answer 429, but neither reopens before the billing
-// period does. Read as throttling they would make the pacer wait out the month instead of failing.
-describe("classifyProviderFailure — period caps worn as a 429", () => {
+  // Billing-flavoured 429s do not get a speculative special case. They take the same bounded retry
+  // path as every other 429; the provider status, rather than wording we maintain, owns the meaning.
   it.each([
     ["Mistral's per-model monthly tokens", { status: 429, message: "Monthly token limit reached for this model" }],
     ["a workspace spend limit", { status: 429, message: "Spend limit exceeded for this workspace" }],
     ["a usage limit", { status: 429, message: "Usage limit reached" }],
     ["a period-scoped quota", { status: 429, message: "Quota exceeded for the month" }],
-  ])("recognizes %s and refuses to retry it", (_label, error) => {
+  ])("treats %s as an ordinary bounded 429", (_label, error) => {
     const failure = classifyProviderFailure(raw(error as Record<string, unknown>));
-    expect(failure?.failureCode).toBe("PROVIDER_QUOTA_CAPPED");
-    expect(failure?.retryable).toBe(false);
+    expect(failure?.failureCode).toBe("PROVIDER_RATE_LIMITED");
+    expect(failure?.retryable).toBe(true);
   });
 
-  // Precedence, not coincidence: both rules match a 429, and the cap rule is listed first.
-  it("outranks the ordinary rate-limit rule on the same status", () => {
-    expect(classifyProviderFailure(raw({ status: 429, message: "Rate limit reached" }))?.failureCode).toBe(
-      "PROVIDER_RATE_LIMITED",
-    );
-    expect(classifyProviderFailure(raw({ status: 429, message: "Monthly limit reached" }))?.failureCode).toBe(
-      "PROVIDER_QUOTA_CAPPED",
-    );
-  });
+  it("keeps retry exhaustion neutral instead of inventing a billing diagnosis", () => {
+    const cause = raw({ status: 429, message: "Requests rate limit exceeded" });
+    const exhausted = new RateLimitExhaustedError("mistral", "mistral-large-latest", 8, 420_000, cause);
+    const failure = classifyProviderFailure(exhausted);
 
-  // An empty account is still the credit rule's business — it is listed above this one and its
-  // message sends the operator somewhere different.
-  it("leaves an out-of-credit account to the credit rule", () => {
-    expect(
-      classifyProviderFailure(raw({ status: 429, message: "You exceeded your current quota, check billing" }))
-        ?.failureCode,
-    ).toBe("PROVIDER_CREDIT_EXHAUSTED");
-  });
-
-  it("tells the operator that waiting will not help", () => {
-    const failure = classifyProviderFailure(raw({ status: 429, message: "Monthly limit reached" }))!;
-    const message = providerFailureMessage(failure, { provider: "mistral", model: "mistral-large-latest" });
-    expect(message).toMatch(/not ordinary throttling/i);
-    expect(message).toMatch(/billing period/i);
+    expect(failure?.failureCode).toBe("PROVIDER_RATE_LIMITED");
+    expect(failure?.providerMessage).toMatch(/retry budget/i);
+    expect(failure?.providerMessage).not.toMatch(/monthly|spend|billing/i);
   });
 });
 
@@ -357,7 +340,6 @@ describe("TERMINAL_PROVIDER_CODES", () => {
       "PROVIDER_CREDIT_EXHAUSTED",
       "PROVIDER_KEY_INVALID",
       "PROVIDER_KEY_MISSING",
-      "PROVIDER_QUOTA_CAPPED",
       "PROVIDER_UNAVAILABLE",
     ]);
   });

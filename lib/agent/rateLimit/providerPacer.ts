@@ -326,8 +326,16 @@ export class ProviderPacer {
     const requestsUsed = worse(bucket.sends.length, requestCeiling, bucket.remainingRequests);
     const tokensUsed = worse(sumTokens(bucket.sends), tokenCeiling, bucket.remainingTokens);
 
+    /**
+     * A context can outgrow the whole per-minute allowance — measured, mistral-medium charges 49k
+     * against a 25k ceiling by its twelfth turn. No wait makes room for a call that never fits, so
+     * such a call goes out on an empty window and the provider overdraws, which is what it does
+     * anyway. Without this the bucket never admits and the run stalls until its deadline.
+     */
+    const unfittable = tokenCeiling !== undefined && estimate > tokenCeiling;
     const overRequests = requestCeiling !== undefined && requestsUsed >= requestCeiling;
-    const overTokens = tokenCeiling !== undefined && tokensUsed + estimate > tokenCeiling;
+    const overTokens =
+      tokenCeiling !== undefined && (unfittable ? tokensUsed > 0 : tokensUsed + estimate > tokenCeiling);
     if (!overRequests && !overTokens) return 0;
 
     if (bucket.resetAt !== undefined && bucket.resetAt > now) return bucket.resetAt - now;
@@ -337,7 +345,9 @@ export class ProviderPacer {
     const fits =
       overRequests && requestCeiling !== undefined
         ? (sends: Send[]) => sends.length < requestCeiling
-        : (sends: Send[]) => sumTokens(sends) + estimate <= tokenCeiling!;
+        : unfittable
+          ? (sends: Send[]) => sumTokens(sends) === 0
+          : (sends: Send[]) => sumTokens(sends) + estimate <= tokenCeiling!;
     for (let i = 1; i <= bucket.sends.length; i++) {
       if (fits(bucket.sends.slice(i))) return Math.max(0, bucket.sends[i - 1].at + LEDGER_WINDOW_MS - now);
     }
@@ -406,6 +416,13 @@ export class ProviderPacer {
     const now = this.now();
     this.prune(bucket, now);
 
+    // pacedFetch may already have folded a Retry-After/reset header from this refusal into the
+    // bucket before the SDK turns the 429 response into an exception. Prefer that provider-owned
+    // deadline to our learned guess. An exact deadline needs no jitter here: admission is serialized
+    // when callers wake, and waking before Retry-After would only buy another refusal.
+    const providerResetAt =
+      resetAt ?? (bucket.resetAt !== undefined && bucket.resetAt > now ? bucket.resetAt : undefined);
+
     /**
      * Needs at least two: a single send of ours cannot have exceeded a ceiling by itself, so that
      * refusal came from traffic we cannot see and teaches us nothing about our own rate. Learning
@@ -422,7 +439,9 @@ export class ProviderPacer {
     bucket.refusedAt = now;
     bucket.recoveryMs = Math.min(MAX_RECOVERY_MS, bucket.recoveryMs * RECOVERY_GROWTH);
     if (resetAt !== undefined) bucket.resetAt = resetAt;
-    return clampWait(jitter(Math.max(0, (resetAt ?? now + bucket.recoveryMs) - now), this.random));
+    return providerResetAt !== undefined
+      ? clampWait(providerResetAt - now)
+      : clampWait(jitter(bucket.recoveryMs, this.random));
   }
 
   /**

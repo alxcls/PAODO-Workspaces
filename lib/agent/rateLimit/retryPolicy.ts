@@ -2,9 +2,8 @@
  * How long a rate-limited call may keep trying. The pacer decides *when* to send; this decides when
  * to stop believing that waiting will help.
  *
- * The cumulative cap is the guard against a refusal that never clears — a monthly cap we cannot
- * distinguish from ordinary throttling. Better a clear failure after a bounded wait than a run that
- * hangs until its deadline.
+ * The cumulative cap is the guard against a refusal that does not clear in a useful amount of time.
+ * Better a clear failure after a bounded wait than a call that hangs until the workspace deadline.
  */
 
 /** Attempts for one logical call, first included. */
@@ -24,9 +23,8 @@ export class RateLimitExhaustedError extends Error {
     readonly cause: unknown,
   ) {
     super(
-      `${provider} kept refusing ${model} for ${Math.round(waitedMs / 1000)}s across ${attempts} attempts. ` +
-        `An ordinary rate limit clears well inside that, so this is more likely a quota that will not ` +
-        `reopen on its own — a monthly token cap or a spend limit on the account.`,
+      `${provider} kept rate-limiting ${model} for ${Math.round(waitedMs / 1000)}s across ${attempts} attempts. ` +
+        `This call stopped after reaching its rate-limit retry budget.`,
     );
     this.name = "RateLimitExhaustedError";
   }

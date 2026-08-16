@@ -8,7 +8,6 @@ export const PROVIDER_KEY_INVALID_CODE = "PROVIDER_KEY_INVALID" as const;
 export const PROVIDER_KEY_MISSING_CODE = "PROVIDER_KEY_MISSING" as const;
 export const MODEL_UNAVAILABLE_CODE = "MODEL_UNAVAILABLE" as const;
 export const PROVIDER_RATE_LIMITED_CODE = "PROVIDER_RATE_LIMITED" as const;
-export const PROVIDER_QUOTA_CAPPED_CODE = "PROVIDER_QUOTA_CAPPED" as const;
 export const PROVIDER_UNAVAILABLE_CODE = "PROVIDER_UNAVAILABLE" as const;
 
 /** Who refused, for message wording. Both parts are optional — not every call site knows both. */
@@ -167,39 +166,6 @@ const RULES = [
     event: "provider_key_invalid",
     outcome: "run_stopped_bad_credential",
     logMessage: "LLM provider rejected the configured API key",
-  },
-  {
-    code: PROVIDER_QUOTA_CAPPED_CODE,
-    failureClass: "quota_cap",
-    resource: "llm_provider_period_quota",
-    resourceScope: "llm_provider_account",
-    // Wearing a 429's clothes but not a 429's meaning: this window reopens on a billing boundary, so
-    // the pacer would wait out the month. Above the rate-limit rule for exactly that reason.
-    retryable: false,
-    // No status is decisive — 429 belongs to the rule below. Only the wording separates them.
-    decisiveStatuses: [],
-    patterns: [
-      // Mistral's per-model tokens_per_month. The gap allows "monthly TOKEN limit", which is how it
-      // actually reads, without letting "monthly" match a limit a sentence away.
-      /\bmonthly\b[^.]{0,24}\b(limit|quota|cap|allowance)\b/i,
-      /tokens?[\s_-]*per[\s_-]*month/i,
-      // The workspace spend limit, whose 429 says nothing about a month at all.
-      /\b(spend|usage|billing)[\s_-]*limit\b/i,
-      /quota[\s_-]*(exhausted|exceeded)[\s_-]*for[\s_-]*(the[\s_-]*)?(month|period|billing)/i,
-    ],
-    message: (failure: ProviderFailure, target: ProviderTarget) => {
-      const named = target.provider ?? "The model provider";
-      const scope = target.model ? ` for ${target.model}` : "";
-      return (
-        `${named} has refused${scope} because a spending or monthly token cap on the account is ` +
-        `reached (${failure.providerMessage}). This is not ordinary throttling — waiting will not ` +
-        `clear it before the billing period rolls over. Raise the limit on the provider account, or ` +
-        `switch this workspace to another provider.`
-      );
-    },
-    event: "provider_quota_capped",
-    outcome: "run_stopped_quota_capped",
-    logMessage: "LLM provider account has hit a period quota or spend cap",
   },
   {
     code: PROVIDER_RATE_LIMITED_CODE,

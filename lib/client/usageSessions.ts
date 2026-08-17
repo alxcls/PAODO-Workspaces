@@ -117,7 +117,7 @@ export function originLabel(origin: SessionOrigin): string {
     case "scheduled":
       return "Scheduled";
     case "agent":
-      return "Agent network";
+      return "Agent graph";
     // Records created before explicit source tracking used `manual`.
     case "manual":
       return "Workspace chat";

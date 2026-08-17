@@ -56,7 +56,7 @@ vi.mock("@/lib/drives/store", () => ({
     return h.disconnectWorkspace(id);
   },
 }));
-vi.mock("@/lib/agent/network/graph", () => ({
+vi.mock("@/lib/agent/graph", () => ({
   removeWorkspaceFromGraph: (id: string) => {
     track("graph");
     return h.removeWorkspaceFromGraph(id);

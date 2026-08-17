@@ -54,7 +54,7 @@ export default function DrivePage({ params }: { params: Promise<{ id: string }> 
           <div className="flex items-center gap-2">
             <Link
               href="/graph"
-              title="Back to network"
+              title="Back to graph"
               className="w-[34px] h-[34px] rounded-[10px] overflow-hidden flex-shrink-0 inline-flex items-center justify-center bg-gradient-to-br from-primary to-primary-2 border-0 p-0 cursor-pointer"
             >
               <Image

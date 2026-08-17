@@ -15,7 +15,7 @@ import {
 } from "@xyflow/react";
 import { WORKSPACE_BOTTOM_HANDLE, WORKSPACE_TOP_HANDLE, normalizeWorkspaceIncomingHandle } from "./handles";
 import { createCellAllocator, findTakenCell, readStoredPosition, toCell, toPixels } from "./grid";
-import type { CellPosition, NodePosition } from "@/lib/agent/network/graph";
+import type { CellPosition, NodePosition } from "@/lib/agent/graph";
 
 interface WorkspaceItem {
   id: string;

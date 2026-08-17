@@ -1,11 +1,11 @@
 // Builds the MCP surface for a single workspace: it exposes every skill the workspace declares in
 // .skills/ as an MCP tool and runs them through the same validated skill path A2A uses
-// (executeSkill), bypassing only the Agent-Network graph check since an external MCP client is not
+// (executeSkill), bypassing only the Agent Graph check since an external MCP client is not
 // a connected workspace. Kept transport-agnostic so the list/call logic is unit-testable; the HTTP
 // wiring lives in the route handler.
 //
 // There is no per-skill publication step: the endpoint being enabled plus a valid bearer secret IS
-// the authorization decision, exactly as an Agent-Network edge is for A2A. `.skills/` is therefore
+// the authorization decision, exactly as an Agent Graph edge is for A2A. `.skills/` is therefore
 // the single source of truth, and it is read live on every request — a skill the workspace agent
 // writes is callable immediately, one it deletes stops being listed and stops being callable.
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
@@ -68,7 +68,7 @@ export async function callWorkspaceMcpTool(
     const exec = deps.executeSkillFn ?? executeSkill;
     result = await exec(workspaceId, `mcp:${workspaceId}`, name, args ?? {}, {
       // The MCP client is not a workspace with a graph edge; the credential already authorized it, so
-      // skip the Agent-Network DAG check. NOT_CONNECTED therefore cannot occur.
+      // skip the Agent Graph DAG check. NOT_CONNECTED therefore cannot occur.
       canCallFn: () => true,
       store: getStore(),
       containers: getContainers(),

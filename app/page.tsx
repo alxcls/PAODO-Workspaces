@@ -134,7 +134,7 @@ export default function HomePage() {
               <button
                 className="btn btn-ghost text-ms gap-1.5 text-text-2 hover:text-primary"
                 onClick={() => router.push("/graph")}
-                title="Agent Network"
+                title="Agent Graph"
               >
                 <svg width="15" height="15" viewBox="0 0 15 15" fill="none">
                   <circle cx="2.5" cy="7.5" r="2" stroke="currentColor" strokeWidth="1.3" />
@@ -159,7 +159,7 @@ export default function HomePage() {
                     strokeLinecap="round"
                   />
                 </svg>
-                Network
+                Graph
               </button>
             ) : null}
             <button className="iconbtn" onClick={() => setShowSettings(true)} title="Settings" aria-label="Settings">

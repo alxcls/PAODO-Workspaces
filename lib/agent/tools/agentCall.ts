@@ -4,7 +4,7 @@
 // validation, correction retries) lives in executeSkill, which runs the callee in-process
 // with a fresh, isolated conversation.
 // Only works when a directed edge exists from the caller workspace to the target workspace
-// in the Agent Network graph (data/.workspace-graph.json).
+// in the Agent Graph (data/.workspace-graph.json).
 
 import { StructuredTool } from "@langchain/core/tools";
 import { z } from "zod";
@@ -122,7 +122,7 @@ A workspace with no declared skills is not callable. If the workspace is not con
     if (code === "NOT_CONNECTED") {
       return {
         result:
-          `Permission denied: this workspace is not connected to "${workspace}" in the Agent Network. ` +
+          `Permission denied: this workspace is not connected to "${workspace}" in the Agent Graph. ` +
           `Add an edge in the /graph page first.`,
         meta,
       };

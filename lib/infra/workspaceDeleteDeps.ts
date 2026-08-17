@@ -4,7 +4,7 @@ import { rm } from "fs/promises";
 import path from "path";
 import { deleteWorkspaceConversations } from "@/lib/conversations/store";
 import { disconnectWorkspace } from "@/lib/drives/store";
-import { removeWorkspaceFromGraph } from "@/lib/agent/network/graph";
+import { removeWorkspaceFromGraph } from "@/lib/agent/graph";
 import type { WorkspaceDeleteDeps, WorkspaceDeleteStage } from "@/lib/operations/workspace/delete";
 import { createAuditLogger, createLogger } from "./logger";
 import { WORKSPACES_ROOT } from "./paths";

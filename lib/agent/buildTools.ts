@@ -28,7 +28,7 @@ import { DriveDeleteTool } from "./tools/driveDelete";
 import { DriveDownloadTool } from "./tools/driveDownload";
 import { DriveUploadTool } from "./tools/driveUpload";
 import { getDrivesForWorkspace } from "@/lib/drives/store";
-import { isCaller } from "@/lib/agent/network/graph";
+import { isCaller } from "@/lib/agent/graph";
 import { defaultContainerManager } from "../infra/docker/defaultContainerManager";
 import { defaultWorkspaceStore } from "@/lib/infra/workspace/registry";
 import { getVersioning } from "../infra/services";

@@ -5,7 +5,7 @@
 // single boundary between the two systems. Everything above it reasons in cells; only ReactFlow
 // itself sees pixels. Keeping the conversion here is what lets a node be placed without measuring
 // anything: a cell's size is a constant, not a rendered card's height.
-import type { CellPosition, NodePosition } from "@/lib/agent/network/graph";
+import type { CellPosition, NodePosition } from "@/lib/agent/graph";
 
 /** Wide enough for the fixed-width card plus a gutter, tall enough to read an edge between rows. */
 export const CELL_WIDTH = 320;

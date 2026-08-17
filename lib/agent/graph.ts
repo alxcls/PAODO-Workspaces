@@ -2,11 +2,11 @@
 // Edges flow from caller (source) → callee (target), enforcing a DAG where only
 // connected workspaces can invoke each other via the call_agent tool.
 import path from "path";
-import { WORKSPACES_ROOT } from "../../infra/paths";
-import { atomicSaveJson, readJson } from "../../infra/jsonPersist";
-import { globalSingleton } from "../../infra/globalSingleton";
-import { createLogger } from "../../infra/logger";
-import { AppError } from "../../errors/appError";
+import { WORKSPACES_ROOT } from "../infra/paths";
+import { atomicSaveJson, readJson } from "../infra/jsonPersist";
+import { globalSingleton } from "../infra/globalSingleton";
+import { createLogger } from "../infra/logger";
+import { AppError } from "../errors/appError";
 
 const log = createLogger("workspaceGraph");
 

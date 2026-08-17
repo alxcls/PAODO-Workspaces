@@ -5,7 +5,7 @@
 
 import { StructuredTool } from "@langchain/core/tools";
 import { z } from "zod";
-import { getCallees } from "@/lib/agent/network/graph";
+import { getCallees } from "@/lib/agent/graph";
 import { loadSkills } from "@/lib/skills/store";
 import type { IWorkspaceReader } from "../../infra/interfaces";
 import type { SkillDefinition, SkillSchema } from "@/lib/skills/types";

@@ -209,7 +209,7 @@ export default function GraphEditor() {
           <div className="bg-white rounded-2xl shadow-[0_18px_40px_rgba(15,10,30,0.25)] p-[30px_34px] w-[min(460px,calc(100vw-48px))] border border-[rgba(15,10,30,0.08)]">
             <div className="font-semibold text-[19px] mb-3 text-text">Unsaved changes</div>
             <p className="text-sm text-text-2 m-0 mb-[26px] leading-[1.5]">
-              You have unsaved changes to the agent network. What would you like to do?
+              You have unsaved changes to the agent graph. What would you like to do?
               {pendingDriveDeletes.length > 0 && (
                 <span className="block mt-2 text-danger">
                   Saving permanently deletes {pendingDriveDeletes.map((drive) => drive.data.label as string).join(", ")}

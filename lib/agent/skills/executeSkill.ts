@@ -2,7 +2,7 @@
 // the callee between them. Same Node process — an ordinary call, no HTTP, no serialization.
 import Ajv, { type ErrorObject, type ValidateFunction } from "ajv";
 import { AIMessage, HumanMessage, type BaseMessage } from "@langchain/core/messages";
-import { canCall } from "@/lib/agent/network/graph";
+import { canCall } from "@/lib/agent/graph";
 import { TERMINAL_PROVIDER_CODES } from "../providerFailure";
 import { loadSkills } from "@/lib/skills/store";
 import { createConversation, getMessages, persist } from "@/lib/conversations/store";
@@ -177,7 +177,7 @@ export async function executeSkill(
     return {
       state: "failed",
       code: "NOT_CONNECTED",
-      message: "this workspace is not connected to the target in the Agent Network.",
+      message: "this workspace is not connected to the target in the Agent Graph.",
     };
   }
 

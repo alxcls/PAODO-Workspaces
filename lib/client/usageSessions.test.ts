@@ -149,5 +149,5 @@ describe("formatCost", () => {
 
 describe("originLabel", () => {
   it("maps legacy 'manual' to the chat label", () => expect(originLabel("manual")).toBe("Workspace chat"));
-  it("labels the agent network origin", () => expect(originLabel("agent")).toBe("Agent network"));
+  it("labels the agent graph origin", () => expect(originLabel("agent")).toBe("Agent graph"));
 });

@@ -11,9 +11,10 @@ import {
   type Connection,
   type Edge,
   type Node,
+  type OnNodeDrag,
 } from "@xyflow/react";
 import { WORKSPACE_BOTTOM_HANDLE, WORKSPACE_TOP_HANDLE, normalizeWorkspaceIncomingHandle } from "./handles";
-import { createCellAllocator, readStoredPosition, toCell, toPixels } from "./grid";
+import { createCellAllocator, findTakenCell, readStoredPosition, toCell, toPixels } from "./grid";
 import type { CellPosition, NodePosition } from "@/lib/agent/network/graph";
 
 interface WorkspaceItem {
@@ -56,6 +57,11 @@ function isTyping(target: EventTarget | null) {
   return !!element && (element.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(element.tagName));
 }
 
+/** React Flow reports a lone drag with an empty `nodes`, and a multi-selection drag with all of them. */
+function draggedNodes(node: Node, nodes: Node[]): Node[] {
+  return nodes.length ? nodes : [node];
+}
+
 function wouldCreateCycle(edges: Edge[], source: string, target: string): boolean {
   const adjacency = new Map<string, string[]>();
   for (const edge of edges) {
@@ -87,6 +93,7 @@ export function useGraphDocument({ onGraphDisabled, showError }: GraphDocumentOp
   const [saved, setSaved] = useState(false);
   const [isDirty, setIsDirty] = useState(false);
   const [pendingDriveDeletes, setPendingDriveDeletes] = useState<Node[]>([]);
+  const dragOriginsRef = useRef<Map<string, { x: number; y: number }>>(new Map());
   const savedDriveConnectionsRef = useRef<Map<string, DriveConnectionItem>>(new Map());
   const nodesRef = useRef<Node[]>([]);
   const edgesRef = useRef<Edge[]>([]);
@@ -257,7 +264,28 @@ export function useGraphDocument({ onGraphDisabled, showError }: GraphDocumentOp
     [driveIds, setEdges, showError],
   );
 
-  const onNodeDragStop = useCallback(() => setIsDirty(true), []);
+  const onNodeDragStart = useCallback<OnNodeDrag>((_, node, nodes) => {
+    dragOriginsRef.current = new Map(draggedNodes(node, nodes).map((dragged) => [dragged.id, dragged.position]));
+  }, []);
+
+  // A cell holds one card, so a drop onto an occupied one has nowhere to go and snaps back to where
+  // the drag started rather than stacking two cards in the same slot.
+  const onNodeDragStop = useCallback<OnNodeDrag>(
+    (_, node, nodes) => {
+      if (!findTakenCell(draggedNodes(node, nodes), nodesRef.current)) {
+        setIsDirty(true);
+        return;
+      }
+      const origins = dragOriginsRef.current;
+      setNodes((current) =>
+        current.map((candidate) => {
+          const origin = origins.get(candidate.id);
+          return origin ? { ...candidate, position: origin } : candidate;
+        }),
+      );
+    },
+    [setNodes],
+  );
 
   const persistDrives = useCallback(async () => {
     const savedConnections = savedDriveConnectionsRef.current;
@@ -410,6 +438,7 @@ export function useGraphDocument({ onGraphDisabled, showError }: GraphDocumentOp
     onNodesChange,
     onEdgesChange,
     onConnect,
+    onNodeDragStart,
     onNodeDragStop,
     deleteSelection,
     createDrive,

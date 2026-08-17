@@ -13,6 +13,7 @@ function NodeCard({
   label,
   description,
   selected,
+  dragging,
   title,
   className = "",
   children,
@@ -21,6 +22,7 @@ function NodeCard({
   label: string;
   description?: string;
   selected?: boolean;
+  dragging?: boolean;
   title?: string;
   className?: string;
   children?: React.ReactNode;
@@ -29,7 +31,7 @@ function NodeCard({
   return (
     <div
       title={title}
-      className={`bg-white border rounded-card p-[12px_14px_16px] w-[280px] shadow-sm transition-[border-color,box-shadow] duration-[140ms] hover:border-primary-2 ${selected ? "border-primary shadow-[0_0_0_2px_var(--color-primary-soft),var(--shadow-sm)]" : "border-border"} ${className}`}
+      className={`bg-white border rounded-card p-[12px_14px_16px] w-[280px] shadow-sm transition-[border-color,box-shadow] duration-[140ms] hover:border-primary-2 ${selected ? "border-primary shadow-[0_0_0_2px_var(--color-primary-soft),var(--shadow-sm)]" : "border-border"} ${dragging ? "opacity-50" : ""} ${className}`}
     >
       {children}
       <div className="flex gap-3 items-center">
@@ -45,7 +47,7 @@ function NodeCard({
   );
 }
 
-export function WorkspaceNode({ data, selected }: NodeProps) {
+export function WorkspaceNode({ data, selected, dragging }: NodeProps) {
   return (
     <NodeCard
       icon={
@@ -61,6 +63,7 @@ export function WorkspaceNode({ data, selected }: NodeProps) {
       label={data.label as string}
       description={data.description as string}
       selected={selected}
+      dragging={dragging}
       title="Open workspace"
       className="cursor-pointer"
     >
@@ -97,13 +100,14 @@ const DriveIcon = () => (
 // Drive node: same card as a workspace (icon + name + description), so the two node types are
 // visually consistent. Top and bottom source handles let you start a drive->workspace link;
 // the edges float (anchor to the nearest border), so two handles are enough.
-export function DriveNode({ data, selected }: NodeProps) {
+export function DriveNode({ data, selected, dragging }: NodeProps) {
   return (
     <NodeCard
       icon={<DriveIcon />}
       label={data.label as string}
       description={data.description as string}
       selected={selected}
+      dragging={dragging}
       title="Open drive"
       className="cursor-pointer"
     >

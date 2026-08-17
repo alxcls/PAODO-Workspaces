@@ -34,6 +34,7 @@ export default function GraphEditor() {
     onNodesChange,
     onEdgesChange,
     onConnect,
+    onNodeDragStart,
     onNodeDragStop,
     deleteSelection,
     createDrive,
@@ -177,6 +178,7 @@ export default function GraphEditor() {
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
             onConnect={onConnect}
+            onNodeDragStart={onNodeDragStart}
             onNodeDragStop={onNodeDragStop}
             onNodeDoubleClick={onNodeDoubleClick}
             connectionMode={ConnectionMode.Loose}

@@ -34,6 +34,26 @@ export function readStoredPosition(stored: NodePosition | undefined): CellPositi
 
 const cellKey = ({ col, row }: CellPosition) => `${col},${row}`;
 
+interface PlacedNode {
+  id: string;
+  position: { x: number; y: number };
+}
+
+/**
+ * The first cell a moving node would land on that some other node already holds, if any.
+ *
+ * The nodes being moved are excluded from the occupancy set, so dropping a card back where it
+ * started never reads as a collision, and a multi-node drag never collides with itself.
+ */
+export function findTakenCell(moving: PlacedNode[], all: PlacedNode[]): CellPosition | undefined {
+  const movingIds = new Set(moving.map((node) => node.id));
+  const taken = new Set<string>();
+  for (const node of all) {
+    if (!movingIds.has(node.id)) taken.add(cellKey(toCell(node.position)));
+  }
+  return moving.map((node) => toCell(node.position)).find((cell) => taken.has(cellKey(cell)));
+}
+
 /**
  * Hands out cells to nodes nobody has placed yet, skipping every cell already taken.
  *

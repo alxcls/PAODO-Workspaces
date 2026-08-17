@@ -33,6 +33,8 @@ _Demo video of PAODO in action_ :
 
 - **Isolated workspaces** — one Docker container per workspace, with its own agent and `AGENTS.md` instructions, running as a restricted non-root user
 
+- **Internet access** — sealed by default: a workspace only reaches the network once you enable it, per workspace
+
 - **ReAct agent** — full tool set (file read/edit/write, shell, glob, directory listing, `apt_install`, web fetch, todo list, context compaction); streams progress live and is interruptible (press escape to kill the running command)
 
 - **File browser** — view, edit, upload, and download files from the UI, with syntax highlighting
@@ -47,7 +49,7 @@ _Demo video of PAODO in action_ :
 
 - **Per-workspace secrets** — give each workspace its own third-party API keys; a credential proxy injects the real values into outbound requests so the keys never reach the agent or its container
 
-- **Agent network** — connect specialist workspaces so one agent can call another through defined, validated skills
+- **Agent graph** — connect specialist workspaces so one agent can call another through defined, validated skills
 
 - **Shared drives** — connect shared storage to selected workspaces so agents can exchange files and collaborate on the same materials.
 
@@ -55,7 +57,7 @@ _Demo video of PAODO in action_ :
 
 ## Quick start
 
-**Requirements:** Node.js 20+, [Docker](https://docs.docker.com/get-docker/) (running), and an API key for at least one supported provider (OpenAI, Anthropic, DeepSeek, Moonshot, or Mistral). The key goes into the app, not into a file — see below.
+**Requirements:** Node.js 22.x, [Docker](https://docs.docker.com/get-docker/) (running), and an API key for at least one supported AI model provider.
 
 ```bash
 git clone https://github.com/alxcls/PAODO-Workspaces.git
@@ -65,26 +67,21 @@ cp .env.example .env          # set USERNAME and PASSWORD
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000), then add your provider API key under the gear icon → **Settings → Provider API keys**. Provider keys and per-workspace third-party secrets live in independent encrypted vaults with independent master keys, outside workspace data. Until a key is set, a workspace stops at the start of its conversation and names the provider it needs one for.
-
-The workspace Docker image is built automatically on first run.
+Open [http://localhost:3000](http://localhost:3000) and add your provider API key under the gear icon → **Settings → Provider API keys**.
 
 For VPS deployment, see the [deploy guide](deploy/README.md).
 
 ## How it works
 
 Each workspace runs in its own Docker sandbox and is accessible via the chat UI, external API,
-or MCP server. These are thin triggers over shared PAODO operations rather than separate
-implementations of the same action. Agents in connected workspaces and MCP clients can invoke skills
+or MCP server. Agents in connected workspaces and MCP clients can invoke skills
 using defined input/output contracts. See [Triggers and operations](doc/trigger-operation-architecture.md).
 
 ![Architectural representation of the main functionality](doc/images/loop.png)
 
 `server.ts` boots a Node.js HTTP server that mounts Next.js plus a WebSocket server on one port, so shell output and file events stream over `/ws` without a separate process. Requests hit Next.js API routes, which run the ReAct loop in [`lib/agent/runner.ts`](lib/agent/runner.ts) and stream events back over SSE.
 
-Every sandboxed tool call — file ops, glob, shell, package installs — runs inside a per-workspace Docker container (`ws_<id>`) as a restricted non-root user, with only that workspace's directory mounted. Containers start on demand and stop after an idle timeout.
-
-Workspace metadata and network configuration are stored as JSON files under `data/`.
+Every sandboxed tool call runs inside a per-workspace Docker container (`ws_<id>`) as a restricted non-root user, with only that workspace's directory mounted.
 
 For the full architecture, see [`doc/`](doc/).
 
@@ -93,12 +90,12 @@ The agent runs a ReAct loop with the following tools:
 - **Files** — `file_read` · `file_write` · `file_edit` · `list_directory` · `glob`
 - **System** — `execute_command` · `stop_task` · `apt_install` · `http_get`
 - **Session** — `todo_write` · `compact_context` · `workspace_history` · `workspace_restore`
-- **Agent network** — `list_agents` · `call_agent`
+- **Agent graph** — `list_agents` · `call_agent`
 - **Shared drives** — `drive_ls` · `drive_read` · `drive_download` · `drive_upload` · `drive_delete`
 
-## Agent network
+## Agent graph
 
-Workspaces can call each other. The network page connects them into a directed graph; an edge **A → B** lets A's agent invoke B's. Agents find their neighbors with `list_agents` and call them with `call_agent`.
+Workspaces can call each other. The graph page connects them into a directed acyclic graph; an edge **A → B** lets A's agent invoke B's. Agents find their neighbors with `list_agents` and call them with `call_agent`.
 
 Calls are **contract-first**: each workspace publishes typed _skills_ (`.skills/*.json`), and the platform validates the caller's input and the callee's output against the skill's schema. The callee runs in a fresh, isolated conversation. No graph edge, no call.
 
@@ -112,7 +109,7 @@ curl -X POST http://localhost:<port>/api/workspaces/<id>/agent \
   -d '{"message": "list all files and summarize what this workspace does"}'
 ```
 
-The response is a Server-Sent Events stream of progress events (`tool_start`, `tool_end`, …), ending in a single `response` event that carries the final answer, then `done`.
+The response is a Server-Sent Events stream of `tool_start` progress events, ending in a single `response` event that carries the final answer, then `done`.
 
 Each call starts its own conversation, visible in the workspace UI. To thread calls together
 instead, pass the `conversationId` returned in the `X-Conversation-Id` header back in the next
@@ -140,16 +137,13 @@ graph. Each skill's `.skills/*.json` contract becomes the tool's input and outpu
 run through the same validated path the agent network uses. The secret is stored hashed, shown once,
 and revoked independently of the API key.
 
-There is no per-skill publication step: whatever the workspace declares in `.skills/` is what the
-endpoint serves, read fresh on every request, so a skill the agent adds is callable at once and one
-it deletes is neither listed nor callable. Enabling the MCP and handing out its secret is the
-authorization decision — give it only to clients you would trust with every skill the workspace
-declares. The workspace panel lists the currently exposed tools so you can see the surface change.
+There is no publication step: the endpoint reads `.skills/` fresh on every request, so a skill the
+agent adds is immediately callable and one it deletes is gone. Handing out the secret is therefore
+the authorization decision — the workspace panel lists the currently exposed tools.
 
-Skill calls are one-shot, unlike the chat API above: each runs in a fresh, isolated conversation, so
-there is no `conversationId` to continue — a caller that needs different arguments calls again
-rather than resumes. Those conversations are still persisted and visible in the workspace UI and dashboard for
-auditing.
+Unlike the chat API, skill calls are one-shot: each runs in a fresh, isolated conversation with no
+`conversationId` to continue. Those conversations are still persisted in the workspace UI and
+dashboard for auditing.
 
 ## Known limitations
 
@@ -158,16 +152,6 @@ auditing.
 - **No file write queue** — concurrent writes to the same file can overwrite each other under load.
 
 - **No image reading** — the agent handles images as raw files but can't see their content.
-
-## Roadmap
-
-Automatic (size-triggered) compaction · budget monitoring · database storage and tools.
-
-## Contributing
-
-This is a personal project to build a power tool for small AI agent services. Help or opinion about the project is genuinely welcome.
-
-Discord: **alex_24589**
 
 ## License
 

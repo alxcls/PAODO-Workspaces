@@ -86,13 +86,6 @@ Every sandboxed tool call — file ops, glob, shell, package installs — runs i
 
 Workspace metadata and network configuration are stored as JSON files under `data/`.
 
-Recoverable credentials use four storage boundaries: provider vault/key and workspace-secret
-vault/key. Docker Compose keeps each in a named volume separate from `workspaces`; local development
-uses four ignored `.paodo-…` directories. The credential proxy receives only the workspace-secret
-pair, so it cannot decrypt provider API keys. A workspace-data backup contains none of them. Treat
-each vault as sensitive encrypted material, keep its key backup elsewhere, and transfer neither half
-for a credential-free handoff. This greenfield format deliberately has no legacy-vault migration.
-
 For the full architecture, see [`doc/`](doc/).
 
 The agent runs a ReAct loop with the following tools:

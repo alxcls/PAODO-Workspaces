@@ -1,7 +1,5 @@
-// Handle ids for the workspace node's two connection points, and the rule for which one an
-// incoming link snaps to. Shared because both sides need to agree: WorkspaceNode renders the
-// handles, while the editor normalizes whatever handle id comes back from the store or from a
-// drag before it touches an edge.
+// Handle ids for the workspace node's two connection points, and the rule for which one an incoming
+// link snaps to. Shared: WorkspaceNode renders them, the editor normalizes what a store or drag hands back.
 
 export const WORKSPACE_TOP_HANDLE = "workspace-target-top";
 export const WORKSPACE_BOTTOM_HANDLE = "workspace-source-bottom";

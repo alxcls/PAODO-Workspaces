@@ -1,6 +1,5 @@
-// Persists the directed workspace connection graph to data/.workspace-graph.json.
-// Edges flow from caller (source) → callee (target), enforcing a DAG where only
-// connected workspaces can invoke each other via the call_agent tool.
+// Persists the directed workspace connection graph to data/.workspace-graph.json. Edges flow from
+// caller (source) → callee (target): a DAG where only connected workspaces can call_agent each other.
 import path from "path";
 import { WORKSPACES_ROOT } from "../infra/paths";
 import { atomicSaveJson, readJson } from "../infra/jsonPersist";
@@ -34,9 +33,8 @@ interface GraphFile {
 
 const GRAPH_FILE = path.join(WORKSPACES_ROOT, ".workspace-graph.json");
 
-// Held on a shared global holder (not a module-level `let`) so every Next.js module instance reads
-// and writes the same cache — otherwise an edge added via the API would be invisible to the agent's
-// call-gating until restart. Reassign `state.graph` on writes; the holder object is the stable ref.
+// On a shared global holder, not a module-level `let`, so every Next.js module instance reads one
+// cache — otherwise an edge added via the API stays invisible to call-gating until restart.
 const state = globalSingleton("workspaceGraph", () => ({
   graph: readJson<GraphFile>(GRAPH_FILE, { edges: [], positions: {} }),
 }));
@@ -97,10 +95,8 @@ export function removeWorkspaceFromGraph(workspaceId: string): void {
   delete positions[workspaceId];
   if (edges.length === graph.edges.length && !(workspaceId in graph.positions)) return;
   state.graph = { edges, positions };
-  // Called mid-cascade by DELETE /api/workspaces/[id]: the registry entry is already gone, and the
-  // container, files, git repo and API key are cleaned up after this returns. Throwing would abort
-  // that cleanup and orphan all of it, so a failed write is logged and swallowed — a stale edge is
-  // cheap to live with, an orphaned container is not. saveGraph still throws; its route handles it.
+  // Called mid-cascade by DELETE /api/workspaces/[id]: throwing would abort the container, file and
+  // key cleanup that follows. A stale edge is cheap to live with, an orphaned container is not.
   try {
     atomicSaveJson(GRAPH_FILE, state.graph);
   } catch (err) {

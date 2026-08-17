@@ -1,10 +1,5 @@
-// The canvas is a lattice. A node occupies one cell addressed by integer col/row, and a cell is the
-// only placement a card can take — so two cards can never half-overlap, only share a cell or not.
-//
-// React Flow is pixels-only, so col/row is the stored and transported shape and this module is the
-// single boundary between the two systems. Everything above it reasons in cells; only ReactFlow
-// itself sees pixels. Keeping the conversion here is what lets a node be placed without measuring
-// anything: a cell's size is a constant, not a rendered card's height.
+// The canvas is a lattice: a node occupies one cell addressed by integer col/row, so two cards share
+// a cell or nothing. React Flow is pixels-only; this module is the single boundary between the two.
 import type { CellPosition, NodePosition } from "@/lib/agent/graph";
 
 /** Wide enough for the fixed-width card plus a gutter, tall enough to read an edge between rows. */
@@ -18,11 +13,16 @@ export const SNAP_GRID: [number, number] = [CELL_WIDTH, CELL_HEIGHT];
 /** Cells per row before the allocator wraps to the next one. */
 const GRID_COLUMNS = 4;
 
-export function toPixels({ col, row }: CellPosition) {
+export interface PixelPosition {
+  x: number;
+  y: number;
+}
+
+export function toPixels({ col, row }: CellPosition): PixelPosition {
   return { x: col * CELL_WIDTH, y: row * CELL_HEIGHT };
 }
 
-export function toCell({ x, y }: { x: number; y: number }): CellPosition {
+export function toCell({ x, y }: PixelPosition): CellPosition {
   return { col: Math.round(x / CELL_WIDTH), row: Math.round(y / CELL_HEIGHT) };
 }
 
@@ -34,43 +34,41 @@ export function readStoredPosition(stored: NodePosition | undefined): CellPositi
 
 const cellKey = ({ col, row }: CellPosition) => `${col},${row}`;
 
+/** The one answer to "is this spot taken". On a lattice that is a set lookup rather than an
+ *  intersection test against every other card, which is what makes the scans below cheap. */
+function occupancy(cells: Iterable<CellPosition>) {
+  const taken = new Set([...cells].map(cellKey));
+  return {
+    has: (cell: CellPosition) => taken.has(cellKey(cell)),
+    add: (cell: CellPosition) => taken.add(cellKey(cell)),
+  };
+}
+
 interface PlacedNode {
   id: string;
-  position: { x: number; y: number };
+  position: PixelPosition;
 }
 
-/**
- * The first cell a moving node would land on that some other node already holds, if any.
- *
- * The nodes being moved are excluded from the occupancy set, so dropping a card back where it
- * started never reads as a collision, and a multi-node drag never collides with itself.
- */
+/** The first cell a moving node would land on that some other node already holds, if any. Moving
+ *  nodes are excluded, so a drop back where the drag started never reads as a collision and a
+ *  multi-node drag never collides with itself. */
 export function findTakenCell(moving: PlacedNode[], all: PlacedNode[]): CellPosition | undefined {
   const movingIds = new Set(moving.map((node) => node.id));
-  const taken = new Set<string>();
-  for (const node of all) {
-    if (!movingIds.has(node.id)) taken.add(cellKey(toCell(node.position)));
-  }
-  return moving.map((node) => toCell(node.position)).find((cell) => taken.has(cellKey(cell)));
+  const taken = occupancy(all.filter((node) => !movingIds.has(node.id)).map((node) => toCell(node.position)));
+  return moving.map((node) => toCell(node.position)).find((cell) => taken.has(cell));
 }
 
-/**
- * Hands out cells to nodes nobody has placed yet, skipping every cell already taken.
- *
- * This is the payoff of the lattice. Asking "is this spot free" used to mean intersecting a
- * variable-width, variable-height card against every other card; on a lattice it is one set lookup,
- * so first-free-cell is a scan short enough to not think about. A workspace or drive that appears
- * from outside the editor therefore lands somewhere empty instead of on top of a placed node.
- */
+/** Hands out cells to nodes nobody has placed yet, skipping every cell already taken, so a workspace
+ *  or drive arriving from outside the editor lands somewhere empty instead of on a placed node. */
 export function createCellAllocator(taken: Iterable<CellPosition>) {
-  const occupied = new Set([...taken].map(cellKey));
+  const occupied = occupancy(taken);
   let next = 0;
   return (): CellPosition => {
     for (;;) {
       const cell = { col: next % GRID_COLUMNS, row: Math.floor(next / GRID_COLUMNS) };
       next += 1;
-      if (occupied.has(cellKey(cell))) continue;
-      occupied.add(cellKey(cell));
+      if (occupied.has(cell)) continue;
+      occupied.add(cell);
       return cell;
     }
   };

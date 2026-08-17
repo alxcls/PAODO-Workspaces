@@ -7,11 +7,8 @@ import {
 } from "@xyflow/react";
 import { getEdgeParams } from "./floatingEdgeUtils";
 
-// Edge that anchors to the nearest border point of each node rather than to a fixed
-// handle, so links stay visually attached as nodes are dragged around. Rendered via
-// BaseEdge so it gets the transparent wide interaction path — without it the thin dashed
-// line is nearly impossible to click, so the edge can't be selected and therefore can't
-// be deleted with the Delete/Backspace key.
+// Anchors to each node's nearest border point rather than a fixed handle, so links stay attached
+// while dragging. BaseEdge adds the wide invisible hit path — without it the line can't be clicked.
 export function FloatingEdge({ id, source, target, markerEnd, style }: EdgeProps) {
   const sourceNode = useInternalNode(source);
   const targetNode = useInternalNode(target);
@@ -30,9 +27,8 @@ export function FloatingEdge({ id, source, target, markerEnd, style }: EdgeProps
   return <BaseEdge id={id} path={path} markerEnd={markerEnd} style={style} interactionWidth={20} />;
 }
 
-// Drag preview while a connection is being drawn. For drives it floats from the node's
-// nearest border (matching committed drive edges); for workspaces it starts at the handle
-// being dragged, so the input/output side stays meaningful.
+// Drag preview while drawing a connection: drives float from the nearest border (matching a
+// committed drive edge), workspaces start at the dragged handle so input/output stays meaningful.
 export function FloatingConnectionLine({
   fromX,
   fromY,

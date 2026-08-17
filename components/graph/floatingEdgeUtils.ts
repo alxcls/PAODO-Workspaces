@@ -1,8 +1,7 @@
 import { Position, type InternalNode, type Node } from "@xyflow/react";
 
-// Geometry helpers for "floating" edges: instead of anchoring to a fixed handle,
-// an edge attaches to the point on each node's border that faces the other node,
-// recomputed live as nodes move. Adapted from the React Flow floating-edges recipe.
+// Geometry for "floating" edges: an edge attaches to the point on each node's border facing the
+// other node, recomputed as nodes move. Adapted from the React Flow floating-edges recipe.
 
 // Point on `node`'s border where the line toward `target`'s center crosses it.
 function getNodeIntersection(node: InternalNode<Node>, target: InternalNode<Node>) {

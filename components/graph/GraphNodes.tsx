@@ -1,13 +1,10 @@
 import { Handle, Position, type NodeProps } from "@xyflow/react";
 import Image from "next/image";
 import { WORKSPACE_BOTTOM_HANDLE, WORKSPACE_TOP_HANDLE } from "./handles";
+import { nodeData } from "./types";
 
-// The two node types the canvas renders. Both are pure presentation — they read only from the
-// `data` React Flow hands them, so what a node looks like changes here and nowhere else.
-
-// Shared card body for graph nodes so workspace and drive nodes look identical
-// (icon + name + optional description). Handles are passed as children and absolutely
-// positioned by React Flow against the card edges; the node types differ only in those.
+// The two node types the canvas renders, both pure presentation over the `data` React Flow hands
+// them. They share one card (icon + name + description) and differ only in icon and handles.
 function NodeCard({
   icon,
   label,
@@ -47,9 +44,16 @@ function NodeCard({
   );
 }
 
-export function WorkspaceNode({ data, selected, dragging }: NodeProps) {
+/** The card fields every node type reads the same way out of React Flow's props. */
+function cardProps({ data, selected, dragging }: NodeProps) {
+  const { label, description } = nodeData(data);
+  return { label, description, selected, dragging };
+}
+
+export function WorkspaceNode(props: NodeProps) {
   return (
     <NodeCard
+      {...cardProps(props)}
       icon={
         <Image
           src="/agent-robot.svg"
@@ -60,10 +64,6 @@ export function WorkspaceNode({ data, selected, dragging }: NodeProps) {
           unoptimized
         />
       }
-      label={data.label as string}
-      description={data.description as string}
-      selected={selected}
-      dragging={dragging}
       title="Open workspace"
       className="cursor-pointer"
     >
@@ -97,20 +97,11 @@ const DriveIcon = () => (
   </svg>
 );
 
-// Drive node: same card as a workspace (icon + name + description), so the two node types are
-// visually consistent. Top and bottom source handles let you start a drive->workspace link;
-// the edges float (anchor to the nearest border), so two handles are enough.
-export function DriveNode({ data, selected, dragging }: NodeProps) {
+// Two source handles let you start a drive->workspace link from either side; the edges float
+// (anchor to the nearest border), so two are enough.
+export function DriveNode(props: NodeProps) {
   return (
-    <NodeCard
-      icon={<DriveIcon />}
-      label={data.label as string}
-      description={data.description as string}
-      selected={selected}
-      dragging={dragging}
-      title="Open drive"
-      className="cursor-pointer"
-    >
+    <NodeCard {...cardProps(props)} icon={<DriveIcon />} title="Open drive" className="cursor-pointer">
       <Handle id="drive-top" type="source" position={Position.Top} className="graph-handle" />
       <Handle id="drive-bottom" type="source" position={Position.Bottom} className="graph-handle" />
     </NodeCard>

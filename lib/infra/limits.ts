@@ -107,6 +107,21 @@ export const EXEC_OUTPUT_KEEP = 5;
  */
 export const EXEC_OUTPUT_MAX_BACKLOG = 8 * 1024 * 1024;
 
+/**
+ * How long a killed command's process group is given to exit on SIGTERM before SIGKILL follows.
+ *
+ * Commands are killed routinely and without anyone asking — the silence and max-runtime guards and
+ * the disk check all do it, alongside the user's Stop. Going straight to SIGKILL denies git the
+ * chance to drop its index.lock and npm the chance to clear its staging dir, so the workspace is
+ * left needing repair and the agent spends its next turns doing it. This window is what turns that
+ * into a clean abort.
+ *
+ * Free, in latency terms: the kill is already fire-and-forget relative to the tool's return (see
+ * execCommand's killWith), so nothing waits on this — not the user's Stop, not the agent's next turn.
+ * Short all the same, because it delays only the forced kill of something already misbehaving.
+ */
+export const EXEC_KILL_GRACE_MS = 2_000;
+
 // ---------------------------------------------------------------------------
 // File reads — lib/agent/tools/fileRead.ts, lib/agent/tools/driveRead.ts
 // ---------------------------------------------------------------------------

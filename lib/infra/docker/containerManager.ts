@@ -15,7 +15,7 @@ import { createLogger, exitAfterLogs } from "../logger";
 import { envArgs, type IDockerClient } from "./dockerClient";
 import { ImageManager, HASH_LABEL } from "./imageManager";
 import type { IContainerManager, OutputSink } from "../interfaces";
-import { EXEC_OUTPUT_MAX_BYTES, EXEC_OUTPUT_KEEP, EXEC_OUTPUT_MAX_BACKLOG } from "../limits";
+import { EXEC_OUTPUT_MAX_BYTES, EXEC_OUTPUT_KEEP, EXEC_OUTPUT_MAX_BACKLOG, EXEC_KILL_GRACE_MS } from "../limits";
 import { containerName, networkName } from "./naming";
 import { BackgroundTaskManager, type BackgroundTask } from "./backgroundTaskManager";
 import { ProxyNetworkManager } from "./proxyNetworkManager";
@@ -56,6 +56,10 @@ const IDLE_TIMEOUT_MS = parseInt(process.env.CONTAINER_IDLE_MS ?? "", 10) || 10 
 // and neither is visible to the file tree, to git, or to workspace snapshots — which matters here,
 // because snapshots stage with `add --all --force` and would otherwise commit every spill file.
 const EXEC_OUTPUT_DIR = "/tmp/paodo-exec";
+// Where execStreaming parks a command's session-leader pid so its group can be killed later. Split
+// into dir + prefix so the file it writes and the sweep that clears them can never drift apart.
+const EXEC_PIDFILE_DIR = "/tmp";
+const EXEC_PIDFILE_PREFIX = "paodo-exec-";
 // Docker volume name is deterministic: compose project name (fixed in docker-compose.yml as
 // "paodo_ws") + "_" + volume key ("workspaces"). Falls back to a plain bind mount when unset
 // so local dev (app running directly on host) still works without Docker Compose.
@@ -253,6 +257,7 @@ export class ContainerManager implements IContainerManager {
         stage = "start_container";
         const r = await this.docker.cmd("start", containerName(workspaceId));
         if (r.code !== 0) throw new Error(`docker start failed: ${r.stderr}`);
+        await this.sweepExecPidFiles(workspaceId);
         return;
       }
 
@@ -455,6 +460,30 @@ export class ContainerManager implements IContainerManager {
     });
   }
 
+  /**
+   * Clear exec pid files orphaned by a container stop.
+   *
+   * Only the kill path removes a pid file; a command that simply finishes leaves its own behind. A
+   * container lives for the whole life of its workspace and nothing else ever clears its /tmp, so
+   * without this those files accumulate for as long as the workspace exists.
+   *
+   * Runs ONLY on the restart path, which is what makes it safe without an age heuristic: the stop
+   * killed every process in the container, so nothing left in here can belong to a live command.
+   * `find -delete` rather than `rm -f` with a glob, so a long-neglected container cannot blow ARG_MAX.
+   */
+  private async sweepExecPidFiles(workspaceId: string): Promise<void> {
+    const script = `find ${EXEC_PIDFILE_DIR} -maxdepth 1 -type f -name '${EXEC_PIDFILE_PREFIX}*.pid' -delete`;
+    // Best effort: leftover pid files cost disk, never correctness, so a failure here must not stop
+    // a container that has otherwise started cleanly.
+    const r = await this.docker.exec(containerName(workspaceId), ["/bin/bash", "-c", script]).catch((err) => {
+      log.warn({ err, workspaceId }, "failed to sweep orphaned exec pid files");
+      return null;
+    });
+    if (r && r.code !== 0) {
+      log.warn({ workspaceId, stderr: r.stderr }, "failed to sweep orphaned exec pid files");
+    }
+  }
+
   async execStreaming(
     workspaceId: string,
     workspaceDir: string,
@@ -470,7 +499,7 @@ export class ContainerManager implements IContainerManager {
       // the container, since killing the host-side `docker exec` client just orphans it onto PID 1.
       // cmdArgs is a runnable argv (e.g. ["/bin/bash","-c",command]); `exec "$0" "$@"` re-execs it
       // in place, so the recorded PID is exactly the process that runs the work.
-      const pidFile = `/tmp/paodo-exec-${randomUUID()}.pid`;
+      const pidFile = `${EXEC_PIDFILE_DIR}/${EXEC_PIDFILE_PREFIX}${randomUUID()}.pid`;
       const launcher = `echo $$ > ${pidFile}; exec "$0" "$@"`;
       // setsid --wait: create the new session (so the work is a killable process-group leader) but
       // BLOCK until it finishes and propagate its exit code. Without --wait, setsid forks and the
@@ -512,14 +541,33 @@ export class ContainerManager implements IContainerManager {
       proc.stderr!.on("data", (chunk: Buffer) => safeEmit(() => opts.onStderr(chunk.toString()), workspaceId));
 
       let killed = false;
+      // Signals the whole in-container process group via the recorded session leader. Only the last
+      // signal a command will ever get removes the pid file — the escalation still needs to read it.
+      const signalGroup = (killSignal: "TERM" | "KILL", removePidFile: boolean) =>
+        this.docker
+          .exec(name, [
+            "/bin/bash",
+            "-c",
+            `kill -${killSignal} -"$(cat ${pidFile} 2>/dev/null)" 2>/dev/null` +
+              (removePidFile ? `; rm -f ${pidFile}` : ""),
+          ])
+          .catch((err) =>
+            log.warn({ err, workspaceId, killSignal }, "failed to signal aborted foreground command inside container"),
+          );
+
+      // Ask, then force. The grace window is what lets git drop its index.lock and npm clear its
+      // staging dir, so an interrupted command leaves a clean workspace rather than a repair job.
       const kill = () => {
         if (killed) return;
         killed = true;
-        // Fire-and-forget: kill the in-container process group, then drop the host-side client.
-        this.docker
-          .exec(name, ["/bin/bash", "-c", `kill -KILL -"$(cat ${pidFile} 2>/dev/null)" 2>/dev/null; rm -f ${pidFile}`])
-          .catch((err) => log.warn({ err, workspaceId }, "failed to kill aborted foreground command inside container"));
-        proc.kill("SIGKILL");
+        signalGroup("TERM", false);
+        // The host-side client is deliberately left alone until the escalation: dropping it while
+        // the group still lives orphans the command onto PID 1, which the pid-file kill exists to avoid.
+        const escalation = setTimeout(() => {
+          signalGroup("KILL", true);
+          proc.kill("SIGKILL");
+        }, EXEC_KILL_GRACE_MS);
+        escalation.unref?.();
       };
 
       if (opts.signal) {
@@ -532,6 +580,8 @@ export class ContainerManager implements IContainerManager {
         if (finished) return;
         finished = true;
         opts.signal?.removeEventListener("abort", kill);
+        // A pending escalation is deliberately NOT cancelled here: `setsid --wait` returns when the
+        // group LEADER exits, so a sibling that blocked SIGTERM would be left with nothing to kill it.
         resolve({ code });
       };
       proc.on("close", (code) => done(code));

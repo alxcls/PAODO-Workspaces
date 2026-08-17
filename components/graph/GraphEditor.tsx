@@ -191,14 +191,7 @@ export default function GraphEditor() {
             snapToGrid
             snapGrid={SNAP_GRID}
           >
-            <Background
-              id="cells"
-              variant={BackgroundVariant.Lines}
-              color="var(--color-border-soft)"
-              gap={SNAP_GRID}
-              lineWidth={1}
-            />
-            <Background id="dots" variant={BackgroundVariant.Dots} color="var(--color-border)" gap={24} size={1.2} />
+            <Background variant={BackgroundVariant.Dots} color="var(--color-border)" gap={24} size={1.2} />
             <Controls />
           </ReactFlow>
         )}

@@ -9,6 +9,7 @@ import TopBar from "@/components/layout/TopBar";
 import { useTransientMessage } from "@/lib/client/hooks/useTransientMessage";
 import { FloatingConnectionLine, FloatingEdge } from "./FloatingEdge";
 import { DriveNode, WorkspaceNode } from "./GraphNodes";
+import { SNAP_GRID } from "./grid";
 import { useGraphDocument } from "./useGraphDocument";
 
 export default function GraphEditor() {
@@ -187,8 +188,17 @@ export default function GraphEditor() {
             nodeDragThreshold={4}
             deleteKeyCode={null}
             multiSelectionKeyCode="Shift"
+            snapToGrid
+            snapGrid={SNAP_GRID}
           >
-            <Background variant={BackgroundVariant.Dots} color="var(--color-border)" gap={24} size={1.2} />
+            <Background
+              id="cells"
+              variant={BackgroundVariant.Lines}
+              color="var(--color-border-soft)"
+              gap={SNAP_GRID}
+              lineWidth={1}
+            />
+            <Background id="dots" variant={BackgroundVariant.Dots} color="var(--color-border)" gap={24} size={1.2} />
             <Controls />
           </ReactFlow>
         )}

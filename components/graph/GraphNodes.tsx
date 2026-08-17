@@ -29,7 +29,7 @@ function NodeCard({
   return (
     <div
       title={title}
-      className={`bg-white border rounded-card p-[12px_14px_16px] min-w-[220px] max-w-[280px] shadow-sm transition-[border-color,box-shadow] duration-[140ms] hover:border-primary-2 ${selected ? "border-primary shadow-[0_0_0_2px_var(--color-primary-soft),var(--shadow-sm)]" : "border-border"} ${className}`}
+      className={`bg-white border rounded-card p-[12px_14px_16px] w-[280px] shadow-sm transition-[border-color,box-shadow] duration-[140ms] hover:border-primary-2 ${selected ? "border-primary shadow-[0_0_0_2px_var(--color-primary-soft),var(--shadow-sm)]" : "border-border"} ${className}`}
     >
       {children}
       <div className="flex gap-3 items-center">
@@ -37,7 +37,7 @@ function NodeCard({
         <div className="min-w-0 flex-1">
           <div className="font-semibold text-ms text-text whitespace-nowrap overflow-hidden text-ellipsis">{label}</div>
           {hasDescription && (
-            <div className="text-xs text-text-2 mt-1 leading-[1.4] whitespace-pre-wrap">{description}</div>
+            <div className="text-xs text-text-2 mt-1 leading-[1.4] whitespace-pre-wrap line-clamp-2">{description}</div>
           )}
         </div>
       </div>

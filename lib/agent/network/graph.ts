@@ -16,9 +16,20 @@ export interface GraphEdge {
   target: string; // callee workspace ID
 }
 
+/** A node's cell on the editor lattice. Integers, not pixels: the canvas is the only thing that
+ *  knows how large a cell is, so nothing outside it has to reason in geometry to place a node. */
+export interface CellPosition {
+  col: number;
+  row: number;
+}
+
+/** Graphs saved before the lattice hold raw pixels. The editor reads either shape and the next
+ *  save rewrites the file in cells, so this union narrows on its own over time. */
+export type NodePosition = CellPosition | { x: number; y: number };
+
 interface GraphFile {
   edges: GraphEdge[];
-  positions: Record<string, { x: number; y: number }>;
+  positions: Record<string, NodePosition>;
 }
 
 const GRAPH_FILE = path.join(WORKSPACES_ROOT, ".workspace-graph.json");
@@ -54,7 +65,7 @@ function hasCycle(edges: GraphEdge[]): boolean {
   return false;
 }
 
-export function saveGraph(edges: GraphEdge[], positions: Record<string, { x: number; y: number }>): void {
+export function saveGraph(edges: GraphEdge[], positions: Record<string, NodePosition>): void {
   // Not logged: the graph editor lets a user draw a cycle, and rejecting it is the feature working.
   // The route turns this into a 400 the user sees and acts on — nothing for an operator to do.
   if (hasCycle(edges)) {

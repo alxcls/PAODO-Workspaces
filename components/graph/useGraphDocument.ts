@@ -13,6 +13,8 @@ import {
   type Node,
 } from "@xyflow/react";
 import { WORKSPACE_BOTTOM_HANDLE, WORKSPACE_TOP_HANDLE, normalizeWorkspaceIncomingHandle } from "./handles";
+import { createCellAllocator, readStoredPosition, toCell, toPixels } from "./grid";
+import type { CellPosition, NodePosition } from "@/lib/agent/network/graph";
 
 interface WorkspaceItem {
   id: string;
@@ -140,7 +142,7 @@ export function useGraphDocument({ onGraphDisabled, showError }: GraphDocumentOp
       fetch("/api/workspaces").then((response) => response.json()) as Promise<WorkspaceItem[]>,
       fetch("/api/workspace-graph").then((response) => {
         if (!response.ok) throw new Error("graph-disabled");
-        return response.json() as Promise<{ edges: Edge[]; positions: Record<string, { x: number; y: number }> }>;
+        return response.json() as Promise<{ edges: Edge[]; positions: Record<string, NodePosition> }>;
       }),
       fetch("/api/drives").then((response) => (response.ok ? response.json() : [])) as Promise<DriveItem[]>,
       fetch("/api/drive-connections").then((response) => (response.ok ? response.json() : [])) as Promise<
@@ -148,23 +150,29 @@ export function useGraphDocument({ onGraphDisabled, showError }: GraphDocumentOp
       >,
     ])
       .then(([workspaces, graph, drives, connections]) => {
-        const positions = graph.positions ?? {};
+        // A node the editor has never placed gets the first free cell rather than a slot derived
+        // from its index in this response — that index shifts whenever a sibling is added.
+        const placed = new Map<string, CellPosition>();
+        for (const [id, stored] of Object.entries(graph.positions ?? {})) {
+          const cell = readStoredPosition(stored);
+          if (cell) placed.set(id, cell);
+        }
+        const allocateCell = createCellAllocator(placed.values());
+        const positionOf = (id: string) => toPixels(placed.get(id) ?? allocateCell());
+
         const workspaceIds = new Set(workspaces.map((workspace) => workspace.id));
-        const workspaceNodes: Node[] = workspaces.map((workspace, index) => ({
+        const workspaceNodes: Node[] = workspaces.map((workspace) => ({
           id: workspace.id,
           type: "workspace",
           deletable: false,
-          position: positions[workspace.id] ?? {
-            x: 80 + (index % 3) * 260,
-            y: 80 + Math.floor(index / 3) * 220,
-          },
+          position: positionOf(workspace.id),
           data: { label: workspace.name, description: workspace.description ?? "" },
         }));
-        const driveNodes: Node[] = drives.map((drive, index) => ({
+        const driveNodes: Node[] = drives.map((drive) => ({
           id: drive.id,
           type: "drive",
           deletable: false,
-          position: positions[drive.id] ?? { x: 80 + (index % 3) * 260, y: 460 + Math.floor(index / 3) * 200 },
+          position: positionOf(drive.id),
           data: { label: drive.name, description: drive.description, kind: "drive" },
         }));
         setNodes([...workspaceNodes, ...driveNodes]);
@@ -313,9 +321,9 @@ export function useGraphDocument({ onGraphDisabled, showError }: GraphDocumentOp
   }, [pendingDriveDeletes, setEdges]);
 
   const persist = useCallback(async () => {
-    const positions: Record<string, { x: number; y: number }> = {};
+    const positions: Record<string, CellPosition> = {};
     nodesRef.current.forEach((node) => {
-      positions[node.id] = node.position;
+      positions[node.id] = toCell(node.position);
     });
     const workspaceEdges = edgesRef.current
       .filter((edge) => edge.data?.kind !== "drive")
@@ -369,16 +377,19 @@ export function useGraphDocument({ onGraphDisabled, showError }: GraphDocumentOp
           throw new Error(body.error ?? "Create failed");
         }
         const drive = (await response.json()) as DriveItem;
-        setNodes((current) => [
-          ...current,
-          {
-            id: drive.id,
-            type: "drive",
-            deletable: false,
-            position: { x: 200, y: 320 },
-            data: { label: drive.name, description: drive.description, kind: "drive" },
-          },
-        ]);
+        setNodes((current) => {
+          const allocateCell = createCellAllocator(current.map((node) => toCell(node.position)));
+          return [
+            ...current,
+            {
+              id: drive.id,
+              type: "drive",
+              deletable: false,
+              position: toPixels(allocateCell()),
+              data: { label: drive.name, description: drive.description, kind: "drive" },
+            },
+          ];
+        });
         return true;
       } catch (error) {
         showError(error instanceof Error ? error.message : "Create failed");

@@ -19,7 +19,7 @@ export default function DescriptionBlock({ value, onChange }: { value: string; o
 
   return (
     <div
-      className={`relative flex flex-col border rounded-card p-[16px_18px] transition-[border-color,background] duration-[140ms] ${editing ? "border-primary-2 bg-bg" : "border-border bg-bg-tint cursor-text hover:border-primary-2 hover:bg-bg group"}`}
+      className={`relative flex flex-col overflow-hidden border rounded-card p-[16px_18px] transition-[border-color,background] duration-[140ms] ${editing ? "border-primary-2 bg-bg" : "border-border bg-bg-tint cursor-text hover:border-primary-2 hover:bg-bg group"}`}
       style={{ height: 240 }}
       onClick={() => {
         if (!editing) {
@@ -51,7 +51,9 @@ export default function DescriptionBlock({ value, onChange }: { value: string; o
           </div>
         </>
       ) : value ? (
-        <p className="m-0 text-text leading-[1.55] whitespace-pre-wrap">{value}</p>
+        <p className="m-0 flex-1 min-h-0 overflow-y-auto text-text leading-[1.55] whitespace-pre-wrap break-words">
+          {value}
+        </p>
       ) : (
         <p className="m-0 text-text-3">Add a description for this workspace…</p>
       )}

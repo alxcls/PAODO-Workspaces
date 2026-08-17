@@ -1,5 +1,5 @@
 // Client-side transcript reducers for the agent chat stream: they fold AgentEvents into the rendered
-// message list. No React, no DOM — useAgentStream owns the state + RAF coalescing and delegates all
+// message list. No React, no DOM — useAgentStream owns the state + repaint coalescing and delegates all
 // shaping here, which keeps this layer unit-testable under the plain node vitest config.
 //
 // The Message shape and the tool display maps live in lib/transcript/ because the server also speaks
@@ -57,8 +57,8 @@ export function foldTurnUsageForChat(
 }
 
 // Token coalescing: replace the trailing assistant bubble with the full accumulated text, or
-// start a new one if the last message isn't an open assistant turn. Shared by the streaming RAF
-// flush and the terminal flush in the hook's finally block — the single source of this rule.
+// start a new one if the last message isn't an open assistant turn. Shared by the streaming
+// interval flush and the terminal flush in the hook's finally block — the single source of this rule.
 export function upsertAssistantText(messages: Message[], content: string): Message[] {
   const last = messages[messages.length - 1];
   if (last?.role === "assistant" && !last.thinking) {

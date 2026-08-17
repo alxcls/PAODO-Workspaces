@@ -1,11 +1,11 @@
 // Chat panel — renders the message thread and input bar for agent interaction.
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, memo } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import TokenUsageLine from "@/components/usage/TokenUsageLine";
-import { useAgentStream, toolLabel, type PacedState } from "@/lib/client/hooks/useAgentStream";
+import { useAgentStream, toolLabel, type Message, type PacedState } from "@/lib/client/hooks/useAgentStream";
 import type { InitialConversation } from "@/lib/client/hooks/useConversations";
 
 // Borrows the tool-row shape on purpose: a rate-limit wait is work being done to us, so it reads as
@@ -38,6 +38,100 @@ const mdComponents: Components = {
     </div>
   ),
 };
+
+// One rendered transcript entry, memoized on the message object. The reducers in agentTranscript
+// replace only the message a delta touches, so a streaming repaint re-renders that one and no other
+// — without this, every repaint re-parsed the whole transcript's markdown.
+const MessageRow = memo(function MessageRow({ m }: { m: Message }) {
+  if (m.role === "reasoning" || (m.role === "assistant" && m.thinking)) {
+    const content = m.content?.trim();
+    if (!content) return null;
+    return (
+      <div className="text-[11.5px] text-text-3 italic px-0.5 py-0.5 leading-[1.5] [&_strong]:font-semibold [&_strong]:not-italic">
+        <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
+          {content}
+        </ReactMarkdown>
+      </div>
+    );
+  }
+  if (m.role === "tool_start") {
+    return (
+      <div className="flex flex-col gap-1.5 mb-1.5">
+        <div
+          className={`font-mono text-[12.5px] leading-[1.4] text-primary-2 px-0.5${m.toolDone ? " opacity-45" : ""}`}
+        >
+          {m.toolDone ? (
+            <span className="text-primary-2 mr-0.5">✓</span>
+          ) : (
+            <span className="inline-block w-2 h-2 border-[1.5px] border-primary-2 border-t-transparent rounded-full animate-[tool-spin_0.7s_linear_infinite] align-middle mr-0.5" />
+          )}{" "}
+          <b>{toolLabel(m.toolName ?? "")}</b>
+          {m.toolSummary && <span className="text-text-3"> {m.toolSummary}</span>}
+        </div>
+        {m.calleeConversationId && m.calleeWorkspaceId && (
+          <a
+            href={`/workspace/${m.calleeWorkspaceId}?conversation=${m.calleeConversationId}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="font-mono text-[12px] leading-[1.4] text-primary hover:underline px-0.5 self-start"
+          >
+            {/* Show the same short id the callee's conversation switcher displays
+                (its title is id.slice(0, 8)), so the link matches what you see there. */}
+            ↳ View conversation {m.calleeConversationId.slice(0, 8)}
+            {m.calleeWorkspaceName ? ` with agent ${m.calleeWorkspaceName}` : ""} ↗
+          </a>
+        )}
+      </div>
+    );
+  }
+  if (m.role === "limit_notice") {
+    return (
+      <div className="font-mono text-[12.5px] leading-[1.4] text-text-3 px-0.5 py-1">
+        ⚠ Iteration limit reached — response may be incomplete.
+      </div>
+    );
+  }
+  if (m.role === "disconnected") {
+    return (
+      <div className="font-mono text-[12.5px] leading-[1.4] text-text-3 px-0.5 py-1">
+        ⌁ Connection interrupted — reconnecting. The agent is still working.
+      </div>
+    );
+  }
+  if (m.role === "error") {
+    return <div className="px-0.5 py-1 text-[12.5px] text-danger">✗ {m.content}</div>;
+  }
+  if (m.role === "usage") {
+    return (
+      <TokenUsageLine
+        inputTokensTotal={m.inputTokensTotal ?? 0}
+        inputTokensCacheRead={m.inputTokensCacheRead ?? 0}
+        outputTokensTotal={m.outputTokensTotal ?? 0}
+        scope="for this agent loop"
+      />
+    );
+  }
+  if (m.role === "assistant") {
+    const content = m.content ?? "";
+    if (!content.trim()) return null;
+    return (
+      <div className="flex justify-start">
+        <div className="bubble-agent md-prose">
+          <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
+            {content}
+          </ReactMarkdown>
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div className="flex justify-end">
+      <div className="max-w-[84%] px-3 py-2 rounded-xl rounded-br-sm text-sm leading-[1.45] break-words bg-primary text-white whitespace-pre-wrap">
+        {m.content}
+      </div>
+    </div>
+  );
+});
 
 const SendIcon = () => (
   <svg
@@ -158,118 +252,9 @@ export default function ChatPanel({
           <div className="text-text-3 text-ms text-center mt-6">Ask the agent anything about this workspace.</div>
         )}
 
-        {messages.map((m, i) => {
-          if (m.role === "reasoning") {
-            const content = m.content?.trim();
-            if (!content) return null;
-            return (
-              <div
-                key={i}
-                className="text-[11.5px] text-text-3 italic px-0.5 py-0.5 leading-[1.5] [&_strong]:font-semibold [&_strong]:not-italic"
-              >
-                <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
-                  {content}
-                </ReactMarkdown>
-              </div>
-            );
-          }
-          if (m.role === "assistant" && m.thinking) {
-            const content = m.content?.trim();
-            if (!content) return null;
-            return (
-              <div
-                key={i}
-                className="text-[11.5px] text-text-3 italic px-0.5 py-0.5 leading-[1.5] [&_strong]:font-semibold [&_strong]:not-italic"
-              >
-                <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
-                  {content}
-                </ReactMarkdown>
-              </div>
-            );
-          }
-          if (m.role === "tool_start") {
-            return (
-              <div key={i} className="flex flex-col gap-1.5 mb-1.5">
-                <div
-                  className={`font-mono text-[12.5px] leading-[1.4] text-primary-2 px-0.5${m.toolDone ? " opacity-45" : ""}`}
-                >
-                  {m.toolDone ? (
-                    <span className="text-primary-2 mr-0.5">✓</span>
-                  ) : (
-                    <span className="inline-block w-2 h-2 border-[1.5px] border-primary-2 border-t-transparent rounded-full animate-[tool-spin_0.7s_linear_infinite] align-middle mr-0.5" />
-                  )}{" "}
-                  <b>{toolLabel(m.toolName ?? "")}</b>
-                  {m.toolSummary && <span className="text-text-3"> {m.toolSummary}</span>}
-                </div>
-                {m.calleeConversationId && m.calleeWorkspaceId && (
-                  <a
-                    href={`/workspace/${m.calleeWorkspaceId}?conversation=${m.calleeConversationId}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="font-mono text-[12px] leading-[1.4] text-primary hover:underline px-0.5 self-start"
-                  >
-                    {/* Show the same short id the callee's conversation switcher displays
-                        (its title is id.slice(0, 8)), so the link matches what you see there. */}
-                    ↳ View conversation {m.calleeConversationId.slice(0, 8)}
-                    {m.calleeWorkspaceName ? ` with agent ${m.calleeWorkspaceName}` : ""} ↗
-                  </a>
-                )}
-              </div>
-            );
-          }
-          if (m.role === "limit_notice") {
-            return (
-              <div key={i} className="font-mono text-[12.5px] leading-[1.4] text-text-3 px-0.5 py-1">
-                ⚠ Iteration limit reached — response may be incomplete.
-              </div>
-            );
-          }
-          if (m.role === "disconnected") {
-            return (
-              <div key={i} className="font-mono text-[12.5px] leading-[1.4] text-text-3 px-0.5 py-1">
-                ⌁ Connection interrupted — reconnecting. The agent is still working.
-              </div>
-            );
-          }
-          if (m.role === "error") {
-            return (
-              <div key={i} className="px-0.5 py-1 text-[12.5px] text-danger">
-                ✗ {m.content}
-              </div>
-            );
-          }
-          if (m.role === "usage") {
-            return (
-              <TokenUsageLine
-                key={i}
-                inputTokensTotal={m.inputTokensTotal ?? 0}
-                inputTokensCacheRead={m.inputTokensCacheRead ?? 0}
-                outputTokensTotal={m.outputTokensTotal ?? 0}
-                scope="for this agent loop"
-              />
-            );
-          }
-          if (m.role === "assistant") {
-            const content = m.content ?? "";
-            if (!content.trim()) return null;
-            return (
-              <div key={i} className="flex justify-start">
-                <div className="bubble-agent md-prose">
-                  <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
-                    {content}
-                  </ReactMarkdown>
-                </div>
-              </div>
-            );
-          }
-          return (
-            <div key={i} className="flex justify-end">
-              <div className="max-w-[84%] px-3 py-2 rounded-xl rounded-br-sm text-sm leading-[1.45] break-words bg-primary text-white whitespace-pre-wrap">
-                {m.content}
-              </div>
-            </div>
-          );
-        })}
+        {messages.map((m, i) => (
+          <MessageRow key={i} m={m} />
+        ))}
 
         {/* A throttled model holds the turn for minutes, so the dots would read as a hang. The paced
             row carries its own spinner, so the run still looks alive while it names the culprit. */}

@@ -1,7 +1,7 @@
 // Drives the chat transcript for one conversation against the agent. Sending a message and
 // re-attaching to an already-running agent share one SSE-consuming core: each AgentEvent is folded
-// into the transcript, with token/reasoning deltas coalesced via requestAnimationFrame for smooth
-// streaming. All transcript shaping is delegated to the pure reducers in ./agentTranscript.
+// into the transcript, with token/reasoning deltas coalesced onto a fixed repaint interval.
+// All transcript shaping is delegated to the pure reducers in ./agentTranscript.
 //
 // Because the run is owned by the server (not this request), closing/switching only detaches this
 // viewer — the agent keeps running. hydrate() loads a conversation's saved history; attachLive()
@@ -46,6 +46,10 @@ const RECONNECT_DELAYS_MS = [2_000, 4_000, 8_000];
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+// Streaming deltas repaint on this interval rather than every animation frame. A reasoning stretch
+// is one growing message, so each repaint re-renders all of it; ten a second still reads as smooth.
+const STREAM_FLUSH_MS = 100;
+
 /** A rate-limit wait in progress, surfaced in place of the thinking bubble. */
 export interface PacedState {
   provider: string;
@@ -79,8 +83,8 @@ export function useAgentStream(workspaceId: string, conversationId: string | nul
   const genRef = useRef(0);
   const pendingTokenRef = useRef<string | null>(null);
   const pendingReasoningRef = useRef<string | null>(null);
-  const tokenRafRef = useRef<number | null>(null);
-  const reasoningRafRef = useRef<number | null>(null);
+  const tokenTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const reasoningTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // A paced notice describes admission, not the provider's subsequent inference time. Once its
   // deadline passes, return to the ordinary thinking indicator even if Mistral has not emitted its
@@ -131,6 +135,24 @@ export function useAgentStream(workspaceId: string, conversationId: string | nul
     pendingReasoningRef.current = null;
     commit({ ...transcriptRef.current, messages: upsertReasoningText(transcriptRef.current.messages, content) });
   }, [commit]);
+
+  // One pending repaint at a time. A direct flush (tool_start, turn_usage) empties the buffer, so a
+  // timer that fires afterwards is a harmless no-op.
+  const scheduleTokenFlush = useCallback(() => {
+    if (tokenTimerRef.current) return;
+    tokenTimerRef.current = setTimeout(() => {
+      tokenTimerRef.current = null;
+      flushToken();
+    }, STREAM_FLUSH_MS);
+  }, [flushToken]);
+
+  const scheduleReasoningFlush = useCallback(() => {
+    if (reasoningTimerRef.current) return;
+    reasoningTimerRef.current = setTimeout(() => {
+      reasoningTimerRef.current = null;
+      flushReasoning();
+    }, STREAM_FLUSH_MS);
+  }, [flushReasoning]);
 
   // Shared SSE pump for both send and attach. `userBubble`, when given, is appended before the
   // stream opens (the user's own message echo).
@@ -200,24 +222,14 @@ export function useAgentStream(workspaceId: string, conversationId: string | nul
             assistantContent += event.content;
             setPaced(null);
             pendingTokenRef.current = assistantContent;
-            if (!tokenRafRef.current) {
-              tokenRafRef.current = requestAnimationFrame(() => {
-                tokenRafRef.current = null;
-                flushToken();
-              });
-            }
+            scheduleTokenFlush();
           } else if (event.type === "reasoning") {
             reasoningContent += event.content;
             // Mistral often reasons before emitting prose or a tool call. That is real provider
             // activity, so a completed rate-limit countdown must not remain on screen over it.
             setPaced(null);
             pendingReasoningRef.current = reasoningContent;
-            if (!reasoningRafRef.current) {
-              reasoningRafRef.current = requestAnimationFrame(() => {
-                reasoningRafRef.current = null;
-                flushReasoning();
-              });
-            }
+            scheduleReasoningFlush();
           } else if (event.type === "paced") {
             // Never committed to the transcript — it describes right now, and the next real event
             // means the wait is over.
@@ -229,7 +241,7 @@ export function useAgentStream(workspaceId: string, conversationId: string | nul
               endsAt: Date.now() + event.waitMs,
             });
           } else if (event.type === "tool_start") {
-            // Network events can beat the next animation frame. Commit the model's preamble before
+            // Network events can beat the next scheduled repaint. Commit the model's preamble before
             // adding its tool row so the completed usage badge can precede the whole group.
             flushToken();
             flushReasoning();
@@ -270,13 +282,13 @@ export function useAgentStream(workspaceId: string, conversationId: string | nul
           outcome = "dropped";
         }
       } finally {
-        if (tokenRafRef.current) {
-          cancelAnimationFrame(tokenRafRef.current);
-          tokenRafRef.current = null;
+        if (tokenTimerRef.current) {
+          clearTimeout(tokenTimerRef.current);
+          tokenTimerRef.current = null;
         }
-        if (reasoningRafRef.current) {
-          cancelAnimationFrame(reasoningRafRef.current);
-          reasoningRafRef.current = null;
+        if (reasoningTimerRef.current) {
+          clearTimeout(reasoningTimerRef.current);
+          reasoningTimerRef.current = null;
         }
         flushToken();
         flushReasoning();
@@ -291,7 +303,7 @@ export function useAgentStream(workspaceId: string, conversationId: string | nul
       }
       return outcome;
     },
-    [workspaceId, commit, flushToken, flushReasoning],
+    [workspaceId, commit, flushToken, flushReasoning, scheduleTokenFlush, scheduleReasoningFlush],
   );
 
   // The conversation's saved history plus whether a run is still in flight.

@@ -1,11 +1,12 @@
-// The download route zips a caller-selected set of workspace-relative paths — the same space the file
-// tree serves, so the browser can hand a selection straight back.
-//
-// A directory with no files anywhere beneath it is easy to lose: JSZip only materializes a folder once
-// something is placed inside it, so without an explicit folder entry an empty dir (e.g. a fresh
-// `.skills/`) silently vanishes from the archive. These tests pin that empty and empty-only
-// directories survive the download, and that a path the archive cannot honour is *reported* rather
-// than dropped in silence.
+/**
+ * The download route zips a caller-selected set of workspace-relative paths — the same space the file
+ * tree serves, so the browser can hand a selection straight back.
+ *
+ * Pinned here: empty and empty-only directories survive (JSZip materializes a folder only once
+ * something is placed inside it, so a fresh `.skills/` would otherwise vanish); a path the archive
+ * cannot honour is reported rather than dropped in silence; and entry names carry the folders that
+ * distinguish the selection, but not the empty ancestry above it.
+ */
 
 import { describe, it, expect, afterAll, beforeEach } from "vitest";
 import fs from "fs";
@@ -70,11 +71,52 @@ describe("addSelectedToZip", () => {
     expect(files).toContain("src/index.ts");
   });
 
-  it("archives a nested selection at its own relative path, not flattened to its name", async () => {
+  it("drops the ancestry above a single nested file so it is not buried in empty folders", async () => {
     fs.mkdirSync(path.join(WS_DIR, "src", "deep"), { recursive: true });
     fs.writeFileSync(path.join(WS_DIR, "src", "deep", "index.ts"), "b");
     const { files } = await zipEntries(["src/deep/index.ts"]);
-    expect(files).toEqual(["src/deep/index.ts"]);
+    expect(files).toEqual(["index.ts"]);
+  });
+
+  it("keeps a single selected directory's own name, dropping only what is above it", async () => {
+    fs.mkdirSync(path.join(WS_DIR, "src", "deep"), { recursive: true });
+    fs.writeFileSync(path.join(WS_DIR, "src", "deep", "index.ts"), "b");
+    const { files } = await zipEntries(["src/deep"]);
+    expect(files).toEqual(["deep/index.ts"]);
+  });
+
+  it("keeps the folders that tell two same-named files apart", async () => {
+    fs.mkdirSync(path.join(WS_DIR, "src", "api", "a"), { recursive: true });
+    fs.mkdirSync(path.join(WS_DIR, "src", "api", "b"), { recursive: true });
+    fs.writeFileSync(path.join(WS_DIR, "src", "api", "a", "route.ts"), "a");
+    fs.writeFileSync(path.join(WS_DIR, "src", "api", "b", "route.ts"), "b");
+    const { files } = await zipEntries(["src/api/a/route.ts", "src/api/b/route.ts"]);
+    expect(files.sort()).toEqual(["a/route.ts", "b/route.ts"]);
+  });
+
+  it("keeps full paths when the selection spans unrelated branches", async () => {
+    fs.mkdirSync(path.join(WS_DIR, "src", "lib"), { recursive: true });
+    fs.mkdirSync(path.join(WS_DIR, "docs"), { recursive: true });
+    fs.writeFileSync(path.join(WS_DIR, "src", "lib", "util.ts"), "a");
+    fs.writeFileSync(path.join(WS_DIR, "docs", "readme.md"), "b");
+    const { files } = await zipEntries(["src/lib/util.ts", "docs/readme.md"]);
+    expect(files.sort()).toEqual(["docs/readme.md", "src/lib/util.ts"]);
+  });
+
+  it("matches shared folders segment-wise, not by string prefix", async () => {
+    fs.mkdirSync(path.join(WS_DIR, "src", "app"), { recursive: true });
+    fs.mkdirSync(path.join(WS_DIR, "src", "application"), { recursive: true });
+    fs.writeFileSync(path.join(WS_DIR, "src", "app", "a.ts"), "a");
+    fs.writeFileSync(path.join(WS_DIR, "src", "application", "b.ts"), "b");
+    const { files } = await zipEntries(["src/app/a.ts", "src/application/b.ts"]);
+    expect(files.sort()).toEqual(["app/a.ts", "application/b.ts"]);
+  });
+
+  it("stays well-formed when a directory is selected alongside a file inside it", async () => {
+    fs.mkdirSync(path.join(WS_DIR, "src", "deep"), { recursive: true });
+    fs.writeFileSync(path.join(WS_DIR, "src", "deep", "index.ts"), "b");
+    const { files } = await zipEntries(["src/deep", "src/deep/index.ts"]);
+    expect(files).toEqual(["deep/index.ts"]);
   });
 
   it("nests every entry under rootFolder so a single file extracts inside a named folder", async () => {

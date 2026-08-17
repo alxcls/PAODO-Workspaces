@@ -46,9 +46,9 @@ const RECONNECT_DELAYS_MS = [2_000, 4_000, 8_000];
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-// Streaming deltas repaint on this interval rather than every animation frame. A reasoning stretch
-// is one growing message, so each repaint re-renders all of it; ten a second still reads as smooth.
-const STREAM_FLUSH_MS = 100;
+// Streaming deltas repaint on this interval rather than every animation frame. A repaint re-renders
+// the whole live message, so frame rate costs far more than it buys; 20/s still reads as streaming.
+const STREAM_FLUSH_MS = 50;
 
 /** A rate-limit wait in progress, surfaced in place of the thinking bubble. */
 export interface PacedState {

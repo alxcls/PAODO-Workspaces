@@ -1,16 +1,21 @@
 // Everything DeepSeek requires that no other provider should inherit. Canonical conversation messages
 // stay provider-neutral; this module restores its private reasoning at the outbound boundary.
+import { AsyncLocalStorage } from "node:async_hooks";
 import { AIMessage, type BaseMessage } from "@langchain/core/messages";
 import { ChatOpenAI, type ChatOpenAIFields } from "@langchain/openai";
 import { replayReasoning } from "./reasoningReplay";
 import { THINKING_OFF_EFFORT, type ReasoningEffort } from "../models/llmSelection";
 
-/** Reasoning for this request, keyed by the tool-call id of the turn that produced it. */
+/** Reasoning for one request, keyed by the tool-call id of the turn that produced it. */
 type ReasoningLookup = Map<string, string>;
 
-// Keyed by the chat instance, so a run's lookup is collected with its client and no two conversations
-// can see each other's. buildChatModel constructs a fresh client per run, so one lookup is one run.
-const LOOKUPS = new WeakMap<object, ReasoningLookup>();
+/**
+ * Scoped to a single call rather than held on the client, because the object the runner calls is not
+ * the one this module builds: bindTools returns a fresh Runnable wrapping the same client, so anything
+ * keyed by instance is missed on exactly the calls that matter, while the shared client's fetch would
+ * still see a lookup another call had left behind.
+ */
+const REASONING_SCOPE = new AsyncLocalStorage<ReasoningLookup>();
 
 /**
  * DeepSeek's thinking fields. The OpenAI-compatible `reasoning_effort` has no "none", so switching
@@ -35,7 +40,7 @@ type WireMessage = { tool_calls?: Array<{ id?: string }>; reasoning_content?: st
  * position, which a compaction or a dropped turn would silently shift. A body this cannot parse is
  * returned untouched: replay must never be the reason a call fails.
  */
-export function restoreReasoningContent(body: string, lookup: ReasoningLookup): string {
+function restoreReasoningContent(body: string, lookup: ReasoningLookup): string {
   let payload: { messages?: WireMessage[] };
   try {
     payload = JSON.parse(body);
@@ -64,41 +69,45 @@ export function restoreReasoningContent(body: string, lookup: ReasoningLookup): 
  * the way Mistral's thinking blocks ride in `content`. Here the body is already DeepSeek's own
  * documented shape — a far steadier contract than the SDK's internals.
  */
-function deepseekFetch(inner: typeof fetch, lookup: ReasoningLookup): typeof fetch {
+function deepseekFetch(inner: typeof fetch): typeof fetch {
   return (input, init) => {
-    if (typeof init?.body !== "string" || lookup.size === 0) return inner(input, init);
+    const lookup = REASONING_SCOPE.getStore();
+    if (!lookup?.size || typeof init?.body !== "string") return inner(input, init);
     return inner(input, { ...init, body: restoreReasoningContent(init.body, lookup) });
   };
 }
 
 /** A ChatOpenAI that replays reasoning, wrapping whatever fetch the caller already installed. */
 export function createDeepSeekChatModel(fields: ChatOpenAIFields): ChatOpenAI {
-  const lookup: ReasoningLookup = new Map();
   const inner = (fields.configuration?.fetch as typeof fetch | undefined) ?? fetch;
-  const chat = new ChatOpenAI({
+  return new ChatOpenAI({
     ...fields,
-    configuration: { ...fields.configuration, fetch: deepseekFetch(inner, lookup) },
+    configuration: { ...fields.configuration, fetch: deepseekFetch(inner) },
   });
-  LOOKUPS.set(chat, lookup);
-  return chat;
 }
 
-/**
- * Hand this request's reasoning to the client that is about to send it.
- *
- * Returns the caller's array unchanged — unlike Mistral, nothing about a DeepSeek message needs
- * rewriting, only a field LangChain refuses to carry needs restoring further down.
- */
-export function prepareDeepSeekMessages(messages: BaseMessage[], chat: object): BaseMessage[] {
-  const lookup = LOOKUPS.get(chat);
-  if (!lookup) return messages;
-
-  lookup.clear();
+/** What each turn reasoned, addressed by the tool call that turn made. */
+function lookupFrom(messages: BaseMessage[]): ReasoningLookup {
+  const lookup: ReasoningLookup = new Map();
   for (const message of messages) {
     if (!(message instanceof AIMessage)) continue;
     const id = message.tool_calls?.[0]?.id;
     const reasoning = replayReasoning(message);
     if (id && reasoning) lookup.set(id, reasoning);
   }
-  return messages;
+  return lookup;
+}
+
+/**
+ * DeepSeek's outbound adapter: run one call with its own reasoning in scope.
+ *
+ * The messages go out untouched — unlike Mistral, nothing about a DeepSeek message needs rewriting.
+ * Only a field LangChain refuses to carry has to be restored, and that happens in the fetch above,
+ * which reads the scope this opens. The lifetime is the call, so nothing can leak into the next one.
+ */
+export function sendWithDeepSeekReasoning<T>(
+  messages: BaseMessage[],
+  send: (messages: BaseMessage[]) => Promise<T>,
+): Promise<T> {
+  return REASONING_SCOPE.run(lookupFrom(messages), () => send(messages));
 }

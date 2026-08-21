@@ -18,7 +18,13 @@ import { createLogger } from "../infra/logger";
 import type { ToolStatus } from "@/lib/usage/types";
 import type { CallAgentMeta } from "./tools/agentCall";
 import { streamModelTurn, synthesizeLimit, type ResolvedToolCall } from "./modelTurn";
-import { NO_USAGE, type ModelCallObserver, type ModelCallRecord, type ModelUsage } from "./modelGateway";
+import {
+  NO_USAGE,
+  providerReplaysReasoning,
+  type ModelCallObserver,
+  type ModelCallRecord,
+  type ModelUsage,
+} from "./modelGateway";
 import { withReplayMetadata } from "./reasoningReplay";
 import { providerConcurrency } from "./providerConcurrency";
 import { dispatchTools, type RunnerTool } from "./toolDispatch";
@@ -210,6 +216,11 @@ export async function* runAgent(
   const signalHandlers: Record<string, PostDispatchFn> = injectedHandlers ?? builtHandlers ?? {};
   const typedToolMap = toolMap as Record<string, RunnerTool>;
 
+  // Only a provider that replays reasoning keeps it. The rest would persist thinking text nothing
+  // ever reads — and at the higher effort levels that is most of what the turn produced.
+  const keepsReasoning = providerReplaysReasoning(modelWithTools.provider);
+  const replayedReasoning = (reasoning: string) => (keepsReasoning ? reasoning : "");
+
   // Through the hub rather than straight at the socket: notify carries every tool_call and
   // tool_result_log of a run, so it needs the same backpressure bound as the console stream.
   const resolvedNotify = notify ?? ((msg: object) => void sendToWorkspace(workspaceId, JSON.stringify(msg)));
@@ -289,7 +300,7 @@ export async function* runAgent(
             content: fullText,
             // The execution ledger owns token measurements. Replay state keeps only the stable
             // reference used to join those measurements when a conversation is reopened.
-            response_metadata: withReplayMetadata({ executionTurnId: turnId }, reasoningText),
+            response_metadata: withReplayMetadata({ executionTurnId: turnId }, replayedReasoning(reasoningText)),
           }),
         );
         wlog.debug("agent loop done");
@@ -308,7 +319,7 @@ export async function* runAgent(
       const assistantTurn = new AIMessage({
         content: fullText,
         tool_calls: activeCalls.map((tc) => ({ id: tc.id, name: tc.name, args: tc.args })),
-        response_metadata: withReplayMetadata({ executionTurnId: turnId }, reasoningText),
+        response_metadata: withReplayMetadata({ executionTurnId: turnId }, replayedReasoning(reasoningText)),
       });
 
       for (const tc of activeCalls) {

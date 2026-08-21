@@ -5,7 +5,7 @@ import type { AIMessageChunk, BaseMessage } from "@langchain/core/messages";
 import type { Logger } from "pino";
 import { throttleLog } from "../infra/logThrottle";
 import type { AgentEvent } from "./runner";
-import type { ModelGateway, ModelStream, ModelUsage } from "./modelGateway";
+import { providerReplaysReasoning, type ModelGateway, type ModelStream, type ModelUsage } from "./modelGateway";
 import { mistralThinkingText, providerToolCallId } from "./mistralProtocol";
 import { classifyProviderFailure, providerFailureMessage } from "./providerFailure";
 import { withReplayMetadata } from "./reasoningReplay";
@@ -242,7 +242,10 @@ export async function* synthesizeLimit(
       messages.push(
         new AIMessage({
           content: text,
-          response_metadata: withReplayMetadata({ executionTurnId: turnId }, reasoning),
+          response_metadata: withReplayMetadata(
+            { executionTurnId: turnId },
+            providerReplaysReasoning(model.provider) ? reasoning : "",
+          ),
         }),
       );
       yield {

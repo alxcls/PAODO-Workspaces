@@ -138,8 +138,10 @@ function mistralIdMap(messages: BaseMessage[]): Map<string, string> {
  * why nothing but the reasoning has to be carried across turns.
  */
 function replayContent(message: AIMessage): MistralReplayContent | undefined {
-  const text = typeof message.content === "string" ? message.content : "";
-  return mistralReplayContent(replayReasoning(message), text);
+  // Non-string content is already blocks. Rebuilding from it would drop everything the "" fallback
+  // could not represent, so such a message goes out exactly as the caller wrote it.
+  if (typeof message.content !== "string") return undefined;
+  return mistralReplayContent(replayReasoning(message), message.content);
 }
 
 /**

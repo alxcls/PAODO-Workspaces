@@ -3,7 +3,7 @@
 import type { AIMessageChunk, BaseMessage } from "@langchain/core/messages";
 import type { BindToolsInput } from "@langchain/core/language_models/chat_models";
 import { createLogger } from "../infra/logger";
-import { prepareDeepSeekMessages } from "./deepseekProtocol";
+import { sendWithDeepSeekReasoning } from "./deepseekProtocol";
 import { prepareMistralMessages } from "./mistralProtocol";
 import { providerConcurrency, type ProviderConcurrencyGate } from "./providerConcurrency";
 import { NOTICE_THRESHOLD_MS, providerPacer, type PacerKey, type ProviderPacer } from "./rateLimit/providerPacer";
@@ -148,20 +148,30 @@ export interface ModelGatewayOptions {
 }
 
 /**
- * Rewrites the outbound message array for one provider, leaving the caller's originals untouched.
+ * Runs one provider call, free to rewrite the messages or to wrap the call itself.
  *
- * `chat` is how a provider whose injection happens INSIDE the client reaches it — DeepSeek's
- * reasoning_content is dropped by LangChain's converter, so its adapter hands the reasoning to the
- * client instead of writing it onto a message. Adapters that only reshape messages ignore it.
+ * It wraps the call rather than only mapping messages because not every vendor's requirement can be
+ * expressed as a message: DeepSeek's reasoning_content is dropped by LangChain's converter, so it is
+ * restored further down, inside a scope that has to stay open until the request is actually sent.
  */
-type OutboundAdapter = (messages: BaseMessage[], chat: BindableChatModel) => BaseMessage[];
+type OutboundAdapter = <T>(messages: BaseMessage[], send: (messages: BaseMessage[]) => Promise<T>) => Promise<T>;
 
 // One entry per provider that cannot accept canonical history verbatim. Adding a provider here is the
 // whole wiring: nothing in the runner or the turn reader learns a vendor's name.
 const OUTBOUND_ADAPTERS: Record<string, OutboundAdapter> = {
-  mistral: prepareMistralMessages,
-  deepseek: prepareDeepSeekMessages,
+  mistral: (messages, send) => send(prepareMistralMessages(messages)),
+  deepseek: sendWithDeepSeekReasoning,
 };
+
+/**
+ * Whether this provider's history has to keep each turn's reasoning for replay.
+ *
+ * Asked before persisting it, so a provider that never replays does not carry thinking text nothing
+ * reads. Derived from the adapters because today they are exactly the providers that need it.
+ */
+export function providerReplaysReasoning(provider: string): boolean {
+  return provider in OUTBOUND_ADAPTERS;
+}
 
 /** One paced attempt that succeeded, plus the bookkeeping its caller still owes. */
 interface Attempt<T> {
@@ -176,10 +186,11 @@ export function createModelGateway(chat: BindableChatModel, options: ModelGatewa
   const concurrency = options.concurrency ?? providerConcurrency;
   const pacer = options.pacer ?? providerPacer;
   const pacerKey: PacerKey = { provider, model };
-  // Vendor wire formats are quarantined behind OUTBOUND_ADAPTERS. A provider without one receives the
-  // caller's exact array; the rest get a short-lived clone carrying whatever they refuse to go without.
+  // Vendor wire formats are quarantined behind OUTBOUND_ADAPTERS. A provider without one sends the
+  // caller's exact array; the rest send whatever they refuse to go without.
   const adapt = OUTBOUND_ADAPTERS[provider];
-  const outboundMessages = (messages: BaseMessage[]) => (adapt ? adapt(messages, chat) : messages);
+  const sendOutbound = <T>(messages: BaseMessage[], send: (messages: BaseMessage[]) => Promise<T>): Promise<T> =>
+    adapt ? adapt(messages, send) : send(messages);
 
   /**
    * Run one logical call: wait for the provider's quota, try it, and on a refusal that reached no
@@ -280,7 +291,9 @@ export function createModelGateway(chat: BindableChatModel, options: ModelGatewa
       let emitted = false;
 
       // Throws only once retrying is pointless — nothing to release here, `perform` owns that.
-      const attempt = await perform(call, () => chat.stream(outboundMessages(messages), { signal: call.signal }));
+      const attempt = await perform(call, () =>
+        sendOutbound(messages, (outbound) => chat.stream(outbound, { signal: call.signal })),
+      );
       const raw = attempt.value;
       const finish = attempt.finish;
 
@@ -313,7 +326,9 @@ export function createModelGateway(chat: BindableChatModel, options: ModelGatewa
     },
 
     async invoke(messages, call) {
-      const attempt = await perform(call, () => chat.invoke(outboundMessages(messages), { signal: call.signal }));
+      const attempt = await perform(call, () =>
+        sendOutbound(messages, (outbound) => chat.invoke(outbound, { signal: call.signal })),
+      );
       const message = attempt.value;
       const usage = usageTokens(message);
       // Where the provider prices the call itself the header already taught the pacer more; this is

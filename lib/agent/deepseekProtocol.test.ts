@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import { AIMessage, HumanMessage, ToolMessage, type BaseMessage } from "@langchain/core/messages";
-import { createDeepSeekChatModel, deepseekReasoningConfig, prepareDeepSeekMessages } from "./deepseekProtocol";
+import { createDeepSeekChatModel, deepseekReasoningConfig } from "./deepseekProtocol";
 import { deserializeMessages, serializeMessages } from "./messageSerialization";
+import { createModelGateway } from "./modelGateway";
 import { withReplayMetadata } from "./reasoningReplay";
 
 function thinkingTurn(id: string, reasoning: string): BaseMessage[] {
@@ -16,11 +17,13 @@ function thinkingTurn(id: string, reasoning: string): BaseMessage[] {
 }
 
 /**
- * A model whose captured fetch never reaches the network. Driving a real client is the point: the
- * injection rides the request body LangChain builds, so a change in how it builds one must fail here
- * rather than silently stop replaying reasoning.
+ * A gateway whose captured fetch never reaches the network.
+ *
+ * Built through createModelGateway rather than around a bare client, because the object the runner
+ * calls is the one bindTools returns — a different object wrapping the same client. Replay that works
+ * on the client alone and not through here is replay that never runs in production.
  */
-function modelWithCapturedRequest() {
+function gatewayWithCapturedRequest() {
   const seen: { body?: string } = {};
   const fetchStub = vi.fn(async (_input: unknown, init?: { body?: unknown }) => {
     seen.body = typeof init?.body === "string" ? init.body : undefined;
@@ -28,18 +31,26 @@ function modelWithCapturedRequest() {
       headers: { "content-type": "application/json" },
     });
   });
-  const model = createDeepSeekChatModel({
+  const chat = createDeepSeekChatModel({
     model: "deepseek-v4-pro",
     maxRetries: 0,
     configuration: { baseURL: "https://api.deepseek.com/v1", apiKey: "k", fetch: fetchStub as never },
   });
-  return { model, seen };
+  const gateway = createModelGateway(chat as never, { provider: "deepseek", model: "deepseek-v4-pro" });
+  return { gateway, seen };
 }
 
+const CALL = { stage: "model_turn" } as never;
+
+/** What the runner sends: through the tool-bound gateway, which is not the client we constructed. */
 async function sentMessages(messages: BaseMessage[]): Promise<Array<Record<string, unknown>>> {
-  const { model, seen } = modelWithCapturedRequest();
-  await model.invoke(prepareDeepSeekMessages(messages, model));
+  const { gateway, seen } = gatewayWithCapturedRequest();
+  await gateway.bindTools([]).invoke(messages, CALL);
   return JSON.parse(seen.body ?? "{}").messages ?? [];
+}
+
+function assistantWithTools(sent: Array<Record<string, unknown>>) {
+  return sent.find((m) => Array.isArray(m.tool_calls));
 }
 
 describe("deepseekReasoningConfig", () => {
@@ -56,12 +67,11 @@ describe("deepseekReasoningConfig", () => {
   });
 });
 
-describe("prepareDeepSeekMessages", () => {
+describe("deepseek reasoning replay", () => {
   it("replays the stored reasoning on the assistant turn that called the tool", async () => {
     const sent = await sentMessages(thinkingTurn("call_a", "I should read the file first."));
 
-    const assistant = sent.find((m) => Array.isArray(m.tool_calls));
-    expect(assistant?.reasoning_content).toBe("I should read the file first.");
+    expect(assistantWithTools(sent)?.reasoning_content).toBe("I should read the file first.");
   });
 
   it("pairs reasoning by tool-call id, not by position", async () => {
@@ -83,7 +93,7 @@ describe("prepareDeepSeekMessages", () => {
 
     const sent = await sentMessages(restored);
 
-    expect(sent.find((m) => Array.isArray(m.tool_calls))?.reasoning_content).toBe("Persisted thought.");
+    expect(assistantWithTools(sent)?.reasoning_content).toBe("Persisted thought.");
   });
 
   it("leaves a turn that stored no reasoning untouched", async () => {
@@ -94,17 +104,49 @@ describe("prepareDeepSeekMessages", () => {
 
     const sent = await sentMessages(messages);
 
-    expect(sent.find((m) => Array.isArray(m.tool_calls))).not.toHaveProperty("reasoning_content");
+    expect(assistantWithTools(sent)).not.toHaveProperty("reasoning_content");
   });
 
-  it("returns the caller's own array, leaving canonical history unrewritten", () => {
-    const { model } = modelWithCapturedRequest();
+  // The reasoning reaches the wire without ever being written onto the message it came from.
+  it("leaves canonical history unrewritten", async () => {
     const messages = thinkingTurn("call_a", "Private thought.");
+    const [assistant] = messages;
 
-    const outbound = prepareDeepSeekMessages(messages, model);
+    const sent = await sentMessages(messages);
 
-    expect(outbound).toBe(messages);
-    expect(outbound[0]).toBe(messages[0]);
+    expect(assistantWithTools(sent)?.reasoning_content).toBe("Private thought.");
+    expect(messages[0]).toBe(assistant);
     expect((messages[0] as AIMessage).content).toBe("Let me look.");
+    expect((messages[0] as AIMessage).additional_kwargs).not.toHaveProperty("reasoning_content");
+  });
+
+  // The turn loop streams; only compaction and limit synthesis invoke. A scope that closed before the
+  // request left would replay on one path and not the other.
+  it("replays on the streaming path the agent loop actually uses", async () => {
+    const { gateway, seen } = gatewayWithCapturedRequest();
+
+    const stream = await gateway.bindTools([]).stream(thinkingTurn("call_a", "Streamed thought."), CALL);
+    for await (const _chunk of stream.chunks) void _chunk;
+
+    const sent = JSON.parse(seen.body ?? "{}").messages ?? [];
+    expect(assistantWithTools(sent)?.reasoning_content).toBe("Streamed thought.");
+  });
+
+  /**
+   * The bug this guards: the lookup used to live on the client, which the tool-bound gateway shares
+   * with the unbound one. A call that resolved could leave entries behind for a later call that had
+   * no business seeing them, so the scope has to close with the request that opened it.
+   */
+  it("does not carry one call's reasoning into the next", async () => {
+    const { gateway, seen } = gatewayWithCapturedRequest();
+
+    await gateway.invoke(thinkingTurn("call_a", "Thought from an earlier call."), CALL);
+    await gateway.bindTools([]).invoke(
+      [new AIMessage({ content: "Looking.", tool_calls: [{ id: "call_a", name: "file_read", args: {} }] })],
+      CALL,
+    );
+
+    const sent = JSON.parse(seen.body ?? "{}").messages ?? [];
+    expect(assistantWithTools(sent)).not.toHaveProperty("reasoning_content");
   });
 });

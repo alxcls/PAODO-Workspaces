@@ -182,6 +182,8 @@ export function validateMetadata(
     // omitted one cannot land here — resolution only ever picks a level the provider accepts.
     const efforts = providerVocabulary(selection.provider).reasoningEfforts;
     const named = input.model.reasoningEffort?.trim();
+    // Guards a provider with no dial at all, which would otherwise be told to pick "one of: ". No
+    // offered provider is dial-less today, so this is unreachable until one is added.
     if (named && efforts.length === 0) {
       throw new WorkspaceUpdateError(`reasoningEffort is not supported for ${selection.provider}`, {
         field: "reasoningEffort",

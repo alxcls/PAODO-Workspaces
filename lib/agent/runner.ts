@@ -19,7 +19,7 @@ import type { ToolStatus } from "@/lib/usage/types";
 import type { CallAgentMeta } from "./tools/agentCall";
 import { streamModelTurn, synthesizeLimit, type ResolvedToolCall } from "./modelTurn";
 import { NO_USAGE, type ModelCallObserver, type ModelCallRecord, type ModelUsage } from "./modelGateway";
-import { type MistralReplayContent, withMistralReplayMetadata } from "./mistralProtocol";
+import { withReplayMetadata } from "./reasoningReplay";
 import { providerConcurrency } from "./providerConcurrency";
 import { dispatchTools, type RunnerTool } from "./toolDispatch";
 import {
@@ -258,14 +258,12 @@ export async function* runAgent(
       let reasoningText = "";
       let toolCalls: ResolvedToolCall[] = [];
       let usage: ModelUsage = NO_USAGE;
-      let mistralContent: MistralReplayContent | undefined;
 
       for await (const event of streamModelTurn(modelWithTools, messages, iterations, signal, wlog)) {
         if (event.type === "turn_complete") {
           fullText = event.fullText;
           toolCalls = event.toolCalls;
           usage = event.usage;
-          mistralContent = event.mistralReplayContent;
         } else {
           if (event.type === "reasoning") reasoningText += event.content;
           yield event;
@@ -291,7 +289,7 @@ export async function* runAgent(
             content: fullText,
             // The execution ledger owns token measurements. Replay state keeps only the stable
             // reference used to join those measurements when a conversation is reopened.
-            response_metadata: withMistralReplayMetadata({ executionTurnId: turnId }, mistralContent),
+            response_metadata: withReplayMetadata({ executionTurnId: turnId }, reasoningText),
           }),
         );
         wlog.debug("agent loop done");
@@ -305,12 +303,12 @@ export async function* runAgent(
       toolCalls.forEach((tc, i) => seen.set(`${tc.name}:${JSON.stringify(tc.args)}`, i));
       const activeCalls = toolCalls.filter((tc, i) => seen.get(`${tc.name}:${JSON.stringify(tc.args)}`) === i);
 
-      // Canonical history remains plain text for every provider. Mistral's sanitized ThinkChunk is
-      // private response metadata; its gateway adapter alone restores it on an outbound clone.
+      // Canonical history remains plain text for every provider. The reasoning is private response
+      // metadata, and only the gateway's outbound adapter re-encodes it for a provider that needs it.
       const assistantTurn = new AIMessage({
         content: fullText,
         tool_calls: activeCalls.map((tc) => ({ id: tc.id, name: tc.name, args: tc.args })),
-        response_metadata: withMistralReplayMetadata({ executionTurnId: turnId }, mistralContent),
+        response_metadata: withReplayMetadata({ executionTurnId: turnId }, reasoningText),
       });
 
       for (const tc of activeCalls) {

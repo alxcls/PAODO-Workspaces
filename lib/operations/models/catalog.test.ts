@@ -30,7 +30,7 @@ describe("model catalog", () => {
       },
       deepseek: {
         models: ["deepseek-v4-flash", "deepseek-v4-pro"],
-        reasoningEfforts: [],
+        reasoningEfforts: ["none", "low", "high", "max"],
         hasKey: true,
       },
     });

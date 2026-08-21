@@ -102,14 +102,15 @@ describe("the update contract", () => {
     expect(result?.applied).toEqual(Object.keys(result?.values ?? {}));
   });
 
-  it("omits a provider's internal effort placeholder from its public receipt", async () => {
+  // Switching provider resets the effort to that provider's default, so the receipt reports a field
+  // the caller never named — the alternative being a silent write the caller cannot see.
+  it("reports the effort a provider switch resolved to, and nothing internal", async () => {
     const result = await updateWorkspace("ws-1", { model: { provider: "deepseek", model: "deepseek-v4-pro" } }, deps());
 
     expect(result).toMatchObject({
-      applied: ["llmProvider", "llmModel"],
-      values: { llmProvider: "deepseek", llmModel: "deepseek-v4-pro" },
+      applied: ["llmProvider", "llmModel", "reasoningEffort"],
+      values: { llmProvider: "deepseek", llmModel: "deepseek-v4-pro", reasoningEffort: "low" },
     });
-    expect(result?.values).not.toHaveProperty("reasoningEffort");
     expect(result?.values).not.toHaveProperty("model");
   });
 

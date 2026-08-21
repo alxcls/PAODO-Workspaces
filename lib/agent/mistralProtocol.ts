@@ -3,10 +3,9 @@
 import { createHash } from "node:crypto";
 import { AIMessage, ToolMessage, type BaseMessage, type BaseMessageChunk } from "@langchain/core/messages";
 import { ChatOpenAI, ChatOpenAICompletions, type ChatOpenAIFields } from "@langchain/openai";
+import { replayReasoning } from "./reasoningReplay";
 import { isMistralToolCallId, newMistralToolCallId } from "./toolCallIds";
 import { THINKING_OFF_EFFORT, type ReasoningEffort } from "../models/llmSelection";
-
-const REPLAY_CONTENT_KEY = "mistralReplayContent";
 
 type MistralTextChunk = { type: "text"; text: string };
 type MistralThinkChunk = { type: "thinking"; thinking: MistralTextChunk[] };
@@ -131,9 +130,16 @@ function mistralIdMap(messages: BaseMessage[]): Map<string, string> {
   return ids;
 }
 
+/**
+ * The stored reasoning as Mistral's content blocks, or nothing for a turn that did not reason.
+ *
+ * Built here rather than at capture time so the runner stores one provider-neutral string
+ * (reasoningReplay.ts) instead of this vendor's shape. Text comes straight off the message, which is
+ * why nothing but the reasoning has to be carried across turns.
+ */
 function replayContent(message: AIMessage): MistralReplayContent | undefined {
-  const value = message.response_metadata?.[REPLAY_CONTENT_KEY];
-  return Array.isArray(value) ? (value as MistralReplayContent) : undefined;
+  const text = typeof message.content === "string" ? message.content : "";
+  return mistralReplayContent(replayReasoning(message), text);
 }
 
 /**
@@ -186,14 +192,6 @@ export function mistralReplayContent(reasoning: string, text: string): MistralRe
     { type: "thinking", thinking: [{ type: "text", text: reasoning }] },
     ...(text ? ([{ type: "text", text }] as MistralTextChunk[]) : []),
   ];
-}
-
-/** Add Mistral replay state to response metadata without changing the canonical message content. */
-export function withMistralReplayMetadata(
-  metadata: Record<string, unknown>,
-  content: MistralReplayContent | undefined,
-): Record<string, unknown> {
-  return content ? { ...metadata, [REPLAY_CONTENT_KEY]: content } : metadata;
 }
 
 /** Mistral's nested ThinkChunk text; its OpenAI-compatible stream does not use Anthropic's string. */

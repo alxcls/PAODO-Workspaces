@@ -61,8 +61,6 @@ describe("workspace record queries", () => {
       llmProviderHasKey: true,
     });
     expect(result).not.toHaveProperty("dir");
-    expect(result).not.toHaveProperty("reasoningEffort");
-    expect(result).not.toHaveProperty("reasoningEffortSupported");
   });
 
   it("returns an explicitly selected model instead of the defaults", () => {

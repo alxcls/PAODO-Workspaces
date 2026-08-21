@@ -7,8 +7,8 @@ import {
   mistralReplayContent,
   mistralThinkingText,
   prepareMistralMessages,
-  withMistralReplayMetadata,
 } from "./mistralProtocol";
+import { withReplayMetadata } from "./reasoningReplay";
 
 function toolPair(id: string, name = "file_read"): BaseMessage[] {
   return [
@@ -71,11 +71,11 @@ describe("prepareMistralMessages", () => {
     expect(outbound[2]).toBe(messages[2]);
   });
 
-  it("restores saved ThinkChunk content only on the outbound assistant clone", () => {
+  it("rebuilds ThinkChunk content from the stored reasoning, only on the outbound clone", () => {
     const replay = mistralReplayContent("I should inspect first.", "I will inspect it.");
     const canonical = new AIMessage({
       content: "I will inspect it.",
-      response_metadata: withMistralReplayMetadata({ executionTurnId: "turn-1" }, replay),
+      response_metadata: withReplayMetadata({ executionTurnId: "turn-1" }, "I should inspect first."),
     });
 
     const outbound = prepareMistralMessages([canonical])[0] as AIMessage;
@@ -90,7 +90,7 @@ describe("prepareMistralMessages", () => {
     const replay = mistralReplayContent("Plan privately.", "Act publicly.");
     const canonical = new AIMessage({
       content: "Act publicly.",
-      response_metadata: withMistralReplayMetadata({}, replay),
+      response_metadata: withReplayMetadata({}, "Plan privately."),
     });
 
     const restored = deserializeMessages(serializeMessages([canonical]));

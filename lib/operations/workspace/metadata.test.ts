@@ -227,17 +227,17 @@ describe("workspace metadata validation", () => {
 
   // DeepSeek takes no effort, so a caller cannot supply a valid one. Substituting the default keeps a
   // provider switch from failing on a field that provider ignores.
-  it("substitutes the default effort for a provider with no effort dial", () => {
+  it("resolves an unnamed effort to the selected provider's default", () => {
     expect(validateMetadata({ model: { provider: "deepseek", model: "deepseek-v4-pro" } })).toMatchObject({
       model: { provider: "deepseek", reasoningEffort: "low" },
     });
   });
 
   // An explicit setting the provider cannot persist is a rejected request, never a successful write
-  // with a warning. This keeps programmatic triggers aligned with the UI, where the dial is absent.
-  it("rejects an effort supplied to a provider that has no dial", () => {
-    expect(() => validateMetadata({ model: { provider: "deepseek", reasoningEffort: "high" } }, CURRENT)).toThrow(
-      "reasoningEffort is not supported for deepseek",
+  // with a warning. This keeps programmatic triggers aligned with the UI, which cannot offer the level.
+  it("rejects an effort outside the selected provider's own levels", () => {
+    expect(() => validateMetadata({ model: { provider: "deepseek", reasoningEffort: "xhigh" } }, CURRENT)).toThrow(
+      "reasoningEffort for deepseek must be one of: none, low, high, max",
     );
   });
 });

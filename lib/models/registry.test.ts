@@ -44,7 +44,7 @@ describe("models catalog", () => {
       "high",
       "xhigh",
     ]);
-    expect(getProviderMetadata("deepseek").reasoningEfforts).toEqual([]);
+    expect(getProviderMetadata("deepseek").reasoningEfforts).toEqual(["none", "low", "high", "max"]);
     // Kimi K3 accepts low|high|max — no medium, and it always thinks, so none/minimal aren't offered.
     expect(getProviderMetadata("moonshot").reasoningEfforts).toEqual(["low", "high", "max"]);
     // Medium exposes one binary choice: off or Mistral's supported high reasoning mode.

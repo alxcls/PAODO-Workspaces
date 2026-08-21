@@ -132,6 +132,19 @@ describe("buildChatModel", () => {
     expect(m.modelKwargs).toEqual({ reasoning_effort: "max" });
   });
 
+  // DeepSeek V4 thinks by default at "high", and its OpenAI-compatible reasoning_effort has no
+  // "none" — so only the separate thinking field actually switches thinking off.
+  it.each([
+    ["max", { reasoning_effort: "max" }],
+    ["low", { reasoning_effort: "low" }],
+    ["none", { thinking: { type: "disabled" } }],
+  ])("maps the DeepSeek effort %s onto its own request field", (reasoningEffort, expected) => {
+    const m = buildChatModel(
+      config({ provider: "deepseek", model: "deepseek-v4-pro", reasoningEffort: reasoningEffort as never }),
+    ) as unknown as { modelKwargs: Record<string, unknown> };
+    expect(m.modelKwargs).toEqual(expected);
+  });
+
   it.each([
     ["high", { reasoning_effort: "high" }],
     ["none", undefined],

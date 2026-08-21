@@ -3,6 +3,7 @@
 import type { AIMessageChunk, BaseMessage } from "@langchain/core/messages";
 import type { BindToolsInput } from "@langchain/core/language_models/chat_models";
 import { createLogger } from "../infra/logger";
+import { prepareDeepSeekMessages } from "./deepseekProtocol";
 import { prepareMistralMessages } from "./mistralProtocol";
 import { providerConcurrency, type ProviderConcurrencyGate } from "./providerConcurrency";
 import { NOTICE_THRESHOLD_MS, providerPacer, type PacerKey, type ProviderPacer } from "./rateLimit/providerPacer";
@@ -146,6 +147,22 @@ export interface ModelGatewayOptions {
   pacer?: ProviderPacer;
 }
 
+/**
+ * Rewrites the outbound message array for one provider, leaving the caller's originals untouched.
+ *
+ * `chat` is how a provider whose injection happens INSIDE the client reaches it — DeepSeek's
+ * reasoning_content is dropped by LangChain's converter, so its adapter hands the reasoning to the
+ * client instead of writing it onto a message. Adapters that only reshape messages ignore it.
+ */
+type OutboundAdapter = (messages: BaseMessage[], chat: BindableChatModel) => BaseMessage[];
+
+// One entry per provider that cannot accept canonical history verbatim. Adding a provider here is the
+// whole wiring: nothing in the runner or the turn reader learns a vendor's name.
+const OUTBOUND_ADAPTERS: Record<string, OutboundAdapter> = {
+  mistral: prepareMistralMessages,
+  deepseek: prepareDeepSeekMessages,
+};
+
 /** One paced attempt that succeeded, plus the bookkeeping its caller still owes. */
 interface Attempt<T> {
   value: T;
@@ -159,10 +176,10 @@ export function createModelGateway(chat: BindableChatModel, options: ModelGatewa
   const concurrency = options.concurrency ?? providerConcurrency;
   const pacer = options.pacer ?? providerPacer;
   const pacerKey: PacerKey = { provider, model };
-  // Mistral's wire format is quarantined here. Other providers receive the caller's exact array;
-  // Mistral receives a short-lived clone with its reasoning blocks and tool ids restored.
-  const outboundMessages = (messages: BaseMessage[]) =>
-    provider === "mistral" ? prepareMistralMessages(messages) : messages;
+  // Vendor wire formats are quarantined behind OUTBOUND_ADAPTERS. A provider without one receives the
+  // caller's exact array; the rest get a short-lived clone carrying whatever they refuse to go without.
+  const adapt = OUTBOUND_ADAPTERS[provider];
+  const outboundMessages = (messages: BaseMessage[]) => (adapt ? adapt(messages, chat) : messages);
 
   /**
    * Run one logical call: wait for the provider's quota, try it, and on a refusal that reached no

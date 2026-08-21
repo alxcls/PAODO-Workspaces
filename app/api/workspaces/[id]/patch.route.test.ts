@@ -213,14 +213,13 @@ describe("workspace update body contract", () => {
   });
 
   it("rejects a reasoning effort the selected provider cannot persist", async () => {
-    const res = await patch({ llmProvider: "deepseek", reasoningEffort: "high" });
+    const res = await patch({ llmProvider: "deepseek", reasoningEffort: "xhigh" });
 
     expect(res.status).toBe(400);
     expect(await res.json()).toMatchObject({
       ok: false,
       code: "WORKSPACE_UPDATE_INVALID",
-      error: "reasoningEffort is not supported for deepseek",
-      details: { field: "reasoningEffort", provider: "deepseek" },
+      error: "reasoningEffort for deepseek must be one of: none, low, high, max",
     });
     expect(h.setWorkspaceLlm).not.toHaveBeenCalled();
   });

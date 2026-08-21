@@ -6,13 +6,9 @@ import type { Logger } from "pino";
 import { throttleLog } from "../infra/logThrottle";
 import type { AgentEvent } from "./runner";
 import type { ModelGateway, ModelStream, ModelUsage } from "./modelGateway";
-import {
-  mistralReplayContent,
-  mistralThinkingText,
-  providerToolCallId,
-  type MistralReplayContent,
-} from "./mistralProtocol";
+import { mistralThinkingText, providerToolCallId } from "./mistralProtocol";
 import { classifyProviderFailure, providerFailureMessage } from "./providerFailure";
+import { withReplayMetadata } from "./reasoningReplay";
 
 export type ResolvedToolCall = { id: string; name: string; args: Record<string, unknown> };
 
@@ -29,7 +25,6 @@ export type TurnEvent =
       fullText: string;
       toolCalls: ResolvedToolCall[];
       usage: ModelUsage;
-      mistralReplayContent?: MistralReplayContent;
     };
 
 type PartialToolCall = { id: string; name: string; args: string };
@@ -178,7 +173,6 @@ export async function* streamModelTurn(
 ): AsyncGenerator<TurnEvent> {
   const partials: PartialToolCall[] = [];
   let fullText = "";
-  let fullReasoning = "";
   const startedAt = Date.now();
   const call = yield* openStream(modelWithTools, messages, signal);
   let timeToFirstTokenMs: number | null = null;
@@ -191,7 +185,6 @@ export async function* streamModelTurn(
       yield { type: "token", content };
     }
     for (const content of reasoning) {
-      fullReasoning += content;
       yield { type: "reasoning", content };
     }
 
@@ -211,9 +204,6 @@ export async function* streamModelTurn(
     fullText,
     toolCalls: assembleToolCalls(partials, modelWithTools.provider),
     usage: call.usage(),
-    ...(modelWithTools.provider === "mistral"
-      ? { mistralReplayContent: mistralReplayContent(fullReasoning, fullText) }
-      : {}),
   };
 }
 
@@ -252,12 +242,7 @@ export async function* synthesizeLimit(
       messages.push(
         new AIMessage({
           content: text,
-          response_metadata: {
-            executionTurnId: turnId,
-            ...(model.provider === "mistral" && reasoning
-              ? { mistralReplayContent: mistralReplayContent(reasoning, text) }
-              : {}),
-          },
+          response_metadata: withReplayMetadata({ executionTurnId: turnId }, reasoning),
         }),
       );
       yield {

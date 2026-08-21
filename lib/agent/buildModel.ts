@@ -3,6 +3,7 @@
 
 import { ChatOpenAI } from "@langchain/openai";
 import { ChatAnthropic } from "@langchain/anthropic";
+import { createDeepSeekChatModel, deepseekReasoningConfig } from "./deepseekProtocol";
 import type { LLMProviderConfig } from "./interfaces";
 import { createModelGateway, type ModelCallObserver, type ModelGateway } from "./modelGateway";
 import { createMistralChatModel, mistralRequestConfig } from "./mistralProtocol";
@@ -135,9 +136,11 @@ const PROVIDERS: Record<string, ProviderDescriptor> = {
   deepseek: {
     availabilityEnv: "DEEPSEEK_AVAILABLE",
     supportsPromptCaching: false,
-    reasoningEfforts: [],
+    // V4 thinks by default at "high" since 13 Aug 2026, so the dial is what keeps a run from paying
+    // for reasoning nobody asked for. "none" is offered because only it switches thinking off.
+    reasoningEfforts: [THINKING_OFF_EFFORT, "low", "high", "max"],
     build: (config) =>
-      new ChatOpenAI({
+      createDeepSeekChatModel({
         model: config.model,
         ...NO_SDK_RETRY,
         configuration: {
@@ -145,6 +148,7 @@ const PROVIDERS: Record<string, ProviderDescriptor> = {
           apiKey: config.apiKey,
           fetch: pacedFetch("deepseek", config.model),
         },
+        ...deepseekReasoningConfig(config.reasoningEffort),
       }),
   },
   moonshot: {

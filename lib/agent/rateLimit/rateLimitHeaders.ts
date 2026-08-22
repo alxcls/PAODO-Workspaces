@@ -12,8 +12,12 @@ export interface RateLimitSnapshot {
   remainingRequests?: number;
   limitTokens?: number;
   remainingTokens?: number;
-  /** Epoch ms the window reopens, for the providers that say. Mistral does not. */
-  resetAt?: number;
+  /** Epoch ms the request allowance reopens, for providers that say. Mistral does not. */
+  resetRequestsAt?: number;
+  /** Epoch ms the token allowance reopens. Distinct from requests on Scaleway and Anthropic. */
+  resetTokensAt?: number;
+  /** A response-wide Retry-After deadline. On a refusal this overrides either quota-axis reset. */
+  retryAt?: number;
   /** What the call just made actually cost. Mistral only — the others make us estimate. */
   queryCost?: number;
 }
@@ -24,7 +28,8 @@ interface VendorHeaders {
   limitTokens: string;
   remainingTokens: string;
   /** Absent for vendors that report no reset (Mistral). */
-  reset?: string;
+  resetRequests?: string;
+  resetTokens?: string;
   queryCost?: string;
   /** How `reset` is spelled: a duration from now, or an absolute instant. */
   resetFormat?: "duration" | "iso";
@@ -38,7 +43,8 @@ const VENDORS: readonly VendorHeaders[] = [
     remainingRequests: "anthropic-ratelimit-requests-remaining",
     limitTokens: "anthropic-ratelimit-tokens-limit",
     remainingTokens: "anthropic-ratelimit-tokens-remaining",
-    reset: "anthropic-ratelimit-requests-reset",
+    resetRequests: "anthropic-ratelimit-requests-reset",
+    resetTokens: "anthropic-ratelimit-tokens-reset",
     resetFormat: "iso",
   },
   {
@@ -53,7 +59,8 @@ const VENDORS: readonly VendorHeaders[] = [
     remainingRequests: "x-ratelimit-remaining-requests",
     limitTokens: "x-ratelimit-limit-tokens",
     remainingTokens: "x-ratelimit-remaining-tokens",
-    reset: "x-ratelimit-reset-requests",
+    resetRequests: "x-ratelimit-reset-requests",
+    resetTokens: "x-ratelimit-reset-tokens",
     resetFormat: "duration",
   },
 ];
@@ -79,11 +86,16 @@ export function parseResetDuration(raw: string): number | undefined {
   return total;
 }
 
-function resetAt(headers: Headers, vendor: VendorHeaders, now: number): number | undefined {
-  if (!vendor.reset) return undefined;
-  const raw = headers.get(vendor.reset);
+function resetAt(
+  headers: Headers,
+  name: string | undefined,
+  format: VendorHeaders["resetFormat"],
+  now: number,
+): number | undefined {
+  if (!name) return undefined;
+  const raw = headers.get(name);
   if (raw === null) return undefined;
-  if (vendor.resetFormat === "iso") {
+  if (format === "iso") {
     const parsed = Date.parse(raw.trim());
     return Number.isFinite(parsed) ? parsed : undefined;
   }
@@ -126,18 +138,19 @@ export function parseRateLimitHeaders(headers: Headers, now: number = Date.now()
     ) {
       continue;
     }
-    // `retry-after` wins where both are present: it is the provider answering "when", while a reset
-    // header describes the window in general.
-    const reset = retry ?? resetAt(headers, vendor, now);
+    const resetRequests = resetAt(headers, vendor.resetRequests, vendor.resetFormat, now);
+    const resetTokens = resetAt(headers, vendor.resetTokens, vendor.resetFormat, now);
     const queryCost = vendor.queryCost ? count(headers, vendor.queryCost) : undefined;
     return {
       ...(limitRequests === undefined ? {} : { limitRequests }),
       ...(remainingRequests === undefined ? {} : { remainingRequests }),
       ...(limitTokens === undefined ? {} : { limitTokens }),
       ...(remainingTokens === undefined ? {} : { remainingTokens }),
-      ...(reset === undefined ? {} : { resetAt: reset }),
+      ...(resetRequests === undefined ? {} : { resetRequestsAt: resetRequests }),
+      ...(resetTokens === undefined ? {} : { resetTokensAt: resetTokens }),
+      ...(retry === undefined ? {} : { retryAt: retry }),
       ...(queryCost === undefined ? {} : { queryCost }),
     };
   }
-  return retry === undefined ? null : { resetAt: retry };
+  return retry === undefined ? null : { retryAt: retry };
 }

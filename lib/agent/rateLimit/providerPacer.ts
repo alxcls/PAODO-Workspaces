@@ -101,7 +101,13 @@ interface Bucket {
   limitTokens?: number;
   remainingRequests?: number;
   remainingTokens?: number;
-  resetAt?: number;
+  resetRequestsAt?: number;
+  resetTokensAt?: number;
+  /** Most recent provider-confirmed request-window boundary that has already passed. */
+  requestsWindowStartedAt?: number;
+  /** Most recent provider-confirmed token-window boundary that has already passed. */
+  tokensWindowStartedAt?: number;
+  retryAt?: number;
   /**
    * What this process has sent inside the window.
    *
@@ -295,6 +301,26 @@ export class ProviderPacer {
   }
 
   /**
+   * Advance each provider-owned window independently once its reset passes.
+   *
+   * Clearing the old `remaining` matters as much as recording the boundary: a later response may
+   * publish the NEXT reset without repeating a remaining count, and neither event may resurrect a
+   * snapshot or reservation from the window that just closed.
+   */
+  private rollProviderWindows(bucket: Bucket, now: number): void {
+    if (bucket.resetRequestsAt !== undefined && now >= bucket.resetRequestsAt) {
+      bucket.requestsWindowStartedAt = Math.max(bucket.requestsWindowStartedAt ?? 0, bucket.resetRequestsAt);
+      bucket.resetRequestsAt = undefined;
+      bucket.remainingRequests = undefined;
+    }
+    if (bucket.resetTokensAt !== undefined && now >= bucket.resetTokensAt) {
+      bucket.tokensWindowStartedAt = Math.max(bucket.tokensWindowStartedAt ?? 0, bucket.resetTokensAt);
+      bucket.resetTokensAt = undefined;
+      bucket.remainingTokens = undefined;
+    }
+  }
+
+  /**
    * How long before this call may go, in ms. Zero means now.
    *
    * The ledger is primary and a reported `remaining` only ever adds pessimism. That ordering is what
@@ -307,9 +333,14 @@ export class ProviderPacer {
     const now = this.now();
     const estimate = this.estimate(bucket);
     this.prune(bucket, now);
+    this.rollProviderWindows(bucket, now);
 
     const requestCeiling = bucket.limitRequests ?? bucket.learnedRequests;
     const tokenCeiling = bucket.limitTokens ?? bucket.learnedTokens;
+    const requestSends = sendsForAxis(bucket.sends, bucket.requestsWindowStartedAt);
+    const tokenSends = sendsForAxis(bucket.sends, bucket.tokensWindowStartedAt);
+    // Retry-After applies to the response as a whole, even when that response reported no ceilings.
+    if (bucket.retryAt !== undefined && bucket.retryAt > now) return bucket.retryAt - now;
     // Nothing has stated a ceiling and nothing has refused us. Send, and learn from what comes back.
     if (requestCeiling === undefined && tokenCeiling === undefined) return 0;
 
@@ -318,13 +349,20 @@ export class ProviderPacer {
      * describes a window the provider has already rolled over, and believing it would park the run
      * on a limit that no longer exists.
      */
-    const expired = bucket.resetAt !== undefined && now >= bucket.resetAt;
-    const fresh = !expired && now - bucket.observedAt < SNAPSHOT_TTL_MS;
-    const worse = (counted: number, ceiling: number | undefined, remaining: number | undefined) =>
-      fresh && ceiling !== undefined && remaining !== undefined ? Math.max(counted, ceiling - remaining) : counted;
+    const fresh = (reset: number | undefined) =>
+      (reset === undefined || now < reset) && now - bucket.observedAt < SNAPSHOT_TTL_MS;
+    const worse = (
+      counted: number,
+      ceiling: number | undefined,
+      remaining: number | undefined,
+      reset: number | undefined,
+    ) =>
+      fresh(reset) && ceiling !== undefined && remaining !== undefined
+        ? Math.max(counted, ceiling - remaining)
+        : counted;
 
-    const requestsUsed = worse(bucket.sends.length, requestCeiling, bucket.remainingRequests);
-    const tokensUsed = worse(sumTokens(bucket.sends), tokenCeiling, bucket.remainingTokens);
+    const requestsUsed = worse(requestSends.length, requestCeiling, bucket.remainingRequests, bucket.resetRequestsAt);
+    const tokensUsed = worse(sumTokens(tokenSends), tokenCeiling, bucket.remainingTokens, bucket.resetTokensAt);
 
     /**
      * A context can outgrow the whole per-minute allowance — measured, mistral-medium charges 49k
@@ -338,27 +376,37 @@ export class ProviderPacer {
       tokenCeiling !== undefined && (unfittable ? tokensUsed > 0 : tokensUsed + estimate > tokenCeiling);
     if (!overRequests && !overTokens) return 0;
 
-    if (bucket.resetAt !== undefined && bucket.resetAt > now) return bucket.resetAt - now;
-
-    // Where our own sends account for the pressure, the ledger knows exactly when a slot frees, so
-    // the wait is only as long as it has to be.
-    const fits =
-      overRequests && requestCeiling !== undefined
-        ? (sends: Send[]) => sends.length < requestCeiling
-        : unfittable
-          ? (sends: Send[]) => sumTokens(sends) === 0
-          : (sends: Send[]) => sumTokens(sends) + estimate <= tokenCeiling!;
-    for (let i = 1; i <= bucket.sends.length; i++) {
-      if (fits(bucket.sends.slice(i))) return Math.max(0, bucket.sends[i - 1].at + LEDGER_WINDOW_MS - now);
-    }
-
-    /**
-     * Pressure with no send of ours behind it — another process on the same key. Nothing local can
-     * time it, so wait a recovery from whenever we last saw evidence of it. Measured from that
-     * moment rather than from now, or each pass would restart the wait and never converge.
-     */
     const pressureAt = Math.max(bucket.refusedAt ?? 0, bucket.observedAt);
-    return Math.max(0, pressureAt + bucket.recoveryMs - now);
+    const axisWait = (
+      reset: number | undefined,
+      sends: readonly Send[],
+      fits: (sends: readonly Send[]) => boolean,
+    ): number => {
+      if (reset !== undefined && reset > now) return reset - now;
+
+      // Where our own sends account for the pressure, the ledger knows exactly when a slot frees.
+      for (let i = 1; i <= sends.length; i++) {
+        if (fits(sends.slice(i))) return Math.max(0, sends[i - 1].at + LEDGER_WINDOW_MS - now);
+      }
+
+      // Pressure with no send of ours behind it came from traffic outside this process. Measure the
+      // recovery from the evidence rather than from now, or each pass would restart it forever.
+      return Math.max(0, pressureAt + bucket.recoveryMs - now);
+    };
+
+    const waits: number[] = [];
+    if (overRequests && requestCeiling !== undefined) {
+      waits.push(axisWait(bucket.resetRequestsAt, requestSends, (sends) => sends.length < requestCeiling));
+    }
+    if (overTokens && tokenCeiling !== undefined) {
+      waits.push(
+        axisWait(bucket.resetTokensAt, tokenSends, (sends) =>
+          unfittable ? sumTokens(sends) === 0 : sumTokens(sends) + estimate <= tokenCeiling,
+        ),
+      );
+    }
+    // Both axes must have room before admission, hence the later of their independent deadlines.
+    return Math.max(...waits);
   }
 
   /**
@@ -373,11 +421,15 @@ export class ProviderPacer {
   settle(key: PacerKey, snapshot: RateLimitSnapshot | null): void {
     if (!snapshot) return;
     const bucket = this.bucketFor(key);
+    const now = this.now();
+    this.rollProviderWindows(bucket, now);
 
     if (snapshot.limitRequests !== undefined) bucket.limitRequests = snapshot.limitRequests;
     if (snapshot.limitTokens !== undefined) bucket.limitTokens = snapshot.limitTokens;
     if (snapshot.queryCost !== undefined) bucket.lastCost = snapshot.queryCost;
-    if (snapshot.resetAt !== undefined) bucket.resetAt = snapshot.resetAt;
+    if (snapshot.resetRequestsAt !== undefined) bucket.resetRequestsAt = snapshot.resetRequestsAt;
+    if (snapshot.resetTokensAt !== undefined) bucket.resetTokensAt = snapshot.resetTokensAt;
+    if (snapshot.retryAt !== undefined) bucket.retryAt = snapshot.retryAt;
 
     // Above one because this call's own reservation is still held; anything more is company.
     const contended = bucket.inFlight > 1;
@@ -386,7 +438,7 @@ export class ProviderPacer {
 
     bucket.remainingRequests = fold(bucket.remainingRequests, snapshot.remainingRequests);
     bucket.remainingTokens = fold(bucket.remainingTokens, snapshot.remainingTokens);
-    bucket.observedAt = this.now();
+    bucket.observedAt = now;
   }
 
   /** The token usage a call reported, for providers that do not price it in a header. */
@@ -411,25 +463,42 @@ export class ProviderPacer {
    * was demonstrably too much, so it becomes the ceiling. Without this the streaming Mistral path
    * would learn nothing at all and go on colliding at the same rate.
    */
-  penalize(key: PacerKey, resetAt?: number): number {
+  penalize(key: PacerKey, retryAt?: number): number {
     const bucket = this.bucketFor(key);
     const now = this.now();
     this.prune(bucket, now);
+    this.rollProviderWindows(bucket, now);
+    const requestSends = sendsForAxis(bucket.sends, bucket.requestsWindowStartedAt);
+    const tokenSends = sendsForAxis(bucket.sends, bucket.tokensWindowStartedAt);
 
     // pacedFetch may already have folded a Retry-After/reset header from this refusal into the
     // bucket before the SDK turns the 429 response into an exception. Prefer that provider-owned
     // deadline to our learned guess. An exact deadline needs no jitter here: admission is serialized
     // when callers wake, and waking before Retry-After would only buy another refusal.
-    const providerResetAt =
-      resetAt ?? (bucket.resetAt !== undefined && bucket.resetAt > now ? bucket.resetAt : undefined);
+    if (retryAt !== undefined) bucket.retryAt = retryAt;
+    const responseWideRetry = bucket.retryAt !== undefined && bucket.retryAt > now ? bucket.retryAt : undefined;
+    const requestExhausted =
+      bucket.remainingRequests !== undefined
+        ? bucket.remainingRequests <= 0
+        : bucket.limitRequests !== undefined && requestSends.length >= bucket.limitRequests;
+    const estimate = this.estimate(bucket);
+    const tokenExhausted =
+      bucket.remainingTokens !== undefined
+        ? bucket.remainingTokens < estimate
+        : bucket.limitTokens !== undefined && sumTokens(tokenSends) + estimate > bucket.limitTokens;
+    const quotaDeadlines = [
+      requestExhausted ? bucket.resetRequestsAt : undefined,
+      tokenExhausted ? bucket.resetTokensAt : undefined,
+    ].filter((deadline): deadline is number => deadline !== undefined && deadline > now);
+    const providerResetAt = responseWideRetry ?? (quotaDeadlines.length ? Math.max(...quotaDeadlines) : undefined);
 
     /**
      * Needs at least two: a single send of ours cannot have exceeded a ceiling by itself, so that
      * refusal came from traffic we cannot see and teaches us nothing about our own rate. Learning
      * from it would pin the ceiling at one call per window on the first unlucky collision.
      */
-    if (bucket.limitRequests === undefined && bucket.sends.length > 1) {
-      const tooMany = bucket.sends.length;
+    if (bucket.limitRequests === undefined && requestSends.length > 1) {
+      const tooMany = requestSends.length;
       bucket.learnedRequests = Math.max(1, Math.min(bucket.learnedRequests ?? tooMany, tooMany) - 1);
       bucket.cleanSends = 0;
     }
@@ -438,7 +507,6 @@ export class ProviderPacer {
     // described and keep throttling a bucket the ledger already knows has room.
     bucket.refusedAt = now;
     bucket.recoveryMs = Math.min(MAX_RECOVERY_MS, bucket.recoveryMs * RECOVERY_GROWTH);
-    if (resetAt !== undefined) bucket.resetAt = resetAt;
     return providerResetAt !== undefined
       ? clampWait(providerResetAt - now)
       : clampWait(jitter(bucket.recoveryMs, this.random));
@@ -477,6 +545,16 @@ export class ProviderPacer {
 }
 
 const sumTokens = (sends: readonly Send[]) => sends.reduce((total, send) => total + send.tokens, 0);
+
+/**
+ * A provider-owned reset is a stronger window boundary than the conservative 60-second ledger.
+ * Reservations before the most recently completed boundary no longer consume that quota axis.
+ * Keep this filter axis-specific because request and token allowances can reset independently.
+ */
+function sendsForAxis(sends: readonly Send[], windowStartedAt: number | undefined): readonly Send[] {
+  if (windowStartedAt === undefined) return sends;
+  return sends.filter((send) => send.at >= windowStartedAt);
+}
 
 /** The lower of what we projected and what the provider reported; either may be the only one known. */
 function pessimistic(projected: number | undefined, reported: number | undefined): number | undefined {

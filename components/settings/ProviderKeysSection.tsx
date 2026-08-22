@@ -154,10 +154,7 @@ export default function ProviderKeysSection({ open }: { open: boolean }) {
   return (
     <section>
       <span className="text-sm font-semibold">Provider API keys</span>
-      <p className="mb-0 mt-1.5 text-xs text-text-3">
-        Your own key for each model provider. A workspace set to a provider with no key here stops at the start of its
-        conversation and says so.
-      </p>
+      <p className="mb-0 mt-1.5 text-xs text-text-3">Register your own keys for each model provider.</p>
 
       {error && (
         <p role="alert" className="mb-0 mt-3 text-xs text-danger">

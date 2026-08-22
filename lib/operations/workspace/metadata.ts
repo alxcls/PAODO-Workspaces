@@ -143,8 +143,8 @@ export function validateMetadata(
     const offered = availableProviders();
     if (!offered.includes(selection.provider)) {
       throw new WorkspaceUpdateError(
-        `${selection.provider} is switched off in this deployment ` +
-          `(${providerAvailabilityEnv(selection.provider)}=false in .env). ` +
+        `${selection.provider} is not offered in this deployment ` +
+          `(set ${providerAvailabilityEnv(selection.provider)}=true in .env to offer it). ` +
           (offered.length
             ? `Pick one of: ${offered.join(", ")}.`
             : "No provider is switched on, so no workspace can be given one."),

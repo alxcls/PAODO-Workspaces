@@ -24,11 +24,10 @@ function seedWorkspace(ws: Record<string, unknown>) {
 // day it is added, which is precisely when these tests matter most.
 const PROVIDER_ENV = SUPPORTED_PROVIDERS.map((provider) => providerAvailabilityEnv(provider)!).filter(Boolean);
 
-/** Switch every provider off except one, so the fallback's choice is unambiguous. */
+/** Offer exactly one provider, so the fallback's choice is unambiguous. */
 function offerOnly(provider: string) {
-  for (const other of SUPPORTED_PROVIDERS) {
-    if (other !== provider) process.env[providerAvailabilityEnv(other)!] = "false";
-  }
+  for (const other of SUPPORTED_PROVIDERS) delete process.env[providerAvailabilityEnv(other)!];
+  process.env[providerAvailabilityEnv(provider)!] = "true";
 }
 
 describe("loadAgentConfig", () => {
@@ -38,7 +37,9 @@ describe("loadAgentConfig", () => {
     const g = global as typeof global & { _workspaces?: Map<string, unknown> };
     g._workspaces?.clear();
     savedEnv = Object.fromEntries(PROVIDER_ENV.map((key) => [key, process.env[key]]));
-    for (const key of PROVIDER_ENV) delete process.env[key];
+    // Availability is opt-in, so the baseline has to name every provider; the cases that care about
+    // one being withdrawn switch it off themselves.
+    for (const key of PROVIDER_ENV) process.env[key] = "true";
     // Keys live in a process-global store now, not the environment, so they leak between tests the
     // same way env vars used to and need clearing for the same reason.
     _resetProviderKeysForTest();

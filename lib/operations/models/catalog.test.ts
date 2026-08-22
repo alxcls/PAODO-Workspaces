@@ -8,9 +8,7 @@ import { SUPPORTED_PROVIDERS, providerAvailabilityEnv } from "@/lib/agent/buildM
 
 /** Switch off every provider except the named ones, so a case can assert on an exact catalog. */
 const only = (...providers: string[]) =>
-  Object.fromEntries(
-    SUPPORTED_PROVIDERS.filter((p) => !providers.includes(p)).map((p) => [providerAvailabilityEnv(p)!, "false"]),
-  );
+  Object.fromEntries(providers.map((p) => [providerAvailabilityEnv(p)!, "true"]));
 
 // Key state is injected rather than written to the encrypted store on disk: what this module does
 // with the answer is the thing under test, not how the answer is stored.
@@ -40,7 +38,7 @@ describe("model catalog", () => {
   // with no keys served `{}` — an empty picker, on the page whose settings modal is the only way to
   // enter a key.
   it("publishes every offered provider, with its models, when no key is set anywhere", () => {
-    const catalog = getModelCatalog({}, noKeys);
+    const catalog = getModelCatalog(only(...SUPPORTED_PROVIDERS), noKeys);
     expect(Object.keys(catalog)).toEqual(SUPPORTED_PROVIDERS);
     expect(catalog.anthropic.models.length).toBeGreaterThan(0);
   });

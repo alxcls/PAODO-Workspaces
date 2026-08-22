@@ -114,10 +114,11 @@ describe("workspace metadata validation", () => {
   // startup, so accepting it would store a workspace that cannot run — the state startup clears. The
   // message names the .env switch rather than listing "supported" providers, because the caller who
   // hits this is the one who wrote that line.
-  it("refuses a supported provider this deployment has switched off", () => {
+  it("refuses a supported provider this deployment does not offer", () => {
     offer("anthropic", "openai");
     expect(() => validateMetadata({ model: { provider: "mistral", model: "mistral-large" } })).toThrow(
-      "mistral is switched off in this deployment (MISTRAL_AVAILABLE=false in .env). Pick one of: anthropic, openai.",
+      "mistral is not offered in this deployment (set MISTRAL_AVAILABLE=true in .env to offer it). " +
+        "Pick one of: anthropic, openai.",
     );
     // The check is on the RESOLVED provider, so it also catches the carried-over case: a caller
     // changing only the model of a workspace still sitting on a withdrawn provider.
@@ -126,7 +127,7 @@ describe("workspace metadata validation", () => {
         { model: { model: "mistral-large" } },
         { provider: "mistral", model: "x", reasoningEffort: "high" },
       ),
-    ).toThrow("mistral is switched off");
+    ).toThrow("mistral is not offered");
   });
 
   // Not merely "pick another one": there is no other one. The message has to say so, or it sends the

@@ -5,7 +5,8 @@
 // workspace, discard the misspelled field, and answer 200 with the typo absent from `applied` — a
 // partial change reported as a complete one, which no caller can detect. Both rejections name the
 // accepted fields, since a programmatic caller has no form to discover them from.
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { providerAvailabilityEnv, SUPPORTED_PROVIDERS } from "@/lib/agent/buildModel";
 
 const h = vi.hoisted(() => ({
   workspace: {
@@ -62,7 +63,12 @@ beforeEach(() => {
   h.renames = [];
   h.descriptions = [];
   h.setWorkspaceLlm.mockClear();
+  // Availability is opt-in, and this suite asserts the body contract rather than which providers a
+  // deployment offers, so every provider is named.
+  for (const provider of SUPPORTED_PROVIDERS) vi.stubEnv(providerAvailabilityEnv(provider)!, "true");
 });
+
+afterEach(() => vi.unstubAllEnvs());
 
 describe("workspace update body contract", () => {
   it("rejects an unknown field and names the accepted ones", async () => {

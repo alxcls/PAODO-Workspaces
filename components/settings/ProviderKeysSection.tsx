@@ -33,6 +33,7 @@ const PROVIDER_NAMES: Record<string, string> = {
   deepseek: "DeepSeek",
   moonshot: "Moonshot",
   mistral: "Mistral",
+  scaleway: "Scaleway",
 };
 
 function providerLabel(provider: string): string {

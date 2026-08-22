@@ -107,15 +107,85 @@ describe("ProviderPacer — admission", () => {
     expect(second.waitedMs).toBeLessThan(120_000);
   });
 
-  it("uses a reported reset in preference to the learned recovery", async () => {
+  it("uses a reported request reset in preference to the learned recovery", async () => {
     const { pacer, slept, at } = testPacer();
-    pacer.settle(HAIKU, { limitRequests: 10_000, remainingRequests: 0, resetAt: at() + 4_000 });
+    pacer.settle(HAIKU, { limitRequests: 10_000, remainingRequests: 0, resetRequestsAt: at() + 4_000 });
 
     await pacer.acquire(HAIKU);
 
     // Jittered, so the assertion is about the order of magnitude rather than the exact figure.
     expect(slept[0]).toBeGreaterThan(2_000);
     expect(slept[0]).toBeLessThan(6_000);
+  });
+
+  it("honours a response-wide Retry-After even when the provider reports no ceilings", async () => {
+    const { pacer, slept, at } = testPacer();
+    pacer.settle(LARGE, { retryAt: at() + 7_000 });
+
+    await pacer.acquire(LARGE);
+
+    expect(slept).toEqual([7_000]);
+  });
+
+  it("uses only the exhausted Scaleway quota axis, and the later deadline when both are exhausted", async () => {
+    const REQUESTS = { provider: "scaleway", model: "request-bound" };
+    const TOKENS = { provider: "scaleway", model: "token-bound" };
+    const BOTH = { provider: "scaleway", model: "both-bound" };
+    const { pacer, slept, at } = testPacer();
+
+    const scalewayState = {
+      limitRequests: 300,
+      limitTokens: 200_000,
+      resetRequestsAt: at() + 200,
+      resetTokensAt: at() + 3_000,
+    };
+    pacer.settle(REQUESTS, { ...scalewayState, remainingRequests: 0, remainingTokens: 200_000 });
+    await pacer.acquire(REQUESTS);
+    expect(slept.splice(0)).toEqual([200]);
+
+    const tokenNow = at();
+    pacer.settle(TOKENS, {
+      ...scalewayState,
+      resetRequestsAt: tokenNow + 200,
+      resetTokensAt: tokenNow + 3_000,
+      remainingRequests: 299,
+      remainingTokens: 0,
+    });
+    await pacer.acquire(TOKENS);
+    expect(slept.splice(0)).toEqual([3_000]);
+
+    const bothNow = at();
+    pacer.settle(BOTH, {
+      ...scalewayState,
+      resetRequestsAt: bothNow + 200,
+      resetTokensAt: bothNow + 3_000,
+      remainingRequests: 0,
+      remainingTokens: 0,
+    });
+    await pacer.acquire(BOTH);
+    expect(slept).toEqual([3_000]);
+  });
+
+  it("stops counting a local reservation once that quota axis resets", async () => {
+    const TOKENS = { provider: "scaleway", model: "short-token-reset" };
+    const { pacer, slept, at } = testPacer();
+
+    // Reserve one cold-estimated send before learning that it filled the token allowance.
+    // The provider says that allowance reopens in three seconds, much sooner than the conservative
+    // 60-second local ledger. The old behavior slept to the reset and then slept another 57 seconds.
+    const first = await pacer.acquire(TOKENS);
+    pacer.settle(TOKENS, { limitTokens: 25_000, remainingTokens: 0, resetTokensAt: at() + 3_000 });
+    first.release();
+
+    const second = await pacer.acquire(TOKENS);
+    // This is the next window's deadline. The first reservation must stay retired when it replaces
+    // the previous deadline; otherwise the third call sees two sends in this window and waits again.
+    pacer.settle(TOKENS, { remainingTokens: 15_400, resetTokensAt: at() + 3_000 });
+    second.release();
+    const third = await pacer.acquire(TOKENS);
+    third.release();
+
+    expect(slept).toEqual([3_000]);
   });
 
   // Anthropic and OpenAI measure 9,999 of 10,000 requests and the full token allowance left. The
@@ -262,7 +332,7 @@ describe("ProviderPacer — learning", () => {
 
   it("uses the provider's recorded Retry-After deadline for the immediate refusal backoff", () => {
     const { pacer, at } = testPacer();
-    pacer.settle(LARGE, { resetAt: at() + 7_000 });
+    pacer.settle(LARGE, { retryAt: at() + 7_000 });
 
     expect(pacer.penalize(LARGE)).toBe(7_000);
   });
@@ -325,13 +395,13 @@ describe("ProviderPacer — learning", () => {
     const { pacer, at } = testPacer();
     const notices: number[] = [];
 
-    pacer.settle(HAIKU, { limitRequests: 10, remainingRequests: 0, resetAt: at() + 30_000 });
+    pacer.settle(HAIKU, { limitRequests: 10, remainingRequests: 0, resetRequestsAt: at() + 30_000 });
     await pacer.acquire(HAIKU, { onPaced: ({ waitMs }) => notices.push(waitMs) });
     expect(notices).toHaveLength(1);
     expect(notices[0]).toBeGreaterThanOrEqual(NOTICE_THRESHOLD_MS);
 
     const quiet: number[] = [];
-    pacer.settle(CODESTRAL, { limitRequests: 125, remainingRequests: 0, resetAt: at() + 100 });
+    pacer.settle(CODESTRAL, { limitRequests: 125, remainingRequests: 0, resetRequestsAt: at() + 100 });
     await pacer.acquire(CODESTRAL, { onPaced: ({ waitMs }) => quiet.push(waitMs) });
     expect(quiet).toEqual([]);
   });

@@ -14,6 +14,22 @@ import { NO_DIAL_EFFORT, type ReasoningEffort } from "@/lib/models/llmSelection"
 export interface ModelVocabulary {
   models: readonly string[];
   reasoningEfforts: readonly ReasoningEffort[];
+  /**
+   * Per-model narrowings, for vendors whose effort levels belong to the model rather than the
+   * provider. A model listed here is bound by ITS list — including an empty one, meaning that model
+   * has no dial at all — and anything absent falls back to `reasoningEfforts` above.
+   */
+  modelReasoningEfforts?: Readonly<Record<string, readonly ReasoningEffort[]>>;
+}
+
+/**
+ * The levels that apply to one model. Read this rather than `vocabulary.reasoningEfforts` anywhere a
+ * model is in hand: the provider list is a union for a vendor that narrows, so using it directly is
+ * what lets a picker offer a level the chosen model quietly ignores.
+ */
+export function effortsForModel(vocabulary: ModelVocabulary, model: string): readonly ReasoningEffort[] {
+  const perModel = vocabulary.modelReasoningEfforts;
+  return perModel && Object.hasOwn(perModel, model) ? perModel[model] : vocabulary.reasoningEfforts;
 }
 
 /** A complete, usable choice — what the workspace stores and the agent runs with. */
@@ -54,9 +70,12 @@ export function defaultModelFor(vocabulary: ModelVocabulary): string {
  * "low" whenever offered, which is every provider that has a dial today. The fallback is the quietest
  * level the provider does offer rather than its first: `none` disables reasoning outright on OpenAI, so
  * position alone is not a safe rule.
+ *
+ * `model` narrows the list first where the vendor's levels are per model. Omitting it keeps the old
+ * provider-wide answer, which is still right for every provider that does not narrow.
  */
-export function defaultEffortFor(vocabulary: ModelVocabulary): ReasoningEffort {
-  const accepted = vocabulary.reasoningEfforts;
+export function defaultEffortFor(vocabulary: ModelVocabulary, model?: string): ReasoningEffort {
+  const accepted = model === undefined ? vocabulary.reasoningEfforts : effortsForModel(vocabulary, model);
   if (accepted.includes("low")) return "low";
   return accepted.find((effort) => effort !== "none") ?? accepted[0];
 }
@@ -82,12 +101,14 @@ export function firstAvailableSelection(
   const [provider] = providers;
   if (!provider) return { provider: "", model: "", reasoningEffort: NO_DIAL_EFFORT };
   const vocabulary = vocabularyFor(provider);
+  const model = defaultModelFor(vocabulary);
+  const efforts = effortsForModel(vocabulary, model);
   return {
     provider,
-    model: defaultModelFor(vocabulary),
-    // A provider with no dial stores the uniform placeholder rather than a level it would reject —
+    model,
+    // A model with no dial stores the uniform placeholder rather than a level it would reject —
     // defaultEffortFor has nothing to return from an empty list.
-    reasoningEffort: vocabulary.reasoningEfforts.length > 0 ? defaultEffortFor(vocabulary) : NO_DIAL_EFFORT,
+    reasoningEffort: efforts.length > 0 ? defaultEffortFor(vocabulary, model) : NO_DIAL_EFFORT,
   };
 }
 
@@ -96,8 +117,9 @@ export function firstAvailableSelection(
  *
  * Resolution is per field, so any subset works. An omitted provider keeps the current one. An omitted
  * model and an omitted effort both keep their current value while the provider is unchanged, except a
- * model change resets effort to that provider's default. An explicit effort always wins. A provider
- * with no effort dial always resolves to the stored placeholder.
+ * model change resets effort to that model's default. An explicit effort always wins. A model with no
+ * effort dial — whether because its provider has none or because the vendor narrows this one to an
+ * empty list — always resolves to the stored placeholder.
  *
  * Validation is NOT done here: this decides what was meant, not whether it is allowed. The caller
  * checks the provider against its registry and the effort against `vocabulary` — it owns the error
@@ -119,7 +141,7 @@ export function resolveModelSelection(
   const model = trimmed(requested.model) ?? (providerChanged ? defaultModelFor(vocabulary) : current.model);
   const modelChanged = model !== current.model;
 
-  if (vocabulary.reasoningEfforts.length === 0) {
+  if (effortsForModel(vocabulary, model).length === 0) {
     // The stored value is a placeholder the agent never sends. Overwriting it keeps every no-dial
     // provider reading the same rather than preserving whatever the last one used.
     return { provider, model, reasoningEffort: NO_DIAL_EFFORT };
@@ -127,7 +149,7 @@ export function resolveModelSelection(
 
   const reasoningEffort =
     (trimmed(requested.reasoningEffort) as ReasoningEffort | undefined) ??
-    (providerChanged || modelChanged ? defaultEffortFor(vocabulary) : current.reasoningEffort);
+    (providerChanged || modelChanged ? defaultEffortFor(vocabulary, model) : current.reasoningEffort);
 
   return { provider, model, reasoningEffort };
 }

@@ -106,7 +106,7 @@ describe("workspace metadata validation", () => {
       "llmProvider must be one of: anthropic, openai",
     );
     expect(() => validateMetadata({ model: { provider: "openai", model: "gpt-5", reasoningEffort: "nope" } })).toThrow(
-      "reasoningEffort for openai must be one of: ",
+      "reasoningEffort for gpt-5 must be one of: ",
     );
   });
 
@@ -233,12 +233,27 @@ describe("workspace metadata validation", () => {
     });
   });
 
-  // An explicit setting the provider cannot persist is a rejected request, never a successful write
+  // An explicit setting the model cannot persist is a rejected request, never a successful write
   // with a warning. This keeps programmatic triggers aligned with the UI, which cannot offer the level.
-  it("rejects an effort outside the selected provider's own levels", () => {
+  it("rejects an effort outside the selected model's own levels", () => {
     expect(() => validateMetadata({ model: { provider: "deepseek", reasoningEffort: "xhigh" } }, CURRENT)).toThrow(
-      "reasoningEffort for deepseek must be one of: none, low, high, max",
+      "reasoningEffort for deepseek-v4-flash must be one of: none, low, high, max",
     );
+  });
+
+  /**
+   * The message names the MODEL because on Scaleway the level belongs to the model: qwen3.6 accepts
+   * none|medium while the flash model beside it accepts none|low|high|max. Naming the provider would
+   * list levels that are wrong for the model the caller actually chose.
+   */
+  it("rejects a Scaleway effort its sibling model accepts but this one does not", () => {
+    const scaleway = { provider: "scaleway", model: "qwen3.6-35b-a3b", reasoningEffort: "high" };
+    expect(() => validateMetadata({ model: scaleway }, CURRENT)).toThrow(
+      "reasoningEffort for qwen3.6-35b-a3b must be one of: none, medium",
+    );
+    expect(validateMetadata({ model: { ...scaleway, model: "deepseek-v4-flash-0731" } }, CURRENT)).toMatchObject({
+      model: { model: "deepseek-v4-flash-0731", reasoningEffort: "high" },
+    });
   });
 });
 

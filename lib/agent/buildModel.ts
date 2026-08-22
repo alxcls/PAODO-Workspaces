@@ -9,9 +9,16 @@ import { createModelGateway, type ModelCallObserver, type ModelGateway } from ".
 import { createMistralChatModel, mistralRequestConfig } from "./mistralProtocol";
 import { providerPacer } from "./rateLimit/providerPacer";
 import { parseRateLimitHeaders } from "./rateLimit/rateLimitHeaders";
+import { createScalewayChatModel, scalewayReasoningConfig } from "./scalewayProtocol";
 import { THINKING_OFF_EFFORT, type ReasoningEffort } from "../models/llmSelection";
 import { listModels } from "../models/registry";
-import { firstAvailableSelection, type ModelSelection, type ModelVocabulary } from "../models/selection";
+import { scalewayModelEffortLists, scalewayProviderEfforts } from "../models/scalewayEfforts";
+import {
+  effortsForModel,
+  firstAvailableSelection,
+  type ModelSelection,
+  type ModelVocabulary,
+} from "../models/selection";
 
 // Legacy extended-thinking budgets, keyed by the workspace's reasoning-effort knob. Used only for
 // models that still accept thinking:{type:"enabled", budget_tokens} — see ANTHROPIC_ADAPTIVE_MODELS.
@@ -47,6 +54,13 @@ interface ProviderMetadata {
   // The effort levels this provider accepts, quietest first. Drives BOTH the picker and API-side
   // validation, so the UI cannot offer a rejected level. Empty means no dial, and the UI hides it.
   reasoningEfforts: ReasoningEffort[];
+  /**
+   * Narrower lists for models that honour fewer levels than the provider as a whole; the provider
+   * list above stands for anything absent here. Needed wherever a vendor's levels are per model
+   * rather than per provider — Scaleway's are, and its gateway accepts every level on every model,
+   * so nothing but this stops the picker offering two labels for one behaviour.
+   */
+  modelReasoningEfforts?: Record<string, readonly ReasoningEffort[]>;
 }
 
 interface ProviderDescriptor extends ProviderMetadata {
@@ -189,6 +203,27 @@ const PROVIDERS: Record<string, ProviderDescriptor> = {
         ...mistralRequestConfig(config.model, config.reasoningEffort, context.cacheScopeId),
       }),
   },
+  // EU-sovereign inference: open-weight models served from Paris under GDPR, with a zero-retention
+  // default and no CLOUD Act exposure. Some are models another provider here also serves directly.
+  scaleway: {
+    availabilityEnv: "SCALEWAY_AVAILABLE",
+    supportsPromptCaching: false,
+    // The union of the offered models' levels, narrowed per model below — Scaleway documents efforts
+    // per model, and its gateway accepts every level on every model rather than rejecting the rest.
+    reasoningEfforts: scalewayProviderEfforts(),
+    modelReasoningEfforts: scalewayModelEffortLists(),
+    build: (config) =>
+      createScalewayChatModel({
+        model: config.model,
+        ...NO_SDK_RETRY,
+        configuration: {
+          baseURL: "https://api.scaleway.ai/v1",
+          apiKey: config.apiKey,
+          fetch: pacedFetch("scaleway", config.model),
+        },
+        ...scalewayReasoningConfig(config.model, config.reasoningEffort),
+      }),
+  },
 };
 
 /**
@@ -272,9 +307,25 @@ export function availableProviders(env: Record<string, string | undefined> = pro
     .map(([provider]) => provider);
 }
 
-/** What a provider accepts, assembled from the two registries that own the halves. */
-function vocabularyFor(provider: string): ModelVocabulary {
-  return { models: listModels(provider), reasoningEfforts: getProviderMetadata(provider).reasoningEfforts };
+/**
+ * What a provider accepts, assembled from the two registries that own the halves: model names from
+ * lib/models/registry.ts, effort levels from PROVIDERS above.
+ *
+ * Exported because validateMetadata resolves against it too — GET /api/models serves the picker this
+ * same pair, and one shared builder is what keeps all three surfaces agreeing on what a provider takes.
+ */
+export function vocabularyFor(provider: string): ModelVocabulary {
+  const { reasoningEfforts, modelReasoningEfforts } = getProviderMetadata(provider);
+  return {
+    models: listModels(provider),
+    reasoningEfforts,
+    ...(modelReasoningEfforts ? { modelReasoningEfforts } : {}),
+  };
+}
+
+/** The levels one model accepts — the provider's list unless that provider narrows it per model. */
+export function modelReasoningEfforts(provider: string, model: string): readonly ReasoningEffort[] {
+  return effortsForModel(vocabularyFor(provider), model);
 }
 
 /**

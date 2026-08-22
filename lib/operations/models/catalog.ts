@@ -15,6 +15,12 @@ export interface ProviderModelCatalog {
   models: string[];
   reasoningEfforts: ReasoningEffort[];
   /**
+   * Narrower effort lists for models that honour fewer levels than the provider as a whole; absent
+   * for a provider that narrows nothing. The picker must read `effortsForModel` rather than the
+   * provider list above, or it offers levels the selected model silently ignores.
+   */
+  modelReasoningEfforts?: Record<string, readonly ReasoningEffort[]>;
+  /**
    * Whether an API key is stored for this provider — that is, whether choosing it yields a workspace
    * that can actually run.
    *
@@ -37,13 +43,17 @@ export function getModelCatalog(
   hasKey: (provider: string) => boolean = providerHasKey,
 ): ModelCatalog {
   return Object.fromEntries(
-    availableProviders(env).map((provider) => [
-      provider,
-      {
-        models: listModels(provider),
-        reasoningEfforts: [...getProviderMetadata(provider).reasoningEfforts],
-        hasKey: hasKey(provider),
-      },
-    ]),
+    availableProviders(env).map((provider) => {
+      const { reasoningEfforts, modelReasoningEfforts } = getProviderMetadata(provider);
+      return [
+        provider,
+        {
+          models: listModels(provider),
+          reasoningEfforts: [...reasoningEfforts],
+          ...(modelReasoningEfforts ? { modelReasoningEfforts } : {}),
+          hasKey: hasKey(provider),
+        },
+      ];
+    }),
   );
 }

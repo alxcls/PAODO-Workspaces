@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import type { LightTurnRecord } from "@/lib/usage/types";
-import { groupBySessions, formatTokens, formatCost, formatRunError, originLabel } from "./usageSessions";
+import { groupBySessions, formatTokens, formatSessionCost, formatRunError, originLabel } from "./usageSessions";
 
 function rec(over: Partial<LightTurnRecord> = {}): LightTurnRecord {
   return {
@@ -90,6 +90,39 @@ describe("groupBySessions", () => {
     expect(s.cost).toBe(0.123);
   });
 
+  it("totals a single-currency run and renders it in that currency", () => {
+    const [s] = groupBySessions([
+      rec({ id: "a", model: "qwen3.6-35b-a3b", cost: 0.2, costCurrency: "EUR" }),
+      rec({ id: "b", model: "qwen3.6-35b-a3b", cost: 0.1, costCurrency: "EUR" }),
+    ]);
+    expect(s.cost).toBeCloseTo(0.3);
+    expect(s.costByCurrency).toEqual({ EUR: 0.30000000000000004 });
+    expect(formatSessionCost(s)).toBe("€0.300");
+  });
+
+  // The failure this prevents: €0.20 + $0.10 rendered as "0.30" of nothing in particular.
+  it("keeps a mixed-currency run as separate subtotals rather than one meaningless sum", () => {
+    const [s] = groupBySessions([
+      rec({ id: "a", model: "qwen3.6-35b-a3b", cost: 0.2, costCurrency: "EUR" }),
+      rec({ id: "b", model: "gpt-5.1", cost: 0.1, costCurrency: "USD" }),
+    ]);
+    expect(s.cost).toBeUndefined();
+    expect(s.costByCurrency).toEqual({ EUR: 0.2, USD: 0.1 });
+    expect(formatSessionCost(s)).toBe("€0.200 + $0.100");
+  });
+
+  // A turn recorded before the currency column existed was billed in dollars, not in "unknown".
+  it("reads a stored cost with no currency as dollars", () => {
+    const [s] = groupBySessions([rec({ model: "gpt-5.1", cost: 0.5 })]);
+    expect(s.costByCurrency).toEqual({ USD: 0.5 });
+    expect(formatSessionCost(s)).toBe("$0.500");
+  });
+
+  it("shows an unpriced run as a dash, never as a zero", () => {
+    const [s] = groupBySessions([rec({ model: "chatgpt-4o-latest" })]);
+    expect(formatSessionCost(s)).toBe("—");
+  });
+
   it("leaves a run that recorded no error unmarked, failed tool calls included", () => {
     const [s] = groupBySessions([rec({ toolCalls: [{ name: "exec", status: "error" }] })]);
     expect(s.error).toBeUndefined();
@@ -139,12 +172,17 @@ describe("formatTokens", () => {
   it("abbreviates thousands", () => expect(formatTokens(1500)).toBe("1.5K"));
 });
 
-describe("formatCost", () => {
-  it("shows an em-dash for undefined (no pricing)", () => expect(formatCost(undefined)).toBe("—"));
-  it("shows $0 for exactly zero", () => expect(formatCost(0)).toBe("$0"));
-  it("gives sub-cent amounts extra precision", () => expect(formatCost(0.0012)).toBe("$0.0012"));
-  it("uses 3 decimals under $1", () => expect(formatCost(0.25)).toBe("$0.250"));
-  it("uses 2 decimals at or above $1", () => expect(formatCost(4.2)).toBe("$4.20"));
+// The precision rules, reached through the function the dashboard actually calls. A run's cost is
+// often sub-cent, so a flat 2 decimals would render most of them as "$0.00".
+describe("formatSessionCost precision", () => {
+  const usd = (cost: number) => formatSessionCost({ cost, costByCurrency: { USD: cost } });
+
+  it("shows $0 for exactly zero", () => expect(usd(0)).toBe("$0"));
+  it("gives sub-cent amounts extra precision", () => expect(usd(0.0012)).toBe("$0.0012"));
+  it("uses 3 decimals under $1", () => expect(usd(0.25)).toBe("$0.250"));
+  it("uses 2 decimals at or above $1", () => expect(usd(4.2)).toBe("$4.20"));
+  it("carries the euro symbol through the same rules", () =>
+    expect(formatSessionCost({ cost: 0.0084, costByCurrency: { EUR: 0.0084 } })).toBe("€0.0084"));
 });
 
 describe("originLabel", () => {

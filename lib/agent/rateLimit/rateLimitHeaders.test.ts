@@ -22,6 +22,17 @@ const OPENAI = new Headers({
   "x-ratelimit-reset-tokens": "0s",
 });
 
+// Captured from a live Scaleway qwen3.6 response. The two reset clocks are independent and must not
+// be collapsed: the request bucket refills one request much more slowly than the token bucket here.
+const SCALEWAY = new Headers({
+  "x-ratelimit-limit-requests": "300",
+  "x-ratelimit-reset-requests": "200ms",
+  "x-ratelimit-remaining-requests": "149",
+  "x-ratelimit-limit-tokens": "200000",
+  "x-ratelimit-reset-tokens": "3ms",
+  "x-ratelimit-remaining-tokens": "99987",
+});
+
 const ANTHROPIC = new Headers({
   "anthropic-ratelimit-requests-limit": "10000",
   "anthropic-ratelimit-requests-remaining": "9999",
@@ -50,7 +61,19 @@ describe("parseRateLimitHeaders", () => {
       remainingRequests: 4_999,
       limitTokens: 2_000_000,
       remainingTokens: 1_999_997,
-      resetAt: NOW + 12,
+      resetRequestsAt: NOW + 12,
+      resetTokensAt: NOW,
+    });
+  });
+
+  it("keeps Scaleway's request and token reset clocks separate", () => {
+    expect(parseRateLimitHeaders(SCALEWAY, NOW)).toEqual({
+      limitRequests: 300,
+      remainingRequests: 149,
+      limitTokens: 200_000,
+      remainingTokens: 99_987,
+      resetRequestsAt: NOW + 200,
+      resetTokensAt: NOW + 3,
     });
   });
 
@@ -60,7 +83,8 @@ describe("parseRateLimitHeaders", () => {
       remainingRequests: 9_999,
       limitTokens: 12_000_000,
       remainingTokens: 12_000_000,
-      resetAt: Date.parse("2026-08-16T10:28:31Z"),
+      resetRequestsAt: Date.parse("2026-08-16T10:28:31Z"),
+      resetTokensAt: Date.parse("2026-08-16T10:28:32Z"),
     });
   });
 
@@ -73,13 +97,17 @@ describe("parseRateLimitHeaders", () => {
   // Measured: Mistral's own 429s carry no rate-limit headers at all, so retry-after is the only
   // thing a refusal can teach us, and it has to survive on its own.
   it("reads a bare retry-after when nothing else is present", () => {
-    expect(parseRateLimitHeaders(new Headers({ "retry-after": "30" }), NOW)).toEqual({ resetAt: NOW + 30_000 });
+    expect(parseRateLimitHeaders(new Headers({ "retry-after": "30" }), NOW)).toEqual({ retryAt: NOW + 30_000 });
   });
 
-  it("prefers retry-after over a general reset, since it answers the actual question", () => {
+  it("keeps retry-after as a response-wide override without discarding either reset clock", () => {
     const headers = new Headers(OPENAI);
     headers.set("retry-after", "5");
-    expect(parseRateLimitHeaders(headers, NOW)?.resetAt).toBe(NOW + 5_000);
+    expect(parseRateLimitHeaders(headers, NOW)).toMatchObject({
+      retryAt: NOW + 5_000,
+      resetRequestsAt: NOW + 12,
+      resetTokensAt: NOW,
+    });
   });
 
   it("keeps a partial header set rather than discarding what was reported", () => {

@@ -12,12 +12,19 @@
 // bug that a later refresh repairs — it is permanently wrong in the database. That is why the
 // refresher exists at all, and why the catalog has to be swappable in the live process.
 import { globalSingleton } from "../infra/globalSingleton";
+import { DEFAULT_CURRENCY, type Currency } from "./currency";
 import seed from "./model-pricing.json";
 
-interface CatalogEntry {
+// Re-exported so this module stays the one place a rate's shape is described, while the constants
+// themselves live in a leaf the client bundle can import without the price list. See ./currency.ts.
+export { DEFAULT_CURRENCY, type Currency };
+
+export interface CatalogEntry {
   provider: string;
   /** Which upstream list this rate came from — carried for review, not used by the cost math. */
   source: string;
+  /** Absent means DEFAULT_CURRENCY, so an older vendored file keeps reading correctly. */
+  currency?: Currency;
   input_cost_per_token: number;
   output_cost_per_token: number;
   cache_read_input_token_cost?: number;
@@ -47,13 +54,14 @@ export function getCatalog(): Record<string, CatalogEntry> {
   return holder.entries;
 }
 
-// Per-token USD rates for a model. Cache rates fall back to the plain input rate when the catalog
-// doesn't break them out, so a provider without explicit cache pricing still costs something sane.
+// Per-token rates for a model, in `currency`. Cache rates fall back to the plain input rate when the
+// catalog doesn't break them out, so a provider without explicit cache pricing still costs something sane.
 export interface Rate {
   input: number;
   cachedInput: number;
   cacheCreation: number;
   output: number;
+  currency: Currency;
 }
 
 // The token counts recorded per turn (a subset of TurnRecord). Kept structural so usageStore and the
@@ -95,10 +103,21 @@ export function getRate(modelId: string | undefined): Rate | undefined {
       (e.provider === "mistral" ? e.input_cost_per_token * 0.1 : e.input_cost_per_token),
     cacheCreation: e.cache_creation_input_token_cost ?? e.input_cost_per_token,
     output: e.output_cost_per_token,
+    currency: e.currency ?? DEFAULT_CURRENCY,
   };
 }
 
-// USD cost for one turn's tokens. inputTokensTotal includes cache reads and cache writes; those
+/**
+ * The currency a model's cost is denominated in, or undefined when the model isn't priced.
+ *
+ * Frozen alongside the cost itself (lib/usage/record.ts) rather than looked up at read time: the
+ * catalog is swapped on a timer, so a later refresh must not restate an old turn's currency.
+ */
+export function getCurrency(modelId: string | undefined): Currency | undefined {
+  return getRate(modelId)?.currency;
+}
+
+// Cost for one turn's tokens, in the model's own currency (getCurrency). inputTokensTotal includes cache reads and cache writes; those
 // buckets are billed separately below, so base input subtracts both to avoid double-charging.
 // Returns undefined when the model isn't in the catalog so callers can render "unknown" rather
 // than a misleading $0.

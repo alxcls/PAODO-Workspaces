@@ -13,7 +13,8 @@ import { uncachedInputTokens } from "@/lib/client/tokenUsage";
 import {
   groupBySessions,
   formatTokens,
-  formatCost,
+  formatSessionCost,
+  formatSessionCostTitle,
   formatDateTime,
   formatRunError,
   originLabel,
@@ -454,11 +455,8 @@ export default function DashboardPage() {
                     <td className="px-6 py-2.5 text-right font-mono text-text-1">
                       {formatTokens(s.outputTokensTotal)}
                     </td>
-                    <td
-                      className="px-6 py-2.5 text-right font-mono text-text-1"
-                      title={s.cost !== undefined ? `$${s.cost.toFixed(6)}` : "No pricing for this session's model(s)"}
-                    >
-                      {formatCost(s.cost)}
+                    <td className="px-6 py-2.5 text-right font-mono text-text-1" title={formatSessionCostTitle(s)}>
+                      {formatSessionCost(s)}
                     </td>
                     <td className="px-4 py-2.5 text-center align-middle">
                       <RunOutcomeIcon error={s.error} />

@@ -91,6 +91,7 @@ describe("buildChatModel", () => {
     ["deepseek", "deepseek-v4-pro"],
     ["moonshot", "kimi-k3"],
     ["mistral", "mistral-medium-latest"],
+    ["scaleway", "qwen3.6-35b-a3b"],
   ])("wires the selected model and key into the %s client", (provider, model) => {
     const m = buildChatModel(config({ provider, model, apiKey: `key-${provider}` })) as unknown as {
       model: string;
@@ -106,6 +107,9 @@ describe("buildChatModel", () => {
     ["deepseek", "deepseek-v4-pro", "https://api.deepseek.com/v1"],
     ["moonshot", "kimi-k3", "https://api.moonshot.ai/v1"],
     ["mistral", "mistral-medium-latest", "https://api.mistral.ai/v1"],
+    // Doubly load-bearing for Scaleway: the endpoint is the entire EU-sovereignty claim, so a
+    // dropped override would send an EU customer's traffic to a US host while still looking correct.
+    ["scaleway", "qwen3.6-35b-a3b", "https://api.scaleway.ai/v1"],
   ])("points %s at its own endpoint, never another vendor's", (provider, model, baseURL) => {
     const m = buildChatModel(config({ provider, model, apiKey: `key-${provider}` })) as unknown as {
       clientConfig: { baseURL?: string; apiKey?: string };
@@ -143,6 +147,25 @@ describe("buildChatModel", () => {
       config({ provider: "deepseek", model: "deepseek-v4-pro", reasoningEffort: reasoningEffort as never }),
     ) as unknown as { modelKwargs: Record<string, unknown> };
     expect(m.modelKwargs).toEqual(expected);
+  });
+
+  // Scaleway serves DeepSeek's weights behind its OWN OpenAI-compatible API, where "none" is a
+  // legal reasoning_effort. Routing it through DeepSeek's thinking field instead would 400.
+  it.each(["none", "low", "high"])("sends the Scaleway effort %s as a plain reasoning_effort", (reasoningEffort) => {
+    const m = buildChatModel(
+      config({ provider: "scaleway", model: "deepseek-v4-flash-0731", reasoningEffort: reasoningEffort as never }),
+    ) as unknown as { modelKwargs: Record<string, unknown> };
+    expect(m.modelKwargs).toEqual({ reasoning_effort: reasoningEffort });
+    expect(m.modelKwargs).not.toHaveProperty("thinking");
+  });
+
+  // Scaleway's gateway takes any level on any model and quietly collapses an unsupported one to that
+  // model's default, so the snap has to happen here — qwen3.6 documents none|medium and nothing else.
+  it("sends a Scaleway model only a level it documents", () => {
+    const m = buildChatModel(
+      config({ provider: "scaleway", model: "qwen3.6-35b-a3b", reasoningEffort: "low" }),
+    ) as unknown as { modelKwargs: Record<string, unknown> };
+    expect(m.modelKwargs).toEqual({ reasoning_effort: "medium" });
   });
 
   it.each([
@@ -192,6 +215,7 @@ describe("buildChatModel", () => {
     ["anthropic", "claude-haiku-4-5"],
     ["deepseek", "deepseek-v4-pro"],
     ["moonshot", "kimi-k3"],
+    ["scaleway", "qwen3.6-35b-a3b"],
   ])("does not leak the Mistral prompt cache key to %s", (provider, model) => {
     const m = buildChatModel(config({ provider, model }), {
       cacheScopeId: "conversation-42",

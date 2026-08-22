@@ -1,5 +1,6 @@
 import type Database from "better-sqlite3";
 import { initialSchema } from "./001-initial-schema";
+import { costCurrency } from "./002-cost-currency";
 
 export interface Migration {
   version: number;
@@ -7,7 +8,7 @@ export interface Migration {
   up(db: Database.Database): void;
 }
 
-export const DATABASE_MIGRATIONS: readonly Migration[] = [initialSchema];
+export const DATABASE_MIGRATIONS: readonly Migration[] = [initialSchema, costCurrency];
 
 function validateMigrations(migrations: readonly Migration[]): void {
   migrations.forEach((migration, index) => {

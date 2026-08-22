@@ -2,7 +2,13 @@
 // because the picker calls the two primitives on their own — a change that suits the server but breaks
 // carryOverEffort in isolation would otherwise only surface in the UI.
 import { describe, it, expect } from "vitest";
-import { defaultEffortFor, defaultModelFor, firstAvailableSelection, resolveModelSelection } from "./selection";
+import {
+  defaultEffortFor,
+  defaultModelFor,
+  effortsForModel,
+  firstAvailableSelection,
+  resolveModelSelection,
+} from "./selection";
 import type { ModelVocabulary } from "./selection";
 
 const OPENAI: ModelVocabulary = {
@@ -12,10 +18,19 @@ const OPENAI: ModelVocabulary = {
 const MOONSHOT: ModelVocabulary = { models: ["kimi-k3"], reasoningEfforts: ["low", "high", "max"] };
 const DEEPSEEK: ModelVocabulary = { models: ["deepseek-v4-pro"], reasoningEfforts: [] };
 
+// A vendor whose levels belong to the model, shaped like Scaleway: "narrow" accepts a subset, "wide"
+// has no entry and takes the provider list, and "dialless" is narrowed all the way to nothing.
+const NARROWING: ModelVocabulary = {
+  models: ["narrow", "wide", "dialless"],
+  reasoningEfforts: ["none", "low", "medium", "high"],
+  modelReasoningEfforts: { narrow: ["none", "medium"], dialless: [] },
+};
+
 const VOCABULARIES: Record<string, ModelVocabulary> = {
   openai: OPENAI,
   moonshot: MOONSHOT,
   deepseek: DEEPSEEK,
+  narrowing: NARROWING,
 };
 const lookup = (provider: string): ModelVocabulary => VOCABULARIES[provider] ?? { models: [], reasoningEfforts: [] };
 
@@ -45,6 +60,40 @@ describe("defaultEffortFor", () => {
   // "none" turns reasoning off entirely, so first-in-the-list is not a safe rule on its own.
   it("skips none rather than defaulting a provider to no reasoning at all", () => {
     expect(defaultEffortFor({ models: [], reasoningEfforts: ["none", "medium"] })).toBe("medium");
+  });
+
+  it("defaults to the model's own levels where the provider narrows them", () => {
+    expect(defaultEffortFor(NARROWING, "narrow")).toBe("medium");
+    expect(defaultEffortFor(NARROWING, "wide")).toBe("low");
+  });
+});
+
+/**
+ * The provider list is a UNION for a vendor whose levels belong to the model — Scaleway's do, and its
+ * gateway accepts every level on every model rather than rejecting the ones a model ignores. So
+ * reading the provider list where a model is in hand is what would offer a level that silently
+ * collapses to something else.
+ */
+describe("effortsForModel", () => {
+  it("narrows to the model's list when the provider has one", () => {
+    expect(effortsForModel(NARROWING, "narrow")).toEqual(["none", "medium"]);
+  });
+
+  it("falls back to the provider list for a model with no entry", () => {
+    expect(effortsForModel(NARROWING, "wide")).toEqual(["none", "low", "medium", "high"]);
+    expect(effortsForModel(OPENAI, "gpt-5.5")).toBe(OPENAI.reasoningEfforts);
+  });
+
+  it.each(["constructor", "__proto__", "hasOwnProperty"])(
+    "treats the inherited property %s as absent rather than as a model entry",
+    (model) => {
+      expect(effortsForModel(NARROWING, model)).toBe(NARROWING.reasoningEfforts);
+    },
+  );
+
+  // An empty list is a narrowing, not a missing one: that model has no dial and the UI hides it.
+  it("treats an empty per-model list as no dial rather than as absent", () => {
+    expect(effortsForModel(NARROWING, "dialless")).toEqual([]);
   });
 });
 
@@ -141,6 +190,22 @@ describe("resolveModelSelection", () => {
     expect(resolveModelSelection({ provider: "deepseek" }, CURRENT, lookup)).toEqual({
       provider: "deepseek",
       model: "deepseek-v4-pro",
+      reasoningEffort: "low",
+    });
+  });
+
+  // Switching between two models of the SAME provider changes the accepted levels where the vendor
+  // narrows per model, so the reset has to consult the incoming model rather than the provider.
+  it("resets effort to the incoming model's default, not the provider's", () => {
+    const current = { provider: "narrowing", model: "wide", reasoningEffort: "high" as const };
+    expect(resolveModelSelection({ model: "narrow" }, current, lookup).reasoningEffort).toBe("medium");
+  });
+
+  it("resolves a model narrowed to no dial to the placeholder, on a provider that has one", () => {
+    const current = { provider: "narrowing", model: "wide", reasoningEffort: "high" as const };
+    expect(resolveModelSelection({ model: "dialless" }, current, lookup)).toEqual({
+      provider: "narrowing",
+      model: "dialless",
       reasoningEffort: "low",
     });
   });

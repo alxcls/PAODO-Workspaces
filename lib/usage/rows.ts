@@ -8,6 +8,7 @@
 // extract. What IS shared, and lives here, is the translation every reader needs identically —
 // null↔undefined, JSON↔object, and validating a stored status string back into the union.
 import type Database from "better-sqlite3";
+import { DEFAULT_CURRENCY, type Currency } from "../models/currency";
 import type { RunErrorRecord, SessionOrigin, ToolStatus, TurnRecord } from "./types";
 
 export interface TurnRow {
@@ -27,6 +28,7 @@ export interface TurnRow {
   output_tokens_total: number;
   output_tokens_reasoning: number;
   cost_usd: number | null;
+  cost_currency: string | null;
   reasoning_text: string | null;
   output_text: string | null;
   error_code: string | null;
@@ -56,12 +58,12 @@ const INSERT_TURN_SQL = `
   INSERT OR IGNORE INTO usage_turns (
     id, session_id, conversation_id, workspace_id, workspace_name, origin, timestamp,
     user_input, model, input_tokens_total, input_tokens_cache_read, input_tokens_cache_write,
-    output_tokens_total, output_tokens_reasoning, cost_usd, reasoning_text, output_text,
+    output_tokens_total, output_tokens_reasoning, cost_usd, cost_currency, reasoning_text, output_text,
     error_code, error_message
   ) VALUES (
     @id, @session_id, @conversation_id, @workspace_id, @workspace_name, @origin, @timestamp,
     @user_input, @model, @input_tokens_total, @input_tokens_cache_read, @input_tokens_cache_write,
-    @output_tokens_total, @output_tokens_reasoning, @cost_usd, @reasoning_text, @output_text,
+    @output_tokens_total, @output_tokens_reasoning, @cost_usd, @cost_currency, @reasoning_text, @output_text,
     @error_code, @error_message
   )
 `;
@@ -92,6 +94,7 @@ function turnParams(record: TurnRecord) {
     output_tokens_total: record.outputTokensTotal,
     output_tokens_reasoning: record.outputTokensReasoning,
     cost_usd: record.cost ?? null,
+    cost_currency: record.costCurrency ?? null,
     reasoning_text: record.reasoningText ?? null,
     output_text: record.outputText ?? null,
     error_code: record.error?.code ?? null,
@@ -144,6 +147,20 @@ export function parseToolArgs(value: string | null): Record<string, unknown> {
   }
 }
 
+/**
+ * The currency a stored cost is in. NULL on every row written before the column existed, and those
+ * turns really were dollars, so an absent value on a PRICED row reads as the default rather than as
+ * "unknown". An unpriced row has no currency at all — there is no amount for one to qualify.
+ */
+export function currencyFromRow(
+  value: string | null | undefined,
+  cost: number | null | undefined,
+): Currency | undefined {
+  if (cost == null) return undefined;
+  if (value === "EUR" || value === "USD") return value;
+  return value == null ? DEFAULT_CURRENCY : undefined;
+}
+
 /** Map a turn row to a record with an empty toolCalls — the caller folds joined tool rows into it. */
 export function rowToTurn(row: TurnRow): TurnRecord {
   return {
@@ -162,6 +179,7 @@ export function rowToTurn(row: TurnRow): TurnRecord {
     outputTokensTotal: row.output_tokens_total,
     outputTokensReasoning: row.output_tokens_reasoning,
     cost: row.cost_usd ?? undefined,
+    costCurrency: currencyFromRow(row.cost_currency, row.cost_usd),
     reasoningText: row.reasoning_text ?? undefined,
     outputText: row.output_text ?? undefined,
     error: errorFromRow(row),

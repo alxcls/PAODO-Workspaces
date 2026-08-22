@@ -18,8 +18,9 @@ import path from "path";
 import { createLogger } from "../infra/logger";
 import { globalSingleton } from "../infra/globalSingleton";
 import { WORKSPACES_ROOT } from "../infra/paths";
-import { buildCatalog, type Catalog } from "./refresh";
-import { setCatalog } from "./pricing";
+import { buildCatalog, type Catalog, type VendoredEntry } from "./refresh";
+import { getCatalog, setCatalog } from "./pricing";
+import { offeredModelIds } from "./registry";
 
 const log = createLogger("priceRefresher");
 
@@ -82,11 +83,52 @@ function loadCached(): boolean {
   }
 }
 
+/**
+ * Put back the rates a source that could not deliver a complete response would have supplied.
+ *
+ * `setCatalog` is otherwise wholesale, and must stay that way: merging by default would keep a rate
+ * for a model upstream has dropped, which is the stale-rate failure this whole file exists to end.
+ * This is the one exception, kept narrow enough that it cannot cause that. It only fills keys the new
+ * catalog does NOT have (a fresh rate always wins), only from the sources that actually failed, and
+ * only for models still offered — so it can never resurrect a retired model, and it stops happening
+ * the moment the source answers again.
+ *
+ * Without it, a transient outage is worse than a total one: `buildCatalog` still returns, the tick
+ * counts as success, and the wholesale swap DELETES rates the process was already holding. Every turn
+ * on those models then freezes cost `undefined` (lib/usage/record.ts), which no later refresh repairs.
+ */
+function carryForward(catalog: Catalog, failedSources: readonly VendoredEntry["source"][]): string[] {
+  const offered = new Set(offeredModelIds());
+  const carried: string[] = [];
+  for (const [model, entry] of Object.entries(getCatalog())) {
+    // Matching the string against the known source names is also what narrows it: the live catalog
+    // can come from a cache file, so its `source` is only a string until one of these claims it.
+    const source = failedSources.find((failed) => failed === entry.source);
+    if (!source || model in catalog || !offered.has(model)) continue;
+    catalog[model] = { ...entry, source };
+    carried.push(model);
+  }
+  return carried;
+}
+
 async function tick(): Promise<void> {
   if (state.running) return;
   state.running = true;
+  // Any outcome leaving the catalog short of a healthy fetch. A partial refresh used to return early
+  // and skip the retry below — the same gap as a hard failure, but reported as success.
+  let retry = false;
   try {
-    const { catalog, filled, unpriced } = await buildCatalog();
+    const { catalog, filled, unpriced, sourceFailures } = await buildCatalog();
+
+    if (sourceFailures.length) {
+      retry = true;
+      const carried = carryForward(catalog, sourceFailures);
+      log.warn(
+        { event: "price_source_incomplete", sources: sourceFailures, carried, retryMs: RETRY_MS },
+        "a price source was incomplete or unreachable — carrying its previous rates forward",
+      );
+    }
+
     setCatalog(catalog);
     try {
       persist(catalog);
@@ -107,8 +149,8 @@ async function tick(): Promise<void> {
       { event: "price_refresh_completed", outcome: "prices_updated", models: Object.keys(catalog).length, filled },
       "model prices refreshed",
     );
-    return;
   } catch (err) {
+    retry = true;
     log.warn(
       { event: "price_refresh_failed", outcome: "previous_prices_retained", err, retryMs: RETRY_MS },
       "model price refresh failed — keeping the rates already in force",
@@ -116,8 +158,8 @@ async function tick(): Promise<void> {
   } finally {
     state.running = false;
   }
-  // Only reached on failure. One pending retry at a time; the regular interval keeps running.
-  if (state.timer && !state.retryTimer) {
+  // Reached on a failed OR a partial refresh. One pending retry at a time; the interval keeps running.
+  if (retry && state.timer && !state.retryTimer) {
     state.retryTimer = setTimeout(() => {
       state.retryTimer = null;
       void tick();

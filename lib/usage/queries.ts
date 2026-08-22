@@ -7,7 +7,7 @@
 // listing. Each maps its rows back through the converters in ./rows.ts so column names live in one
 // place per direction.
 import { appDataDb as db } from "../data/database";
-import { errorFromRow, isToolStatus, parseToolArgs, rowToTurn } from "./rows";
+import { currencyFromRow, errorFromRow, isToolStatus, parseToolArgs, rowToTurn } from "./rows";
 import type { JoinedTurnRow, LightJoinedRow } from "./rows";
 import type { LightTurnRecord, OutputTokenUsage, SessionOrigin, TurnRecord } from "./types";
 
@@ -103,7 +103,7 @@ export function listUsageLight(workspaceId?: string): LightTurnRecord[] {
           SELECT
             seq, id, session_id, conversation_id, workspace_id, workspace_name, origin, timestamp,
             model, input_tokens_total, input_tokens_cache_read, input_tokens_cache_write,
-            output_tokens_total, output_tokens_reasoning, cost_usd, error_code, error_message,
+            output_tokens_total, output_tokens_reasoning, cost_usd, cost_currency, error_code, error_message,
             -- Usage records outlive the conversations that produced them (deleting a workspace drops
             -- its conversation rows but keeps its execution records). The id stays on the row either
             -- way — it is what ties the run to its conversation in an audit trail — and this decides
@@ -145,6 +145,7 @@ export function listUsageLight(workspaceId?: string): LightTurnRecord[] {
         outputTokensTotal: row.output_tokens_total,
         outputTokensReasoning: row.output_tokens_reasoning,
         cost: row.cost_usd ?? undefined,
+        costCurrency: currencyFromRow(row.cost_currency, row.cost_usd),
         error: errorFromRow(row),
         toolCalls: [],
       };

@@ -6,6 +6,8 @@
 // The SQL column shapes these map onto live in ./rows.ts, the writers in ./record.ts, the readers in
 // ./queries.ts.
 
+import type { Currency } from "../models/currency";
+
 // Outcome of a tool call, decided at the source (the runner) and persisted so the dashboard can
 // render it without re-parsing output. "needs_input" is the A2A non-terminal retry state.
 export type ToolStatus = "ok" | "error" | "needs_input";
@@ -43,15 +45,17 @@ export interface TurnRecord {
   inputTokensCacheWrite: number;
   outputTokensTotal: number;
   outputTokensReasoning: number;
-  /** USD cost frozen at write time; undefined means the model was not in the pricing catalog. */
+  /** Cost frozen at write time; undefined means the model was not in the pricing catalog. */
   cost?: number;
+  /** The currency `cost` is in, frozen with it. Undefined alongside an undefined cost. */
+  costCurrency?: Currency;
   reasoningText?: string;
   outputText?: string;
   error?: RunErrorRecord;
   toolCalls: ToolCallRecord[];
 }
 
-export type NewTurnRecord = Omit<TurnRecord, "id" | "timestamp" | "cost"> & { id?: string };
+export type NewTurnRecord = Omit<TurnRecord, "id" | "timestamp" | "cost" | "costCurrency"> & { id?: string };
 
 export type TurnUsageFields = Omit<
   TurnRecord,
@@ -88,6 +92,7 @@ export interface LightTurnRecord {
   outputTokensTotal: number;
   outputTokensReasoning: number;
   cost?: number;
+  costCurrency?: Currency;
   error?: RunErrorRecord;
   toolCalls: Array<{ name: string; status: ToolStatus }>;
 }

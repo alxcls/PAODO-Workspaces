@@ -1,6 +1,9 @@
 // Pure, view-agnostic logic behind the usage dashboard: fold the light per-turn usage records into
 // one row per run (session), and format the scalar cells. Kept out of the page component so it's unit
 // testable and the component stays presentational.
+// The currency leaf, NOT lib/models/pricing — that module carries the whole vendored price list, and
+// this one runs in the browser. See lib/models/currency.ts.
+import { DEFAULT_CURRENCY, type Currency } from "@/lib/models/currency";
 import type { LightTurnRecord, RunErrorRecord, SessionOrigin } from "@/lib/usage/types";
 
 // One user message ("turn line") = one run = one sessionId, aggregated from the light per-turn
@@ -24,6 +27,13 @@ export interface LightSession {
   toolTotal: number;
   // undefined until a priced turn contributes; stays undefined if no turn's model is in the catalog.
   cost: number | undefined;
+  /**
+   * Per-currency subtotals, because a session is free to switch models mid-run and a euro-priced
+   * Scaleway turn cannot be added to a dollar-priced one. `cost` above stays the total ONLY while a
+   * session is single-currency, and is undefined the moment two appear — a sum across currencies is
+   * a number that means nothing, and showing it would be worse than showing the parts.
+   */
+  costByCurrency: Partial<Record<Currency, number>>;
   // The run's terminal error, if any — the last one recorded across the run's turns, which is what
   // stopped it. undefined means the run finished without an error (a failed tool call the agent
   // recovered from is not a failed run; those stay visible as red dots inside the drawer).
@@ -54,6 +64,7 @@ export function groupBySessions(records: LightTurnRecord[]): LightSession[] {
         outputTokensTotal: 0,
         toolTotal: 0,
         cost: undefined,
+        costByCurrency: {},
       };
       map.set(r.sessionId, s);
     }
@@ -69,7 +80,12 @@ export function groupBySessions(records: LightTurnRecord[]): LightSession[] {
     s.toolTotal += r.toolCalls.length;
     // Cost is frozen by the usage store; dashboard reads never re-price historical turns.
     const c = r.cost;
-    if (c !== undefined) s.cost = (s.cost ?? 0) + c;
+    if (c !== undefined) {
+      const currency = r.costCurrency ?? DEFAULT_CURRENCY;
+      s.costByCurrency[currency] = (s.costByCurrency[currency] ?? 0) + c;
+      const totals = Object.values(s.costByCurrency);
+      s.cost = totals.length === 1 ? totals[0] : undefined;
+    }
     if (r.timestamp < s.timestamp) s.timestamp = r.timestamp;
   }
   // Order by when each session STARTED (newest first) — see the agent-to-agent note: a caller's
@@ -88,13 +104,36 @@ export function formatTokens(n: number): string {
   return String(n);
 }
 
-// USD cost per session. `cost` is undefined when no turn's model was found in the pricing catalog, in
-// which case we show "—" rather than a misleading $0. Sub-cent totals get more precision.
-export function formatCost(cost: number | undefined): string {
-  if (cost === undefined) return "—";
-  if (cost === 0) return "$0";
-  if (cost < 0.01) return "$" + cost.toFixed(4);
-  return "$" + cost.toFixed(cost < 1 ? 3 : 2);
+const CURRENCY_SYMBOL: Record<Currency, string> = { USD: "$", EUR: "€" };
+
+// One amount with its currency symbol. Sub-cent totals get more precision.
+function formatAmount(cost: number, currency: Currency): string {
+  const symbol = CURRENCY_SYMBOL[currency];
+  if (cost === 0) return symbol + "0";
+  if (cost < 0.01) return symbol + cost.toFixed(4);
+  return symbol + cost.toFixed(cost < 1 ? 3 : 2);
+}
+
+type SessionCost = Pick<LightSession, "cost" | "costByCurrency">;
+
+/**
+ * A session's total, spelled out per currency — the only correct rendering when a run mixed them.
+ *
+ * A session with no priced turn renders "—" rather than a misleading $0, and one that mixed
+ * currencies renders its parts joined by "+", never as one number: euros and dollars are not
+ * addable, and the per-currency subtotals are each individually true.
+ */
+export function formatSessionCost(session: SessionCost): string {
+  const parts = Object.entries(session.costByCurrency) as Array<[Currency, number]>;
+  if (parts.length === 0) return "—";
+  return parts.map(([currency, amount]) => formatAmount(amount, currency)).join(" + ");
+}
+
+/** The hover title behind that cell: full precision, or why there is no number to show. */
+export function formatSessionCostTitle(session: SessionCost): string {
+  const parts = Object.entries(session.costByCurrency) as Array<[Currency, number]>;
+  if (parts.length === 0) return "No pricing for this session's model(s)";
+  return parts.map(([currency, amount]) => `${CURRENCY_SYMBOL[currency]}${amount.toFixed(6)}`).join(" + ");
 }
 
 function pad(n: number): string {

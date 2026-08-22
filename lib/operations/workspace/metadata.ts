@@ -4,17 +4,12 @@ import { type ReasoningEffort } from "@/lib/models/llmSelection";
 import {
   availableProviders,
   defaultModelSelection,
-  getProviderMetadata,
+  modelReasoningEfforts,
   providerAvailabilityEnv,
   SUPPORTED_PROVIDERS,
+  vocabularyFor,
 } from "@/lib/agent/buildModel";
-import { listModels } from "@/lib/models/registry";
-import {
-  resolveModelSelection,
-  type ModelSelection,
-  type ModelVocabulary,
-  type RequestedModelSelection,
-} from "@/lib/models/selection";
+import { resolveModelSelection, type ModelSelection, type RequestedModelSelection } from "@/lib/models/selection";
 import { validateWorkspaceName } from "@/lib/workspace/name";
 import {
   MAX_WORKSPACE_DESCRIPTION_LENGTH,
@@ -48,14 +43,6 @@ export interface WorkspaceMetadata {
   model?: ModelSelection;
 }
 
-/**
- * The vocabulary the shared resolver needs, read from the two code-owned catalogs: model names from
- * lib/models/registry.ts, effort levels from the provider registry. GET /api/models serves this same
- * pair to the picker, which is what keeps the two surfaces resolving against identical data.
- */
-function providerVocabulary(provider: string): ModelVocabulary {
-  return { models: listModels(provider), reasoningEfforts: getProviderMetadata(provider).reasoningEfforts };
-}
 export type MetadataWriter = Pick<
   IWorkspaceStore,
   | "renameWorkspace"
@@ -136,7 +123,7 @@ export function validateMetadata(
 
     // Fill the gaps, then check what came out. Resolution is shared with the picker so a partial choice
     // means the same thing here as it does in the UI; see lib/models/selection.ts.
-    const selection = resolveModelSelection(input.model, current, providerVocabulary);
+    const selection = resolveModelSelection(input.model, current, vocabularyFor);
 
     // Both rejections name the accepted values. The valid effort levels differ per provider, so a
     // caller cannot know them ahead of the provider choice — carrying them in the error is the only
@@ -172,26 +159,30 @@ export function validateMetadata(
     // storing someone else's — or a typo — buys a selection that only fails later, when the run reaches
     // the provider. The picker cannot express an incoherent pair (its model list is the selected
     // provider's catalog), so this is what gives a programmatic caller the same guarantee.
-    const models = providerVocabulary(selection.provider).models;
+    const models = vocabularyFor(selection.provider).models;
     if (!models.includes(selection.model)) {
       throw new WorkspaceUpdateError(`llmModel for ${selection.provider} must be one of: ${models.join(", ")}`);
     }
 
-    // An effort the caller named that the provider does not accept is refused rather than replaced: a
-    // caller with no dropdown constraining it would otherwise read "ok" for a value we substituted. An
-    // omitted one cannot land here — resolution only ever picks a level the provider accepts.
-    const efforts = providerVocabulary(selection.provider).reasoningEfforts;
+    /**
+     * An effort the caller named that the model does not accept is refused rather than replaced: a
+     * caller with no dropdown constraining it would otherwise read "ok" for a value we substituted.
+     * An omitted one cannot land here — resolution only ever picks a level the model accepts.
+     *
+     * Checked per MODEL, not per provider: Scaleway's levels belong to the model, and its gateway
+     * accepts every level on every one of them, so this is the only thing that can refuse a mismatch.
+     */
+    const efforts = modelReasoningEfforts(selection.provider, selection.model);
     const named = input.model.reasoningEffort?.trim();
-    // Guards a provider with no dial at all, which would otherwise be told to pick "one of: ". No
-    // offered provider is dial-less today, so this is unreachable until one is added.
+    // Guards a model with no dial at all, which would otherwise be told to pick "one of: ".
     if (named && efforts.length === 0) {
-      throw new WorkspaceUpdateError(`reasoningEffort is not supported for ${selection.provider}`, {
+      throw new WorkspaceUpdateError(`reasoningEffort is not supported for ${selection.model}`, {
         field: "reasoningEffort",
         provider: selection.provider,
       });
     }
     if (named && !efforts.includes(named as ReasoningEffort)) {
-      throw new WorkspaceUpdateError(`reasoningEffort for ${selection.provider} must be one of: ${efforts.join(", ")}`);
+      throw new WorkspaceUpdateError(`reasoningEffort for ${selection.model} must be one of: ${efforts.join(", ")}`);
     }
 
     metadata.model = selection;

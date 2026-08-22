@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { THINKING_OFF_EFFORT, type ReasoningEffort } from "@/lib/models/llmSelection";
-import { defaultEffortFor } from "@/lib/models/selection";
+import { defaultEffortFor, effortsForModel } from "@/lib/models/selection";
 // The GET /api/models payload shape, imported from the module that SERVES it rather than redeclared
 // here. `import type` is erased at compile time, so this pulls none of that module's runtime graph
 // (which reaches the LLM SDKs) into the client bundle. Redeclaring it drifted once already: the
@@ -100,21 +100,20 @@ export default function ModelBlock({ wsId, catalogVersion = 0 }: { wsId: string;
   // Never replace a stored retired id just for display. It stays visible until the user explicitly
   // picks a current model, which also prevents the UI and runtime from claiming different models.
   const selectedModel = model;
-  // Empty means the selected provider has no effort dial (for example DeepSeek), so the control is
-  // absent rather than presenting a setting the agent never sends.
-  // Mistral's effort vocabulary belongs only to Medium; Large has no reasoning mode.
+  // Empty means no effort dial for this model, so the control is absent rather than presenting a
+  // setting the agent never sends. Scaleway narrows via the catalog; Mistral's stays hardcoded here.
   const efforts =
     provider === "mistral" && selectedModel !== "mistral-medium-latest"
       ? []
-      : (providerCatalog?.reasoningEfforts ?? []);
+      : providerCatalog
+        ? effortsForModel(providerCatalog, selectedModel)
+        : [];
   const modelUnavailable =
     catalogLoaded && Boolean(model) && (!providerCatalog || !providerCatalog.models.includes(model));
   const validModel = Boolean(providerCatalog?.models.includes(selectedModel));
   const selectedEffort =
-    providerCatalog &&
-    providerCatalog.reasoningEfforts.length > 0 &&
-    !providerCatalog.reasoningEfforts.includes(effort as ReasoningEffort)
-      ? defaultEffortFor(providerCatalog)
+    providerCatalog && efforts.length > 0 && !efforts.includes(effort as ReasoningEffort)
+      ? defaultEffortFor(providerCatalog, selectedModel)
       : effort;
 
   // The effort vocabulary already describes the control completely: empty means no thinking dial,
@@ -266,7 +265,9 @@ export default function ModelBlock({ wsId, catalogVersion = 0 }: { wsId: string;
                   disabled={thinkingAlways}
                   onChange={(e) =>
                     setEffort(
-                      e.target.checked && providerCatalog ? defaultEffortFor(providerCatalog) : THINKING_OFF_EFFORT,
+                      e.target.checked && providerCatalog
+                        ? defaultEffortFor(providerCatalog, selectedModel)
+                        : THINKING_OFF_EFFORT,
                     )
                   }
                 />

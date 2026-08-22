@@ -8,7 +8,7 @@
 // the next write reopens rather than reusing a handle to a database that just rejected us.
 import { createLogger } from "../infra/logger";
 import { appDataDb as db, invalidateAppDataDb } from "../data/database";
-import { computeCost } from "../models/pricing";
+import { computeCost, getCurrency } from "../models/pricing";
 import { insertRecord } from "./rows";
 import type { NewTurnRecord, RunErrorRecord, TurnRecord, TurnUsageFields, UsageContext } from "./types";
 
@@ -20,7 +20,9 @@ export function appendUsage(partial: NewTurnRecord): void {
     id: partial.id ?? crypto.randomUUID(),
     timestamp: new Date().toISOString(),
   };
+  // Both frozen together: a rate refresh must never restate what an old turn was billed, or in what.
   record.cost = computeCost(record, record.model);
+  record.costCurrency = record.cost === undefined ? undefined : getCurrency(record.model);
 
   try {
     const conn = db();

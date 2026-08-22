@@ -289,6 +289,31 @@ describe("usageStore", () => {
     expect(store.getSessionDetail("s1")[0].cost).toBe(store.listUsageLight()[0].cost);
   });
 
+  // Both read paths, because they build their SELECTs separately — one could carry the currency
+  // while the other silently drops it, and a euro cost read back as dollars is invisibly wrong.
+  it("round-trips the currency a euro-priced turn was billed in, on both read paths", async () => {
+    const store = await freshStore();
+    store.appendUsage(baseTurn({ model: "qwen3.6-35b-a3b" }));
+
+    expect(store.listUsageLight()[0].costCurrency).toBe("EUR");
+    expect(store.getSessionDetail("s1")[0].costCurrency).toBe("EUR");
+  });
+
+  it("records a dollar-priced turn as dollars, so the two are told apart", async () => {
+    const store = await freshStore();
+    store.appendUsage(baseTurn({ model: "chatgpt-4o-latest" }));
+
+    expect(store.listUsageLight()[0].costCurrency).toBe("USD");
+  });
+
+  it("leaves an unpriced turn with no currency, since there is no amount to qualify", async () => {
+    const store = await freshStore();
+    store.appendUsage(baseTurn({ model: "not-a-real-model" }));
+
+    expect(store.listUsageLight()[0].cost).toBeUndefined();
+    expect(store.listUsageLight()[0].costCurrency).toBeUndefined();
+  });
+
   it("retains records beyond the dashboard response cap", async () => {
     const store = await freshStore();
     for (let i = 0; i < 5001; i++) {

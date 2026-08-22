@@ -219,7 +219,19 @@ describe("workspace update body contract", () => {
     expect(await res.json()).toMatchObject({
       ok: false,
       code: "WORKSPACE_UPDATE_INVALID",
-      error: "reasoningEffort for deepseek must be one of: none, low, high, max",
+      error: "reasoningEffort for deepseek-v4-flash must be one of: none, low, high, max",
+    });
+    expect(h.setWorkspaceLlm).not.toHaveBeenCalled();
+  });
+
+  it("rejects an inherited model property as a caller error rather than returning 500", async () => {
+    const res = await patch({ llmProvider: "scaleway", llmModel: "constructor" });
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({
+      ok: false,
+      code: "WORKSPACE_UPDATE_INVALID",
+      error: expect.stringContaining("llmModel for scaleway must be one of:"),
     });
     expect(h.setWorkspaceLlm).not.toHaveBeenCalled();
   });

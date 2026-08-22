@@ -3,7 +3,11 @@ import Database from "better-sqlite3";
 import fs from "fs";
 import os from "os";
 import path from "path";
-import { migrateDatabase, type Migration } from "./migrations";
+import { DATABASE_MIGRATIONS, migrateDatabase, type Migration } from "./migrations";
+
+// Derived, not hand-written: a new migration must move these assertions on its own, or they quietly
+// stop covering the newest schema version.
+const LATEST_VERSION = DATABASE_MIGRATIONS.at(-1)!.version;
 
 const ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "database-test-"));
 const DB_FILE = path.join(ROOT, ".paodo.db");
@@ -66,7 +70,7 @@ describe("appDataDb", () => {
       { type: "index", name: "usage_turns_session_seq_idx" },
       { type: "index", name: "usage_turns_workspace_seq_idx" },
     ]);
-    expect(conn.pragma("user_version", { simple: true })).toBe(1);
+    expect(conn.pragma("user_version", { simple: true })).toBe(LATEST_VERSION);
   });
 
   it("refuses to expose or cache a database created by newer application code", async () => {
@@ -74,7 +78,7 @@ describe("appDataDb", () => {
     fs.rmSync(ROOT, { recursive: true, force: true });
     fs.mkdirSync(ROOT, { recursive: true });
     const newer = new Database(DB_FILE);
-    newer.pragma("user_version = 2");
+    newer.pragma(`user_version = ${LATEST_VERSION + 1}`);
     newer.close();
 
     process.env.WORKSPACES_ROOT = ROOT;
@@ -148,7 +152,7 @@ describe("appDataDb", () => {
     const backup = new Database(backupFile, { readonly: true });
     expect(backup.prepare("SELECT id FROM conversations").get()).toEqual({ id: "c1" });
     expect(backup.prepare("SELECT id FROM usage_turns").get()).toEqual({ id: "t1" });
-    expect(backup.pragma("user_version", { simple: true })).toBe(1);
+    expect(backup.pragma("user_version", { simple: true })).toBe(LATEST_VERSION);
     backup.close();
     await expect(backupAppDataDb(DB_FILE)).rejects.toThrow("must not overwrite");
   });

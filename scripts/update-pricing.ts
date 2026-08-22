@@ -23,11 +23,29 @@ import { buildCatalog } from "../lib/models/refresh";
 const OUT = path.join(__dirname, "..", "lib", "models", "model-pricing.json");
 
 async function main() {
-  const { catalog, filled, unpriced } = await buildCatalog();
+  const { catalog, filled, scaleway, unpriced, effortDrift, sourceFailures } = await buildCatalog();
+
+  // BEFORE the write, unlike every check below it: an unreachable or incomplete source yields a
+  // catalog missing models, and this file is the seed every fresh deployment boots on. Vendoring
+  // that commits the hole.
+  if (sourceFailures.length) {
+    console.error(`\nSOURCE INCOMPLETE OR UNREACHABLE: ${sourceFailures.join(", ")}`);
+    console.error(`${OUT} left untouched. Re-run once the source is back.`);
+    process.exit(1);
+  }
 
   writeFileSync(OUT, JSON.stringify(catalog, null, 2) + "\n");
   console.log(`wrote ${Object.keys(catalog).length} models to ${path.relative(process.cwd(), OUT)}`);
   if (filled.length) console.log(`filled from models.dev (not yet in LiteLLM): ${filled.join(", ")}`);
+  if (scaleway.length) console.log(`priced in EUR from Scaleway's own catalog: ${scaleway.join(", ")}`);
+
+  // Prices are vendored above; the reasoning table is not, so drift in it has to be reported rather
+  // than written. See lib/models/scalewayEfforts.ts for why that one stays hand-maintained.
+  if (effortDrift.length) {
+    console.error(`\nSCALEWAY REASONING LEVELS MOVED:\n  ${effortDrift.join("\n  ")}`);
+    console.error("Update SCALEWAY_MODEL_EFFORTS in lib/models/scalewayEfforts.ts to match, then re-run.");
+    process.exit(1);
+  }
   if (unpriced.length) {
     console.error(`\nNO RATE for offered model(s): ${unpriced.join(", ")}`);
     console.error("Neither source prices these. Retire them from lib/models/registry.ts or add a source.");

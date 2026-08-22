@@ -23,6 +23,9 @@ export const AVAILABLE_MODELS: Record<string, readonly string[]> = {
   // confirmed by GET /v1/models. Codestral is the code-specialist option, Medium supports optional
   // reasoning, and Large does not expose it. Keep aliases so Mistral owns version maintenance.
   mistral: ["codestral-latest", "mistral-large-latest", "mistral-medium-latest"],
+  // Serverless ids — the bare names; the `qwen/…:fp8` forms are Dedicated Deployment only. Flash
+  // leads: it alone prices cached input, at a fifth of its own rate, which is most of a loop's input.
+  scaleway: ["deepseek-v4-flash-0731", "qwen3.6-35b-a3b"],
 };
 
 /** The models offered for a provider (empty for an unknown provider). Drives the model picker dropdown. */

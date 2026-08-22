@@ -266,53 +266,55 @@ describe("buildChatModel", () => {
 // Availability is the ONLY question .env answers about a provider. Keys are entered in the app, so
 // the assertions below say nothing about them — the function no longer knows they exist.
 describe("availableProviders", () => {
-  it("offers every supported provider when nothing is switched off", () => {
+  const allOn = Object.fromEntries(SUPPORTED_PROVIDERS.map((p) => [providerAvailabilityEnv(p)!, "true"]));
+
+  it("offers every supported provider that .env names", () => {
     // Not a hand-listed expectation: adding a provider must extend this automatically, or the test
     // quietly stops covering the newest one.
-    expect(availableProviders({})).toEqual(SUPPORTED_PROVIDERS);
+    expect(availableProviders(allOn)).toEqual(SUPPORTED_PROVIDERS);
   });
 
-  it("offers a provider that has no API key, so a fresh deployment has something to pick", () => {
+  it("offers a named provider that has no API key, so a fresh deployment has something to pick", () => {
     // The bug this replaces: requiring a key here meant a deployment with none served an empty
     // picker, and the keys can only be entered through that picker's own settings modal.
-    expect(availableProviders({})).toContain("anthropic");
+    expect(availableProviders(allOn)).toContain("anthropic");
   });
 
   it("drops a provider .env switched off", () => {
-    expect(availableProviders({ ANTHROPIC_AVAILABLE: "false" })).not.toContain("anthropic");
+    expect(availableProviders({ ...allOn, ANTHROPIC_AVAILABLE: "false" })).not.toContain("anthropic");
   });
 
-  it("keeps a provider whose availability var is unset, blank, or true", () => {
-    // Opt-out: an .env written before the switch existed must keep every provider standing.
-    for (const env of [{}, { DEEPSEEK_AVAILABLE: "" }, { DEEPSEEK_AVAILABLE: "true" }]) {
-      expect(availableProviders(env)).toContain("deepseek");
+  it("withdraws a provider whose availability var is unset or blank", () => {
+    // Opt-in, and this is the whole point of it: a provider added to the registry stays dark until an
+    // .env names it, so a deployment cannot be armed to spend by an upgrade it did not configure.
+    for (const env of [{}, { DEEPSEEK_AVAILABLE: "" }]) {
+      expect(availableProviders(env)).not.toContain("deepseek");
     }
+    expect(availableProviders({ DEEPSEEK_AVAILABLE: "true" })).toContain("deepseek");
   });
 
   it("reads the switch case-insensitively, trimmed, and in the lowercase spelling", () => {
-    expect(availableProviders({ OPENAI_AVAILABLE: "False" })).not.toContain("openai");
-    expect(availableProviders({ OPENAI_AVAILABLE: " false " })).not.toContain("openai");
-    expect(availableProviders({ openai_available: "false" })).not.toContain("openai");
+    expect(availableProviders({ OPENAI_AVAILABLE: "True" })).toContain("openai");
+    expect(availableProviders({ OPENAI_AVAILABLE: " true " })).toContain("openai");
+    expect(availableProviders({ openai_available: "true" })).toContain("openai");
   });
 
-  it("ignores a value that is neither true nor false rather than guessing it meant off", () => {
-    // Only the literal "false" disables, matching GRAPH_ENABLED. A typo leaves the provider offered,
-    // which fails visibly in the picker rather than making a provider vanish for an unreadable reason.
-    expect(availableProviders({ OPENAI_AVAILABLE: "no" })).toContain("openai");
+  it("ignores a value that is neither true nor false rather than guessing it meant on", () => {
+    // Only the literal "true" enables. A typo leaves the provider withdrawn, which is the safe way to
+    // be wrong: it cannot spend, and its absence from the picker is visible immediately.
+    expect(availableProviders({ OPENAI_AVAILABLE: "yes" })).not.toContain("openai");
   });
 
-  it("returns nothing when every provider is switched off", () => {
-    const allOff = Object.fromEntries(SUPPORTED_PROVIDERS.map((p) => [providerAvailabilityEnv(p)!, "false"]));
-    expect(availableProviders(allOff)).toEqual([]);
+  it("returns nothing when .env names no provider at all", () => {
+    expect(availableProviders({})).toEqual([]);
   });
 });
 
 describe("defaultModelSelection", () => {
-  // Every case switches providers off rather than keying them on, because that is now the only lever.
-  const only = (provider: string) =>
-    Object.fromEntries(
-      SUPPORTED_PROVIDERS.filter((p) => p !== provider).map((p) => [providerAvailabilityEnv(p)!, "false"]),
-    );
+  // Availability is the only lever now that keys live outside .env, and under opt-in naming the one
+  // provider a case cares about is the whole setup.
+  const only = (provider: string) => ({ [providerAvailabilityEnv(provider)!]: "true" });
+  const allOn = Object.fromEntries(SUPPORTED_PROVIDERS.map((p) => [providerAvailabilityEnv(p)!, "true"]));
 
   it("takes the first available provider's first model", () => {
     expect(defaultModelSelection(only("deepseek"))).toEqual({
@@ -332,19 +334,18 @@ describe("defaultModelSelection", () => {
   });
 
   it("skips a provider switched off in favour of the next one offered", () => {
-    expect(defaultModelSelection({ ANTHROPIC_AVAILABLE: "false" }).provider).toBe("openai");
+    expect(defaultModelSelection({ ...allOn, ANTHROPIC_AVAILABLE: "false" }).provider).toBe("openai");
   });
 
-  // No longer a hypothetical corner: with keys out of .env, a deployment that switches everything
-  // off still starts, and this is what its workspaces report until something is switched back on.
-  it("returns empty fields when every provider is switched off", () => {
-    const allOff = Object.fromEntries(SUPPORTED_PROVIDERS.map((p) => [providerAvailabilityEnv(p)!, "false"]));
-    expect(defaultModelSelection(allOff)).toEqual({ provider: "", model: "", reasoningEffort: "low" });
+  // No longer a hypothetical corner: with keys out of .env, a deployment that names nothing still
+  // starts, and this is what its workspaces report until something is switched on.
+  it("returns empty fields when no provider is offered", () => {
+    expect(defaultModelSelection({})).toEqual({ provider: "", model: "", reasoningEffort: "low" });
   });
 
   it("picks a provider that has no API key rather than skipping to a keyed one", () => {
     // Deliberate: the picker shows a real default from first boot, and the missing key is reported at
     // conversation start where it names the fix. Hiding it would show an empty picker instead.
-    expect(defaultModelSelection({}).provider).toBe(SUPPORTED_PROVIDERS[0]);
+    expect(defaultModelSelection(allOn).provider).toBe(SUPPORTED_PROVIDERS[0]);
   });
 });

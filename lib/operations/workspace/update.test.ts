@@ -4,7 +4,8 @@
 // asserted here is composition: that nothing is written until the whole
 // request validates, that the fields land in a fixed order, and that what landed is reported
 // accurately even when the workspace disappears halfway through.
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { providerAvailabilityEnv, SUPPORTED_PROVIDERS } from "@/lib/agent/buildModel";
 import { updateWorkspace, type UpdateWorkspaceDeps, type UpdateWorkspaceStore } from "./update";
 import type { ChannelCredentials } from "./access";
 import type { EgressServices } from "./egress";
@@ -61,6 +62,13 @@ const deps = (overrides: UpdateWorkspaceDeps = {}): UpdateWorkspaceDeps => ({
 });
 
 describe("the update contract", () => {
+  // Availability is opt-in. These cases are about composition rather than which providers a
+  // deployment offers, so every provider is named for all of them.
+  beforeEach(() => {
+    for (const provider of SUPPORTED_PROVIDERS) vi.stubEnv(providerAvailabilityEnv(provider)!, "true");
+  });
+  afterEach(() => vi.unstubAllEnvs());
+
   it("applies a partial update and names the fields that landed", async () => {
     const mutable = { ...workspace };
     const store = storeStub({

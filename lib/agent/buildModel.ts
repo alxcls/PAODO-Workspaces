@@ -106,8 +106,8 @@ function pacedFetch(provider: string, model: string) {
   };
 }
 
-// The single source of truth for provider support. Adding one means an entry here plus its models in
-// lib/models/registry.ts — nothing else in the agent layer changes, and nothing in .env.
+// The single source of truth for provider support. Adding one means an entry here, its models in
+// lib/models/registry.ts, and its <PROVIDER>_AVAILABLE=true in the .env of every deployment offering it.
 const PROVIDERS: Record<string, ProviderDescriptor> = {
   anthropic: {
     availabilityEnv: "ANTHROPIC_AVAILABLE",
@@ -274,22 +274,18 @@ export const SUPPORTED_PROVIDERS = Object.keys(PROVIDERS);
 /**
  * Whether a provider is offered in this deployment, per its `<PROVIDER>_AVAILABLE` .env var.
  *
- * Opt-out, not opt-in: an unset (or blank) var means available, so a deployment offers every provider
- * the app supports until it says otherwise and nobody has to add five lines to stand still. Only the
- * literal "false" switches one off — the same reading GRAPH_ENABLED gets elsewhere — and it is
- * matched after trimming and lowercasing so `False` and a trailing space behave as written.
- *
- * Both spellings of the name are read, the uppercase one documented in .env.example and the
- * all-lowercase one (`deepseek_available`), because .env files get written either way and an
- * availability switch that silently does nothing is a worse outcome than a second lookup.
+ * Opt-in: only the literal "true" enables one, trimmed and lowercased, so adding a provider to the
+ * registry cannot arm spending on an existing deployment. An unnamed provider is withdrawn and its
+ * stored key destroyed at startup (purgeProviderKeysExcept). Both spellings of the name are read,
+ * because .env files get written either way.
  */
 function providerAvailable(availabilityEnv: string, env: Record<string, string | undefined>): boolean {
   const raw = env[availabilityEnv] ?? env[availabilityEnv.toLowerCase()];
-  return raw?.trim().toLowerCase() !== "false";
+  return raw?.trim().toLowerCase() === "true";
 }
 
 /**
- * The providers this deployment offers: every supported one .env has not switched off.
+ * The providers this deployment offers: every supported one .env has named.
  *
  * DELIBERATELY SAYS NOTHING ABOUT KEYS. It used to also require an API key in .env, which made one
  * list serve two questions — "what may be chosen" and "what can authenticate" — and that conflation

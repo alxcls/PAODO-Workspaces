@@ -5,6 +5,8 @@ import { describe, it, expect, beforeEach, afterEach, afterAll, vi } from "vites
 import fs from "fs";
 import os from "os";
 import path from "path";
+// Type-only, so it is erased before vi.resetModules() and never pins a second copy of the store.
+import type { Drive } from "./store";
 
 const ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "drivestore-test-"));
 afterAll(() => fs.rmSync(ROOT, { recursive: true, force: true }));
@@ -139,9 +141,9 @@ describe("drive deletion", () => {
 
     await expect(store.deleteDrive(drive.id)).rejects.toBe(failure);
     expect(store.getDrive(drive.id)).toEqual(drive);
-    // Connections are removed first to stop agents discovering a drive whose content is being
-    // deleted. The registry entry remains as the retry handle when the filesystem step fails.
-    expect(store.listConnections()).toEqual([]);
+    // The connections outlive a failed rm on purpose: they are the only record of what was linked
+    // here, so spending them before the step that can fail would lose it for good.
+    expect(store.listConnections()).toHaveLength(1);
     expect(fs.existsSync(store.driveContentDir(drive.id))).toBe(true);
 
     await expect(store.deleteDrive(drive.id)).resolves.toBe(true);
@@ -157,13 +159,34 @@ describe("drive deletion", () => {
     fs.mkdirSync(connectionsFile);
 
     await expect(store.deleteDrive(drive.id)).rejects.toThrow();
+    // Content is already gone by this point — it is removed first — and the registry entry is what
+    // makes that recoverable, because the same call run again finishes the steps that did not.
     expect(store.getDrive(drive.id)).toEqual(drive);
-    expect(fs.existsSync(store.driveContentDir(drive.id))).toBe(true);
 
-    // Repair the failed persistence target and retry; no content was touched before that failure.
     fs.rmSync(connectionsFile, { recursive: true, force: true });
     await expect(store.deleteDrive(drive.id)).resolves.toBe(true);
     expect(store.getDrive(drive.id)).toBeUndefined();
+  });
+
+  // The one point deleteDrive yields. A drive created while rm ran is absent from any snapshot taken
+  // before it, so a filtered copy of that snapshot would erase the new drive on the way out.
+  it("does not erase a drive created while its content was being removed", async () => {
+    const actual = await vi.importActual<typeof import("fs/promises")>("fs/promises");
+    let concurrent: Drive | undefined;
+    vi.doMock("fs/promises", () => ({
+      ...actual,
+      rm: vi.fn(async (...args: Parameters<typeof actual.rm>) => {
+        concurrent ??= store.createDrive("created-mid-delete");
+        return actual.rm(...args);
+      }),
+    }));
+    store = await freshStore();
+
+    const doomed = store.createDrive("doomed");
+    await expect(store.deleteDrive(doomed.id)).resolves.toBe(true);
+
+    expect(store.getDrive(doomed.id)).toBeUndefined();
+    expect(store.getDrive(concurrent!.id)).toEqual(concurrent);
   });
 });
 

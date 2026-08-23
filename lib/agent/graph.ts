@@ -64,17 +64,17 @@ function hasCycle(edges: GraphEdge[]): boolean {
   return false;
 }
 
-/**
- * Ids are this store's to give. An edge arrives from the canvas carrying React Flow's own id, which
- * is a rendering artifact — it spells out both endpoints and the handles they were dragged between,
- * so the same pair joined from another side of the node is a different string for the same edge.
- * Minting here makes an id identity instead, and makes it unique: two edges cannot share one, and no
- * caller can choose one that collides.
- */
+// Ids are this store's to give. An id survives only if the store issued it and nothing earlier in the
+// same save claimed it: the `call_` prefix is public, so recognising it would let a caller collide.
 function minted(edges: GraphEdge[]): GraphEdge[] {
-  return edges.map((edge) =>
-    connectionKind(edge.id) === "call" ? edge : { ...edge, id: mintConnectionId("call") },
-  );
+  const issued = new Set(state.graph.edges.map((edge) => edge.id));
+  const claimed = new Set<string>();
+  return edges.map((edge) => {
+    const keep = connectionKind(edge.id) === "call" && issued.has(edge.id) && !claimed.has(edge.id);
+    const id = keep ? edge.id : mintConnectionId("call");
+    claimed.add(id);
+    return keep ? edge : { ...edge, id };
+  });
 }
 
 /** Answers with the graph as stored — the edges in the order they were sent, under the ids they were

@@ -153,25 +153,23 @@ export function updateDrive(driveId: string, patch: { name?: string; description
   return drive;
 }
 
+// Content, connections, registry — in that order. Content is the only step that can fail, and the
+// connections are the sole record of what was linked; the registry entry stays last as the retry handle.
 export async function deleteDrive(driveId: string): Promise<boolean> {
-  const drives = listDrives();
-  const next = drives.filter((d) => d.id !== driveId);
-  if (next.length === drives.length) return false;
+  if (!listDrives().some((d) => d.id === driveId)) return false;
 
-  // Disconnect first, so agents stop discovering the drive before its content is removed. A failed
-  // connection write leaves both the registry entry and files untouched.
-  const connections = listConnections().filter((c) => c.driveId !== driveId);
-  saveConnections(connections, { operation: "delete_drive", driveId });
-
-  // Clean up owned content before removing the registry entry. If this fails, the drive stays
-  // addressable and the caller can retry the same deletion instead of receiving success for files
-  // that are still on disk. A retry is safe after any partial filesystem cleanup because rm is both
-  // recursive and forced.
   await rm(driveContentDir(driveId), { recursive: true, force: true });
 
-  // The registry is the retry handle and therefore the final write. Reaching the success receipt now
-  // means the content directory, connections, and registry entry have all been removed.
-  atomicSaveJson(DRIVES_FILE, next);
+  // Re-read, not filtered from a snapshot above: `rm` is the one yield point, and a drive created
+  // while it ran is absent from any older copy.
+  saveConnections(
+    listConnections().filter((c) => c.driveId !== driveId),
+    { operation: "delete_drive", driveId },
+  );
+  atomicSaveJson(
+    DRIVES_FILE,
+    listDrives().filter((d) => d.id !== driveId),
+  );
   log.info({ driveId }, "deleted drive");
   return true;
 }

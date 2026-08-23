@@ -153,6 +153,24 @@ describe("saveGraph", () => {
     expect(again.edges).toEqual(first.edges);
   });
 
+  // The prefix is public, so wearing it is not proof this store issued it. An edge id is what a
+  // removal addresses, against the graph that decides which workspace may delegate to which.
+  it("replaces a call_ id it never issued, rather than trusting the prefix", () => {
+    const stored = graph.saveGraph([edge("call_invented-by-the-caller", "a", "b")], {});
+    expect(stored.edges[0].id).not.toBe("call_invented-by-the-caller");
+    expect(stored.edges[0].id).toMatch(/^call_/);
+  });
+
+  it("refuses to let one of its own ids be reused for a second edge in the same save", () => {
+    const first = graph.saveGraph([edge("e1", "a", "b")], {});
+    const reused = first.edges[0].id;
+    const stored = graph.saveGraph([{ ...first.edges[0] }, edge(reused, "b", "c")], {});
+
+    expect(pairs(stored.edges)).toEqual(["a->b", "b->c"]);
+    expect(stored.edges[0].id).toBe(reused);
+    expect(stored.edges[1].id).not.toBe(reused);
+  });
+
   it("persists, so a later reader sees edges it did not write", async () => {
     graph.saveGraph([edge("e1", "a", "b")], { a: cell(2, 3) });
     const reloaded = await freshGraph({ seed: readFile() });

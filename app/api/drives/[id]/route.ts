@@ -8,14 +8,15 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { createLogger } from "@/lib/infra/logger";
 import { appErrorResponse, errorResponse, readJsonObject } from "@/lib/api/errorResponse";
-import { deleteDrive, getDrive, updateDrive } from "@/lib/operations/drives/manage";
+import { deleteDrive, updateDrive } from "@/lib/operations/drives/manage";
+import { getDriveOverview } from "@/lib/operations/drives/overview";
 
 const log = createLogger("api").child({ route: "drive" });
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   try {
-    return NextResponse.json(getDrive(id), { headers: { "Cache-Control": "no-store" } });
+    return NextResponse.json(getDriveOverview(id), { headers: { "Cache-Control": "no-store" } });
   } catch (err) {
     const expected = appErrorResponse(err, req);
     if (expected) return expected;

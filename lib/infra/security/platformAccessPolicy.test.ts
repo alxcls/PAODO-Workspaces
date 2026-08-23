@@ -95,13 +95,27 @@ describe("platform access policy", () => {
 
   // A drive is reachable by every workspace connected to it, so anything wider than the five commands
   // lands in more than one agent's view at once. Asserted per method so widening has to be deliberate.
-  it("does not grant the browser's drive transports, the editor's writes, or drive connections", () => {
+  it("does not grant the browser's drive transports or the editor's writes", () => {
     for (const method of ["GET", "POST", "PUT", "PATCH", "DELETE"]) {
       expect(isPlatformRouteAllowed(method, "/api/drives/drive-1/files/upload")).toBe(false);
       expect(isPlatformRouteAllowed(method, "/api/drives/drive-1/files/download")).toBe(false);
-      expect(isPlatformRouteAllowed(method, "/api/drive-connections")).toBe(false);
     }
     expect(isPlatformRouteAllowed("PUT", "/api/drives/drive-1/files/content")).toBe(false);
     expect(isPlatformRouteAllowed("PATCH", "/api/drives/drive-1/files/content")).toBe(false);
+  });
+
+  it("grants reading both connection graphs", () => {
+    expect(isPlatformRouteAllowed("GET", "/api/drive-connections")).toBe(true);
+    expect(isPlatformRouteAllowed("GET", "/api/workspace-graph")).toBe(true);
+  });
+
+  // Reading a link and establishing one are separate grants, so a token that can report the topology
+  // still cannot rewire it. Asserted per method because these two routes are where every edge is
+  // written: PUT on the graph replaces it wholesale, and POST/DELETE own every drive link.
+  it("does not grant writing either connection graph", () => {
+    for (const method of ["POST", "PUT", "PATCH", "DELETE"]) {
+      expect(isPlatformRouteAllowed(method, "/api/drive-connections")).toBe(false);
+      expect(isPlatformRouteAllowed(method, "/api/workspace-graph")).toBe(false);
+    }
   });
 });

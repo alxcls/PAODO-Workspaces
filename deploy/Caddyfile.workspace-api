@@ -128,9 +128,15 @@
 		#   GET    /api/workspaces/{id}
 		#   GET    /api/drives
 		#   GET    /api/drives/{id}
+		#   GET    /api/drive-connections
+		#   GET    /api/workspace-graph
+		#
+		# The last two are the connection graphs, and reading is the whole of what
+		# they get: their write methods appear in no matcher below, so a link is
+		# readable on this host and established only through the UI.
 		@cliRead {
 			method GET
-			path_regexp cliRead ^/api/(status|models|workspaces(?:/[^/]+)?|drives(?:/[^/]+)?)$
+			path_regexp cliRead ^/api/(status|models|workspaces(?:/[^/]+)?|drives(?:/[^/]+)?|drive-connections|workspace-graph)$
 		}
 
 		# POST /api/workspaces and /api/drives create; POST on a workspace is NOT

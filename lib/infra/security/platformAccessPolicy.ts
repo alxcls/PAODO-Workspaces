@@ -58,12 +58,12 @@ const RULES: ReadonlyArray<{
   workspaceRule("DELETE", "files/content"),
   workspaceRule("GET", "files/transfer"),
   workspaceRule("PUT", "files/transfer"),
-  // Drive metadata, then a drive's files — the same five methods a workspace's files get above, and
-  // for the same commands. Neither collection gets the browser's upload/download transports or the
-  // editor's save and move: a drive is reachable by every workspace connected to it, so widening its
-  // file surface past what the CLI actually calls widens it for all of them at once.
-  // /api/drive-connections is still absent — connecting a drive is a capability of its own, and this
-  // policy is the place that has to name it deliberately rather than inherit it from the group.
+  /**
+   * Drive metadata, then a drive's files — the same five methods a workspace's files get above, and
+   * for the same commands. Neither collection gets the browser's upload/download transports or the
+   * editor's save and move: a drive is reachable by every workspace connected to it, so widening its
+   * file surface past what the CLI actually calls widens it for all of them at once.
+   */
   { method: "GET", pathname: /^\/api\/drives$/ },
   { method: "POST", pathname: /^\/api\/drives$/ },
   driveRule("GET"),
@@ -74,6 +74,19 @@ const RULES: ReadonlyArray<{
   driveRule("DELETE", "files/content"),
   driveRule("GET", "files/transfer"),
   driveRule("PUT", "files/transfer"),
+  /**
+   * Both connection graphs, readable and no more. Reading is what makes the rest of this policy
+   * usable: a drive is addressed by name only from a workspace connected to it, and a link is removed
+   * by an id these two routes are the only source of — so a caller that cannot read them is left
+   * guessing at both. Establishing a connection stays a capability of its own, which this policy has
+   * to grant deliberately rather than let a read imply.
+   *
+   * GET /api/workspace-graph answers with node positions beside the edges. That is canvas layout,
+   * meaningless outside the editor rather than sensitive, and it is served whole because the route is
+   * the UI's: filtering a response per caller would make it two routes wearing one path.
+   */
+  { method: "GET", pathname: /^\/api\/drive-connections$/ },
+  { method: "GET", pathname: /^\/api\/workspace-graph$/ },
 ];
 
 export function isPlatformRouteAllowed(method: string, pathname: string): boolean {

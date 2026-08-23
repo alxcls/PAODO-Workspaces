@@ -110,6 +110,20 @@ describe("DELETE /api/workspaces/[id]", () => {
     expect(h.calls).toContain("directory");
     expect(h.calls).toContain("container");
     expect(h.calls).toContain("version_history");
+    expect(h.calls.indexOf("container")).toBeLessThan(h.calls.indexOf("directory"));
+  });
+
+  it("does not start directory deletion when container removal fails", async () => {
+    h.removeContainer.mockRejectedValue(new Error("docker rm permission denied"));
+
+    const response = await DELETE(request(), ctx());
+
+    expect(response.status).toBe(500);
+    expect(h.calls).toContain("container");
+    expect(h.calls).not.toContain("directory");
+    expect(h.calls).not.toContain("registry");
+    expect(h.deleteWorkspaceDir).not.toHaveBeenCalled();
+    expect(h.deleteWorkspace).not.toHaveBeenCalled();
   });
 
   it("leaves the workspace in the registry when an earlier stage fails, so it can be retried", async () => {

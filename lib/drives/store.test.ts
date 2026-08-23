@@ -1,7 +1,7 @@
 // resolveDriveDir is the single resolver every drive_* tool funnels through. It must accept
 // EITHER a drive's id (the stable handle agents pass to each other) OR its name (case-insensitive),
 // and stay scoped to the drives the calling workspace is actually connected to.
-import { describe, it, expect, beforeEach, afterAll, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, afterAll, vi } from "vitest";
 import fs from "fs";
 import os from "os";
 import path from "path";
@@ -23,6 +23,10 @@ let store: typeof import("./store");
 
 beforeEach(async () => {
   store = await freshStore();
+});
+
+afterEach(() => {
+  vi.doUnmock("fs/promises");
 });
 
 describe("resolveDriveDir", () => {
@@ -106,6 +110,60 @@ describe("drive name uniqueness", () => {
     const drive = store.createDrive("articles");
     await store.deleteDrive(drive.id);
     expect(store.createDrive("articles").name).toBe("articles");
+  });
+});
+
+describe("drive deletion", () => {
+  it("removes content and connections before removing the registry entry", async () => {
+    const drive = store.createDrive("articles");
+    const contentFile = path.join(store.driveContentDir(drive.id), "private.txt");
+    fs.writeFileSync(contentFile, "sensitive");
+    store.connectDrive(drive.id, "ws1");
+
+    await expect(store.deleteDrive(drive.id)).resolves.toBe(true);
+
+    expect(fs.existsSync(store.driveContentDir(drive.id))).toBe(false);
+    expect(store.listConnections()).toEqual([]);
+    expect(store.getDrive(drive.id)).toBeUndefined();
+  });
+
+  it("keeps the drive registered when content deletion fails, then permits a retry", async () => {
+    const actual = await vi.importActual<typeof import("fs/promises")>("fs/promises");
+    const failure = new Error("filesystem unavailable");
+    const removeContent = vi.fn(actual.rm).mockRejectedValueOnce(failure);
+    vi.doMock("fs/promises", () => ({ ...actual, rm: removeContent }));
+    store = await freshStore();
+
+    const drive = store.createDrive("articles");
+    store.connectDrive(drive.id, "ws1");
+
+    await expect(store.deleteDrive(drive.id)).rejects.toBe(failure);
+    expect(store.getDrive(drive.id)).toEqual(drive);
+    // Connections are removed first to stop agents discovering a drive whose content is being
+    // deleted. The registry entry remains as the retry handle when the filesystem step fails.
+    expect(store.listConnections()).toEqual([]);
+    expect(fs.existsSync(store.driveContentDir(drive.id))).toBe(true);
+
+    await expect(store.deleteDrive(drive.id)).resolves.toBe(true);
+    expect(store.getDrive(drive.id)).toBeUndefined();
+    expect(store.listConnections()).toEqual([]);
+    expect(fs.existsSync(store.driveContentDir(drive.id))).toBe(false);
+  });
+
+  it("keeps the drive registered when connection cleanup fails, then permits a retry", async () => {
+    const drive = store.createDrive("articles");
+    const connectionsFile = path.join(ROOT, ".drive-connections.json");
+    // A directory at the registry path makes the atomic rename fail deterministically.
+    fs.mkdirSync(connectionsFile);
+
+    await expect(store.deleteDrive(drive.id)).rejects.toThrow();
+    expect(store.getDrive(drive.id)).toEqual(drive);
+    expect(fs.existsSync(store.driveContentDir(drive.id))).toBe(true);
+
+    // Repair the failed persistence target and retry; no content was touched before that failure.
+    fs.rmSync(connectionsFile, { recursive: true, force: true });
+    await expect(store.deleteDrive(drive.id)).resolves.toBe(true);
+    expect(store.getDrive(drive.id)).toBeUndefined();
   });
 });
 

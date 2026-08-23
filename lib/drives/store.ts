@@ -156,16 +156,21 @@ export async function deleteDrive(driveId: string): Promise<boolean> {
   const drives = listDrives();
   const next = drives.filter((d) => d.id !== driveId);
   if (next.length === drives.length) return false;
-  atomicSaveJson(DRIVES_FILE, next);
-  // Drop every connection that referenced this drive.
+
+  // Disconnect first, so agents stop discovering the drive before its content is removed. A failed
+  // connection write leaves both the registry entry and files untouched.
   const connections = listConnections().filter((c) => c.driveId !== driveId);
-  atomicSaveJson(CONNECTIONS_FILE, connections);
-  // Remove the drive's files last; best-effort, registry is already consistent.
-  try {
-    await rm(driveContentDir(driveId), { recursive: true, force: true });
-  } catch (err) {
-    log.warn({ err, driveId }, "failed to remove drive content dir");
-  }
+  saveConnections(connections, { operation: "delete_drive", driveId });
+
+  // Clean up owned content before removing the registry entry. If this fails, the drive stays
+  // addressable and the caller can retry the same deletion instead of receiving success for files
+  // that are still on disk. A retry is safe after any partial filesystem cleanup because rm is both
+  // recursive and forced.
+  await rm(driveContentDir(driveId), { recursive: true, force: true });
+
+  // The registry is the retry handle and therefore the final write. Reaching the success receipt now
+  // means the content directory, connections, and registry entry have all been removed.
+  atomicSaveJson(DRIVES_FILE, next);
   log.info({ driveId }, "deleted drive");
   return true;
 }
@@ -245,9 +250,8 @@ export function getDrivesForWorkspace(workspaceId: string): Drive[] {
 /**
  * Resolve a drive reference (its id OR its name) to its content dir, scoped to what THIS
  * workspace is connected to. The id (a UUID) is the stable key agents pass between each other;
- * the name is matched case-insensitively as a human-friendly fallback. These never collide:
- * drive names forbid hyphens (assertSafeDriveName) while UUIDs always contain them.
- * Returns null when the workspace has no connected drive matching the reference.
+ * the name is matched case-insensitively as a human-friendly fallback. Returns null when the
+ * workspace has no connected drive matching the reference.
  */
 export function resolveDriveDir(workspaceId: string, driveRef: string): { drive: Drive; dir: string } | null {
   const ref = driveRef.trim();

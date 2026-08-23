@@ -41,8 +41,11 @@ export function workspaceDeleteDeps(): WorkspaceDeleteDeps {
         stage("internet_access_policy", ({ id }) => deleteInternetAccessPolicy(id)),
         stage("schedule", ({ id }) => clearSchedule(id)),
       ],
+      // Stop and remove the container before touching its mounted directory. Keeping these in one
+      // parallel group lets a failed/running container race the directory removal and retain open
+      // files after the API reports success.
+      [stage("container", ({ id }) => containers.remove(id))],
       [
-        stage("container", ({ id }) => containers.remove(id)),
         stage("workspace_directory", ({ dir }) => containers.deleteWorkspaceDir(dir)),
         stage("version_history", ({ id }) => versioning.deleteRepo(id)),
         stage("agent_permissions", ({ id }) =>

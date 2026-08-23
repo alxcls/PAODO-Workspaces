@@ -17,6 +17,7 @@ import { rm } from "fs/promises";
 import { WORKSPACES_ROOT } from "../infra/paths";
 import { atomicSaveJson } from "../infra/jsonPersist";
 import { createLogger } from "../infra/logger";
+import { validateDriveName } from "./name";
 
 const log = createLogger("driveStore");
 
@@ -102,36 +103,10 @@ function saveConnections(
   }
 }
 
-// The name never hits the drive's own path (that is keyed by UUID), but drive_download writes into
-// the workspace at downloads/<drive-name>/..., so the name must be a safe single path segment.
-/**
- * Thrown when the caller supplied a name the user has to fix — as opposed to a disk or I/O failure.
- * Routes branch on it to answer 400 without logging (the user reads the message and corrects it)
- * while every other failure stays on the 500 + log.error path, where an operator can actually act.
- * Mirrors WorkspaceNameError; replaces matching on the message text.
- */
-export class DriveNameError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "DriveNameError";
-  }
-}
-
-function assertSafeDriveName(name: string): void {
-  const trimmed = name.trim();
-  // Forbid path separators and control characters — the name is used as a path segment under
-  // downloads/<drive-name>/. Hyphens and underscores are allowed.
-  const hasUnsafeChar = /[/\\\x00-\x1f]/.test(trimmed);
-  if (!trimmed || trimmed.length > 100 || trimmed === "." || trimmed === ".." || hasUnsafeChar) {
-    throw new DriveNameError(`Invalid drive name: "${name}"`);
-  }
-}
-
 export function createDrive(name: string, description?: string): Drive {
-  assertSafeDriveName(name);
   const drive: Drive = {
     id: crypto.randomUUID(),
-    name: name.trim(),
+    name: validateDriveName(name),
     description: description?.trim() || undefined,
     createdAt: new Date().toISOString(),
   };
@@ -148,8 +123,7 @@ export function updateDrive(driveId: string, patch: { name?: string; description
   const drive = drives.find((d) => d.id === driveId);
   if (!drive) return undefined;
   if (patch.name !== undefined) {
-    assertSafeDriveName(patch.name);
-    drive.name = patch.name.trim();
+    drive.name = validateDriveName(patch.name);
   }
   if (patch.description !== undefined) {
     drive.description = patch.description.trim() || undefined;

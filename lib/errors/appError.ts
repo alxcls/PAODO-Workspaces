@@ -27,6 +27,11 @@ export const ERROR_CODES = {
   STORAGE_EXHAUSTED: "STORAGE_EXHAUSTED",
   WORKSPACE_NAME_INVALID: "WORKSPACE_NAME_INVALID",
   WORKSPACE_NAME_CONFLICT: "WORKSPACE_NAME_CONFLICT",
+  /**
+   * No DRIVE_NAME_CONFLICT beside it: drives enforce no uniqueness rule, so a code for a collision
+   * that cannot happen would be a contract nothing honours.
+   */
+  DRIVE_NAME_INVALID: "DRIVE_NAME_INVALID",
   WORKSPACE_UPDATE_INVALID: "WORKSPACE_UPDATE_INVALID",
   WORKSPACE_UPDATE_FAILED: "WORKSPACE_UPDATE_FAILED",
   /**

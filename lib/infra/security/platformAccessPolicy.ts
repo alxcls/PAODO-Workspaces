@@ -19,8 +19,17 @@
  * and nothing else, so a rule can never span into a sub-resource it did not name.
  */
 function workspaceRule(method: string, suffix?: string) {
+  return resourceRule("workspaces", method, suffix);
+}
+
+/** The same shape for a drive, so neither collection's rules are hand-written regexes. */
+function driveRule(method: string, suffix?: string) {
+  return resourceRule("drives", method, suffix);
+}
+
+function resourceRule(collection: string, method: string, suffix?: string) {
   const tail = suffix === undefined ? "" : `/${suffix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`;
-  return { method, pathname: new RegExp(`^/api/workspaces/[^/]+${tail}$`) };
+  return { method, pathname: new RegExp(`^/api/${collection}/[^/]+${tail}$`) };
 }
 
 const RULES: ReadonlyArray<{
@@ -49,6 +58,15 @@ const RULES: ReadonlyArray<{
   workspaceRule("DELETE", "files/content"),
   workspaceRule("GET", "files/transfer"),
   workspaceRule("PUT", "files/transfer"),
+  // Drive metadata. The drive's own files are absent: the listing route cannot yet be scoped to a
+  // path, and there is no transfer route to push or pull one, so no CLI command reaches them.
+  // /api/drive-connections is absent too — connecting a drive is a capability of its own, and this
+  // policy is the place that has to name it deliberately rather than inherit it from the group.
+  { method: "GET", pathname: /^\/api\/drives$/ },
+  { method: "POST", pathname: /^\/api\/drives$/ },
+  driveRule("GET"),
+  driveRule("PATCH"),
+  driveRule("DELETE"),
 ];
 
 export function isPlatformRouteAllowed(method: string, pathname: string): boolean {

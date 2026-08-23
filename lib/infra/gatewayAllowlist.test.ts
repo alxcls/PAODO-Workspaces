@@ -132,10 +132,13 @@ describe("public gateway allowlist", () => {
       PATHS.filter((pathname) => gatewayAllows(matchers, method, pathname)).map((pathname) => `${method} ${pathname}`),
     );
     expect(forwarded.sort()).toEqual([
+      `DELETE /api/drives/${ID}`,
       `DELETE /api/workspaces/${ID}`,
       `DELETE /api/workspaces/${ID}/api-key`,
       `DELETE /api/workspaces/${ID}/files/content`,
       `DELETE /api/workspaces/${ID}/mcp-config`,
+      "GET /api/drives",
+      `GET /api/drives/${ID}`,
       "GET /api/models",
       "GET /api/status",
       "GET /api/workspaces",
@@ -143,7 +146,9 @@ describe("public gateway allowlist", () => {
       `GET /api/workspaces/${ID}/files`,
       `GET /api/workspaces/${ID}/files/content`,
       `GET /api/workspaces/${ID}/files/transfer`,
+      `PATCH /api/drives/${ID}`,
       `PATCH /api/workspaces/${ID}`,
+      "POST /api/drives",
       "POST /api/workspaces",
       `POST /api/workspaces/${ID}/api-key`,
       `POST /api/workspaces/${ID}/mcp-config`,

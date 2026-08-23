@@ -1,9 +1,13 @@
 // REST endpoint for the shared-drive collection.
 // GET returns all drives; POST creates a new one with an isolated content directory on disk.
+//
+// Translation only: the name rules and the not-found answers are lib/operations/drives/manage.ts, so
+// the UI and the CLI get the same refusal without either restating it. What is left here is HTTP —
+// reading the body, and turning an AppError into a status.
 import { NextRequest, NextResponse } from "next/server";
-import { listDrives, createDrive, DriveNameError } from "@/lib/drives/store";
 import { createLogger } from "@/lib/infra/logger";
-import { errorResponse, readJsonObject } from "@/lib/api/errorResponse";
+import { appErrorResponse, errorResponse, readJsonObject } from "@/lib/api/errorResponse";
+import { createDrive, listDrives } from "@/lib/operations/drives/manage";
 
 export function GET() {
   return NextResponse.json(listDrives());
@@ -13,22 +17,16 @@ export async function POST(req: NextRequest) {
   const log = createLogger("api").child({ route: "drives" });
   const parsed = await readJsonObject(req);
   if (parsed instanceof Response) return parsed;
-  const body = parsed as { name?: string; description?: string };
-  if (!body.name?.trim()) {
-    return errorResponse("INVALID_REQUEST", "name is required", { request: req });
-  }
+
   try {
-    const drive = createDrive(body.name.trim(), body.description);
-    return NextResponse.json(drive, { status: 201 });
+    return NextResponse.json(createDrive(parsed), { status: 201 });
   } catch (err) {
-    // A rejected name is the user's to fix: 400 with the reason, no log line. Everything else here
-    // is mkdir/atomicSaveJson failing — a system fault that was previously answered with a 400 and
-    // buried among the validation noise, so it becomes a 500 an operator can see.
-    if (err instanceof DriveNameError) {
-      return errorResponse("INVALID_REQUEST", err.message, { request: req });
-    }
+    // A rejected name is the user's to fix and arrives as an AppError, answered above without a log
+    // line. Everything past it is mkdir/atomicSaveJson failing — a system fault an operator can act on.
+    const expected = appErrorResponse(err, req);
+    if (expected) return expected;
     log.error(
-      { event: "drive_create_failed", outcome: "drive_not_created", err, name: body.name },
+      { event: "drive_create_failed", outcome: "drive_not_created", err, name: parsed.name },
       "failed to create drive",
     );
     return errorResponse("INTERNAL_ERROR", "failed to create drive", { request: req });

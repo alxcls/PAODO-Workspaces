@@ -68,4 +68,25 @@ describe("platform access policy", () => {
     expect(isPlatformRouteAllowed("PUT", "/api/workspaces/ws-1/files/content")).toBe(false);
     expect(isPlatformRouteAllowed("PATCH", "/api/workspaces/ws-1/files/content")).toBe(false);
   });
+
+  it("allows drive metadata", () => {
+    expect(isPlatformRouteAllowed("GET", "/api/drives")).toBe(true);
+    expect(isPlatformRouteAllowed("POST", "/api/drives")).toBe(true);
+    expect(isPlatformRouteAllowed("GET", "/api/drives/drive-1")).toBe(true);
+    expect(isPlatformRouteAllowed("PATCH", "/api/drives/drive-1")).toBe(true);
+    expect(isPlatformRouteAllowed("DELETE", "/api/drives/drive-1")).toBe(true);
+  });
+
+  // A drive's files have no CLI command behind them yet: the listing route cannot be scoped to a
+  // path, and there is no transfer route to push or pull one. Asserted per method so the next slice
+  // has to widen this deliberately rather than inherit the access from the drive rules above.
+  it("does not grant a drive's files or its connections", () => {
+    for (const method of ["GET", "POST", "PUT", "PATCH", "DELETE"]) {
+      expect(isPlatformRouteAllowed(method, "/api/drives/drive-1/files")).toBe(false);
+      expect(isPlatformRouteAllowed(method, "/api/drives/drive-1/files/content")).toBe(false);
+      expect(isPlatformRouteAllowed(method, "/api/drives/drive-1/files/upload")).toBe(false);
+      expect(isPlatformRouteAllowed(method, "/api/drives/drive-1/files/download")).toBe(false);
+      expect(isPlatformRouteAllowed(method, "/api/drive-connections")).toBe(false);
+    }
+  });
 });

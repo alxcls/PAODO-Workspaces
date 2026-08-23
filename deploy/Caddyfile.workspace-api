@@ -33,7 +33,7 @@
 # listener timeouts apply to the whole :443 address and would be shared with every
 # other site block on it.
 
-# The eleven CLI routes. All are small JSON request/response pairs that the app answers
+# The sixteen CLI routes. All are small JSON request/response pairs that the app answers
 # in well under a second, so a tight ceiling on both is free here and keeps an
 # unbounded body from reaching Next's JSON parser.
 (cliUpstream) {
@@ -118,30 +118,38 @@
 		# One matcher per method, because Caddy ANDs method and path within a matcher
 		# and a directive takes only one matcher. Read each against the policy list.
 		#
+		# A drive's own files are absent from every matcher below: each drive pattern
+		# ends at /{id}, so /api/drives/{id}/files and anything under it stays refused.
+		#
 		#   GET    /api/status
 		#   GET    /api/models
 		#   GET    /api/workspaces
 		#   GET    /api/workspaces/{id}
+		#   GET    /api/drives
+		#   GET    /api/drives/{id}
 		@cliRead {
 			method GET
-			path_regexp cliRead ^/api/(status|models|workspaces(?:/[^/]+)?)$
+			path_regexp cliRead ^/api/(status|models|workspaces(?:/[^/]+)?|drives(?:/[^/]+)?)$
 		}
 
-		# POST /api/workspaces creates; POST on a workspace is NOT allowed, so the
-		# optional tail requires a credential channel and never bare /{id}.
+		# POST /api/workspaces and /api/drives create; POST on a workspace is NOT
+		# allowed, so its optional tail requires a credential channel and never bare
+		# /{id}. A drive has no POST sub-resource at all.
 		#
 		#   POST   /api/workspaces
 		#   POST   /api/workspaces/{id}/api-key
 		#   POST   /api/workspaces/{id}/mcp-config
+		#   POST   /api/drives
 		@cliCreate {
 			method POST
-			path_regexp cliCreate ^/api/workspaces(?:/[^/]+/(?:api-key|mcp-config))?$
+			path_regexp cliCreate ^/api/(?:workspaces(?:/[^/]+/(?:api-key|mcp-config))?|drives)$
 		}
 
 		#   PATCH  /api/workspaces/{id}
+		#   PATCH  /api/drives/{id}
 		@cliUpdate {
 			method PATCH
-			path_regexp cliUpdate ^/api/workspaces/[^/]+$
+			path_regexp cliUpdate ^/api/(?:workspaces|drives)/[^/]+$
 		}
 
 		# The mirror image of POST: DELETE on a workspace is allowed, DELETE on the
@@ -150,9 +158,10 @@
 		#   DELETE /api/workspaces/{id}
 		#   DELETE /api/workspaces/{id}/api-key
 		#   DELETE /api/workspaces/{id}/mcp-config
+		#   DELETE /api/drives/{id}
 		@cliDelete {
 			method DELETE
-			path_regexp cliDelete ^/api/workspaces/[^/]+(?:/(?:api-key|mcp-config))?$
+			path_regexp cliDelete ^/api/(?:workspaces/[^/]+(?:/(?:api-key|mcp-config))?|drives/[^/]+)$
 		}
 
 		# The file surface. /files is the tree (and the served ignore contract), /files/content is

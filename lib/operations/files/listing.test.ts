@@ -276,6 +276,23 @@ describe("listEntries", () => {
       expect(tree.find((node) => node.path === "src")).not.toHaveProperty("truncated");
     });
 
+    // Otherwise every ancestor up to the root wears the flag, `ls` calls whole directories short, and
+    // nothing in the answer says which directory is the one to raise the limit on.
+    it("leaves an ancestor unflagged when the cut is below it, not in it", async () => {
+      const nested = path.join(WS, "one", "many");
+      fs.mkdirSync(nested, { recursive: true });
+      for (let i = 0; i < 12; i++) fs.writeFileSync(path.join(nested, `f${i}.txt`), "x");
+
+      const { tree, truncated } = await listing(WS, null, { maxDepth: Infinity, maxEntries: 10 });
+
+      expect(truncated).toBe(true);
+      // "one" holds exactly one entry, and it is shown — nothing about that listing is a prefix.
+      const one = tree.find((node) => node.path === "one")!;
+      expect(one).not.toHaveProperty("truncated");
+      expect(one.children).toHaveLength(1);
+      expect(one.children![0]).toMatchObject({ path: "one/many", truncated: true });
+    });
+
     // Measuring runs after the cut, so it costs a read per entry the caller is shown rather than per
     // entry the directory holds — the difference between 10 reads and 50 here.
     it("measures only the entries that survived the cut", async () => {

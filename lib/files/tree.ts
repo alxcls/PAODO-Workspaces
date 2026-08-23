@@ -121,7 +121,9 @@ export async function buildTree(rootDir: string, options: BuildTreeOptions = {})
 interface WalkResult {
   nodes: TreeNode[];
   files: number;
-  /** This directory or anything below it stopped at the ceiling. */
+  /** This directory's own listing stopped at the ceiling. What the node's flag is built from. */
+  cut: boolean;
+  /** This directory or anything below it stopped. The aggregate, and only BuiltTree carries it. */
   truncated: boolean;
 }
 
@@ -146,7 +148,7 @@ async function walk(
   // Past the caller's depth, the tree stops but the count must not: this is exactly the directory whose
   // size a caller cannot see, since it is being handed an empty branch.
   if (depth >= maxDepth) {
-    return { nodes: [], files: countFiles ? await countFilesUnder(dirPath, sem) : 0, truncated: false };
+    return { nodes: [], files: countFiles ? await countFilesUnder(dirPath, sem) : 0, cut: false, truncated: false };
   }
   let read;
   try {
@@ -155,7 +157,7 @@ async function walk(
     // An unreadable directory renders as an empty branch rather than failing the panel: the tree is
     // navigation, and one bad directory should not blank the whole file list.
     createLogger("api").warn({ err, dirPath }, "failed to read directory in file tree");
-    return { nodes: [], files: 0, truncated: false };
+    return { nodes: [], files: 0, cut: false, truncated: false };
   }
 
   const entryResults = await Promise.all(
@@ -171,7 +173,9 @@ async function walk(
             path: entryRelPath,
             children: below.nodes,
             ...(countFiles ? { files: below.files } : {}),
-            ...(below.truncated ? { truncated: true } : {}),
+            // `cut`, not `truncated`: the flag names the directory whose own listing stopped, so a
+            // caller can find it. An ancestor that was listed whole is not a short answer.
+            ...(below.cut ? { truncated: true } : {}),
           },
           files: below.files,
           truncated: below.truncated,
@@ -185,6 +189,7 @@ async function walk(
     // Promise.all preserves input order regardless of resolution order, so entries keep readdir's order.
     nodes: entryResults.map((r) => r.node),
     files: entryResults.reduce((sum, r) => sum + r.files, 0),
+    cut: read.truncated,
     truncated: read.truncated || entryResults.some((r) => r.truncated),
   };
 }

@@ -68,6 +68,47 @@ describe("formatDriveLine", () => {
   });
 });
 
+// Uniqueness is enforced in the store rather than the operation because the store is what holds the
+// list to compare against — and because resolveDriveDir above, which resolves a drive_* tool's
+// `driveRef` by name case-insensitively, is the reason the rule exists at all.
+describe("drive name uniqueness", () => {
+  const conflict = expect.objectContaining({ name: "DriveNameError", code: "DRIVE_NAME_CONFLICT" });
+
+  it("refuses a second drive with an equivalent name", () => {
+    store.createDrive("Articles");
+    expect(() => store.createDrive("articles")).toThrowError(conflict);
+    expect(() => store.createDrive("  ARTICLES  ")).toThrowError(conflict);
+  });
+
+  it("leaves no content directory behind for a refused name", () => {
+    const first = store.createDrive("articles");
+    expect(() => store.createDrive("Articles")).toThrowError(conflict);
+    // The conflict is checked before mkdir, so the only drive directory is the one that took.
+    expect(fs.readdirSync(path.join(ROOT, ".drives"))).toEqual([first.id]);
+    expect(store.listDrives()).toHaveLength(1);
+  });
+
+  it("refuses renaming a drive onto another drive's name", () => {
+    store.createDrive("articles");
+    const scratch = store.createDrive("scratch");
+    expect(() => store.updateDrive(scratch.id, { name: "Articles" })).toThrowError(conflict);
+    expect(store.getDrive(scratch.id)?.name).toBe("scratch");
+  });
+
+  // Without the exceptId, re-sending a drive's current name (which is what a UI form submitting every
+  // field does) would collide with the drive itself.
+  it("allows a drive to be renamed to its own name", () => {
+    const drive = store.createDrive("Articles");
+    expect(store.updateDrive(drive.id, { name: "articles" })?.name).toBe("articles");
+  });
+
+  it("frees a name once the drive holding it is deleted", async () => {
+    const drive = store.createDrive("articles");
+    await store.deleteDrive(drive.id);
+    expect(store.createDrive("articles").name).toBe("articles");
+  });
+});
+
 describe("drive connection persistence", () => {
   it("surfaces a connection registry write failure", () => {
     const drive = store.createDrive("articles");

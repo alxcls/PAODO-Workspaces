@@ -17,7 +17,7 @@ import { rm } from "fs/promises";
 import { WORKSPACES_ROOT } from "../infra/paths";
 import { atomicSaveJson } from "../infra/jsonPersist";
 import { createLogger } from "../infra/logger";
-import { validateDriveName } from "./name";
+import { DriveNameError, normalizeForUniqueness, validateDriveName } from "./name";
 
 const log = createLogger("driveStore");
 
@@ -103,15 +103,32 @@ function saveConnections(
   }
 }
 
+/**
+ * Throws DRIVE_NAME_CONFLICT if any *other* drive already uses an equivalent name. Compared on the
+ * folded key, so case- and Unicode-equivalent spellings cannot coexist: resolveDriveDir below already
+ * answers a drive_* tool's name lookup case-insensitively, and drive_download lands every drive at
+ * downloads/<drive-name>/ — two same-named drives make both of those pick one arbitrarily.
+ */
+function assertNameAvailable(name: string, drives: Drive[], exceptId?: string): void {
+  const key = normalizeForUniqueness(name);
+  for (const drive of drives) {
+    if (drive.id !== exceptId && normalizeForUniqueness(drive.name) === key) {
+      throw new DriveNameError("DRIVE_NAME_CONFLICT", `A drive named "${name}" already exists.`);
+    }
+  }
+}
+
 export function createDrive(name: string, description?: string): Drive {
+  const drives = listDrives();
   const drive: Drive = {
     id: crypto.randomUUID(),
     name: validateDriveName(name),
     description: description?.trim() || undefined,
     createdAt: new Date().toISOString(),
   };
+  // Before mkdir, so a refused name leaves no orphan content directory behind.
+  assertNameAvailable(drive.name, drives);
   fs.mkdirSync(driveContentDir(drive.id), { recursive: true });
-  const drives = listDrives();
   drives.push(drive);
   atomicSaveJson(DRIVES_FILE, drives);
   log.info({ id: drive.id, name: drive.name }, "created drive");
@@ -123,7 +140,10 @@ export function updateDrive(driveId: string, patch: { name?: string; description
   const drive = drives.find((d) => d.id === driveId);
   if (!drive) return undefined;
   if (patch.name !== undefined) {
-    drive.name = validateDriveName(patch.name);
+    const name = validateDriveName(patch.name);
+    // `driveId` excepted, so renaming a drive to the name it already holds is not a conflict.
+    assertNameAvailable(name, drives, driveId);
+    drive.name = name;
   }
   if (patch.description !== undefined) {
     drive.description = patch.description.trim() || undefined;

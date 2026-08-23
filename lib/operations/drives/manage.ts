@@ -8,7 +8,7 @@
 //
 // Deps are injected the same way lib/operations/drives/connect.ts injects them, so these are testable
 // without touching disk and the store's own names never collide with the ones exported here.
-import { AppError, requireNonEmptyString } from "@/lib/errors/appError";
+import { AppError, requireNonEmptyString, requireString } from "@/lib/errors/appError";
 import * as store from "@/lib/drives/store";
 import type { Drive } from "@/lib/drives/store";
 
@@ -24,6 +24,26 @@ export interface UpdateDriveInput {
 
 export interface DeleteDriveResult {
   deleted: true;
+}
+
+/** The fields a drive PATCH may move, and what each one now holds. */
+export interface DriveUpdateValues {
+  name?: string;
+  description?: string;
+}
+
+/**
+ * The same shape a workspace PATCH answers with (lib/api/workspaceUpdateReceipt.ts), so both `set`
+ * verbs report a mutation identically instead of one returning a receipt and the other a resource.
+ *
+ * `applied` carries the values as the store now holds them, not as they were sent: the name is
+ * trimmed and NFC-folded on the way in, so a caller that echoed its own request would be reporting a
+ * spelling the drive does not have.
+ */
+export interface DriveUpdateReceipt {
+  ok: true;
+  driveId: string;
+  applied: DriveUpdateValues;
 }
 
 /** Narrower than the drive store: the five metadata calls and nothing else. */
@@ -70,8 +90,10 @@ export function getDrive(driveIdValue: unknown, deps: DriveDeps = defaultDeps())
 }
 
 /**
- * The name is validated by lib/drives/name.ts inside the store call, so a rejection carries
- * DRIVE_NAME_INVALID and its own message rather than a generic one composed here.
+ * A present, non-empty name is this layer's check; everything the name may then SAY is
+ * lib/drives/name.ts's, applied inside the store call — so length, dot-names, separators and
+ * collisions come back as DRIVE_NAME_INVALID/DRIVE_NAME_CONFLICT with their own messages, and only a
+ * missing or blank name is the generic INVALID_REQUEST composed here.
  */
 export function createDrive(input: CreateDriveInput, deps: DriveDeps = defaultDeps()): Drive {
   const name = requireNonEmptyString(input.name, "name");
@@ -88,8 +110,15 @@ export const UPDATABLE_FIELDS = ["name", "description"] as const;
  * the typo nowhere in the reply — a partial change reported as a complete one, which no caller can
  * detect. `paodo drive set <id> nmae=x` reported success and changed nothing. The refusal names the
  * accepted fields, because a programmatic caller has no form to discover them from.
+ *
+ * Answers with a receipt rather than the drive, the same way a workspace PATCH does: GET is the sole
+ * drive representation, so a projection added there can never make this partial or expensive.
  */
-export function updateDrive(driveIdValue: unknown, input: UpdateDriveInput, deps: DriveDeps = defaultDeps()): Drive {
+export function updateDrive(
+  driveIdValue: unknown,
+  input: UpdateDriveInput,
+  deps: DriveDeps = defaultDeps(),
+): DriveUpdateReceipt {
   const driveId = requireNonEmptyString(driveIdValue, "driveId");
   const fields = UPDATABLE_FIELDS as readonly string[];
   const unknown = Object.keys(input).filter((key) => !fields.includes(key));
@@ -106,11 +135,20 @@ export function updateDrive(driveIdValue: unknown, input: UpdateDriveInput, deps
   }
   const patch = {
     ...(input.name === undefined ? {} : { name: requireNonEmptyString(input.name, "name") }),
-    ...(input.description === undefined ? {} : { description: optionalString(input.description, "description")! }),
+    ...(input.description === undefined ? {} : { description: requireString(input.description, "description") }),
   };
   const drive = deps.update(driveId, patch);
   if (!drive) throw notFound();
-  return drive;
+  return {
+    ok: true,
+    driveId,
+    applied: {
+      ...(patch.name === undefined ? {} : { name: drive.name }),
+      // "" rather than the store's `undefined` for a cleared description: JSON drops an undefined
+      // value, which would report an applied field as one that was never sent.
+      ...(patch.description === undefined ? {} : { description: drive.description ?? "" }),
+    },
+  };
 }
 
 /**

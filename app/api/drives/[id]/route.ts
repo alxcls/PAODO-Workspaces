@@ -15,7 +15,7 @@ const log = createLogger("api").child({ route: "drive" });
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   try {
-    return NextResponse.json(getDrive(id));
+    return NextResponse.json(getDrive(id), { headers: { "Cache-Control": "no-store" } });
   } catch (err) {
     const expected = appErrorResponse(err, req);
     if (expected) return expected;
@@ -32,7 +32,8 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   if (parsed instanceof Response) return parsed;
 
   try {
-    return NextResponse.json(updateDrive(id, parsed));
+    // no-store because a receipt describes one moment of a mutable resource, not a cacheable read.
+    return NextResponse.json(updateDrive(id, parsed), { headers: { "Cache-Control": "no-store" } });
   } catch (err) {
     const expected = appErrorResponse(err, req);
     if (expected) return expected;

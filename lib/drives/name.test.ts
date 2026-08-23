@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { MAX_DRIVE_NAME_LENGTH, validateDriveName } from "./name";
+import { MAX_DRIVE_NAME_LENGTH, normalizeForUniqueness, validateDriveName } from "./name";
 
 /** Every rejection carries the same code, so a route maps it to a status without reading the message. */
 function expectRejected(name: unknown) {
@@ -7,8 +7,11 @@ function expectRejected(name: unknown) {
 }
 
 describe("drive name policy", () => {
-  it("returns the trimmed name", () => {
+  it("returns the trimmed, NFC-normalized name", () => {
     expect(validateDriveName("  Shared assets  ")).toBe("Shared assets");
+    // Decomposed (e + combining acute) folds to the composed form the store persists. Spelled
+    // as escapes so the assertion cannot depend on how this file happens to be encoded.
+    expect(validateDriveName("cafe\u0301")).toBe("caf\u00e9");
   });
 
   it("allows hyphens, underscores and dots inside the name", () => {
@@ -26,11 +29,18 @@ describe("drive name policy", () => {
   });
 
   // The name is used as a path segment under downloads/<drive-name>/.
-  it("refuses path separators and the dot names", () => {
+  it("refuses path separators", () => {
     expectRejected("a/b");
     expectRejected("a\\b");
+  });
+
+  // Not just "." and "..": drive_download materializes the drive as a directory inside a workspace,
+  // where a dotfile-style name shadows the workspace's own hidden directories.
+  it("refuses any leading dot, matching the workspace rule", () => {
     expectRejected(".");
     expectRejected("..");
+    expectRejected(".git");
+    expectRejected(".env");
   });
 
   it("refuses control characters, including DEL", () => {
@@ -45,5 +55,20 @@ describe("drive name policy", () => {
     expectRejected(42);
     expectRejected(null);
     expectRejected({ name: "nested" });
+  });
+});
+
+describe("normalizeForUniqueness", () => {
+  it("folds case, so two spellings cannot coexist", () => {
+    expect(normalizeForUniqueness("Assets")).toBe(normalizeForUniqueness("assets"));
+    expect(normalizeForUniqueness("ASSETS")).toBe(normalizeForUniqueness("Assets"));
+  });
+
+  it("folds surrounding whitespace and Unicode form", () => {
+    expect(normalizeForUniqueness("  cafe\u0301 ")).toBe(normalizeForUniqueness("caf\u00e9"));
+  });
+
+  it("keeps genuinely different names apart", () => {
+    expect(normalizeForUniqueness("assets")).not.toBe(normalizeForUniqueness("assets-eu"));
   });
 });

@@ -27,11 +27,6 @@ export const ERROR_CODES = {
   STORAGE_EXHAUSTED: "STORAGE_EXHAUSTED",
   WORKSPACE_NAME_INVALID: "WORKSPACE_NAME_INVALID",
   WORKSPACE_NAME_CONFLICT: "WORKSPACE_NAME_CONFLICT",
-  /**
-   * No DRIVE_NAME_CONFLICT beside it: drives enforce no uniqueness rule, so a code for a collision
-   * that cannot happen would be a contract nothing honours.
-   */
-  DRIVE_NAME_INVALID: "DRIVE_NAME_INVALID",
   WORKSPACE_UPDATE_INVALID: "WORKSPACE_UPDATE_INVALID",
   WORKSPACE_UPDATE_FAILED: "WORKSPACE_UPDATE_FAILED",
   /**
@@ -41,6 +36,13 @@ export const ERROR_CODES = {
    * the field exists, is refused here on purpose, and has one endpoint of its own.
    */
   WORKSPACE_SECRET_FORBIDDEN: "WORKSPACE_SECRET_FORBIDDEN",
+  DRIVE_NAME_INVALID: "DRIVE_NAME_INVALID",
+  /**
+   * Drive names are unique on the same folded key workspace names are, and for a sharper reason: a
+   * drive is addressed BY NAME by the agent tools (resolveDriveDir) and materialized by name at
+   * downloads/<drive-name>/, so two drives sharing one would each be reachable only by accident.
+   */
+  DRIVE_NAME_CONFLICT: "DRIVE_NAME_CONFLICT",
   SCHEDULE_INVALID: "SCHEDULE_INVALID",
   CREDENTIAL_ALREADY_CONFIGURED: "CREDENTIAL_ALREADY_CONFIGURED",
   CREDENTIAL_NOT_CONFIGURED: "CREDENTIAL_NOT_CONFIGURED",

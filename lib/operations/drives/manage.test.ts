@@ -73,6 +73,37 @@ describe("updating a drive", () => {
     expect(update).toHaveBeenCalledWith("drive-1", { description: "" });
   });
 
+  // The same receipt a workspace PATCH answers with, so both `set` verbs report a mutation alike.
+  it("answers with a receipt naming only the fields it moved", () => {
+    expect(updateDrive("drive-1", { name: "Shared assets" }, deps())).toEqual({
+      ok: true,
+      driveId: "drive-1",
+      applied: { name: "Shared assets" },
+    });
+  });
+
+  // The store trims and NFC-folds a name, so echoing the request back would report a spelling the
+  // drive does not have.
+  it("reports the stored value, not the value that was sent", () => {
+    const stored = { ...drive, name: "Shared assets" };
+    const receipt = updateDrive("drive-1", { name: "  Shared assets  " }, deps({ update: () => stored }));
+    expect(receipt.applied).toEqual({ name: "Shared assets" });
+  });
+
+  // JSON drops an undefined value, so relaying the store's cleared `undefined` would report an
+  // applied field as one that was never sent.
+  it("reports a cleared description as empty rather than omitting it", () => {
+    const cleared = { id: "drive-1", name: "Shared assets", createdAt: drive.createdAt };
+    const receipt = updateDrive("drive-1", { description: "" }, deps({ update: () => cleared }));
+    expect(receipt.applied).toEqual({ description: "" });
+  });
+
+  it("refuses a non-string description", () => {
+    expect(() => updateDrive("drive-1", { description: 7 }, deps())).toThrowError(
+      expect.objectContaining({ code: "INVALID_REQUEST", message: "description must be a string" }),
+    );
+  });
+
   it("refuses an unknown drive", () => {
     expect(() => updateDrive("gone", { name: "x" }, deps())).toThrowError(notFound);
   });

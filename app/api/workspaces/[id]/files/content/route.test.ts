@@ -231,6 +231,47 @@ describe("files/content GET — what ?raw=1 says the bytes are", () => {
     expect(res.headers.get("content-type")).toBe("application/octet-stream");
     expect(Buffer.from(await res.arrayBuffer())).toEqual(Buffer.from([0xff, 0xfe, 0x00, 0x01]));
   });
+
+  // An SVG handed back as image/svg+xml runs its own script on this origin the moment the URL is
+  // navigated to — with the visitor's session, against an API that trusts it.
+  it("refuses to name an SVG as an image, whichever spelling it arrives in", async () => {
+    fs.writeFileSync(abs("bare.svg"), '<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>');
+    fs.writeFileSync(abs("declared.svg"), '<?xml version="1.0"?>\n<svg xmlns="http://www.w3.org/2000/svg"></svg>');
+    expect(await mediaType("bare.svg")).toBe("text/plain; charset=utf-8");
+    expect(await mediaType("declared.svg")).not.toContain("svg");
+  });
+
+  it("tells the browser not to sniff its way past any of that", async () => {
+    fs.writeFileSync(abs("sniffable.txt"), "<html><script>alert(1)</script></html>");
+    expect((await raw("sniffable.txt")).headers.get("x-content-type-options")).toBe("nosniff");
+  });
+});
+
+// A filename reaches this header straight from a name an agent chose on disk, so it is escaped rather
+// than trusted. Node rejects a CRLF header value outright, which would be a 500 for a legitimate read.
+describe("files/content GET — ?download=1 names the file safely", () => {
+  const disposition = async (name: string) =>
+    (
+      await GET(new Request(`http://x/api/files/content?path=${encodeURIComponent(name)}&raw=1&download=1`), ctx)
+    ).headers.get("content-disposition");
+
+  it("neither ends the quoted name early nor injects a header", async () => {
+    const hostile = 'ev"il\r\nX-Injected: yes.txt';
+    fs.writeFileSync(abs(hostile), "x");
+    const header = await disposition(hostile);
+    expect(header).not.toContain("\r");
+    expect(header).not.toContain("\n");
+    expect(header).toBe(
+      `attachment; filename="ev_il__X-Injected: yes.txt"; filename*=UTF-8''${encodeURIComponent(hostile)}`,
+    );
+  });
+
+  it("keeps a non-ASCII name readable through filename*", async () => {
+    fs.writeFileSync(abs("rapport-café.txt"), "x");
+    const header = await disposition("rapport-café.txt");
+    expect(header).toContain('filename="rapport-caf_.txt"');
+    expect(header).toContain("filename*=UTF-8''rapport-caf%C3%A9.txt");
+  });
 });
 
 describe("files/content PUT — save", () => {

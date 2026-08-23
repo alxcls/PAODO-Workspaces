@@ -31,20 +31,41 @@ function internalFailure(request: Request): NextResponse {
   return errorResponse("INTERNAL_ERROR", "The file operation failed", { request });
 }
 
-/**
- * What ?raw=1 says a body is. The classifier has already decided, so the header only has to relay it —
- * and text gets its own media type rather than being lumped in with binary under octet-stream.
- *
- * That distinction is the whole answer for a client that streams this route to a terminal: the JSON
- * shape below names the type, but a raw reader has nothing but the headers, and "some bytes" gives it
- * no way to refuse a PNG before it has already written one. `paodo file cat` is exactly that reader.
- *
- * Always text/plain, never a type guessed from the extension: this content is written by an agent, and
- * serving it back as text/html would make the file panel's own origin the one that renders it.
- */
+// Raster formats a browser paints and cannot execute. An allowlist, so a document format the detector
+// learns next release is inert until added here — which is why SVG is absent rather than filtered.
+const RENDERABLE_IMAGE_TYPES = new Set([
+  "image/png",
+  "image/apng",
+  "image/jpeg",
+  "image/gif",
+  "image/webp",
+  "image/avif",
+  "image/bmp",
+  "image/x-icon",
+  "image/tiff",
+  "image/jp2",
+  "image/jxl",
+  "image/heic",
+  "image/heif",
+]);
+
+// What ?raw=1 says a body is. Text is named apart from binary so `paodo file cat`, which has only
+// the headers, can refuse a PNG before writing it to a terminal.
 function rawMediaType(file: ClassifiedFile): string {
-  if (file.type === "image") return file.mimeType;
+  if (file.type === "image" && RENDERABLE_IMAGE_TYPES.has(file.mimeType)) return file.mimeType;
   return file.type === "text" ? "text/plain; charset=utf-8" : "application/octet-stream";
+}
+
+// RFC 6266: ASCII-folded in the quoted form, real name percent-encoded in filename*. A quote or a
+// newline in a filename can no longer end the header early or inject another.
+function attachmentDisposition(relPath: string): string {
+  const name = path.basename(relPath);
+  const ascii = name.replace(/[^\x20-\x7e]/g, "_").replace(/["\\]/g, "_");
+  const encoded = encodeURIComponent(name).replace(
+    /['()*!]/g,
+    (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`,
+  );
+  return `attachment; filename="${ascii}"; filename*=UTF-8''${encoded}`;
 }
 
 export async function getFileContent(request: Request, be: FileBackend): Promise<Response> {
@@ -75,7 +96,9 @@ export async function getFileContent(request: Request, be: FileBackend): Promise
       return new Response(new Uint8Array(bytes), {
         headers: {
           "Content-Type": rawMediaType(file),
-          ...(isDownload ? { "Content-Disposition": `attachment; filename="${path.basename(relPath)}"` } : {}),
+          // The type above is decided from the bytes, so sniffing can only override it downward.
+          "X-Content-Type-Options": "nosniff",
+          ...(isDownload ? { "Content-Disposition": attachmentDisposition(relPath) } : {}),
         },
       });
     }

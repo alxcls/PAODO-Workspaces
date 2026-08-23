@@ -37,6 +37,8 @@ export type ClassifiedFile =
   | { type: "text"; content: string; bytes: Buffer }
   | { type: "binary"; bytes: Buffer };
 
+// `image` is a format a browser paints. SVG is not: it executes script when navigated to, and this
+// content is agent-written, so it stays text. rawMediaType enforces the same rule at the header.
 async function classifyBuffer(bytes: Buffer): Promise<ClassifiedFile> {
   const { fileTypeFromBuffer } = await import("file-type");
   const result = await fileTypeFromBuffer(bytes);
@@ -47,13 +49,7 @@ async function classifyBuffer(bytes: Buffer): Promise<ClassifiedFile> {
   }
 
   try {
-    const content = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-    // SVG is text-based XML — classify as an image so the viewer renders it rather than showing markup.
-    const trimmed = content.trimStart();
-    if (trimmed.startsWith("<svg") || (trimmed.startsWith("<?xml") && content.includes("<svg"))) {
-      return { type: "image", mimeType: "image/svg+xml", bytes };
-    }
-    return { type: "text", content, bytes };
+    return { type: "text", content: new TextDecoder("utf-8", { fatal: true }).decode(bytes), bytes };
   } catch {
     return { type: "binary", bytes };
   }

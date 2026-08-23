@@ -134,12 +134,13 @@ describe("listEntries", () => {
     // route refuses an `?offset=` against, so a listing never advertises a window `cat` would reject.
     it("leaves a file with no lines to count without a line count", async () => {
       fs.writeFileSync(abs("blob.bin"), Buffer.from([0xff, 0xfe, 0x00, 0x01]));
+      // An SVG is text, and windowable with it: the read route serves it as text/plain rather than
+      // as an image, so a `cat --offset` against it is a window the listing may advertise.
       fs.writeFileSync(abs("logo.svg"), '<svg xmlns="http://www.w3.org/2000/svg"></svg>');
       const tree = await listEntries(WS, null, { measure: true });
       const entry = (relPath: string) => tree.find((node) => node.path === relPath);
       expect(entry("blob.bin")).not.toHaveProperty("lines");
-      // An SVG is text on disk and an image to the reader, and the read route refuses to window it.
-      expect(entry("logo.svg")).not.toHaveProperty("lines");
+      expect(entry("logo.svg")).toMatchObject({ lines: 1 });
     });
 
     it("measures a single file named directly, not just entries of a directory", async () => {

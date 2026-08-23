@@ -1,66 +1,33 @@
 // Streaming tar transport used by the CLI for one file, a directory tree, or the workspace root.
 //
-// The browser's ZIP download and per-file upload remain separate UI transports, and that split is
-// deliberate rather than unfinished: streaming an archive out of a browser needs fetch request
-// streaming, which is not available everywhere, and the browser's upload wants the per-file retry and
-// progress that a single request cannot offer. What both transports share is everything that decides
-// what a transfer means — the ignore contract, containment, the wire path space, size limits, the error
-// vocabulary and the git snapshot. Only the framing differs.
+// The transport itself is lib/api/fileTransferRoutes.ts, shared with the drive route. What is left
+// here is what only a workspace has: a rate-limit budget shared with the browser's upload, and the git
+// snapshot that makes a push undoable. The drive route passes no versioning at all — see that module
+// for why that is a statement about the space rather than a shortcut.
 //
 // A pull is not rate limited; a push spends the same budget as the browser's upload. See PUT below for
 // why that is parity rather than a bound.
 export const runtime = "nodejs";
 
 import { type NextRequest, NextResponse } from "next/server";
-import { Readable } from "stream";
 import { rateLimited, requireWorkspace } from "@/lib/api/guards";
-import { appErrorResponse, errorResponse, requestIdOf, statusForCode } from "@/lib/api/errorResponse";
-import { publicErrorBody } from "@/lib/errors/appError";
+import { changed, getFileTransfer, putFileTransfer } from "@/lib/api/fileTransferRoutes";
 import { getVersioning } from "@/lib/infra/services";
 import { createLogger } from "@/lib/infra/logger";
 import { flushSnapshotBurstStrict, snapshotWorkspaceStrict } from "@/lib/infra/git/snapshotWorkspace";
-import {
-  collectTransfer,
-  packTransfer,
-  putTransfer,
-  TRANSFER_MEDIA_TYPE,
-  TransferApplyError,
-  transferApplyAppError,
-  type PutTransferReceipt,
-} from "@/lib/operations/files/transfer";
+import type { PutTransferReceipt } from "@/lib/operations/files/transfer";
 
 const log = createLogger("api");
+
+function backend(id: string, dir: string) {
+  return { dir, logContext: { workspaceId: id, route: "workspace-files/transfer" } };
+}
 
 export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const ws = requireWorkspace(id, req);
   if (ws instanceof NextResponse) return ws;
-  const source = new URL(req.url).searchParams.get("path") ?? ".";
-
-  try {
-    const items = await collectTransfer(ws.dir, source);
-    const stream = packTransfer(items);
-    return new Response(Readable.toWeb(stream) as ReadableStream<Uint8Array>, {
-      headers: {
-        "Content-Type": TRANSFER_MEDIA_TYPE,
-        "Content-Disposition": 'attachment; filename="paodo-transfer.tar"',
-        "X-PAODO-Transfer-Version": "1",
-        "Cache-Control": "no-store",
-      },
-    });
-  } catch (err) {
-    const known = appErrorResponse(err, req);
-    if (known) return known;
-    log.error(
-      { event: "file_transfer_export_failed", outcome: "transfer_not_exported", workspaceId: id, source, err },
-      "failed to export workspace transfer",
-    );
-    return errorResponse("INTERNAL_ERROR", "The transfer could not be exported", { request: req });
-  }
-}
-
-function changed(receipt: PutTransferReceipt): number {
-  return receipt.created.length + receipt.overwritten.length;
+  return getFileTransfer(req, backend(id, ws.dir));
 }
 
 /**
@@ -98,78 +65,10 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
 
   const ws = requireWorkspace(id, req);
   if (ws instanceof NextResponse) return ws;
-  const mediaType = req.headers.get("content-type")?.split(";", 1)[0].trim().toLowerCase();
-  if (mediaType !== TRANSFER_MEDIA_TYPE) {
-    return errorResponse("INVALID_REQUEST", `Content-Type must be ${TRANSFER_MEDIA_TYPE}`, {
-      request: req,
-      details: { field: "content-type" },
-    });
-  }
-  if (!req.body) {
-    return errorResponse("INVALID_REQUEST", "A transfer body is required", {
-      request: req,
-      details: { field: "body" },
-    });
-  }
-
-  const dest = new URL(req.url).searchParams.get("dest");
-  let receipt: PutTransferReceipt;
-  try {
-    receipt = await putTransfer(ws.dir, dest, Readable.fromWeb(req.body as Parameters<typeof Readable.fromWeb>[0]), {
-      // A pending browser-upload burst is a different user action. Commit it only after this
-      // archive has passed validation, then apply the transfer and take its own snapshot below.
-      beforeApply: async () => {
-        await flushSnapshotBurstStrict(getVersioning(), ws);
-      },
-    });
-  } catch (err) {
-    if (err instanceof TransferApplyError) {
-      const operationError = transferApplyAppError(err);
-      if (changed(err.receipt) > 0) await snapshot(id, ws, err.receipt);
-      const code = operationError?.code ?? "INTERNAL_ERROR";
-      if (!operationError) {
-        log.error(
-          {
-            event: "file_transfer_import_failed",
-            outcome: "transfer_partially_applied",
-            workspaceId: id,
-            dest,
-            err: err.operationError,
-          },
-          "failed while applying workspace transfer",
-        );
-      }
-      const body = {
-        ...publicErrorBody(code, operationError?.message ?? "The transfer could not be fully applied", {
-          details: operationError?.details,
-          requestId: requestIdOf(req),
-        }),
-        ...err.receipt,
-      };
-      return NextResponse.json(body, { status: statusForCode(code), headers: { "Cache-Control": "no-store" } });
-    }
-
-    const known = appErrorResponse(err, req);
-    if (known) return known;
-    log.error(
-      { event: "file_transfer_import_failed", outcome: "transfer_not_applied", workspaceId: id, dest, err },
-      "failed to import workspace transfer",
-    );
-    return errorResponse("INTERNAL_ERROR", "The transfer could not be imported", { request: req });
-  }
-
-  if (!(await snapshot(id, ws, receipt))) {
-    // The files landed, but there is no revision to undo them with. Worth failing the call over: a
-    // push that overwrote a tree and left no way back is not the operation the caller asked for.
-    return NextResponse.json(
-      {
-        ...publicErrorBody("INTERNAL_ERROR", "The transfer was applied but its snapshot could not be created", {
-          requestId: requestIdOf(req),
-        }),
-        ...receipt,
-      },
-      { status: statusForCode("INTERNAL_ERROR"), headers: { "Cache-Control": "no-store" } },
-    );
-  }
-  return NextResponse.json({ ok: true, ...receipt }, { headers: { "Cache-Control": "no-store" } });
+  return putFileTransfer(req, backend(id, ws.dir), {
+    beforeApply: async () => {
+      await flushSnapshotBurstStrict(getVersioning(), ws);
+    },
+    commit: (receipt) => snapshot(id, ws, receipt),
+  });
 }

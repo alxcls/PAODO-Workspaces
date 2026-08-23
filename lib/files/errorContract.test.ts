@@ -22,6 +22,8 @@ const SCANNED = [
   "lib/uploads",
   "lib/operations/files",
   "lib/api/fileContentRoutes.ts",
+  "lib/api/fileTreeRoutes.ts",
+  "lib/api/fileTransferRoutes.ts",
   "app/api/workspaces/[id]/files",
   "app/api/drives/[id]/files",
 ];

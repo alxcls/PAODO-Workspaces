@@ -5,11 +5,11 @@
 // The depth cap is the panel's, not the filesystem's: it exists so one pathological tree cannot make
 // the file panel's single JSON response unbounded, and it is a named option rather than a literal
 // buried in the recursion, because the panel's budget is not every caller's. A client that navigates
-// asks for one level and lists again to descend (the CLI's `paodo file ls`); one that must see the
+// asks for one level and lists again to descend (the CLI's `paodo <workspace|drive> file ls`); one that must see the
 // whole tree passes Infinity and gets it. Both are `?depth=` on the tree route.
 import path from "path";
 import { createLogger } from "@/lib/infra/logger";
-import { readTransferEntries } from "./entries";
+import { readListingEntries, readTransferEntries } from "./entries";
 import { openFileLimiter, type Semaphore } from "./fdLimit";
 
 export interface TreeNode {
@@ -44,6 +44,16 @@ export interface TreeNode {
    * Present only when the caller asked to count, and only on directories. See listEntries.
    */
   files?: number;
+  /**
+   * This directory's own listing stopped at the caller's `maxEntries` ceiling, so `children` is a
+   * prefix of what is really here — and an arbitrary one, since the cut happens in filesystem order
+   * before anything sorts.
+   *
+   * Present only when it is true, and only on a directory that was actually cut. A listing that was
+   * whole says nothing, for the reason the tree route stopped serving `truncated` on every response:
+   * a flag that is almost always false is one a reader learns to skip.
+   */
+  truncated?: boolean;
 }
 
 /** What the file panel renders in one response. */
@@ -52,6 +62,16 @@ export const FILE_PANEL_MAX_DEPTH = 5;
 export interface BuildTreeOptions {
   /** Levels to descend before stopping. Infinity walks the whole tree. */
   maxDepth?: number;
+  /**
+   * The most entries to return for any one directory. Defaults to Infinity — the file panel renders
+   * whatever is there, as it always has, and a ceiling it did not ask for would silently shorten a
+   * tree the user is looking at.
+   *
+   * A client that navigates passes one, because breadth is the half of a listing `maxDepth` does not
+   * bound: one level of a directory holding a million files is a bounded depth and an unbounded
+   * answer. See readListingEntries for why the ceiling stops the scan and not just the output.
+   */
+  maxEntries?: number;
   /**
    * The wire path of `rootDir` itself, for a walk that starts somewhere below the workspace root.
    * Every node's `path` is built from it, so listing one subdirectory names its entries exactly as
@@ -70,23 +90,39 @@ export interface BuildTreeOptions {
   countFiles?: boolean;
 }
 
-export async function buildTree(rootDir: string, options: BuildTreeOptions = {}): Promise<TreeNode[]> {
+/** A finished tree, and whether any directory in it was cut short by the entry ceiling. */
+export interface BuiltTree {
+  nodes: TreeNode[];
+  /**
+   * Some directory in this tree hit `maxEntries`. Aggregated up the walk rather than left only on the
+   * node it happened to, because the directory that was cut may be the root — which has no node to
+   * carry a flag — and because a caller that must not present a prefix as the whole answer should not
+   * have to search the tree to find out that it is one. The node still carries its own flag, so the
+   * caller can find where.
+   */
+  truncated: boolean;
+}
+
+export async function buildTree(rootDir: string, options: BuildTreeOptions = {}): Promise<BuiltTree> {
   const maxDepth = options.maxDepth ?? FILE_PANEL_MAX_DEPTH;
   const walked = await walk(
     rootDir,
     options.basePath ?? "",
     0,
     maxDepth,
+    options.maxEntries ?? Infinity,
     openFileLimiter(),
     options.countFiles === true,
   );
-  return walked.nodes;
+  return { nodes: walked.nodes, truncated: walked.truncated };
 }
 
 /** The nodes of one directory, and — when counting — every file underneath it, however deep. */
 interface WalkResult {
   nodes: TreeNode[];
   files: number;
+  /** This directory or anything below it stopped at the ceiling. */
+  truncated: boolean;
 }
 
 /**
@@ -103,30 +139,31 @@ async function walk(
   relPath: string,
   depth: number,
   maxDepth: number,
+  maxEntries: number,
   sem: Semaphore,
   countFiles: boolean,
 ): Promise<WalkResult> {
   // Past the caller's depth, the tree stops but the count must not: this is exactly the directory whose
   // size a caller cannot see, since it is being handed an empty branch.
   if (depth >= maxDepth) {
-    return { nodes: [], files: countFiles ? await countFilesUnder(dirPath, sem) : 0 };
+    return { nodes: [], files: countFiles ? await countFilesUnder(dirPath, sem) : 0, truncated: false };
   }
-  let entries;
+  let read;
   try {
-    entries = await readTransferEntries(dirPath, sem);
+    read = await readListingEntries(dirPath, sem, maxEntries);
   } catch (err) {
     // An unreadable directory renders as an empty branch rather than failing the panel: the tree is
     // navigation, and one bad directory should not blank the whole file list.
     createLogger("api").warn({ err, dirPath }, "failed to read directory in file tree");
-    return { nodes: [], files: 0 };
+    return { nodes: [], files: 0, truncated: false };
   }
 
   const entryResults = await Promise.all(
-    entries.map(async (e): Promise<{ node: TreeNode; files: number }> => {
+    read.entries.map(async (e): Promise<{ node: TreeNode; files: number; truncated: boolean }> => {
       const hostPath = path.join(dirPath, e.name);
       const entryRelPath = relPath === "" ? e.name : `${relPath}/${e.name}`;
       if (e.isDirectory()) {
-        const below = await walk(hostPath, entryRelPath, depth + 1, maxDepth, sem, countFiles);
+        const below = await walk(hostPath, entryRelPath, depth + 1, maxDepth, maxEntries, sem, countFiles);
         return {
           node: {
             name: e.name,
@@ -134,11 +171,13 @@ async function walk(
             path: entryRelPath,
             children: below.nodes,
             ...(countFiles ? { files: below.files } : {}),
+            ...(below.truncated ? { truncated: true } : {}),
           },
           files: below.files,
+          truncated: below.truncated,
         };
       }
-      return { node: { name: e.name, type: "file", path: entryRelPath }, files: 1 };
+      return { node: { name: e.name, type: "file", path: entryRelPath }, files: 1, truncated: false };
     }),
   );
 
@@ -146,6 +185,7 @@ async function walk(
     // Promise.all preserves input order regardless of resolution order, so entries keep readdir's order.
     nodes: entryResults.map((r) => r.node),
     files: entryResults.reduce((sum, r) => sum + r.files, 0),
+    truncated: read.truncated || entryResults.some((r) => r.truncated),
   };
 }
 

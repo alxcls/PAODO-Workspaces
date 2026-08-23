@@ -17,6 +17,7 @@ import { appErrorResponse, errorResponse, readJsonObject } from "@/lib/api/error
 import { AppError } from "@/lib/errors/appError";
 import type { FileBackend } from "@/lib/files/backend";
 import {
+  type ClassifiedFile,
   readFileEntry,
   removeEntry,
   requireLineRange,
@@ -28,6 +29,22 @@ import { requireEntryPath } from "@/lib/operations/files/paths";
 /** The opaque answer for a failure the operations layer had no public code for, so it is ours to fix. */
 function internalFailure(request: Request): NextResponse {
   return errorResponse("INTERNAL_ERROR", "The file operation failed", { request });
+}
+
+/**
+ * What ?raw=1 says a body is. The classifier has already decided, so the header only has to relay it —
+ * and text gets its own media type rather than being lumped in with binary under octet-stream.
+ *
+ * That distinction is the whole answer for a client that streams this route to a terminal: the JSON
+ * shape below names the type, but a raw reader has nothing but the headers, and "some bytes" gives it
+ * no way to refuse a PNG before it has already written one. `paodo file cat` is exactly that reader.
+ *
+ * Always text/plain, never a type guessed from the extension: this content is written by an agent, and
+ * serving it back as text/html would make the file panel's own origin the one that renders it.
+ */
+function rawMediaType(file: ClassifiedFile): string {
+  if (file.type === "image") return file.mimeType;
+  return file.type === "text" ? "text/plain; charset=utf-8" : "application/octet-stream";
 }
 
 export async function getFileContent(request: Request, be: FileBackend): Promise<Response> {
@@ -51,14 +68,13 @@ export async function getFileContent(request: Request, be: FileBackend): Promise
     }
     const windowed = file.type === "text" && range ? sliceLines(file.content, range) : undefined;
 
-    // ?raw=1 — serve the bytes themselves, for <img src> and download links.
+    // ?raw=1 — serve the bytes themselves, for <img src>, download links and `paodo file cat`.
     if (searchParams.get("raw") === "1") {
-      const mime = file.type === "image" ? file.mimeType : "application/octet-stream";
       const isDownload = searchParams.get("download") === "1";
       const bytes = windowed === undefined ? file.bytes : Buffer.from(windowed, "utf-8");
       return new Response(new Uint8Array(bytes), {
         headers: {
-          "Content-Type": mime,
+          "Content-Type": rawMediaType(file),
           ...(isDownload ? { "Content-Disposition": `attachment; filename="${path.basename(relPath)}"` } : {}),
         },
       });

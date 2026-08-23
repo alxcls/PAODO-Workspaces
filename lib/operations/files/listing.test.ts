@@ -6,7 +6,11 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { AppError } from "@/lib/errors/appError";
-import { listEntries } from "./listing";
+import { listEntries as listing } from "./listing";
+
+// Every assertion below is about the tree itself, so they read it directly; the `truncated` flag beside
+// it has its own block at the bottom.
+const listEntries = async (...args: Parameters<typeof listing>) => (await listing(...args)).tree;
 
 const ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "file-listing-operation-test-"));
 const WS = path.join(ROOT, "ws");
@@ -221,6 +225,75 @@ describe("listEntries", () => {
       expect(await listEntries(WS, "linked", { maxDepth: Infinity })).toEqual([
         { name: "util.ts", type: "file", path: "linked/util.ts" },
       ]);
+    });
+  });
+  // Breadth, the half of a listing maxDepth does not bound. The ceiling has to stop the scan rather
+  // than trim its result, and it has to be visible: a prefix presented as a whole directory is the one
+  // answer a caller cannot tell from a complete one.
+  describe("the entry ceiling", () => {
+    const wide = (count: number) => {
+      fs.mkdirSync(abs("wide"), { recursive: true });
+      for (let i = 0; i < count; i++) fs.writeFileSync(abs(`wide/f${String(i).padStart(4, "0")}.txt`), "x\n");
+    };
+
+    it("returns everything and reports nothing when no ceiling is asked for", async () => {
+      wide(50);
+      const { tree, truncated } = await listing(WS, "wide");
+      expect(tree).toHaveLength(50);
+      expect(truncated).toBe(false);
+    });
+
+    it("returns everything and reports nothing when the directory fits under the ceiling", async () => {
+      wide(9);
+      const { tree, truncated } = await listing(WS, "wide", { maxEntries: 10 });
+      expect(tree).toHaveLength(9);
+      expect(truncated).toBe(false);
+    });
+
+    // The boundary both ways: exactly at the ceiling is whole, one past it is cut.
+    it("is not truncated at exactly the ceiling, and is one entry past it", async () => {
+      wide(10);
+      expect(await listing(WS, "wide", { maxEntries: 10 })).toMatchObject({ truncated: false });
+      expect(await listing(WS, "wide", { maxEntries: 9 })).toMatchObject({ truncated: true });
+    });
+
+    it("caps the entries and says so", async () => {
+      wide(50);
+      const { tree, truncated } = await listing(WS, "wide", { maxEntries: 10 });
+      expect(tree).toHaveLength(10);
+      expect(truncated).toBe(true);
+    });
+
+    // The flag has to survive the trip up the walk: the directory that was cut is not the one the
+    // caller named, and at the root there is no node to carry a flag at all.
+    it("reports a cut in a subdirectory, and marks the directory it happened in", async () => {
+      wide(50);
+      const { tree, truncated } = await listing(WS, null, { maxDepth: Infinity, maxEntries: 10 });
+      expect(truncated).toBe(true);
+      expect(tree.find((node) => node.path === "wide")).toMatchObject({ truncated: true });
+      // The directories that were whole say nothing, so the flag marks where the cut is.
+      expect(tree.find((node) => node.path === "src")).not.toHaveProperty("truncated");
+    });
+
+    // Measuring runs after the cut, so it costs a read per entry the caller is shown rather than per
+    // entry the directory holds — the difference between 10 reads and 50 here.
+    it("measures only the entries that survived the cut", async () => {
+      wide(50);
+      const { tree } = await listing(WS, "wide", { maxEntries: 10, measure: true });
+      expect(tree).toHaveLength(10);
+      for (const node of tree) expect(node).toHaveProperty("lines", 1);
+    });
+
+    // The count answers "how much is really in here", which is exactly what the truncated listing
+    // cannot show — so it must not itself be capped.
+    it("counts the whole directory even though the listing of it was cut", async () => {
+      wide(50);
+      const { tree } = await listing(WS, null, { maxDepth: 1, maxEntries: 10, countFiles: true });
+      expect(tree.find((node) => node.path === "wide")).toMatchObject({ files: 50 });
+    });
+
+    it("never truncates a path that names a single file", async () => {
+      expect(await listing(WS, "AGENTS.md", { maxEntries: 1 })).toMatchObject({ truncated: false });
     });
   });
 });

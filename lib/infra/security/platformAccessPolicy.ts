@@ -58,15 +58,22 @@ const RULES: ReadonlyArray<{
   workspaceRule("DELETE", "files/content"),
   workspaceRule("GET", "files/transfer"),
   workspaceRule("PUT", "files/transfer"),
-  // Drive metadata. The drive's own files are absent: the listing route cannot yet be scoped to a
-  // path, and there is no transfer route to push or pull one, so no CLI command reaches them.
-  // /api/drive-connections is absent too — connecting a drive is a capability of its own, and this
+  // Drive metadata, then a drive's files — the same five methods a workspace's files get above, and
+  // for the same commands. Neither collection gets the browser's upload/download transports or the
+  // editor's save and move: a drive is reachable by every workspace connected to it, so widening its
+  // file surface past what the CLI actually calls widens it for all of them at once.
+  // /api/drive-connections is still absent — connecting a drive is a capability of its own, and this
   // policy is the place that has to name it deliberately rather than inherit it from the group.
   { method: "GET", pathname: /^\/api\/drives$/ },
   { method: "POST", pathname: /^\/api\/drives$/ },
   driveRule("GET"),
   driveRule("PATCH"),
   driveRule("DELETE"),
+  driveRule("GET", "files"),
+  driveRule("GET", "files/content"),
+  driveRule("DELETE", "files/content"),
+  driveRule("GET", "files/transfer"),
+  driveRule("PUT", "files/transfer"),
 ];
 
 export function isPlatformRouteAllowed(method: string, pathname: string): boolean {

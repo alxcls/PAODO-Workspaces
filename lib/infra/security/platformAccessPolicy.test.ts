@@ -77,16 +77,31 @@ describe("platform access policy", () => {
     expect(isPlatformRouteAllowed("DELETE", "/api/drives/drive-1")).toBe(true);
   });
 
-  // A drive's files have no CLI command behind them yet: the listing route cannot be scoped to a
-  // path, and there is no transfer route to push or pull one. Asserted per method so the next slice
-  // has to widen this deliberately rather than inherit the access from the drive rules above.
-  it("does not grant a drive's files or its connections", () => {
+  // The same five a workspace gets, because `paodo drive file` is the same five commands.
+  it("grants a drive's files exactly what it grants a workspace's", () => {
+    for (const suffix of ["files", "files/content", "files/transfer"]) {
+      for (const method of ["GET", "POST", "PUT", "PATCH", "DELETE"]) {
+        expect(isPlatformRouteAllowed(method, `/api/drives/drive-1/${suffix}`)).toBe(
+          isPlatformRouteAllowed(method, `/api/workspaces/ws-1/${suffix}`),
+        );
+      }
+    }
+    expect(isPlatformRouteAllowed("GET", "/api/drives/drive-1/files")).toBe(true);
+    expect(isPlatformRouteAllowed("GET", "/api/drives/drive-1/files/content")).toBe(true);
+    expect(isPlatformRouteAllowed("DELETE", "/api/drives/drive-1/files/content")).toBe(true);
+    expect(isPlatformRouteAllowed("GET", "/api/drives/drive-1/files/transfer")).toBe(true);
+    expect(isPlatformRouteAllowed("PUT", "/api/drives/drive-1/files/transfer")).toBe(true);
+  });
+
+  // A drive is reachable by every workspace connected to it, so anything wider than the five commands
+  // lands in more than one agent's view at once. Asserted per method so widening has to be deliberate.
+  it("does not grant the browser's drive transports, the editor's writes, or drive connections", () => {
     for (const method of ["GET", "POST", "PUT", "PATCH", "DELETE"]) {
-      expect(isPlatformRouteAllowed(method, "/api/drives/drive-1/files")).toBe(false);
-      expect(isPlatformRouteAllowed(method, "/api/drives/drive-1/files/content")).toBe(false);
       expect(isPlatformRouteAllowed(method, "/api/drives/drive-1/files/upload")).toBe(false);
       expect(isPlatformRouteAllowed(method, "/api/drives/drive-1/files/download")).toBe(false);
       expect(isPlatformRouteAllowed(method, "/api/drive-connections")).toBe(false);
     }
+    expect(isPlatformRouteAllowed("PUT", "/api/drives/drive-1/files/content")).toBe(false);
+    expect(isPlatformRouteAllowed("PATCH", "/api/drives/drive-1/files/content")).toBe(false);
   });
 });

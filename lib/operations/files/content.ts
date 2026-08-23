@@ -290,7 +290,7 @@ export async function removeEntry(
   // Checked up front so an unwritable parent is reported as such, rather than as whichever errno the
   // unlink below happens to raise once part of a recursive removal has already succeeded.
   const parent = path.posix.dirname(relPath);
-  await fileSystemCall(parent === "." ? "The workspace root" : parent, () =>
+  await fileSystemCall(parent === "." ? "The root" : parent, () =>
     fs.access(path.dirname(hostPath), fs.constants.W_OK),
   );
 

@@ -69,7 +69,11 @@ const PATHS = [
   "/api/drives",
   `/api/drives/${ID}`,
   `/api/drives/${ID}/files`,
+  `/api/drives/${ID}/files/content`,
+  `/api/drives/${ID}/files/transfer`,
+  // A drive's browser transports, probed to prove they stay UI-only on this collection too.
   `/api/drives/${ID}/files/upload`,
+  `/api/drives/${ID}/files/download`,
   "/api/drive-connections",
   "/api/workspace-graph",
   "/api/settings/cli-access",
@@ -133,12 +137,16 @@ describe("public gateway allowlist", () => {
     );
     expect(forwarded.sort()).toEqual([
       `DELETE /api/drives/${ID}`,
+      `DELETE /api/drives/${ID}/files/content`,
       `DELETE /api/workspaces/${ID}`,
       `DELETE /api/workspaces/${ID}/api-key`,
       `DELETE /api/workspaces/${ID}/files/content`,
       `DELETE /api/workspaces/${ID}/mcp-config`,
       "GET /api/drives",
       `GET /api/drives/${ID}`,
+      `GET /api/drives/${ID}/files`,
+      `GET /api/drives/${ID}/files/content`,
+      `GET /api/drives/${ID}/files/transfer`,
       "GET /api/models",
       "GET /api/status",
       "GET /api/workspaces",
@@ -152,6 +160,7 @@ describe("public gateway allowlist", () => {
       "POST /api/workspaces",
       `POST /api/workspaces/${ID}/api-key`,
       `POST /api/workspaces/${ID}/mcp-config`,
+      `PUT /api/drives/${ID}/files/transfer`,
       `PUT /api/workspaces/${ID}/files/transfer`,
     ]);
   });

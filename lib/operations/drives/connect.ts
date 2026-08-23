@@ -12,6 +12,7 @@
 import { AppError, requireNonEmptyString } from "@/lib/errors/appError";
 import { connectDrive, disconnectDrive, getDrive, type DriveConnection } from "@/lib/drives/store";
 import { getStore } from "@/lib/infra/services";
+import { connectionKind } from "@/lib/connections/ids";
 
 export interface ConnectDriveInput {
   driveId?: unknown;
@@ -89,5 +90,13 @@ export function disconnectDriveFromWorkspace(
   deps: DriveConnectionDeps = defaultDeps(),
 ): DisconnectDriveResult {
   const connectionId = requireNonEmptyString(input.connectionId, "connectionId");
+  // An id from the other graph, or from neither, is refused by name rather than reported as a link
+  // that is already gone. The `deleted: false` above answers "this is not connected any more", which
+  // is true of every string ever sent — and so tells a caller holding the wrong id nothing at all.
+  if (connectionKind(connectionId) !== "link") {
+    throw new AppError("INVALID_REQUEST", "connectionId must be a drive link id, which starts with link_", {
+      field: "connectionId",
+    });
+  }
   return { deleted: deps.disconnect(connectionId) };
 }

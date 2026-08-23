@@ -34,6 +34,10 @@ const edge = (id: string, source: string, target: string): GraphEdge => ({ id, s
 const cell = (col: number, row: number) => ({ col, row });
 const readFile = (): StoredGraph => JSON.parse(fs.readFileSync(GRAPH_FILE, "utf-8"));
 
+/** What a saved edge is, minus the id the store replaced: an id a test chose is not one it can then
+ *  assert on, because minting them is the store's job and is asserted on its own below. */
+const pairs = (edges: GraphEdge[]) => edges.map(({ source, target }) => `${source}->${target}`);
+
 /**
  * The refusal a save raises, asserted by `code` rather than by `instanceof AppError`: every test
  * re-imports the store through a reset module registry, which hands it a second copy of the error
@@ -93,7 +97,7 @@ describe("saveGraph", () => {
   it("keeps a graph that only flows downward", () => {
     const edges = [edge("e1", "a", "b"), edge("e2", "b", "c")];
     graph.saveGraph(edges, { a: cell(0, 0) });
-    expect(graph.getGraph().edges).toEqual(edges);
+    expect(pairs(graph.getGraph().edges)).toEqual(["a->b", "b->c"]);
   });
 
   it("keeps a diamond, where two paths rejoin without flowing back up", () => {
@@ -120,8 +124,33 @@ describe("saveGraph", () => {
     const kept = [edge("e1", "a", "b")];
     graph.saveGraph(kept, { a: cell(1, 1) });
     refusal(() => graph.saveGraph([...kept, edge("e2", "b", "a")], {}));
-    expect(graph.getGraph().edges).toEqual(kept);
-    expect(readFile().edges).toEqual(kept);
+    expect(pairs(graph.getGraph().edges)).toEqual(["a->b"]);
+    expect(pairs(readFile().edges)).toEqual(["a->b"]);
+  });
+
+  it("gives every edge an id of its own, whatever the caller called it", () => {
+    const stored = graph.saveGraph([edge("dup", "a", "b"), edge("dup", "b", "c")], {});
+
+    expect(stored.edges.map((saved) => saved.id)).toEqual([
+      expect.stringMatching(/^call_/),
+      expect.stringMatching(/^call_/),
+    ]);
+    expect(new Set(stored.edges.map((saved) => saved.id)).size).toBe(2);
+  });
+
+  it("answers in the order it was sent, which is what lets a caller adopt the ids", () => {
+    const stored = graph.saveGraph([edge("e1", "a", "b"), edge("e2", "b", "c")], {});
+
+    expect(pairs(stored.edges)).toEqual(["a->b", "b->c"]);
+    expect(stored.edges).toEqual(graph.getGraph().edges);
+  });
+
+  // Otherwise every save renames every edge, and an id no caller can hold for two saves is not one.
+  it("leaves an id it minted alone when the same edge is saved again", () => {
+    const first = graph.saveGraph([edge("e1", "a", "b")], {});
+    const again = graph.saveGraph(first.edges, {});
+
+    expect(again.edges).toEqual(first.edges);
   });
 
   it("persists, so a later reader sees edges it did not write", async () => {
@@ -168,7 +197,7 @@ describe("removeWorkspaceFromGraph", () => {
   it("drops the deleted workspace's edges in both directions and leaves its neighbours linked", () => {
     graph.saveGraph([edge("e1", "a", "b"), edge("e2", "b", "c"), edge("e3", "a", "c")], {});
     graph.removeWorkspaceFromGraph("b");
-    expect(graph.getGraph().edges).toEqual([edge("e3", "a", "c")]);
+    expect(pairs(graph.getGraph().edges)).toEqual(["a->c"]);
     expect(graph.canCall("a", "c")).toBe(true);
   });
 
@@ -220,11 +249,6 @@ describe("rules the store does not enforce on its own", () => {
     graph.saveGraph([edge("e1", "a", "b"), edge("e2", "a", "b")], {});
     expect(graph.getGraph().edges).toHaveLength(2);
     expect(graph.getCallees("a")).toEqual(["b", "b"]);
-  });
-
-  it("accepts two edges sharing one id", () => {
-    graph.saveGraph([edge("dup", "a", "b"), edge("dup", "b", "c")], {});
-    expect(graph.getGraph().edges).toHaveLength(2);
   });
 
   it("accepts an edge naming a workspace that does not exist, having no registry to ask", () => {

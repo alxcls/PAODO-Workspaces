@@ -6,6 +6,7 @@ import { atomicSaveJson, readJson } from "../infra/jsonPersist";
 import { globalSingleton } from "../infra/globalSingleton";
 import { createLogger } from "../infra/logger";
 import { AppError } from "../errors/appError";
+import { connectionKind, mintConnectionId } from "../connections/ids";
 
 const log = createLogger("workspaceGraph");
 
@@ -26,7 +27,7 @@ export interface CellPosition {
  *  save rewrites the file in cells, so this union narrows on its own over time. */
 export type NodePosition = CellPosition | { x: number; y: number };
 
-interface GraphFile {
+export interface GraphFile {
   edges: GraphEdge[];
   positions: Record<string, NodePosition>;
 }
@@ -63,14 +64,30 @@ function hasCycle(edges: GraphEdge[]): boolean {
   return false;
 }
 
-export function saveGraph(edges: GraphEdge[], positions: Record<string, NodePosition>): void {
+/**
+ * Ids are this store's to give. An edge arrives from the canvas carrying React Flow's own id, which
+ * is a rendering artifact — it spells out both endpoints and the handles they were dragged between,
+ * so the same pair joined from another side of the node is a different string for the same edge.
+ * Minting here makes an id identity instead, and makes it unique: two edges cannot share one, and no
+ * caller can choose one that collides.
+ */
+function minted(edges: GraphEdge[]): GraphEdge[] {
+  return edges.map((edge) =>
+    connectionKind(edge.id) === "call" ? edge : { ...edge, id: mintConnectionId("call") },
+  );
+}
+
+/** Answers with the graph as stored — the edges in the order they were sent, under the ids they were
+ *  given — so the caller that drew them can adopt those ids rather than resend its own next time. */
+export function saveGraph(edges: GraphEdge[], positions: Record<string, NodePosition>): GraphFile {
   // Not logged: the graph editor lets a user draw a cycle, and rejecting it is the feature working.
   // The route turns this into a 400 the user sees and acts on — nothing for an operator to do.
   if (hasCycle(edges)) {
     throw new AppError("INVALID_REQUEST", "Graph contains a cycle — only DAGs are allowed.");
   }
-  state.graph = { edges, positions };
+  state.graph = { edges: minted(edges), positions };
   atomicSaveJson(GRAPH_FILE, state.graph);
+  return state.graph;
 }
 
 export function canCall(fromId: string, toId: string): boolean {

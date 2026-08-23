@@ -18,6 +18,7 @@ import { WORKSPACES_ROOT } from "../infra/paths";
 import { atomicSaveJson } from "../infra/jsonPersist";
 import { createLogger } from "../infra/logger";
 import { DriveNameError, normalizeForUniqueness, validateDriveName } from "./name";
+import { mintConnectionId } from "../connections/ids";
 
 const log = createLogger("driveStore");
 
@@ -198,7 +199,7 @@ export function connectDrive(
     return existing;
   }
   const connection: DriveConnection = {
-    id: crypto.randomUUID(),
+    id: mintConnectionId("link"),
     driveId,
     workspaceId,
     sourceHandle: handles?.sourceHandle,

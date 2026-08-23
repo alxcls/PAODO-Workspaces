@@ -26,7 +26,9 @@ export async function PUT(req: Request) {
   };
   const edges = body.edges ?? [];
   try {
-    saveGraph(edges, body.positions ?? {});
+    // Answered with the graph as stored, not just `ok`: the store mints each edge's id, so a caller
+    // that kept its own would resend it and be given another one on every save.
+    return NextResponse.json({ ok: true, ...saveGraph(edges, body.positions ?? {}) });
   } catch (err) {
     const expected = appErrorResponse(err, req);
     if (expected) return expected;
@@ -41,5 +43,4 @@ export async function PUT(req: Request) {
     );
     return errorResponse("INTERNAL_ERROR", "failed to save workspace graph", { request: req });
   }
-  return NextResponse.json({ ok: true });
 }

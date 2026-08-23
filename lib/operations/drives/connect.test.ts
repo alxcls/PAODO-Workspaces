@@ -2,8 +2,10 @@ import { describe, expect, it, vi } from "vitest";
 import { connectDriveToWorkspace, disconnectDriveFromWorkspace, type DriveConnectionDeps } from "./connect";
 import type { DriveConnection } from "@/lib/drives/store";
 
+const LINK_ID = "link_3f7a1c62-0000-4000-8000-000000000000";
+
 const connection: DriveConnection = {
-  id: "conn-1",
+  id: LINK_ID,
   driveId: "drive-1",
   workspaceId: "ws-1",
 };
@@ -80,11 +82,11 @@ describe("connecting a drive to a workspace", () => {
 
 describe("disconnecting a drive", () => {
   it("reports the removal", () => {
-    expect(disconnectDriveFromWorkspace({ connectionId: "conn-1" }, deps())).toEqual({ deleted: true });
+    expect(disconnectDriveFromWorkspace({ connectionId: LINK_ID }, deps())).toEqual({ deleted: true });
   });
 
   it("reports an unknown connection as already gone rather than raising", () => {
-    expect(disconnectDriveFromWorkspace({ connectionId: "conn-9" }, deps({ disconnect: () => false }))).toEqual({
+    expect(disconnectDriveFromWorkspace({ connectionId: LINK_ID }, deps({ disconnect: () => false }))).toEqual({
       deleted: false,
     });
   });
@@ -93,5 +95,19 @@ describe("disconnecting a drive", () => {
     expect(() => disconnectDriveFromWorkspace({}, deps())).toThrowError(
       expect.objectContaining({ code: "INVALID_REQUEST", details: { field: "connectionId" } }),
     );
+  });
+
+  // `deleted: false` is true of every string ever sent, so it cannot be the answer to an id that
+  // belongs to the other graph or to no graph — the caller would read "already gone" and stop looking.
+  it.each([
+    ["an agent call id", "call_9b2f0f4e-0000-4000-8000-000000000000"],
+    ["a workspace id", "b6b8b4f1-0000-4000-8000-000000000000"],
+  ])("refuses %s instead of reporting it already gone", (_label, connectionId) => {
+    const disconnect = vi.fn(() => false);
+
+    expect(() => disconnectDriveFromWorkspace({ connectionId }, deps({ disconnect }))).toThrowError(
+      expect.objectContaining({ code: "INVALID_REQUEST", details: { field: "connectionId" } }),
+    );
+    expect(disconnect).not.toHaveBeenCalled();
   });
 });

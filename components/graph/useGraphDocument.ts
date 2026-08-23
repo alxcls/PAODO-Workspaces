@@ -115,14 +115,23 @@ export function useGraphDocument({ onGraphDisabled, showError }: GraphDocumentOp
     const workspaceEdges = edgesRef.current
       .filter((edge) => !isDriveEdge(edge))
       .map((edge) => ({ id: edge.id, source: edge.source, target: edge.target }));
-    await api.saveGraph(workspaceEdges, storedPositions(nodesRef.current));
-    const renamed = await syncDrives({
+    const stored = await api.saveGraph(workspaceEdges, storedPositions(nodesRef.current));
+    // Both halves of the save mint their own ids, so a newly drawn edge comes back under one the
+    // canvas has not seen. Workspace edges answer in the order they were sent; drive links answer one
+    // at a time. Either way the canvas adopts what it is given, or it resends a dead id next save.
+    const renamed = new Map<string, string>();
+    workspaceEdges.forEach((sent, index) => {
+      const id = stored[index]?.id;
+      if (id && id !== sent.id) renamed.set(sent.id, id);
+    });
+    const links = await syncDrives({
       edges: edgesRef.current,
       saved: savedDriveConnectionsRef.current,
       pendingDeletes: pendingDriveDeletes,
       onDriveDeleted: (driveId) =>
         setPendingDriveDeletes((current) => current.filter((candidate) => candidate.id !== driveId)),
     });
+    for (const [from, to] of links) renamed.set(from, to);
     if (renamed.size) {
       setEdges((current) =>
         current.map((edge) => (renamed.has(edge.id) ? { ...edge, id: renamed.get(edge.id)! } : edge)),

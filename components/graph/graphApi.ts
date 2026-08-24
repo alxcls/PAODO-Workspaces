@@ -41,15 +41,6 @@ export interface GraphDocumentPayload {
   connections: DriveConnectionItem[];
 }
 
-/** The graph API is behind the GRAPH_ENABLED flag; with it off the editor has nothing to edit and
- *  the caller redirects away rather than showing an error. */
-export class GraphDisabledError extends Error {
-  constructor() {
-    super("graph-disabled");
-    this.name = "GraphDisabledError";
-  }
-}
-
 const FAIL_LINKS = "Failed to save drive links";
 const JSON_HEADERS = { "Content-Type": "application/json" };
 
@@ -73,8 +64,8 @@ const optional = <T>(url: string, empty: T): Promise<T> =>
 export function fetchGraphDocument(): Promise<GraphDocumentPayload> {
   return Promise.all([
     fetch("/api/workspaces").then((response) => response.json() as Promise<WorkspaceItem[]>),
-    fetch("/api/workspace-graph").then((response) => {
-      if (!response.ok) throw new GraphDisabledError();
+    fetch("/api/workspace-graph").then(async (response) => {
+      if (!response.ok) throw new Error((await readApiError(response, "Failed to load the graph")).error);
       return response.json() as Promise<StoredGraph>;
     }),
     optional<DriveItem[]>("/api/drives", []),
@@ -82,9 +73,13 @@ export function fetchGraphDocument(): Promise<GraphDocumentPayload> {
   ]).then(([workspaces, graph, drives, connections]) => ({ workspaces, graph, drives, connections }));
 }
 
-export async function saveGraph(edges: GraphEdge[], positions: Record<string, CellPosition>): Promise<void> {
+/** Answers with the edges as stored, in the order they were sent: the app mints each id, so these are
+ *  what the canvas must adopt for a newly drawn edge. */
+export async function saveGraph(edges: GraphEdge[], positions: Record<string, CellPosition>): Promise<GraphEdge[]> {
   const response = await fetch("/api/workspace-graph", jsonBody("PUT", { edges, positions }));
   if (!response.ok) throw new Error((await readApiError(response, `Save failed (${response.status})`)).error);
+  const stored = (await response.json()) as { edges?: GraphEdge[] };
+  return stored.edges ?? [];
 }
 
 export async function createDrive(name: string, description?: string): Promise<DriveItem> {

@@ -46,7 +46,7 @@ describe("drives files/content PATCH — move", () => {
     fs.writeFileSync(path.join(DRIVE_DIR, "report.csv"), "a,b");
 
     // Drive-relative, exactly as the tree serves it — the drive's host dir never crosses the wire.
-    const sourcePath = (await buildTree(DRIVE_DIR)).find((n) => n.name === "report.csv")!.path;
+    const sourcePath = (await buildTree(DRIVE_DIR)).nodes.find((n) => n.name === "report.csv")!.path;
     expect(sourcePath).toBe("report.csv");
 
     const res = await patchMove({ sourcePaths: [sourcePath], destinationDirectory: "sorted" });
@@ -64,7 +64,7 @@ describe("drives files/content PATCH — move", () => {
     const res = await patchMove({ sourcePaths: ["keep.txt"], destinationDirectory: ".." });
 
     expect(res.status).toBe(400);
-    expect((await res.json()).error).toMatch(/escapes the workspace/i);
+    expect((await res.json()).error).toMatch(/escapes the root/i);
     expect(fs.readFileSync(path.join(DRIVE_DIR, "keep.txt"), "utf8")).toBe("safe");
   });
 

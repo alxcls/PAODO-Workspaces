@@ -76,7 +76,7 @@ const putFile = (filePath: string, content: string) =>
   );
 
 /** The path the browser actually holds for a top-level entry: what buildTree serves. */
-const treePathOf = async (name: string) => (await buildTree(WS_DIR)).find((n) => n.name === name)!.path;
+const treePathOf = async (name: string) => (await buildTree(WS_DIR)).nodes.find((n) => n.name === name)!.path;
 
 afterAll(() => fs.rmSync(path.dirname(WS_DIR), { recursive: true, force: true }));
 
@@ -115,7 +115,7 @@ describe("files/content GET — workspace containment", () => {
   it("refuses a .. traversal", async () => {
     const res = await getFile("../secret.txt");
     expect(res.status).toBe(400);
-    expect((await res.json()).error).toMatch(/escapes the workspace/i);
+    expect((await res.json()).error).toMatch(/escapes the root/i);
   });
 
   // An agent that has been editing /workspace/src/main.ts through its own tools will reach for the
@@ -123,7 +123,7 @@ describe("files/content GET — workspace containment", () => {
   it("names the correct form when given the container's own mount path", async () => {
     const res = await getFile("/workspace/hello.txt");
     expect(res.status).toBe(400);
-    expect((await res.json()).error).toMatch(/relative to the workspace root.*use "hello\.txt"/i);
+    expect((await res.json()).error).toMatch(/relative to the root.*use "hello\.txt"/i);
   });
 
   it("reports a missing file as not found rather than as a bad request", async () => {
@@ -197,6 +197,80 @@ describe("files/content GET — a window of lines", () => {
     const res = await window("path=nope.txt&offset=abc");
     expect(res.status).toBe(400);
     expect(await res.json()).toMatchObject({ code: "INVALID_REQUEST", details: { field: "offset" } });
+  });
+});
+
+// ?raw=1 answers with bytes and nothing else, so its Content-Type is the only thing a streaming client
+// has to go on. `paodo file cat` reads it to refuse a file it must not write to a terminal, which it
+// can only do if text and binary are told apart — one octet-stream for both is what let a PNG through.
+describe("files/content GET — what ?raw=1 says the bytes are", () => {
+  const raw = (name: string) => GET(new Request(`http://x/api/files/content?path=${name}&raw=1`), ctx);
+  const mediaType = async (name: string) => (await raw(name)).headers.get("content-type");
+
+  it("names text as text, so a reader can tell it from bytes it cannot print", async () => {
+    fs.writeFileSync(abs("readable.txt"), "one\ntwo\n");
+    expect(await mediaType("readable.txt")).toBe("text/plain; charset=utf-8");
+  });
+
+  // Never a type guessed from the extension: this file was written by an agent, and text/html would
+  // make the app's own origin the thing that renders it.
+  it("names an agent-written .html as plain text rather than as markup", async () => {
+    fs.writeFileSync(abs("page.html"), "<script>alert(1)</script>");
+    expect(await mediaType("page.html")).toBe("text/plain; charset=utf-8");
+  });
+
+  it("keeps an image's own type, which is what the file panel renders it from", async () => {
+    const png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
+    fs.writeFileSync(abs("pixel.png"), Buffer.from(png, "base64"));
+    expect(await mediaType("pixel.png")).toBe("image/png");
+  });
+
+  it("leaves anything undecodable as octet-stream, and still serves the bytes", async () => {
+    fs.writeFileSync(abs("opaque.bin"), Buffer.from([0xff, 0xfe, 0x00, 0x01]));
+    const res = await raw("opaque.bin");
+    expect(res.headers.get("content-type")).toBe("application/octet-stream");
+    expect(Buffer.from(await res.arrayBuffer())).toEqual(Buffer.from([0xff, 0xfe, 0x00, 0x01]));
+  });
+
+  // An SVG handed back as image/svg+xml runs its own script on this origin the moment the URL is
+  // navigated to — with the visitor's session, against an API that trusts it.
+  it("refuses to name an SVG as an image, whichever spelling it arrives in", async () => {
+    fs.writeFileSync(abs("bare.svg"), '<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>');
+    fs.writeFileSync(abs("declared.svg"), '<?xml version="1.0"?>\n<svg xmlns="http://www.w3.org/2000/svg"></svg>');
+    expect(await mediaType("bare.svg")).toBe("text/plain; charset=utf-8");
+    expect(await mediaType("declared.svg")).not.toContain("svg");
+  });
+
+  it("tells the browser not to sniff its way past any of that", async () => {
+    fs.writeFileSync(abs("sniffable.txt"), "<html><script>alert(1)</script></html>");
+    expect((await raw("sniffable.txt")).headers.get("x-content-type-options")).toBe("nosniff");
+  });
+});
+
+// A filename reaches this header straight from a name an agent chose on disk, so it is escaped rather
+// than trusted. Node rejects a CRLF header value outright, which would be a 500 for a legitimate read.
+describe("files/content GET — ?download=1 names the file safely", () => {
+  const disposition = async (name: string) =>
+    (
+      await GET(new Request(`http://x/api/files/content?path=${encodeURIComponent(name)}&raw=1&download=1`), ctx)
+    ).headers.get("content-disposition");
+
+  it("neither ends the quoted name early nor injects a header", async () => {
+    const hostile = 'ev"il\r\nX-Injected: yes.txt';
+    fs.writeFileSync(abs(hostile), "x");
+    const header = await disposition(hostile);
+    expect(header).not.toContain("\r");
+    expect(header).not.toContain("\n");
+    expect(header).toBe(
+      `attachment; filename="ev_il__X-Injected: yes.txt"; filename*=UTF-8''${encodeURIComponent(hostile)}`,
+    );
+  });
+
+  it("keeps a non-ASCII name readable through filename*", async () => {
+    fs.writeFileSync(abs("rapport-café.txt"), "x");
+    const header = await disposition("rapport-café.txt");
+    expect(header).toContain('filename="rapport-caf_.txt"');
+    expect(header).toContain("filename*=UTF-8''rapport-caf%C3%A9.txt");
   });
 });
 
@@ -377,7 +451,7 @@ describe("files/content PATCH — move", () => {
     const res = await patchMove({ sourcePaths: ["stay-put.txt"], destinationDirectory: ".." });
 
     expect(res.status).toBe(400);
-    expect((await res.json()).error).toMatch(/escapes the workspace/i);
+    expect((await res.json()).error).toMatch(/escapes the root/i);
     expect(fs.readFileSync(abs("stay-put.txt"), "utf8")).toBe("safe");
   });
 
@@ -403,7 +477,7 @@ describe("files/content PATCH — move", () => {
     expect(res.status).toBe(200);
     const moved = (await res.json()).results[0].path;
     expect(moved).toBe("inbox/tracked.txt");
-    const inbox = (await buildTree(WS_DIR)).find((n) => n.name === "inbox")!;
+    const inbox = (await buildTree(WS_DIR)).nodes.find((n) => n.name === "inbox")!;
     expect(inbox.children!.map((c) => c.path)).toContain(moved);
   });
 
@@ -456,7 +530,7 @@ describe("files/content PATCH — move", () => {
     const res = await patchMove({ sourcePaths: ["."], destinationDirectory: null });
 
     expect(res.status).toBe(400);
-    expect((await res.json()).error).toMatch(/workspace root/i);
+    expect((await res.json()).error).toMatch(/names the root/i);
   });
 
   it("rejects a malformed body without throwing", async () => {
@@ -574,7 +648,7 @@ describe("files/content PATCH — move", () => {
     fs.mkdirSync(abs("mixed-dest"));
     fs.writeFileSync(abs("mixed-dest/settled.txt"), "already");
     fs.writeFileSync(abs("mixed-mover.txt"), "moves");
-    const settled = (await buildTree(WS_DIR))
+    const settled = (await buildTree(WS_DIR)).nodes
       .find((n) => n.name === "mixed-dest")!
       .children!.find((n) => n.name === "settled.txt")!.path;
 

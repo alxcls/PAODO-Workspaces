@@ -1,6 +1,6 @@
-// Listing one directory of a workspace: the caller's own path in, the file panel's nested tree out.
+// Listing one directory of a workspace or a drive: the caller's own path in, the nested tree out.
 //
-// The walk itself is lib/files/tree.ts, shared with the drive route. What lives here is the half a
+// The walk itself is lib/files/tree.ts. What lives here is the half a
 // route must not do for itself (./paths.ts): turning a caller-supplied path into a host path, and a
 // filesystem errno into the public error vocabulary. Without it, a listing scoped to a subdirectory
 // would have to either trust the string or answer an empty tree for a path that does not exist — and
@@ -32,7 +32,7 @@ export interface ListEntriesOptions {
    *
    * Off by default, and the file panel never asks for it: a line count can only be had by reading the
    * file, so measuring turns a listing of N names into N reads. It exists for the caller that reads
-   * files one window at a time — `paodo file cat --offset --limit` — which otherwise has to discover
+   * files one window at a time — `paodo <workspace|drive> file cat --offset --limit` — which otherwise has to discover
    * how long a file is by running off the end of it.
    */
   measure?: boolean;
@@ -46,15 +46,31 @@ export interface ListEntriesOptions {
    * knowing about before descending, and the tree alone cannot say so.
    */
   countFiles?: boolean;
+  /**
+   * The most entries any one directory may contribute. Absent means no ceiling, which is what the file
+   * panel wants and what every caller got before there was one.
+   *
+   * Breadth is the half of a listing `maxDepth` does not bound: one level of a directory holding a
+   * million files is a bounded depth and an unbounded answer, and on a drive that answer is built
+   * host-side with no container limit above it. A caller that navigates passes a ceiling and reads
+   * `truncated` to know it was reached.
+   */
+  maxEntries?: number;
+}
+
+/** A listing, and whether the ceiling cut any part of it short. */
+export interface Listing {
+  tree: TreeNode[];
+  truncated: boolean;
 }
 
 /**
- * The entries under `pathValue`, which names a directory inside the workspace — `null`, `undefined`,
+ * The entries under `pathValue`, which names a directory inside the space — `null`, `undefined`,
  * "" and "." all meaning the root, so a caller that wants everything passes nothing.
  *
  * Two things a caller depends on:
  *
- *   - Every node's `path` is named from the workspace root, not from the directory listed, so a path
+ *   - Every node's `path` is named from the root, not from the directory listed, so a path
  *     this returns can be handed straight back to the content, transfer and delete routes.
  *   - A path naming a file answers with that one file rather than failing, the way `ls` of a file
  *     does. The caller asked what is at that path, and "a file" and "nothing" are different answers.
@@ -64,18 +80,26 @@ export async function listEntries(
   rootDir: string,
   pathValue: unknown,
   options: ListEntriesOptions = {},
-): Promise<TreeNode[]> {
+): Promise<Listing> {
   const relPath = requireDirPath(pathValue);
   const hostPath = await resolveHostPath(rootDir, relPath);
-  // stat, not lstat: resolveHostPath has already refused a symlink that leaves the workspace, and a
+  // stat, not lstat: resolveHostPath has already refused a symlink that leaves the root, and a
   // contained one is followed here for the same reason a read follows it — the tree lists such a link
   // as an ordinary row, so listing through it is the same permission as reading through it.
-  const stat = await fileSystemCall(relPath || "The workspace root", () => fs.stat(hostPath));
-  const tree = stat.isDirectory()
-    ? await buildTree(hostPath, { maxDepth: options.maxDepth, basePath: relPath, countFiles: options.countFiles })
-    : [{ name: path.posix.basename(relPath), type: "file" as const, path: relPath }];
-  if (options.measure) await measure(rootDir, tree, openFileLimiter());
-  return tree;
+  const stat = await fileSystemCall(relPath || "The root", () => fs.stat(hostPath));
+  // A path naming a file is one entry, so there is nothing a ceiling could cut.
+  const { nodes, truncated } = stat.isDirectory()
+    ? await buildTree(hostPath, {
+        maxDepth: options.maxDepth,
+        maxEntries: options.maxEntries,
+        basePath: relPath,
+        countFiles: options.countFiles,
+      })
+    : { nodes: [{ name: path.posix.basename(relPath), type: "file" as const, path: relPath }], truncated: false };
+  // After the cut, so measuring costs a read per entry the caller will actually be shown rather than
+  // per entry the directory happens to hold.
+  if (options.measure) await measure(rootDir, nodes, openFileLimiter());
+  return { tree: nodes, truncated };
 }
 
 /**

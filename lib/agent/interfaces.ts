@@ -64,7 +64,6 @@ export interface SkillConfig {
 }
 
 export interface AgentConfig extends LLMProviderConfig, ExecConfig, SkillConfig {
-  graphEnabled: boolean;
   internetAccess: boolean;
 }
 

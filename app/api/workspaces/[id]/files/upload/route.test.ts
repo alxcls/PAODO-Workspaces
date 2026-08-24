@@ -69,7 +69,7 @@ describe("files/upload POST — path containment", () => {
     const res = await post(`?path=${encodeURIComponent("../escape.txt")}`, { body: "PWNED" });
 
     expect(res.status).toBe(400);
-    expect((await res.json()).error).toMatch(/escapes the workspace/i);
+    expect((await res.json()).error).toMatch(/escapes the root/i);
     expect(fs.existsSync(ESCAPE_TARGET)).toBe(false);
   });
 

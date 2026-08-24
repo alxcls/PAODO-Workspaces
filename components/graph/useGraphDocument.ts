@@ -5,7 +5,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useEdgesState, useNodesState, type Connection, type Edge, type Node } from "@xyflow/react";
 import * as api from "./graphApi";
-import { GraphDisabledError, type DriveConnectionItem } from "./graphApi";
+import { type DriveConnectionItem } from "./graphApi";
 import { buildEdges, buildNodes, driveNode, nextFreeCell, storedPositions } from "./buildGraph";
 import { applyConnection, resolveConnection } from "./connectionRules";
 import { syncDrives } from "./driveSync";
@@ -20,11 +20,10 @@ function isTyping(target: EventTarget | null) {
 }
 
 interface GraphDocumentOptions {
-  onGraphDisabled(): void;
   showError(message: string): void;
 }
 
-export function useGraphDocument({ onGraphDisabled, showError }: GraphDocumentOptions) {
+export function useGraphDocument({ showError }: GraphDocumentOptions) {
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [ready, setReady] = useState(false);
@@ -92,10 +91,10 @@ export function useGraphDocument({ onGraphDisabled, showError }: GraphDocumentOp
         setReady(true);
       })
       .catch((error: unknown) => {
-        if (error instanceof GraphDisabledError) onGraphDisabled();
-        else setReady(true);
+        showError(error instanceof Error ? error.message : "Failed to load the graph");
+        setReady(true);
       });
-  }, [onGraphDisabled, setEdges, setNodes]);
+  }, [setEdges, setNodes, showError]);
 
   const onConnect = useCallback(
     (connection: Connection) => {
@@ -115,14 +114,23 @@ export function useGraphDocument({ onGraphDisabled, showError }: GraphDocumentOp
     const workspaceEdges = edgesRef.current
       .filter((edge) => !isDriveEdge(edge))
       .map((edge) => ({ id: edge.id, source: edge.source, target: edge.target }));
-    await api.saveGraph(workspaceEdges, storedPositions(nodesRef.current));
-    const renamed = await syncDrives({
+    const stored = await api.saveGraph(workspaceEdges, storedPositions(nodesRef.current));
+    // Both halves of the save mint their own ids, so a newly drawn edge comes back under one the
+    // canvas has not seen. Workspace edges answer in the order they were sent; drive links answer one
+    // at a time. Either way the canvas adopts what it is given, or it resends a dead id next save.
+    const renamed = new Map<string, string>();
+    workspaceEdges.forEach((sent, index) => {
+      const id = stored[index]?.id;
+      if (id && id !== sent.id) renamed.set(sent.id, id);
+    });
+    const links = await syncDrives({
       edges: edgesRef.current,
       saved: savedDriveConnectionsRef.current,
       pendingDeletes: pendingDriveDeletes,
       onDriveDeleted: (driveId) =>
         setPendingDriveDeletes((current) => current.filter((candidate) => candidate.id !== driveId)),
     });
+    for (const [from, to] of links) renamed.set(from, to);
     if (renamed.size) {
       setEdges((current) =>
         current.map((edge) => (renamed.has(edge.id) ? { ...edge, id: renamed.get(edge.id)! } : edge)),

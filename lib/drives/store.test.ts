@@ -1,10 +1,12 @@
 // resolveDriveDir is the single resolver every drive_* tool funnels through. It must accept
 // EITHER a drive's id (the stable handle agents pass to each other) OR its name (case-insensitive),
 // and stay scoped to the drives the calling workspace is actually connected to.
-import { describe, it, expect, beforeEach, afterAll, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, afterAll, vi } from "vitest";
 import fs from "fs";
 import os from "os";
 import path from "path";
+// Type-only, so it is erased before vi.resetModules() and never pins a second copy of the store.
+import type { Drive } from "./store";
 
 const ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "drivestore-test-"));
 afterAll(() => fs.rmSync(ROOT, { recursive: true, force: true }));
@@ -23,6 +25,10 @@ let store: typeof import("./store");
 
 beforeEach(async () => {
   store = await freshStore();
+});
+
+afterEach(() => {
+  vi.doUnmock("fs/promises");
 });
 
 describe("resolveDriveDir", () => {
@@ -65,6 +71,122 @@ describe("formatDriveLine", () => {
   it("omits the em dash when there is no description", () => {
     const drive = store.createDrive("scratch");
     expect(store.formatDriveLine(drive)).toBe(`- scratch (id: ${drive.id})`);
+  });
+});
+
+// Uniqueness is enforced in the store rather than the operation because the store is what holds the
+// list to compare against — and because resolveDriveDir above, which resolves a drive_* tool's
+// `driveRef` by name case-insensitively, is the reason the rule exists at all.
+describe("drive name uniqueness", () => {
+  const conflict = expect.objectContaining({ name: "DriveNameError", code: "DRIVE_NAME_CONFLICT" });
+
+  it("refuses a second drive with an equivalent name", () => {
+    store.createDrive("Articles");
+    expect(() => store.createDrive("articles")).toThrowError(conflict);
+    expect(() => store.createDrive("  ARTICLES  ")).toThrowError(conflict);
+  });
+
+  it("leaves no content directory behind for a refused name", () => {
+    const first = store.createDrive("articles");
+    expect(() => store.createDrive("Articles")).toThrowError(conflict);
+    // The conflict is checked before mkdir, so the only drive directory is the one that took.
+    expect(fs.readdirSync(path.join(ROOT, ".drives"))).toEqual([first.id]);
+    expect(store.listDrives()).toHaveLength(1);
+  });
+
+  it("refuses renaming a drive onto another drive's name", () => {
+    store.createDrive("articles");
+    const scratch = store.createDrive("scratch");
+    expect(() => store.updateDrive(scratch.id, { name: "Articles" })).toThrowError(conflict);
+    expect(store.getDrive(scratch.id)?.name).toBe("scratch");
+  });
+
+  // Without the exceptId, re-sending a drive's current name (which is what a UI form submitting every
+  // field does) would collide with the drive itself.
+  it("allows a drive to be renamed to its own name", () => {
+    const drive = store.createDrive("Articles");
+    expect(store.updateDrive(drive.id, { name: "articles" })?.name).toBe("articles");
+  });
+
+  it("frees a name once the drive holding it is deleted", async () => {
+    const drive = store.createDrive("articles");
+    await store.deleteDrive(drive.id);
+    expect(store.createDrive("articles").name).toBe("articles");
+  });
+});
+
+describe("drive deletion", () => {
+  it("removes content and connections before removing the registry entry", async () => {
+    const drive = store.createDrive("articles");
+    const contentFile = path.join(store.driveContentDir(drive.id), "private.txt");
+    fs.writeFileSync(contentFile, "sensitive");
+    store.connectDrive(drive.id, "ws1");
+
+    await expect(store.deleteDrive(drive.id)).resolves.toBe(true);
+
+    expect(fs.existsSync(store.driveContentDir(drive.id))).toBe(false);
+    expect(store.listConnections()).toEqual([]);
+    expect(store.getDrive(drive.id)).toBeUndefined();
+  });
+
+  it("keeps the drive registered when content deletion fails, then permits a retry", async () => {
+    const actual = await vi.importActual<typeof import("fs/promises")>("fs/promises");
+    const failure = new Error("filesystem unavailable");
+    const removeContent = vi.fn(actual.rm).mockRejectedValueOnce(failure);
+    vi.doMock("fs/promises", () => ({ ...actual, rm: removeContent }));
+    store = await freshStore();
+
+    const drive = store.createDrive("articles");
+    store.connectDrive(drive.id, "ws1");
+
+    await expect(store.deleteDrive(drive.id)).rejects.toBe(failure);
+    expect(store.getDrive(drive.id)).toEqual(drive);
+    // The connections outlive a failed rm on purpose: they are the only record of what was linked
+    // here, so spending them before the step that can fail would lose it for good.
+    expect(store.listConnections()).toHaveLength(1);
+    expect(fs.existsSync(store.driveContentDir(drive.id))).toBe(true);
+
+    await expect(store.deleteDrive(drive.id)).resolves.toBe(true);
+    expect(store.getDrive(drive.id)).toBeUndefined();
+    expect(store.listConnections()).toEqual([]);
+    expect(fs.existsSync(store.driveContentDir(drive.id))).toBe(false);
+  });
+
+  it("keeps the drive registered when connection cleanup fails, then permits a retry", async () => {
+    const drive = store.createDrive("articles");
+    const connectionsFile = path.join(ROOT, ".drive-connections.json");
+    // A directory at the registry path makes the atomic rename fail deterministically.
+    fs.mkdirSync(connectionsFile);
+
+    await expect(store.deleteDrive(drive.id)).rejects.toThrow();
+    // Content is already gone by this point — it is removed first — and the registry entry is what
+    // makes that recoverable, because the same call run again finishes the steps that did not.
+    expect(store.getDrive(drive.id)).toEqual(drive);
+
+    fs.rmSync(connectionsFile, { recursive: true, force: true });
+    await expect(store.deleteDrive(drive.id)).resolves.toBe(true);
+    expect(store.getDrive(drive.id)).toBeUndefined();
+  });
+
+  // The one point deleteDrive yields. A drive created while rm ran is absent from any snapshot taken
+  // before it, so a filtered copy of that snapshot would erase the new drive on the way out.
+  it("does not erase a drive created while its content was being removed", async () => {
+    const actual = await vi.importActual<typeof import("fs/promises")>("fs/promises");
+    let concurrent: Drive | undefined;
+    vi.doMock("fs/promises", () => ({
+      ...actual,
+      rm: vi.fn(async (...args: Parameters<typeof actual.rm>) => {
+        concurrent ??= store.createDrive("created-mid-delete");
+        return actual.rm(...args);
+      }),
+    }));
+    store = await freshStore();
+
+    const doomed = store.createDrive("doomed");
+    await expect(store.deleteDrive(doomed.id)).resolves.toBe(true);
+
+    expect(store.getDrive(doomed.id)).toBeUndefined();
+    expect(store.getDrive(concurrent!.id)).toEqual(concurrent);
   });
 });
 

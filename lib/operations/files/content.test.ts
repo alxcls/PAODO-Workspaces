@@ -52,10 +52,11 @@ describe("readFileEntry", () => {
     expect(file.bytes.length).toBe(4);
   });
 
-  // SVG is text that the viewer should render as a picture, so it is deliberately not "text".
-  it("classifies an SVG as an image", async () => {
-    fs.writeFileSync(path.join(WS_DIR, "logo.svg"), '<svg xmlns="http://www.w3.org/2000/svg"></svg>');
-    expect(await readFileEntry(WS_DIR, "logo.svg")).toMatchObject({ type: "image", mimeType: "image/svg+xml" });
+  // Not "image": an SVG a browser is handed as one executes the script inside it. See rawMediaType.
+  it("classifies an SVG as text, script and all", async () => {
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>';
+    fs.writeFileSync(path.join(WS_DIR, "logo.svg"), svg);
+    expect(await readFileEntry(WS_DIR, "logo.svg")).toMatchObject({ type: "text", content: svg });
   });
 
   it("reports a missing file as NOT_FOUND, not as a bad request", async () => {

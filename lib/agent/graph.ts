@@ -6,6 +6,7 @@ import { atomicSaveJson, readJson } from "../infra/jsonPersist";
 import { globalSingleton } from "../infra/globalSingleton";
 import { createLogger } from "../infra/logger";
 import { AppError } from "../errors/appError";
+import { connectionKind, mintConnectionId } from "../connections/ids";
 
 const log = createLogger("workspaceGraph");
 
@@ -26,7 +27,7 @@ export interface CellPosition {
  *  save rewrites the file in cells, so this union narrows on its own over time. */
 export type NodePosition = CellPosition | { x: number; y: number };
 
-interface GraphFile {
+export interface GraphFile {
   edges: GraphEdge[];
   positions: Record<string, NodePosition>;
 }
@@ -63,14 +64,61 @@ function hasCycle(edges: GraphEdge[]): boolean {
   return false;
 }
 
-export function saveGraph(edges: GraphEdge[], positions: Record<string, NodePosition>): void {
-  // Not logged: the graph editor lets a user draw a cycle, and rejecting it is the feature working.
-  // The route turns this into a 400 the user sees and acts on — nothing for an operator to do.
+// Ids are this store's to give. An id survives only if the store issued it and nothing earlier in the
+// same save claimed it: the `call_` prefix is public, so recognising it would let a caller collide.
+function minted(edges: GraphEdge[]): GraphEdge[] {
+  const issued = new Set(state.graph.edges.map((edge) => edge.id));
+  const claimed = new Set<string>();
+  return edges.map((edge) => {
+    const keep = connectionKind(edge.id) === "call" && issued.has(edge.id) && !claimed.has(edge.id);
+    const id = keep ? edge.id : mintConnectionId("call");
+    claimed.add(id);
+    return keep ? edge : { ...edge, id };
+  });
+}
+
+// Not logged: the graph editor lets a user draw a cycle, and rejecting it is the feature working.
+// The route turns this into a 400 the user sees and acts on — nothing for an operator to do.
+function refuseCycle(edges: GraphEdge[]): void {
   if (hasCycle(edges)) {
     throw new AppError("INVALID_REQUEST", "Graph contains a cycle — only DAGs are allowed.");
   }
-  state.graph = { edges, positions };
+}
+
+/** Answers with the graph as stored — the edges in the order they were sent, under the ids they were
+ *  given — so the caller that drew them can adopt those ids rather than resend its own next time. */
+export function saveGraph(edges: GraphEdge[], positions: Record<string, NodePosition>): GraphFile {
+  refuseCycle(edges);
+  state.graph = { edges: minted(edges), positions };
   atomicSaveJson(GRAPH_FILE, state.graph);
+  return state.graph;
+}
+
+/**
+ * One edge, added without the caller holding an opinion about layout: `positions` is carried through
+ * from what is already stored, so a client that has no canvas cannot erase one. Nothing awaits between
+ * that read and the write, so the editor's own save cannot interleave with it.
+ *
+ * An already-connected pair answers with the edge it already has. A second parallel edge would say
+ * nothing the first does not, and would leave the caller two ids for one capability.
+ */
+export function addCallEdge(source: string, target: string): GraphEdge {
+  const existing = state.graph.edges.find((e) => e.source === source && e.target === target);
+  if (existing) return existing;
+  const edge: GraphEdge = { id: mintConnectionId("call"), source, target };
+  refuseCycle([...state.graph.edges, edge]);
+  state.graph = { edges: [...state.graph.edges, edge], positions: state.graph.positions };
+  atomicSaveJson(GRAPH_FILE, state.graph);
+  return edge;
+}
+
+/** False for an id this graph does not hold, the answer disconnectDrive gives a link already gone. */
+export function removeCallEdge(connectionId: string): boolean {
+  const edges = state.graph.edges.filter((e) => e.id !== connectionId);
+  if (edges.length === state.graph.edges.length) return false;
+  state.graph = { edges, positions: state.graph.positions };
+  atomicSaveJson(GRAPH_FILE, state.graph);
+  return true;
 }
 
 export function canCall(fromId: string, toId: string): boolean {

@@ -68,4 +68,69 @@ describe("platform access policy", () => {
     expect(isPlatformRouteAllowed("PUT", "/api/workspaces/ws-1/files/content")).toBe(false);
     expect(isPlatformRouteAllowed("PATCH", "/api/workspaces/ws-1/files/content")).toBe(false);
   });
+
+  it("allows drive metadata", () => {
+    expect(isPlatformRouteAllowed("GET", "/api/drives")).toBe(true);
+    expect(isPlatformRouteAllowed("POST", "/api/drives")).toBe(true);
+    expect(isPlatformRouteAllowed("GET", "/api/drives/drive-1")).toBe(true);
+    expect(isPlatformRouteAllowed("PATCH", "/api/drives/drive-1")).toBe(true);
+    expect(isPlatformRouteAllowed("DELETE", "/api/drives/drive-1")).toBe(true);
+  });
+
+  // The same five a workspace gets, because `paodo drive file` is the same five commands.
+  it("grants a drive's files exactly what it grants a workspace's", () => {
+    for (const suffix of ["files", "files/content", "files/transfer"]) {
+      for (const method of ["GET", "POST", "PUT", "PATCH", "DELETE"]) {
+        expect(isPlatformRouteAllowed(method, `/api/drives/drive-1/${suffix}`)).toBe(
+          isPlatformRouteAllowed(method, `/api/workspaces/ws-1/${suffix}`),
+        );
+      }
+    }
+    expect(isPlatformRouteAllowed("GET", "/api/drives/drive-1/files")).toBe(true);
+    expect(isPlatformRouteAllowed("GET", "/api/drives/drive-1/files/content")).toBe(true);
+    expect(isPlatformRouteAllowed("DELETE", "/api/drives/drive-1/files/content")).toBe(true);
+    expect(isPlatformRouteAllowed("GET", "/api/drives/drive-1/files/transfer")).toBe(true);
+    expect(isPlatformRouteAllowed("PUT", "/api/drives/drive-1/files/transfer")).toBe(true);
+  });
+
+  // A drive is reachable by every workspace connected to it, so anything wider than the five commands
+  // lands in more than one agent's view at once. Asserted per method so widening has to be deliberate.
+  it("does not grant the browser's drive transports or the editor's writes", () => {
+    for (const method of ["GET", "POST", "PUT", "PATCH", "DELETE"]) {
+      expect(isPlatformRouteAllowed(method, "/api/drives/drive-1/files/upload")).toBe(false);
+      expect(isPlatformRouteAllowed(method, "/api/drives/drive-1/files/download")).toBe(false);
+    }
+    expect(isPlatformRouteAllowed("PUT", "/api/drives/drive-1/files/content")).toBe(false);
+    expect(isPlatformRouteAllowed("PATCH", "/api/drives/drive-1/files/content")).toBe(false);
+  });
+
+  it("grants reading both connection graphs", () => {
+    expect(isPlatformRouteAllowed("GET", "/api/drive-connections")).toBe(true);
+    expect(isPlatformRouteAllowed("GET", "/api/workspace-graph")).toBe(true);
+  });
+
+  it("grants establishing and removing one connection of either kind", () => {
+    for (const method of ["POST", "DELETE"]) {
+      expect(isPlatformRouteAllowed(method, "/api/drive-connections")).toBe(true);
+      expect(isPlatformRouteAllowed(method, "/api/workspace-graph/edges")).toBe(true);
+    }
+  });
+
+  // The write that replaces the graph document, refused per method because it is the one that carries
+  // the editor's node positions: a caller with no canvas to send would erase a layout to add an edge.
+  // POST/DELETE on /edges above is what it may do instead.
+  it("does not grant replacing the graph document", () => {
+    for (const method of ["POST", "PUT", "PATCH", "DELETE"]) {
+      expect(isPlatformRouteAllowed(method, "/api/workspace-graph")).toBe(false);
+    }
+  });
+
+  it("grants neither connection path a method its route does not serve", () => {
+    for (const method of ["PUT", "PATCH"]) {
+      expect(isPlatformRouteAllowed(method, "/api/drive-connections")).toBe(false);
+      expect(isPlatformRouteAllowed(method, "/api/workspace-graph/edges")).toBe(false);
+    }
+    // The edges are read from the graph document above; /edges answers no GET at all.
+    expect(isPlatformRouteAllowed("GET", "/api/workspace-graph/edges")).toBe(false);
+  });
 });

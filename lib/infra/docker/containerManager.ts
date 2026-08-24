@@ -40,6 +40,19 @@ function safeEmit(emit: () => void, workspaceId: string): void {
   }
 }
 
+/** Docker deletion is idempotent only when the named resource is explicitly absent. */
+function isMissingContainer(stderr: string): boolean {
+  return /no such container/i.test(stderr);
+}
+
+function isMissingNetwork(stderr: string): boolean {
+  return /no such network|network\s+\S+\s+not found/i.test(stderr);
+}
+
+function dockerCleanupFailure(stage: string, result: { code: number; stderr: string }): string {
+  return `${stage}: ${result.stderr || `exit ${result.code}`}`;
+}
+
 const CONTAINER_IMAGE = process.env.CONTAINER_IMAGE ?? "paodo-workspace";
 const CONTAINER_MEMORY = capacityProfile.workspaceMemoryLimit;
 const CONTAINER_CPUS = capacityProfile.workspaceCpus;
@@ -117,6 +130,10 @@ export class ContainerManager implements IContainerManager {
   // "stopped," not "ready," so a concurrent ensure() must wait it out and then run its own fresh
   // pass instead of piggybacking on it. See ensure()/stop() below.
   private startLocks = new Map<string, { kind: "ensure" | "stop"; promise: Promise<void> }>();
+  // Permanent for this process once explicit deletion begins. Workspace deletion removes secrets,
+  // graph edges and other state before the registry, so a failed/partial deletion must not let an
+  // in-flight agent recreate the container while the caller retries the cleanup.
+  private removingWorkspaces = new Set<string>();
 
   // Creates the workspace's isolated network, or recreates it if its --internal flag doesn't match
   // the workspace's current internetAccess setting. Docker can't flip --internal on an existing
@@ -393,6 +410,9 @@ export class ContainerManager implements IContainerManager {
     // run our own fresh ensure. The check-then-set below has no `await` in between, so nothing else
     // can claim the slot while we're mid-loop.
     for (;;) {
+      if (this.removingWorkspaces.has(workspaceId)) {
+        throw new Error(`workspace ${workspaceId} is being permanently deleted`);
+      }
       const inflight = this.startLocks.get(workspaceId);
       if (!inflight) break;
       if (inflight.kind === "ensure") return inflight.promise;
@@ -819,21 +839,58 @@ export class ContainerManager implements IContainerManager {
   }
 
   async remove(workspaceId: string): Promise<void> {
-    const t = this.idleTimers.get(workspaceId);
-    if (t) {
-      clearTimeout(t);
-      this.idleTimers.delete(workspaceId);
+    // Mark first so no new ensure() can claim the slot while we wait for an existing start/stop to
+    // finish. The marker deliberately survives a cleanup failure: deletion has already removed other
+    // workspace-owned state, so reviving the container would race the retry and restore only part of
+    // a workspace the user asked to remove.
+    this.removingWorkspaces.add(workspaceId);
+    for (;;) {
+      const inflight = this.startLocks.get(workspaceId);
+      if (!inflight) break;
+      await inflight.promise.catch(() => {});
     }
-    this.startLocks.delete(workspaceId);
-    this.background.clear(workspaceId);
-    // Non-zero exit codes are expected if the container/network was never created.
-    const stop = await this.docker.cmd("stop", containerName(workspaceId));
-    if (stop.code !== 0) log.debug({ workspaceId, stderr: stop.stderr }, "docker stop on remove (may not exist)");
-    const rm = await this.docker.cmd("rm", containerName(workspaceId));
-    if (rm.code !== 0) log.debug({ workspaceId, stderr: rm.stderr }, "docker rm on remove (may not exist)");
-    await this.proxy.detach(workspaceId);
-    const net = await this.docker.cmd("network", "rm", networkName(workspaceId));
-    if (net.code !== 0) log.debug({ workspaceId, stderr: net.stderr }, "docker network rm on remove (may not exist)");
+
+    const p = (async () => {
+      const t = this.idleTimers.get(workspaceId);
+      if (t) {
+        clearTimeout(t);
+        this.idleTimers.delete(workspaceId);
+      }
+      this.background.clear(workspaceId);
+      // Attempt every teardown step even if one fails, but ignore a non-zero result ONLY when Docker
+      // explicitly says the resource is absent. Treating daemon/permission/conflict failures as "may
+      // not exist" lets workspace deletion remove the registry while a live container survives it.
+      const failures: string[] = [];
+      const stop = await this.docker.cmd("stop", containerName(workspaceId));
+      if (stop.code !== 0 && !isMissingContainer(stop.stderr)) {
+        failures.push(dockerCleanupFailure("docker stop", stop));
+      }
+      const remove = await this.docker.cmd("rm", containerName(workspaceId));
+      if (remove.code !== 0 && !isMissingContainer(remove.stderr)) {
+        failures.push(dockerCleanupFailure("docker rm", remove));
+      }
+      try {
+        await this.proxy.detach(workspaceId);
+      } catch (err) {
+        failures.push(`credential proxy detach: ${(err as Error).message}`);
+      }
+      const net = await this.docker.cmd("network", "rm", networkName(workspaceId));
+      if (net.code !== 0 && !isMissingNetwork(net.stderr)) {
+        failures.push(dockerCleanupFailure("docker network rm", net));
+      }
+      if (failures.length > 0) {
+        throw new Error(`workspace Docker cleanup failed: ${failures.join("; ")}`);
+      }
+    })();
+
+    // Reuse the teardown lock kind: ensure() must not coalesce onto a promise whose result means the
+    // container is gone. The permanent marker above makes it reject rather than restart afterward.
+    this.startLocks.set(workspaceId, { kind: "stop", promise: p });
+    try {
+      await p;
+    } finally {
+      if (this.startLocks.get(workspaceId)?.promise === p) this.startLocks.delete(workspaceId);
+    }
   }
 
   // Deletes a workspace directory from the volume. In production (WORKSPACES_VOLUME_NAME set) it

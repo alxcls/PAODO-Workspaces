@@ -44,16 +44,16 @@ describe("relativeEntryPath", () => {
   });
 
   it("refuses an escape, however it is spelled", () => {
-    refuses("..", /escapes the workspace/i);
-    refuses("../secret.txt", /escapes the workspace/i);
-    refuses("src/../../secret.txt", /escapes the workspace/i);
-    refuses("./../secret.txt", /escapes the workspace/i);
+    refuses("..", /escapes the root/i);
+    refuses("../secret.txt", /escapes the root/i);
+    refuses("src/../../secret.txt", /escapes the root/i);
+    refuses("./../secret.txt", /escapes the root/i);
   });
 
   it("refuses a path that resolves to the root, which names no entry", () => {
-    refuses(".", /workspace root/i);
-    refuses("", /workspace root/i);
-    refuses("src/..", /workspace root/i);
+    refuses(".", /names the root/i);
+    refuses("", /names the root/i);
+    refuses("src/..", /names the root/i);
   });
 
   // fs rejects a null byte with ERR_INVALID_ARG_VALUE, which carries no errno and would otherwise
@@ -91,7 +91,7 @@ describe("relativeDirPath", () => {
   });
 
   it("applies the same refusals as an entry path", () => {
-    expect(() => relativeDirPath("..")).toThrow(/escapes the workspace/i);
+    expect(() => relativeDirPath("..")).toThrow(/escapes the root/i);
     expect(() => relativeDirPath("/tmp")).toThrow(/must be relative/i);
   });
 

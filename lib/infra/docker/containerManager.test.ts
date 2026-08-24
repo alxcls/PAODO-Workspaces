@@ -171,6 +171,73 @@ describe("ContainerManager stop result", () => {
   });
 });
 
+describe("ContainerManager remove result", () => {
+  function managerWithResults(results: Partial<Record<string, DockerResult>> = {}): {
+    manager: ContainerManager;
+    calls: string[][];
+  } {
+    const calls: string[][] = [];
+    const docker: IDockerClient = {
+      cmd: async (...args) => {
+        calls.push(args);
+        const key = args[0] === "network" ? `${args[0]} ${args[1]}` : args[0];
+        return results[key] ?? OK;
+      },
+      build: async () => {},
+      exec: async () => OK,
+    };
+    return { manager: new ContainerManager(docker), calls };
+  }
+
+  it("treats explicitly absent containers and networks as already removed", async () => {
+    const missingContainer = { stdout: "", stderr: "No such container: ws_ws1", code: 1 };
+    const { manager } = managerWithResults({
+      stop: missingContainer,
+      rm: missingContainer,
+      "network rm": { stdout: "", stderr: "network wsnet_ws1 not found", code: 1 },
+    });
+
+    await expect(manager.remove("ws1")).resolves.toBeUndefined();
+  });
+
+  it.each([
+    ["stop", "Cannot connect to the Docker daemon"],
+    ["rm", "permission denied"],
+    ["network rm", "network has active endpoints"],
+  ])("rejects a real %s failure after still attempting the remaining cleanup", async (failedCommand, stderr) => {
+    const { manager, calls } = managerWithResults({
+      [failedCommand]: { stdout: "", stderr, code: 1 },
+    });
+
+    await expect(manager.remove("ws1")).rejects.toThrow("workspace Docker cleanup failed");
+    expect(calls).toContainEqual(["stop", "ws_ws1"]);
+    expect(calls).toContainEqual(["rm", "ws_ws1"]);
+    expect(calls).toContainEqual(["network", "rm", "wsnet_ws1"]);
+  });
+
+  it("rejects a container restart once permanent removal has begun", async () => {
+    let releaseStop!: () => void;
+    const stopGate = new Promise<void>((resolve) => (releaseStop = resolve));
+    const docker: IDockerClient = {
+      cmd: async (...args) => {
+        if (args[0] === "stop") await stopGate;
+        return OK;
+      },
+      build: async () => {},
+      exec: async () => OK,
+    };
+    const manager = new ContainerManager(docker);
+    const remove = manager.remove("ws1");
+    await new Promise((resolve) => setImmediate(resolve));
+
+    await expect(manager.ensure("ws1", "/workspace/ws1")).rejects.toThrow("being permanently deleted");
+
+    releaseStop();
+    await expect(remove).resolves.toBeUndefined();
+    await expect(manager.ensure("ws1", "/workspace/ws1")).rejects.toThrow("being permanently deleted");
+  });
+});
+
 // Rehydration: after an app restart the in-memory map is empty but the workspace container and its
 // servers keep running. Rebuilding from the container's pidfiles makes a survivor server visible
 // again — surfaced in the agent's context and stoppable — instead of colliding invisibly.

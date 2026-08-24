@@ -17,6 +17,8 @@ import { rm } from "fs/promises";
 import { WORKSPACES_ROOT } from "../infra/paths";
 import { atomicSaveJson } from "../infra/jsonPersist";
 import { createLogger } from "../infra/logger";
+import { DriveNameError, normalizeForUniqueness, validateDriveName } from "./name";
+import { mintConnectionId } from "../connections/ids";
 
 const log = createLogger("driveStore");
 
@@ -102,41 +104,32 @@ function saveConnections(
   }
 }
 
-// The name never hits the drive's own path (that is keyed by UUID), but drive_download writes into
-// the workspace at downloads/<drive-name>/..., so the name must be a safe single path segment.
 /**
- * Thrown when the caller supplied a name the user has to fix — as opposed to a disk or I/O failure.
- * Routes branch on it to answer 400 without logging (the user reads the message and corrects it)
- * while every other failure stays on the 500 + log.error path, where an operator can actually act.
- * Mirrors WorkspaceNameError; replaces matching on the message text.
+ * Throws DRIVE_NAME_CONFLICT if any *other* drive already uses an equivalent name. Compared on the
+ * folded key, so case- and Unicode-equivalent spellings cannot coexist: resolveDriveDir below already
+ * answers a drive_* tool's name lookup case-insensitively, and drive_download lands every drive at
+ * downloads/<drive-name>/ — two same-named drives make both of those pick one arbitrarily.
  */
-export class DriveNameError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "DriveNameError";
-  }
-}
-
-function assertSafeDriveName(name: string): void {
-  const trimmed = name.trim();
-  // Forbid path separators and control characters — the name is used as a path segment under
-  // downloads/<drive-name>/. Hyphens and underscores are allowed.
-  const hasUnsafeChar = /[/\\\x00-\x1f]/.test(trimmed);
-  if (!trimmed || trimmed.length > 100 || trimmed === "." || trimmed === ".." || hasUnsafeChar) {
-    throw new DriveNameError(`Invalid drive name: "${name}"`);
+function assertNameAvailable(name: string, drives: Drive[], exceptId?: string): void {
+  const key = normalizeForUniqueness(name);
+  for (const drive of drives) {
+    if (drive.id !== exceptId && normalizeForUniqueness(drive.name) === key) {
+      throw new DriveNameError("DRIVE_NAME_CONFLICT", `A drive named "${name}" already exists.`);
+    }
   }
 }
 
 export function createDrive(name: string, description?: string): Drive {
-  assertSafeDriveName(name);
+  const drives = listDrives();
   const drive: Drive = {
     id: crypto.randomUUID(),
-    name: name.trim(),
+    name: validateDriveName(name),
     description: description?.trim() || undefined,
     createdAt: new Date().toISOString(),
   };
+  // Before mkdir, so a refused name leaves no orphan content directory behind.
+  assertNameAvailable(drive.name, drives);
   fs.mkdirSync(driveContentDir(drive.id), { recursive: true });
-  const drives = listDrives();
   drives.push(drive);
   atomicSaveJson(DRIVES_FILE, drives);
   log.info({ id: drive.id, name: drive.name }, "created drive");
@@ -148,8 +141,10 @@ export function updateDrive(driveId: string, patch: { name?: string; description
   const drive = drives.find((d) => d.id === driveId);
   if (!drive) return undefined;
   if (patch.name !== undefined) {
-    assertSafeDriveName(patch.name);
-    drive.name = patch.name.trim();
+    const name = validateDriveName(patch.name);
+    // `driveId` excepted, so renaming a drive to the name it already holds is not a conflict.
+    assertNameAvailable(name, drives, driveId);
+    drive.name = name;
   }
   if (patch.description !== undefined) {
     drive.description = patch.description.trim() || undefined;
@@ -158,20 +153,23 @@ export function updateDrive(driveId: string, patch: { name?: string; description
   return drive;
 }
 
+// Content, connections, registry — in that order. Content is the only step that can fail, and the
+// connections are the sole record of what was linked; the registry entry stays last as the retry handle.
 export async function deleteDrive(driveId: string): Promise<boolean> {
-  const drives = listDrives();
-  const next = drives.filter((d) => d.id !== driveId);
-  if (next.length === drives.length) return false;
-  atomicSaveJson(DRIVES_FILE, next);
-  // Drop every connection that referenced this drive.
-  const connections = listConnections().filter((c) => c.driveId !== driveId);
-  atomicSaveJson(CONNECTIONS_FILE, connections);
-  // Remove the drive's files last; best-effort, registry is already consistent.
-  try {
-    await rm(driveContentDir(driveId), { recursive: true, force: true });
-  } catch (err) {
-    log.warn({ err, driveId }, "failed to remove drive content dir");
-  }
+  if (!listDrives().some((d) => d.id === driveId)) return false;
+
+  await rm(driveContentDir(driveId), { recursive: true, force: true });
+
+  // Re-read, not filtered from a snapshot above: `rm` is the one yield point, and a drive created
+  // while it ran is absent from any older copy.
+  saveConnections(
+    listConnections().filter((c) => c.driveId !== driveId),
+    { operation: "delete_drive", driveId },
+  );
+  atomicSaveJson(
+    DRIVES_FILE,
+    listDrives().filter((d) => d.id !== driveId),
+  );
   log.info({ driveId }, "deleted drive");
   return true;
 }
@@ -199,7 +197,7 @@ export function connectDrive(
     return existing;
   }
   const connection: DriveConnection = {
-    id: crypto.randomUUID(),
+    id: mintConnectionId("link"),
     driveId,
     workspaceId,
     sourceHandle: handles?.sourceHandle,
@@ -251,9 +249,8 @@ export function getDrivesForWorkspace(workspaceId: string): Drive[] {
 /**
  * Resolve a drive reference (its id OR its name) to its content dir, scoped to what THIS
  * workspace is connected to. The id (a UUID) is the stable key agents pass between each other;
- * the name is matched case-insensitively as a human-friendly fallback. These never collide:
- * drive names forbid hyphens (assertSafeDriveName) while UUIDs always contain them.
- * Returns null when the workspace has no connected drive matching the reference.
+ * the name is matched case-insensitively as a human-friendly fallback. Returns null when the
+ * workspace has no connected drive matching the reference.
  */
 export function resolveDriveDir(workspaceId: string, driveRef: string): { drive: Drive; dir: string } | null {
   const ref = driveRef.trim();

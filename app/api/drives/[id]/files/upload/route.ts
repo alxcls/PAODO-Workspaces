@@ -15,7 +15,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const limited = rateLimited(req, { policy: "upload", scope: id, logContext: { driveId: id } });
   if (limited) return limited;
 
-  const drive = requireDrive(id);
+  const drive = requireDrive(id, req);
   if (drive instanceof NextResponse) return drive;
 
   return handleUpload(req, { dir: driveContentDir(id), logContext: { driveId: id } });

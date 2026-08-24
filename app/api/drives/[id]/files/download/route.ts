@@ -12,7 +12,7 @@ import { addSelectedToZip, zipToStreamResponse } from "@/lib/files/zip";
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const drive = requireDrive(id);
+  const drive = requireDrive(id, req);
   if (drive instanceof NextResponse) return drive;
 
   const body = await readJsonObject(req);

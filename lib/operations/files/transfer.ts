@@ -72,7 +72,7 @@ async function collectDirectory(
   items: TransferItem[],
 ): Promise<void> {
   items.push({ type: "directory", relPath, hostPath });
-  const entries = await fileSystemCall(relPath || "The workspace root", () => readTransferEntries(hostPath, sem));
+  const entries = await fileSystemCall(relPath || "The root", () => readTransferEntries(hostPath, sem));
   await Promise.all(
     entries.map(async (entry) => {
       const childRel = relPath === "" ? entry.name : path.posix.join(relPath, entry.name);
@@ -103,7 +103,7 @@ export async function collectTransfer(rootDir: string, sourceValue: unknown): Pr
   // a narrower type contract, so a selected symlink (or a path through one) must not be silently
   // converted into its target's bytes.
   if (path.resolve(root, relPath) !== hostPath) throw unsupported(relPath);
-  const stat = await fileSystemCall(relPath || "The workspace root", () => fs.lstat(hostPath));
+  const stat = await fileSystemCall(relPath || "The root", () => fs.lstat(hostPath));
   if (stat.isSymbolicLink()) throw unsupported(relPath);
   if (stat.isFile()) {
     return [
@@ -337,10 +337,7 @@ export async function putTransfer(
   const receipt: PutTransferReceipt = { created: [], overwritten: [], ignored: [] };
   try {
     const staged = await extractToStage(body, stageDir);
-    const dest =
-      staged.sourceType === "file"
-        ? requireEntryPath(destValue, "dest")
-        : requireDirPath(destValue, "dest");
+    const dest = staged.sourceType === "file" ? requireEntryPath(destValue, "dest") : requireDirPath(destValue, "dest");
     receipt.ignored = staged.ignored.map((relPath) => targetPath(staged.sourceType, dest, relPath));
 
     const planned: Array<StagedItem & { targetRel: string; targetHost: string; existed: boolean }> = [];

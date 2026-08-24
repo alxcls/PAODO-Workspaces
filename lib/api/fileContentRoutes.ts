@@ -17,6 +17,7 @@ import { appErrorResponse, errorResponse, readJsonObject } from "@/lib/api/error
 import { AppError } from "@/lib/errors/appError";
 import type { FileBackend } from "@/lib/files/backend";
 import {
+  type ClassifiedFile,
   readFileEntry,
   removeEntry,
   requireLineRange,
@@ -28,6 +29,43 @@ import { requireEntryPath } from "@/lib/operations/files/paths";
 /** The opaque answer for a failure the operations layer had no public code for, so it is ours to fix. */
 function internalFailure(request: Request): NextResponse {
   return errorResponse("INTERNAL_ERROR", "The file operation failed", { request });
+}
+
+// Raster formats a browser paints and cannot execute. An allowlist, so a document format the detector
+// learns next release is inert until added here — which is why SVG is absent rather than filtered.
+const RENDERABLE_IMAGE_TYPES = new Set([
+  "image/png",
+  "image/apng",
+  "image/jpeg",
+  "image/gif",
+  "image/webp",
+  "image/avif",
+  "image/bmp",
+  "image/x-icon",
+  "image/tiff",
+  "image/jp2",
+  "image/jxl",
+  "image/heic",
+  "image/heif",
+]);
+
+// What ?raw=1 says a body is. Text is named apart from binary so `paodo file cat`, which has only
+// the headers, can refuse a PNG before writing it to a terminal.
+function rawMediaType(file: ClassifiedFile): string {
+  if (file.type === "image" && RENDERABLE_IMAGE_TYPES.has(file.mimeType)) return file.mimeType;
+  return file.type === "text" ? "text/plain; charset=utf-8" : "application/octet-stream";
+}
+
+// RFC 6266: ASCII-folded in the quoted form, real name percent-encoded in filename*. A quote or a
+// newline in a filename can no longer end the header early or inject another.
+function attachmentDisposition(relPath: string): string {
+  const name = path.basename(relPath);
+  const ascii = name.replace(/[^\x20-\x7e]/g, "_").replace(/["\\]/g, "_");
+  const encoded = encodeURIComponent(name).replace(
+    /['()*!]/g,
+    (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`,
+  );
+  return `attachment; filename="${ascii}"; filename*=UTF-8''${encoded}`;
 }
 
 export async function getFileContent(request: Request, be: FileBackend): Promise<Response> {
@@ -51,15 +89,16 @@ export async function getFileContent(request: Request, be: FileBackend): Promise
     }
     const windowed = file.type === "text" && range ? sliceLines(file.content, range) : undefined;
 
-    // ?raw=1 — serve the bytes themselves, for <img src> and download links.
+    // ?raw=1 — serve the bytes themselves, for <img src>, download links and `paodo file cat`.
     if (searchParams.get("raw") === "1") {
-      const mime = file.type === "image" ? file.mimeType : "application/octet-stream";
       const isDownload = searchParams.get("download") === "1";
       const bytes = windowed === undefined ? file.bytes : Buffer.from(windowed, "utf-8");
       return new Response(new Uint8Array(bytes), {
         headers: {
-          "Content-Type": mime,
-          ...(isDownload ? { "Content-Disposition": `attachment; filename="${path.basename(relPath)}"` } : {}),
+          "Content-Type": rawMediaType(file),
+          // The type above is decided from the bytes, so sniffing can only override it downward.
+          "X-Content-Type-Options": "nosniff",
+          ...(isDownload ? { "Content-Disposition": attachmentDisposition(relPath) } : {}),
         },
       });
     }

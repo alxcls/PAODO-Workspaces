@@ -17,7 +17,6 @@ const baseConfig: AgentConfig = {
   model: "claude-haiku-4-5",
   apiKey: "sk-ant-test",
   anthropicCacheTtl1h: false,
-  graphEnabled: false,
   internetAccess: true,
   silenceTimeoutMs: 60_000,
   maxTimeoutMs: 30 * 60_000,

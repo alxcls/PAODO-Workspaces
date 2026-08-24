@@ -33,9 +33,10 @@
 # listener timeouts apply to the whole :443 address and would be shared with every
 # other site block on it.
 
-# The eleven CLI routes. All are small JSON request/response pairs that the app answers
-# in well under a second, so a tight ceiling on both is free here and keeps an
-# unbounded body from reaching Next's JSON parser.
+# The CLI metadata and control routes. All are small JSON request/response pairs that the app
+# answers in well under a second, so a tight ceiling on both is free here and keeps an unbounded
+# body from reaching Next's JSON parser. Avoid a route count here: the gateway allowlist test is the
+# source of truth, while a prose count drifts whenever one capability adds another method/path pair.
 (cliUpstream) {
 	request_body {
 		max_size 64KB
@@ -118,65 +119,97 @@
 		# One matcher per method, because Caddy ANDs method and path within a matcher
 		# and a directive takes only one matcher. Read each against the policy list.
 		#
+		# The four metadata matchers below each end at /{id}. A drive's own files are
+		# forwarded by the three file matchers further down, which name both collections.
+		#
 		#   GET    /api/status
 		#   GET    /api/models
 		#   GET    /api/workspaces
 		#   GET    /api/workspaces/{id}
+		#   GET    /api/drives
+		#   GET    /api/drives/{id}
+		#   GET    /api/drive-connections
+		#   GET    /api/workspace-graph
+		#
+		# The last two are the connection graphs. Both are written below, one edge
+		# at a time — but PUT on /api/workspace-graph appears in no matcher: it
+		# replaces the document whole and would take the editor's layout with it.
 		@cliRead {
 			method GET
-			path_regexp cliRead ^/api/(status|models|workspaces(?:/[^/]+)?)$
+			path_regexp cliRead ^/api/(status|models|workspaces(?:/[^/]+)?|drives(?:/[^/]+)?|drive-connections|workspace-graph)$
 		}
 
-		# POST /api/workspaces creates; POST on a workspace is NOT allowed, so the
-		# optional tail requires a credential channel and never bare /{id}.
+		# POST /api/workspaces and /api/drives create; POST on a workspace is NOT
+		# allowed, so its optional tail requires a credential channel and never bare
+		# /{id}. A drive has no POST sub-resource at all.
+		#
+		# The last two establish one connection of each kind. Neither is a member
+		# path: an edge is named by a body, and its id is minted by the answer.
 		#
 		#   POST   /api/workspaces
 		#   POST   /api/workspaces/{id}/api-key
 		#   POST   /api/workspaces/{id}/mcp-config
+		#   POST   /api/drives
+		#   POST   /api/drive-connections
+		#   POST   /api/workspace-graph/edges
 		@cliCreate {
 			method POST
-			path_regexp cliCreate ^/api/workspaces(?:/[^/]+/(?:api-key|mcp-config))?$
+			path_regexp cliCreate ^/api/(?:workspaces(?:/[^/]+/(?:api-key|mcp-config))?|drives|drive-connections|workspace-graph/edges)$
 		}
 
 		#   PATCH  /api/workspaces/{id}
+		#   PATCH  /api/drives/{id}
 		@cliUpdate {
 			method PATCH
-			path_regexp cliUpdate ^/api/workspaces/[^/]+$
+			path_regexp cliUpdate ^/api/(?:workspaces|drives)/[^/]+$
 		}
 
 		# The mirror image of POST: DELETE on a workspace is allowed, DELETE on the
 		# collection is not, so {id} is required and the channel tail is optional.
 		#
+		# The two connection paths take no {id} for the same reason they take none
+		# above — the edge to remove is named in the body, not the path.
+		#
 		#   DELETE /api/workspaces/{id}
 		#   DELETE /api/workspaces/{id}/api-key
 		#   DELETE /api/workspaces/{id}/mcp-config
+		#   DELETE /api/drives/{id}
+		#   DELETE /api/drive-connections
+		#   DELETE /api/workspace-graph/edges
 		@cliDelete {
 			method DELETE
-			path_regexp cliDelete ^/api/workspaces/[^/]+(?:/(?:api-key|mcp-config))?$
+			path_regexp cliDelete ^/api/(?:workspaces/[^/]+(?:/(?:api-key|mcp-config))?|drives/[^/]+|drive-connections|workspace-graph/edges)$
 		}
 
-		# The file surface. /files is the tree (and the served ignore contract), /files/content is
-		# read, write, move and delete, /files/transfer is push and pull. The browser's own
-		# transports — /files/upload and /files/download — are deliberately not forwarded here.
+		# The file surface, identical for both collections because `paodo workspace file`
+		# and `paodo drive file` are the same five commands. /files is the tree,
+		# /files/content is read, write, move and delete, /files/transfer is push and
+		# pull. The browser's own transports — /files/upload and /files/download — are
+		# deliberately not forwarded here, for either collection.
 		#
 		#   GET    /api/workspaces/{id}/files
 		#   GET    /api/workspaces/{id}/files/content
 		#   GET    /api/workspaces/{id}/files/transfer
+		#   GET    /api/drives/{id}/files
+		#   GET    /api/drives/{id}/files/content
+		#   GET    /api/drives/{id}/files/transfer
 		@cliFileRead {
 			method GET
-			path_regexp cliFileRead ^/api/workspaces/[^/]+/files(?:/(?:content|transfer))?$
+			path_regexp cliFileRead ^/api/(?:workspaces|drives)/[^/]+/files(?:/(?:content|transfer))?$
 		}
 
 		#   PUT    /api/workspaces/{id}/files/transfer
+		#   PUT    /api/drives/{id}/files/transfer
 		@cliFilePut {
 			method PUT
-			path_regexp cliFilePut ^/api/workspaces/[^/]+/files/transfer$
+			path_regexp cliFilePut ^/api/(?:workspaces|drives)/[^/]+/files/transfer$
 		}
 
 		#   DELETE /api/workspaces/{id}/files/content
+		#   DELETE /api/drives/{id}/files/content
 		@cliFileRemove {
 			method DELETE
-			path_regexp cliFileRemove ^/api/workspaces/[^/]+/files/content$
+			path_regexp cliFileRemove ^/api/(?:workspaces|drives)/[^/]+/files/content$
 		}
 
 		handle @workspaceAgent {

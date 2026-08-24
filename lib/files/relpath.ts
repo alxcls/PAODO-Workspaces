@@ -1,4 +1,5 @@
-// The one path space the file API speaks: workspace-relative, POSIX-separated, the root as "".
+// The one path space the file API speaks: relative to the root of whatever it is serving —
+// a workspace or a drive — POSIX-separated, that root spelled "".
 //
 // It used to speak two. The file tree served absolute host paths, the browser handed them straight
 // back, and PUT alone also accepted a relative path (the old backend.lexicalFilePath). That works
@@ -56,11 +57,11 @@ function normalizeClientPath(clientPath: string): string {
     const suggestion = trimmed.slice(CONTAINER_MOUNT.length + 1) || ".";
     reject(
       clientPath,
-      `Paths are relative to the workspace root — drop the "${CONTAINER_MOUNT}/" prefix and use "${suggestion}"`,
+      `Paths are relative to the root — drop the "${CONTAINER_MOUNT}/" prefix and use "${suggestion}"`,
     );
   }
   if (trimmed.startsWith("/")) {
-    reject(clientPath, "Paths must be relative to the workspace root, not absolute");
+    reject(clientPath, "Paths must be relative to the root, not absolute");
   }
 
   // normalize collapses "a//b", "./a" and "a/b/../c"; it leaves a leading ".." in place, which is
@@ -70,18 +71,18 @@ function normalizeClientPath(clientPath: string): string {
   const normalized = path.posix.normalize(trimmed).replace(/\/$/, "");
   if (normalized === "" || normalized === ".") return "";
   if (normalized === ".." || normalized.startsWith("../")) {
-    reject(clientPath, "Path escapes the workspace root");
+    reject(clientPath, "Path escapes the root");
   }
   return normalized;
 }
 
 /**
- * A path that must name an entry inside the workspace. The root is refused: every caller of this
- * reads, writes or deletes one thing, and "" reaching fs.rm would take the whole workspace with it.
+ * A path that must name an entry inside the space. The root is refused: every caller of this reads,
+ * writes or deletes one thing, and "" reaching fs.rm would take the whole workspace or drive with it.
  */
 export function relativeEntryPath(clientPath: string): string {
   const relPath = normalizeClientPath(clientPath);
-  if (relPath === "") reject(clientPath, "Path names the workspace root, not an entry inside it");
+  if (relPath === "") reject(clientPath, "Path names the root, not an entry inside it");
   return relPath;
 }
 

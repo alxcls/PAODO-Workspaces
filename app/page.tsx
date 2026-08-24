@@ -16,7 +16,6 @@ import { useWorkspaces } from "@/lib/client/hooks/useWorkspaces";
 import { useWorkspaceDescription } from "@/lib/client/hooks/useWorkspaceDescription";
 import { useWorkspaceInternetAccess } from "@/lib/client/hooks/useWorkspaceInternetAccess";
 import { useWorkspaceMeta } from "@/lib/client/hooks/useWorkspaceMeta";
-import { useAppConfig } from "@/lib/client/hooks/useAppConfig";
 
 function formatDate(iso: string) {
   try {
@@ -34,7 +33,6 @@ export default function HomePage() {
   const selectedDetails = useWorkspaceMeta(selectedId);
   const { description, save: saveDescription } = useWorkspaceDescription(selectedId);
   const { enabled: internetAccess, toggle: toggleInternetAccess } = useWorkspaceInternetAccess(selectedId);
-  const { graphEnabled } = useAppConfig();
 
   // Form-local UI state: drafts and inline errors that live and die with the open form.
   const [showCreateForm, setShowCreateForm] = useState(false);
@@ -130,38 +128,36 @@ export default function HomePage() {
               </svg>
               Dashboard
             </button>
-            {graphEnabled ? (
-              <button
-                className="btn btn-ghost text-ms gap-1.5 text-text-2 hover:text-primary"
-                onClick={() => router.push("/graph")}
-                title="Agent Graph"
-              >
-                <svg width="15" height="15" viewBox="0 0 15 15" fill="none">
-                  <circle cx="2.5" cy="7.5" r="2" stroke="currentColor" strokeWidth="1.3" />
-                  <circle cx="12.5" cy="3" r="2" stroke="currentColor" strokeWidth="1.3" />
-                  <circle cx="12.5" cy="12" r="2" stroke="currentColor" strokeWidth="1.3" />
-                  <line
-                    x1="4.4"
-                    y1="6.5"
-                    x2="10.6"
-                    y2="3.6"
-                    stroke="currentColor"
-                    strokeWidth="1.3"
-                    strokeLinecap="round"
-                  />
-                  <line
-                    x1="4.4"
-                    y1="8.5"
-                    x2="10.6"
-                    y2="11.4"
-                    stroke="currentColor"
-                    strokeWidth="1.3"
-                    strokeLinecap="round"
-                  />
-                </svg>
-                Graph
-              </button>
-            ) : null}
+            <button
+              className="btn btn-ghost text-ms gap-1.5 text-text-2 hover:text-primary"
+              onClick={() => router.push("/graph")}
+              title="Agent Graph"
+            >
+              <svg width="15" height="15" viewBox="0 0 15 15" fill="none">
+                <circle cx="2.5" cy="7.5" r="2" stroke="currentColor" strokeWidth="1.3" />
+                <circle cx="12.5" cy="3" r="2" stroke="currentColor" strokeWidth="1.3" />
+                <circle cx="12.5" cy="12" r="2" stroke="currentColor" strokeWidth="1.3" />
+                <line
+                  x1="4.4"
+                  y1="6.5"
+                  x2="10.6"
+                  y2="3.6"
+                  stroke="currentColor"
+                  strokeWidth="1.3"
+                  strokeLinecap="round"
+                />
+                <line
+                  x1="4.4"
+                  y1="8.5"
+                  x2="10.6"
+                  y2="11.4"
+                  stroke="currentColor"
+                  strokeWidth="1.3"
+                  strokeLinecap="round"
+                />
+              </svg>
+              Graph
+            </button>
             <button className="iconbtn" onClick={() => setShowSettings(true)} title="Settings" aria-label="Settings">
               <svg width="17" height="17" viewBox="0 0 24 24" fill="none" aria-hidden="true">
                 <path
@@ -275,112 +271,114 @@ export default function HomePage() {
         {/* Main panel */}
         <main className="flex-1 min-w-0 overflow-auto">
           <div className="max-w-[760px] p-[48px_56px_64px]">
-          {selected ? (
-            <div className="flex flex-col">
-              <div className="uppercase text-2xs tracking-[.12em] text-text-3 font-semibold">Workspace</div>
+            {selected ? (
+              <div className="flex flex-col">
+                <div className="uppercase text-2xs tracking-[.12em] text-text-3 font-semibold">Workspace</div>
 
-              {renaming ? (
-                <div style={{ margin: "6px 0 6px" }}>
-                  <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                    <input
-                      autoFocus
-                      className="input"
-                      style={{ fontSize: 20, fontWeight: 600, height: 44 }}
-                      value={renameDraft}
-                      onChange={(e) => {
-                        setRenameDraft(e.target.value);
-                        if (renameError) setRenameError(null);
-                      }}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") handleRename();
-                        if (e.key === "Escape") {
+                {renaming ? (
+                  <div style={{ margin: "6px 0 6px" }}>
+                    <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                      <input
+                        autoFocus
+                        className="input"
+                        style={{ fontSize: 20, fontWeight: 600, height: 44 }}
+                        value={renameDraft}
+                        onChange={(e) => {
+                          setRenameDraft(e.target.value);
+                          if (renameError) setRenameError(null);
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") handleRename();
+                          if (e.key === "Escape") {
+                            setRenaming(false);
+                            setRenameError(null);
+                          }
+                        }}
+                      />
+                      <button className="btn btn-primary" onClick={handleRename}>
+                        Done
+                      </button>
+                      <button
+                        className="linkbtn"
+                        onClick={() => {
                           setRenaming(false);
                           setRenameError(null);
-                        }
-                      }}
-                    />
-                    <button className="btn btn-primary" onClick={handleRename}>
-                      Done
-                    </button>
-                    <button
-                      className="linkbtn"
-                      onClick={() => {
-                        setRenaming(false);
-                        setRenameError(null);
-                      }}
-                    >
-                      Cancel
-                    </button>
-                  </div>
-                  {renameError && (
-                    <div role="alert" className="text-xs text-danger mt-1">
-                      {renameError}
+                        }}
+                      >
+                        Cancel
+                      </button>
                     </div>
-                  )}
-                </div>
-              ) : (
-                <h1 className="text-[34px] font-semibold tracking-[-0.02em] my-1.5 text-text">{selected.name}</h1>
-              )}
-
-              <div className="text-text-2 text-sm">
-                Created {selectedDetails ? formatDate(selectedDetails.createdAt) : "—"}
-              </div>
-
-              <div className="flex gap-2.5 mt-7 mb-2">
-                <button className="btn btn-primary btn-lg" onClick={() => router.push(`/workspace/${selected.id}`)}>
-                  Open workspace <span className="font-semibold">→</span>
-                </button>
-                <button
-                  className="btn btn-ghost btn-lg"
-                  onClick={() => {
-                    setRenameDraft(selected.name);
-                    setRenameError(null);
-                    setRenaming(true);
-                  }}
-                >
-                  Rename
-                </button>
-                <button className="btn btn-danger btn-lg" onClick={() => setConfirmDeleteId(selected.id)}>
-                  Delete
-                </button>
-              </div>
-
-              {confirmDeleteId === selected.id && (
-                <div className="mt-2 p-[10px_14px] border border-danger bg-danger-soft rounded-card text-text flex items-center justify-between gap-3">
-                  <span>
-                    Delete <b>{selected.name}</b>? This can&apos;t be undone.
-                  </span>
-                  <div className="flex gap-2 items-center">
-                    <button className="btn btn-danger btn-sm" onClick={() => handleDelete(selected.id)}>
-                      Yes, delete
-                    </button>
-                    <button className="linkbtn" onClick={() => setConfirmDeleteId(null)}>
-                      Cancel
-                    </button>
+                    {renameError && (
+                      <div role="alert" className="text-xs text-danger mt-1">
+                        {renameError}
+                      </div>
+                    )}
                   </div>
-                </div>
-              )}
+                ) : (
+                  <h1 className="text-[34px] font-semibold tracking-[-0.02em] my-1.5 text-text">{selected.name}</h1>
+                )}
 
-              <div className="mt-9 mb-2 text-xs font-semibold uppercase tracking-[.08em] text-text-3">Description</div>
-              <DescriptionBlock key={`desc-${selected.id}`} value={description} onChange={saveDescription} />
-              <ApiAccessBlock key={`api-${selected.id}`} wsId={selected.id} />
-              <McpBlock key={`mcp-${selected.id}`} wsId={selected.id} />
-              <AgentLoopBlock key={`loop-${selected.id}`} wsId={selected.id} />
-              <ModelBlock key={`model-${selected.id}`} wsId={selected.id} catalogVersion={catalogVersion} />
-              <InternetAccessBlock
-                key={`net-${selected.id}`}
-                enabled={internetAccess}
-                onToggle={toggleInternetAccess}
-              />
-              {internetAccess && <EnvVarsBlock key={`env-${selected.id}`} wsId={selected.id} />}
-            </div>
-          ) : (
-            <div className="mt-20 text-center text-text-2">
-              <div className="empty-illo" />
-              <h2 className="m-0 mb-1.5 text-lg text-text font-semibold">No workspace selected</h2>
-              <p className="m-0">Pick a workspace on the left, or create a new one to get started.</p>
-            </div>
-          )}
+                <div className="text-text-2 text-sm">
+                  Created {selectedDetails ? formatDate(selectedDetails.createdAt) : "—"}
+                </div>
+
+                <div className="flex gap-2.5 mt-7 mb-2">
+                  <button className="btn btn-primary btn-lg" onClick={() => router.push(`/workspace/${selected.id}`)}>
+                    Open workspace <span className="font-semibold">→</span>
+                  </button>
+                  <button
+                    className="btn btn-ghost btn-lg"
+                    onClick={() => {
+                      setRenameDraft(selected.name);
+                      setRenameError(null);
+                      setRenaming(true);
+                    }}
+                  >
+                    Rename
+                  </button>
+                  <button className="btn btn-danger btn-lg" onClick={() => setConfirmDeleteId(selected.id)}>
+                    Delete
+                  </button>
+                </div>
+
+                {confirmDeleteId === selected.id && (
+                  <div className="mt-2 p-[10px_14px] border border-danger bg-danger-soft rounded-card text-text flex items-center justify-between gap-3">
+                    <span>
+                      Delete <b>{selected.name}</b>? This can&apos;t be undone.
+                    </span>
+                    <div className="flex gap-2 items-center">
+                      <button className="btn btn-danger btn-sm" onClick={() => handleDelete(selected.id)}>
+                        Yes, delete
+                      </button>
+                      <button className="linkbtn" onClick={() => setConfirmDeleteId(null)}>
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                <div className="mt-9 mb-2 text-xs font-semibold uppercase tracking-[.08em] text-text-3">
+                  Description
+                </div>
+                <DescriptionBlock key={`desc-${selected.id}`} value={description} onChange={saveDescription} />
+                <ApiAccessBlock key={`api-${selected.id}`} wsId={selected.id} />
+                <McpBlock key={`mcp-${selected.id}`} wsId={selected.id} />
+                <AgentLoopBlock key={`loop-${selected.id}`} wsId={selected.id} />
+                <ModelBlock key={`model-${selected.id}`} wsId={selected.id} catalogVersion={catalogVersion} />
+                <InternetAccessBlock
+                  key={`net-${selected.id}`}
+                  enabled={internetAccess}
+                  onToggle={toggleInternetAccess}
+                />
+                {internetAccess && <EnvVarsBlock key={`env-${selected.id}`} wsId={selected.id} />}
+              </div>
+            ) : (
+              <div className="mt-20 text-center text-text-2">
+                <div className="empty-illo" />
+                <h2 className="m-0 mb-1.5 text-lg text-text font-semibold">No workspace selected</h2>
+                <p className="m-0">Pick a workspace on the left, or create a new one to get started.</p>
+              </div>
+            )}
           </div>
         </main>
       </div>

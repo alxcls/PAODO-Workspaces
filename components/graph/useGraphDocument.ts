@@ -5,7 +5,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useEdgesState, useNodesState, type Connection, type Edge, type Node } from "@xyflow/react";
 import * as api from "./graphApi";
-import { GraphDisabledError, type DriveConnectionItem } from "./graphApi";
+import { type DriveConnectionItem } from "./graphApi";
 import { buildEdges, buildNodes, driveNode, nextFreeCell, storedPositions } from "./buildGraph";
 import { applyConnection, resolveConnection } from "./connectionRules";
 import { syncDrives } from "./driveSync";
@@ -20,11 +20,10 @@ function isTyping(target: EventTarget | null) {
 }
 
 interface GraphDocumentOptions {
-  onGraphDisabled(): void;
   showError(message: string): void;
 }
 
-export function useGraphDocument({ onGraphDisabled, showError }: GraphDocumentOptions) {
+export function useGraphDocument({ showError }: GraphDocumentOptions) {
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [ready, setReady] = useState(false);
@@ -92,10 +91,10 @@ export function useGraphDocument({ onGraphDisabled, showError }: GraphDocumentOp
         setReady(true);
       })
       .catch((error: unknown) => {
-        if (error instanceof GraphDisabledError) onGraphDisabled();
-        else setReady(true);
+        showError(error instanceof Error ? error.message : "Failed to load the graph");
+        setReady(true);
       });
-  }, [onGraphDisabled, setEdges, setNodes]);
+  }, [setEdges, setNodes, showError]);
 
   const onConnect = useCallback(
     (connection: Connection) => {

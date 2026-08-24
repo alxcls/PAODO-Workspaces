@@ -62,7 +62,6 @@ const PATHS = [
   "/api/status/x",
   "/api/models",
   "/api/models/x",
-  "/api/config",
   "/api/usage",
   `/api/usage/${ID}`,
   "/api/agent",

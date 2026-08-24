@@ -1,20 +1,18 @@
-// The whole agent graph (nodes + edges), guarded by the GRAPH_ENABLED flag. Translation only: the
-// checks and field rules are in lib/operations/graph/save.ts, as the per-edge route's are in connect.
+// The whole agent graph (nodes + edges). Translation only: the checks and field rules are in
+// lib/operations/graph/save.ts, as the per-edge route's are in connect.
 import { NextResponse } from "next/server";
-import { getGraph, isGraphEnabled } from "@/lib/agent/graph";
+import { getGraph } from "@/lib/agent/graph";
 import { createLogger } from "@/lib/infra/logger";
 import { errorResponse, appErrorResponse, readJsonObject } from "@/lib/api/errorResponse";
 import { saveWorkspaceGraph } from "@/lib/operations/graph/save";
 
 const log = createLogger("api");
 
-export function GET(req: Request) {
-  if (!isGraphEnabled()) return errorResponse("NOT_FOUND", "Graph feature is disabled", { request: req });
+export function GET() {
   return NextResponse.json(getGraph());
 }
 
 export async function PUT(req: Request) {
-  if (!isGraphEnabled()) return errorResponse("NOT_FOUND", "Graph feature is disabled", { request: req });
   const parsed = await readJsonObject(req);
   if (parsed instanceof Response) return parsed;
   try {

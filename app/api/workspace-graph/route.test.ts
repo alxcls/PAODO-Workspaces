@@ -1,6 +1,6 @@
-// The document half of the graph API. Pins the public boundary: the statuses, the feature flag, and
-// that a refusal reaches the caller under its own code — a 500 would tell the editor to retry.
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+// The document half of the graph API. Pins the public boundary: the statuses, and that a refusal
+// reaches the caller under its own code — a 500 would tell the editor to retry.
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AppError } from "@/lib/errors/appError";
 
 const h = vi.hoisted(() => ({
@@ -8,10 +8,7 @@ const h = vi.hoisted(() => ({
   saveWorkspaceGraph: vi.fn(),
 }));
 
-vi.mock("@/lib/agent/graph", () => ({
-  getGraph: h.getGraph,
-  isGraphEnabled: () => process.env.GRAPH_ENABLED !== "false",
-}));
+vi.mock("@/lib/agent/graph", () => ({ getGraph: h.getGraph }));
 
 vi.mock("@/lib/operations/graph/save", () => ({ saveWorkspaceGraph: h.saveWorkspaceGraph }));
 
@@ -29,21 +26,14 @@ const put = (body: unknown) =>
     body: JSON.stringify(body),
   });
 
-const get = () => new Request("http://x/api/workspace-graph");
-
 beforeEach(() => {
-  delete process.env.GRAPH_ENABLED;
   h.getGraph.mockReset().mockReturnValue(GRAPH);
   h.saveWorkspaceGraph.mockReset().mockReturnValue(GRAPH);
 });
 
-afterEach(() => {
-  delete process.env.GRAPH_ENABLED;
-});
-
 describe("GET /api/workspace-graph", () => {
   it("answers with the stored document", async () => {
-    const response = GET(get());
+    const response = GET();
 
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual(GRAPH);
@@ -108,20 +98,6 @@ describe("PUT /api/workspace-graph", () => {
     );
 
     expect(response.status).toBe(400);
-    expect(h.saveWorkspaceGraph).not.toHaveBeenCalled();
-  });
-});
-
-// The flag turns the whole feature off, so the document route may not be the one that still writes.
-describe("with the graph feature disabled", () => {
-  beforeEach(() => {
-    process.env.GRAPH_ENABLED = "false";
-  });
-
-  it("answers 404 on both methods without reaching the store", async () => {
-    expect(GET(get()).status).toBe(404);
-    expect((await PUT(put({ edges: [] }))).status).toBe(404);
-    expect(h.getGraph).not.toHaveBeenCalled();
     expect(h.saveWorkspaceGraph).not.toHaveBeenCalled();
   });
 });

@@ -41,15 +41,6 @@ export interface GraphDocumentPayload {
   connections: DriveConnectionItem[];
 }
 
-/** The graph API is behind the GRAPH_ENABLED flag; with it off the editor has nothing to edit and
- *  the caller redirects away rather than showing an error. */
-export class GraphDisabledError extends Error {
-  constructor() {
-    super("graph-disabled");
-    this.name = "GraphDisabledError";
-  }
-}
-
 const FAIL_LINKS = "Failed to save drive links";
 const JSON_HEADERS = { "Content-Type": "application/json" };
 
@@ -73,8 +64,8 @@ const optional = <T>(url: string, empty: T): Promise<T> =>
 export function fetchGraphDocument(): Promise<GraphDocumentPayload> {
   return Promise.all([
     fetch("/api/workspaces").then((response) => response.json() as Promise<WorkspaceItem[]>),
-    fetch("/api/workspace-graph").then((response) => {
-      if (!response.ok) throw new GraphDisabledError();
+    fetch("/api/workspace-graph").then(async (response) => {
+      if (!response.ok) throw new Error((await readApiError(response, "Failed to load the graph")).error);
       return response.json() as Promise<StoredGraph>;
     }),
     optional<DriveItem[]>("/api/drives", []),

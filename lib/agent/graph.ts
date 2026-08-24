@@ -40,10 +40,6 @@ const state = globalSingleton("workspaceGraph", () => ({
   graph: readJson<GraphFile>(GRAPH_FILE, { edges: [], positions: {} }),
 }));
 
-export function isGraphEnabled(): boolean {
-  return process.env.GRAPH_ENABLED !== "false";
-}
-
 export function getGraph(): GraphFile {
   return state.graph;
 }

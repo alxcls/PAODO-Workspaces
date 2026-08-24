@@ -76,7 +76,6 @@ export function loadAgentConfig(workspaceId?: string): AgentConfig {
     // Entered in the app, not .env. Undefined when unset for this provider; runAgent's preflight
     // catches that and names the provider, rather than letting the SDK throw about a missing key.
     apiKey: getProviderKey(provider),
-    graphEnabled: process.env.GRAPH_ENABLED !== "false",
     internetAccess: ws ? (ws.internetAccess ?? true) : false,
     anthropicCacheTtl1h: process.env.ANTHROPIC_CACHE_TTL_1H === "true",
     // 5 minutes, not 1: a quiet command is usually slow (npm install, a test suite that prints at the
@@ -133,9 +132,9 @@ export function buildTools(
     new WorkspaceHistoryTool(workspaceId, workspaceDir, versioning),
     // Signal-only: the runner performs the restore against the platform versioning (runner.ts).
     new WorkspaceRestoreTool(),
-    // Calling tools go only to a caller (a workspace with outgoing edges). A pure callee
-    // never receives call_agent/list_agents, even when the graph feature is enabled.
-    ...(config.graphEnabled && isCaller(workspaceId)
+    // Calling tools go only to a caller (a workspace with outgoing edges), so a pure
+    // callee never receives call_agent/list_agents.
+    ...(isCaller(workspaceId)
       ? [new AgentCallTool(workspaceId, store, containers, config), new ListAgentsTool(workspaceId, store)]
       : []),
     // Drive tools are injected only when this workspace has at least one connected drive,

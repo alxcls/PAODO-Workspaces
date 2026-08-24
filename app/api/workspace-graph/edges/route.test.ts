@@ -1,6 +1,6 @@
 // The per-edge half of the graph API, whose reason to exist is what it does not accept: no positions,
-// so a caller with no canvas cannot erase a layout. Pins the statuses, the flag, and AppError relay.
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+// so a caller with no canvas cannot erase a layout. Pins the statuses and the AppError relay.
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AppError } from "@/lib/errors/appError";
 
 const h = vi.hoisted(() => ({
@@ -32,13 +32,8 @@ const del = (body: unknown) =>
   }) as never;
 
 beforeEach(() => {
-  delete process.env.GRAPH_ENABLED;
   h.connectWorkspaces.mockReset().mockReturnValue(EDGE);
   h.disconnectWorkspaces.mockReset().mockReturnValue({ deleted: true });
-});
-
-afterEach(() => {
-  delete process.env.GRAPH_ENABLED;
 });
 
 describe("POST /api/workspace-graph/edges", () => {
@@ -92,23 +87,5 @@ describe("DELETE /api/workspace-graph/edges", () => {
 
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ deleted: false });
-  });
-});
-
-// The flag turns the whole feature off, so neither method may be the one route that still writes to it.
-describe("with the graph feature disabled", () => {
-  beforeEach(() => {
-    process.env.GRAPH_ENABLED = "false";
-  });
-
-  it("answers 404 on both methods without reaching the store", async () => {
-    for (const response of [
-      await POST(post({ source: "ws-1", target: "ws-2" })),
-      await DELETE(del({ connectionId: EDGE.id })),
-    ]) {
-      expect(response.status).toBe(404);
-    }
-    expect(h.connectWorkspaces).not.toHaveBeenCalled();
-    expect(h.disconnectWorkspaces).not.toHaveBeenCalled();
   });
 });

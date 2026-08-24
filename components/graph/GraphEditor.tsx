@@ -2,7 +2,6 @@
 
 // Composes the graph page: document state (useGraphDocument), the canvas, and the chrome around it.
 import { useCallback, useState } from "react";
-import { useRouter } from "next/navigation";
 import type { Node } from "@xyflow/react";
 import { useTransientMessage } from "@/lib/client/hooks/useTransientMessage";
 import DriveForm from "./DriveForm";
@@ -14,10 +13,8 @@ import { useGraphDocument } from "./useGraphDocument";
 import { useNavigationGuard } from "./useNavigationGuard";
 
 export default function GraphEditor() {
-  const router = useRouter();
   const [error, showError] = useTransientMessage(3000);
   const [showDriveForm, setShowDriveForm] = useState(false);
-  const onGraphDisabled = useCallback(() => router.replace("/"), [router]);
   const {
     nodes,
     edges,
@@ -34,7 +31,7 @@ export default function GraphEditor() {
     deleteSelection,
     createDrive,
     save,
-  } = useGraphDocument({ onGraphDisabled, showError });
+  } = useGraphDocument({ showError });
   const { guardedNavigate, isPrompting, leave, dismiss } = useNavigationGuard(isDirty);
 
   const onNodeDoubleClick = useCallback(

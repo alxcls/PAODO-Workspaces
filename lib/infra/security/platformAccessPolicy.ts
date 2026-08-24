@@ -75,18 +75,25 @@ const RULES: ReadonlyArray<{
   driveRule("GET", "files/transfer"),
   driveRule("PUT", "files/transfer"),
   /**
-   * Both connection graphs, readable and no more. Reading is what makes the rest of this policy
-   * usable: a drive is addressed by name only from a workspace connected to it, and a link is removed
-   * by an id these two routes are the only source of — so a caller that cannot read them is left
-   * guessing at both. Establishing a connection stays a capability of its own, which this policy has
-   * to grant deliberately rather than let a read imply.
+   * Both connection graphs: read whole, written one edge at a time. Reading is what makes the rest of
+   * this policy usable — a drive is addressed by name only from a workspace connected to it, and an
+   * edge of either kind is removed by an id these two routes are the only source of.
    *
-   * GET /api/workspace-graph answers with node positions beside the edges. That is canvas layout,
+   * PUT on /api/workspace-graph is deliberately absent, which is why the write here is a sub-resource
+   * rather than that. It replaces the document whole — edges and the editor's node positions together
+   * — so a caller with no canvas to send would erase a layout on its way to adding one edge. POST and
+   * DELETE on /edges touch edges alone and carry the stored positions through.
+   *
+   * GET /api/workspace-graph answers with those positions beside the edges. That is canvas layout,
    * meaningless outside the editor rather than sensitive, and it is served whole because the route is
    * the UI's: filtering a response per caller would make it two routes wearing one path.
    */
   { method: "GET", pathname: /^\/api\/drive-connections$/ },
+  { method: "POST", pathname: /^\/api\/drive-connections$/ },
+  { method: "DELETE", pathname: /^\/api\/drive-connections$/ },
   { method: "GET", pathname: /^\/api\/workspace-graph$/ },
+  { method: "POST", pathname: /^\/api\/workspace-graph\/edges$/ },
+  { method: "DELETE", pathname: /^\/api\/workspace-graph\/edges$/ },
 ];
 
 export function isPlatformRouteAllowed(method: string, pathname: string): boolean {

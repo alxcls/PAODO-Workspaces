@@ -257,6 +257,62 @@ describe("removeWorkspaceFromGraph", () => {
 });
 
 /**
+ * The per-edge writes, which exist so a writer with no canvas can add or remove one edge. What
+ * separates them from saveGraph is what they do NOT touch: `positions` is carried through from what is
+ * stored, never from the caller, so a CLI that has no layout to send cannot cost the editor one.
+ */
+describe("addCallEdge and removeCallEdge", () => {
+  it("adds one edge and leaves the stored positions exactly as they were", () => {
+    graph.saveGraph([edge("e1", "a", "b")], { a: cell(1, 2), b: cell(3, 4) });
+    const added = graph.addCallEdge("b", "c");
+
+    expect(added.id).toMatch(/^call_/);
+    expect(pairs(graph.getGraph().edges)).toEqual(["a->b", "b->c"]);
+    expect(readFile().positions).toEqual({ a: cell(1, 2), b: cell(3, 4) });
+  });
+
+  it("answers with the edge already there rather than a second one beside it", () => {
+    const first = graph.addCallEdge("a", "b");
+    expect(graph.addCallEdge("a", "b")).toEqual(first);
+    expect(graph.getGraph().edges).toHaveLength(1);
+  });
+
+  it("refuses an edge that would close a loop, without writing anything", () => {
+    graph.saveGraph([edge("e1", "a", "b"), edge("e2", "b", "c")], { a: cell(0, 0) });
+    expect(refusal(() => graph.addCallEdge("c", "a")).code).toBe("INVALID_REQUEST");
+    expect(pairs(graph.getGraph().edges)).toEqual(["a->b", "b->c"]);
+    expect(pairs(readFile().edges)).toEqual(["a->b", "b->c"]);
+  });
+
+  it("removes the one edge it is given and keeps the rest", () => {
+    graph.saveGraph([], { a: cell(5, 5) });
+    const removable = graph.addCallEdge("a", "b");
+    graph.addCallEdge("a", "c");
+
+    expect(graph.removeCallEdge(removable.id)).toBe(true);
+    expect(pairs(graph.getGraph().edges)).toEqual(["a->c"]);
+    expect(readFile().positions).toEqual({ a: cell(5, 5) });
+  });
+
+  it("reports an id the graph does not hold as already gone, and writes nothing", () => {
+    graph.saveGraph([edge("e1", "a", "b")], {});
+    fs.rmSync(GRAPH_FILE);
+
+    expect(graph.removeCallEdge("call_never-issued")).toBe(false);
+    expect(fs.existsSync(GRAPH_FILE)).toBe(false);
+    expect(pairs(graph.getGraph().edges)).toEqual(["a->b"]);
+  });
+
+  it("takes an edge out of call gating, not just the listing", () => {
+    const added = graph.addCallEdge("a", "b");
+    expect(graph.canCall("a", "b")).toBe(true);
+    graph.removeCallEdge(added.id);
+    expect(graph.canCall("a", "b")).toBe(false);
+    expect(graph.isCaller("a")).toBe(false);
+  });
+});
+
+/**
  * What the canvas refuses and the store accepts. Each of these is a rule that exists only in
  * components/graph/connectionRules.ts, or in React Flow's own edge handling, and therefore does not
  * apply to any writer that is not the canvas. Asserted as the store behaves TODAY: a change here is

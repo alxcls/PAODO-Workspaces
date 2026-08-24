@@ -131,9 +131,9 @@
 		#   GET    /api/drive-connections
 		#   GET    /api/workspace-graph
 		#
-		# The last two are the connection graphs, and reading is the whole of what
-		# they get: their write methods appear in no matcher below, so a link is
-		# readable on this host and established only through the UI.
+		# The last two are the connection graphs. Both are written below, one edge
+		# at a time — but PUT on /api/workspace-graph appears in no matcher: it
+		# replaces the document whole and would take the editor's layout with it.
 		@cliRead {
 			method GET
 			path_regexp cliRead ^/api/(status|models|workspaces(?:/[^/]+)?|drives(?:/[^/]+)?|drive-connections|workspace-graph)$
@@ -143,13 +143,18 @@
 		# allowed, so its optional tail requires a credential channel and never bare
 		# /{id}. A drive has no POST sub-resource at all.
 		#
+		# The last two establish one connection of each kind. Neither is a member
+		# path: an edge is named by a body, and its id is minted by the answer.
+		#
 		#   POST   /api/workspaces
 		#   POST   /api/workspaces/{id}/api-key
 		#   POST   /api/workspaces/{id}/mcp-config
 		#   POST   /api/drives
+		#   POST   /api/drive-connections
+		#   POST   /api/workspace-graph/edges
 		@cliCreate {
 			method POST
-			path_regexp cliCreate ^/api/(?:workspaces(?:/[^/]+/(?:api-key|mcp-config))?|drives)$
+			path_regexp cliCreate ^/api/(?:workspaces(?:/[^/]+/(?:api-key|mcp-config))?|drives|drive-connections|workspace-graph/edges)$
 		}
 
 		#   PATCH  /api/workspaces/{id}
@@ -162,13 +167,18 @@
 		# The mirror image of POST: DELETE on a workspace is allowed, DELETE on the
 		# collection is not, so {id} is required and the channel tail is optional.
 		#
+		# The two connection paths take no {id} for the same reason they take none
+		# above — the edge to remove is named in the body, not the path.
+		#
 		#   DELETE /api/workspaces/{id}
 		#   DELETE /api/workspaces/{id}/api-key
 		#   DELETE /api/workspaces/{id}/mcp-config
 		#   DELETE /api/drives/{id}
+		#   DELETE /api/drive-connections
+		#   DELETE /api/workspace-graph/edges
 		@cliDelete {
 			method DELETE
-			path_regexp cliDelete ^/api/(?:workspaces/[^/]+(?:/(?:api-key|mcp-config))?|drives/[^/]+)$
+			path_regexp cliDelete ^/api/(?:workspaces/[^/]+(?:/(?:api-key|mcp-config))?|drives/[^/]+|drive-connections|workspace-graph/edges)$
 		}
 
 		# The file surface, identical for both collections because `paodo workspace file`

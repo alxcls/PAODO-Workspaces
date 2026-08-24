@@ -109,13 +109,28 @@ describe("platform access policy", () => {
     expect(isPlatformRouteAllowed("GET", "/api/workspace-graph")).toBe(true);
   });
 
-  // Reading a link and establishing one are separate grants, so a token that can report the topology
-  // still cannot rewire it. Asserted per method because these two routes are where every edge is
-  // written: PUT on the graph replaces it wholesale, and POST/DELETE own every drive link.
-  it("does not grant writing either connection graph", () => {
+  it("grants establishing and removing one connection of either kind", () => {
+    for (const method of ["POST", "DELETE"]) {
+      expect(isPlatformRouteAllowed(method, "/api/drive-connections")).toBe(true);
+      expect(isPlatformRouteAllowed(method, "/api/workspace-graph/edges")).toBe(true);
+    }
+  });
+
+  // The write that replaces the graph document, refused per method because it is the one that carries
+  // the editor's node positions: a caller with no canvas to send would erase a layout to add an edge.
+  // POST/DELETE on /edges above is what it may do instead.
+  it("does not grant replacing the graph document", () => {
     for (const method of ["POST", "PUT", "PATCH", "DELETE"]) {
-      expect(isPlatformRouteAllowed(method, "/api/drive-connections")).toBe(false);
       expect(isPlatformRouteAllowed(method, "/api/workspace-graph")).toBe(false);
     }
+  });
+
+  it("grants neither connection path a method its route does not serve", () => {
+    for (const method of ["PUT", "PATCH"]) {
+      expect(isPlatformRouteAllowed(method, "/api/drive-connections")).toBe(false);
+      expect(isPlatformRouteAllowed(method, "/api/workspace-graph/edges")).toBe(false);
+    }
+    // The edges are read from the graph document above; /edges answers no GET at all.
+    expect(isPlatformRouteAllowed("GET", "/api/workspace-graph/edges")).toBe(false);
   });
 });

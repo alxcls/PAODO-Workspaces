@@ -1,23 +1,19 @@
 // CRUD endpoint for the per-workspace agent graph (nodes + edges); guarded by the GRAPH_ENABLED flag.
 import { NextResponse } from "next/server";
-import { getGraph, saveGraph } from "@/lib/agent/graph";
+import { getGraph, isGraphEnabled, saveGraph } from "@/lib/agent/graph";
 import type { GraphEdge, NodePosition } from "@/lib/agent/graph";
 import { createLogger } from "@/lib/infra/logger";
 import { errorResponse, appErrorResponse, readJsonObject } from "@/lib/api/errorResponse";
 
 const log = createLogger("api");
 
-function graphEnabled() {
-  return process.env.GRAPH_ENABLED !== "false";
-}
-
 export function GET(req: Request) {
-  if (!graphEnabled()) return errorResponse("NOT_FOUND", "Graph feature is disabled", { request: req });
+  if (!isGraphEnabled()) return errorResponse("NOT_FOUND", "Graph feature is disabled", { request: req });
   return NextResponse.json(getGraph());
 }
 
 export async function PUT(req: Request) {
-  if (!graphEnabled()) return errorResponse("NOT_FOUND", "Graph feature is disabled", { request: req });
+  if (!isGraphEnabled()) return errorResponse("NOT_FOUND", "Graph feature is disabled", { request: req });
   const parsed = await readJsonObject(req);
   if (parsed instanceof Response) return parsed;
   const body = parsed as {

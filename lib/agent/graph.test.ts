@@ -325,6 +325,8 @@ describe("rules the store does not enforce on its own", () => {
     expect(graph.getCallees("a")).toEqual(["b", "b"]);
   });
 
+  // Enforced above the store instead, in lib/operations/graph. A direct caller still gets this, which
+  // is why canCall is asserted rather than just the stored edge.
   it("accepts an edge naming a workspace that does not exist, having no registry to ask", () => {
     graph.saveGraph([edge("e1", "real", "deleted-yesterday")], {});
     expect(graph.canCall("real", "deleted-yesterday")).toBe(true);

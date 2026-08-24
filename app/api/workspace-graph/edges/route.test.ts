@@ -1,6 +1,5 @@
 // The per-edge half of the graph API, whose reason to exist is what it does not accept: no positions,
-// so a caller with no canvas cannot erase a layout. This pins the public boundary — the statuses, the
-// feature flag, and that a refusal from the operation reaches the caller as its own code, not a 500.
+// so a caller with no canvas cannot erase a layout. Pins the statuses, the flag, and AppError relay.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AppError } from "@/lib/errors/appError";
 

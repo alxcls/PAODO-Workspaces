@@ -1,12 +1,5 @@
-// REST endpoint for one agent-call edge at a time.
-// POST connects a caller workspace to a callee; DELETE removes one edge by its id.
-//
-// The sibling route replaces the whole graph document — edges and canvas positions together — which
-// only the editor can send. These two touch edges alone and carry the stored positions through
-// untouched, so a client with no canvas can establish a delegation without erasing a layout.
-//
-// Translation only: the referential-integrity checks, the direction, and the field rules are
-// lib/operations/graph/connect.ts. What is left here is HTTP.
+// One agent-call edge at a time: POST connects a caller to a callee, DELETE removes one by id. Unlike
+// the sibling document route it leaves positions alone; the checks are in lib/operations/graph/connect.
 import { NextResponse, type NextRequest } from "next/server";
 import { isGraphEnabled } from "@/lib/agent/graph";
 import { appErrorResponse, errorResponse, readJsonObject } from "@/lib/api/errorResponse";

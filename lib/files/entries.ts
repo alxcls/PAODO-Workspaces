@@ -71,19 +71,15 @@ export async function readListingEntries(
     const entries: Dirent[] = [];
     let truncated = false;
     const dir = await fs.opendir(dirPath);
-    try {
-      for await (const entry of dir) {
-        if (ignoreRuleFor(entry.name, entry.isDirectory(), contract) !== undefined) continue;
-        if (entries.length >= maxEntries) {
-          truncated = true;
-          break;
-        }
-        entries.push(entry);
+    // `for await` closes the handle itself — on a `break` and on a throw, not only on completion — so
+    // an explicit close here would just hit ERR_DIR_CLOSED.
+    for await (const entry of dir) {
+      if (ignoreRuleFor(entry.name, entry.isDirectory(), contract) !== undefined) continue;
+      if (entries.length >= maxEntries) {
+        truncated = true;
+        break;
       }
-    } finally {
-      // `for await` closes the handle when it runs to completion, but a `break` leaves it open and an
-      // already-closed dir throws ERR_DIR_CLOSED rather than being a no-op.
-      if (truncated) await dir.close().catch(() => {});
+      entries.push(entry);
     }
     return { entries, truncated };
   });

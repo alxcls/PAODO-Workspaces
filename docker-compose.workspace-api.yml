@@ -4,7 +4,7 @@
 #   docker compose -f docker-compose.yml -f docker-compose.workspace-api.yml up -d
 #
 # The app service remains bound to 127.0.0.1 by docker-compose.yml. This is the
-# only public listener, and deploy/Caddyfile.workspace-api permits only the
+# only public listener, and deploy/caddy/Caddyfile permits only the
 # explicitly allowlisted bearer-protected programmatic routes.
 services:
   workspace-api:
@@ -24,7 +24,20 @@ services:
       - WORKSPACE_API_DOMAIN=${WORKSPACE_API_DOMAIN:?Set WORKSPACE_API_DOMAIN to the public API hostname}
       - APP_PORT=${PORT:-3000}
     volumes:
-      - ./deploy/Caddyfile.workspace-api:/etc/caddy/Caddyfile:ro
+      # The DIRECTORY, never the file. A single-file bind mount resolves to an inode at container
+      # start, and `git pull` replaces the config by rename — so the container would keep serving the
+      # old file forever and `caddy reload` would succeed while changing nothing. Mounting the parent
+      # makes every open walk the live directory entry, which is what lets a reload deploy a change.
+      #
+      # Mounted AT /etc/caddy, the image's own config path, so this replaces the sample Caddyfile
+      # shipped in the image rather than sitting beside it. That sample is a file_server on :80: left
+      # reachable, any start that missed an explicit --config would serve a static page on the public
+      # IP with the allowlist gone, and would look like a clean boot. Landing here also means the
+      # image's default command already finds this file, so there is no override to drop.
+      #
+      # This directory holds the config and nothing else: it is mounted into the one internet-facing
+      # container, so it must not carry files that container has no reason to read.
+      - ./deploy/caddy:/etc/caddy:ro
       - workspace_api_caddy_data:/data
       - workspace_api_caddy_config:/config
     depends_on:

@@ -1,7 +1,7 @@
 // The public gateway and the application must allow exactly the same set of method/path pairs.
 //
 // The app default-denies on its own, so a gateway that is WIDER than the policy is only redundant.
-// A gateway that is NARROWER is a silent outage: deploy/Caddyfile.workspace-api was written against
+// A gateway that is NARROWER is a silent outage: deploy/caddy/Caddyfile was written against
 // an older, three-rule policy and kept answering a plain-text 404 for GET /api/models, POST/PATCH/
 // DELETE on workspaces and both credential channels — six of the nine CLI commands — long after the
 // app had authorized them. Nothing failed loudly, because a 404 from the edge is indistinguishable
@@ -16,7 +16,7 @@ import fs from "fs";
 import path from "path";
 import { isPlatformRouteAllowed } from "./security/platformAccessPolicy";
 
-const CADDYFILE = path.resolve(__dirname, "../../deploy/Caddyfile.workspace-api");
+const CADDYFILE = path.resolve(__dirname, "../../deploy/caddy/Caddyfile");
 
 /**
  * Every named matcher in the Caddyfile, as the method/path pair it admits. Matchers pair one

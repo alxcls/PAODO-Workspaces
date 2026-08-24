@@ -165,7 +165,7 @@ inspect on the VPS. Coarse last-used is an acceptable price for a file that can 
 
 **One shared key across all three channels.** Rejected: the channels have different blast radii
 (the agent and MCP endpoints are published on a DNS-direct public host per
-`deploy/Caddyfile.workspace-api`, while the CLI token is instance-wide), different owners and rotation
+`deploy/caddy/Caddyfile`, while the CLI token is instance-wide), different owners and rotation
 lifecycles, and different payloads. Merging them would either widen a third-party integration key to
 instance scope or reintroduce a scoping table, which merges nothing.
 

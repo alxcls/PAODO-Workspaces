@@ -190,14 +190,29 @@ docker compose up --build -d
 docker compose \
   -f docker-compose.yml \
   -f docker-compose.workspace-api.yml \
-  up --build --force-recreate -d
+  up --build -d
 ```
 
 Always rebuild both `app` and `credproxy`: they now use separate images, and either side can change
 the credential-injection contract. A scoped rebuild can leave the other side on stale code and
-silently break per-workspace secret injection. Changes to the gateway's Caddy
-configuration need the same recreate: the file is bind-mounted individually, so
-reloading Caddy in place keeps serving the version the container started with.
+silently break per-workspace secret injection.
+
+A change to `deploy/caddy/Caddyfile` alone needs no rebuild and no recreate — the directory is
+mounted, so the container reads whatever the pull left there:
+
+```bash
+docker compose \
+  -f docker-compose.yml \
+  -f docker-compose.workspace-api.yml \
+  exec workspace-api caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
+```
+
+Pass `--config` rather than relying on Caddy finding the file: `reload` searches the working
+directory, not `/etc/caddy`, and a bare invocation exits with `input file required`.
+
+Check that command's exit status, then confirm the new config is actually live by calling one route
+it allows and one it refuses. A reload that rejects a config leaves the previous one serving and the
+gateway up — the safe failure, but a quiet one, so success is worth proving rather than assuming.
 
 Schema migrations run automatically at startup and cannot be reversed: once they
 apply, the previous release refuses to start against the migrated database.

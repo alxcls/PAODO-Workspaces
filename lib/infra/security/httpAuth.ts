@@ -277,7 +277,7 @@ export function authRequestFromIncoming(
  * (the Docker gateway in production — useless for attribution, but never a lie).
  *
  * REQUIRES a hop that overwrites cf-connecting-ip on every route it serves. Cloudflare does at its
- * edge, and deploy/Caddyfile.workspace-api's forwardedHeaders snippet does for the public API host.
+ * edge, and deploy/caddy/Caddyfile's forwardedHeaders snippet does for the public API host.
  * A deployment fronted by anything else must strip and re-set it there too, or the caller chooses
  * their own rate-limit bucket. A forwarded loopback address is refused outright — no edge sees a real
  * client at one, and the limiter exempts loopback, so honouring it would waive every limit on demand.

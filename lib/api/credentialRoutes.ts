@@ -206,7 +206,7 @@ export function credentialHandlers<P>(
 
 /**
  * The externally reachable origin for the workspace API and MCP endpoints, which are published on a
- * DNS-direct host (see deploy/Caddyfile.workspace-api) rather than the UI's. Null when unconfigured,
+ * DNS-direct host (see deploy/caddy/Caddyfile) rather than the UI's. Null when unconfigured,
  * so the UI can fall back to showing a relative path instead of a wrong absolute one.
  */
 export function publicBaseUrl(): string | null {

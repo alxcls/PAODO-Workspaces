@@ -18,28 +18,28 @@ function backend(id: string): FileBackend {
 
 export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const drive = requireDrive(id);
+  const drive = requireDrive(id, req);
   if (drive instanceof NextResponse) return drive;
   return getFileContent(req, backend(id));
 }
 
 export async function PUT(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const drive = requireDrive(id);
+  const drive = requireDrive(id, req);
   if (drive instanceof NextResponse) return drive;
   return putFileContent(req, backend(id));
 }
 
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const drive = requireDrive(id);
+  const drive = requireDrive(id, req);
   if (drive instanceof NextResponse) return drive;
   return moveFileContent(req, backend(id));
 }
 
 export async function DELETE(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const drive = requireDrive(id);
+  const drive = requireDrive(id, req);
   if (drive instanceof NextResponse) return drive;
   return deleteFileContent(req, backend(id));
 }

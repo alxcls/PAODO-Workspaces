@@ -12,7 +12,7 @@ import { getFileTree } from "@/lib/api/fileTreeRoutes";
 
 export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const drive = requireDrive(id);
+  const drive = requireDrive(id, req);
   if (drive instanceof NextResponse) return drive;
   return getFileTree(req, { dir: driveContentDir(id), logContext: { driveId: id, route: "drive-files" } });
 }

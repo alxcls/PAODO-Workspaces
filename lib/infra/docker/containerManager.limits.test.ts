@@ -31,7 +31,8 @@ function makeDocker() {
 async function runArgs(): Promise<string[]> {
   const { docker, calls } = makeDocker();
   await new ContainerManager(docker).ensure("ws1", "/w");
-  return calls.find((c) => c[0] === "run")!;
+  // The container run, not the one-shot that seeds the agent home — only this one carries --name.
+  return calls.find((c) => c[0] === "run" && c.includes("--name"))!;
 }
 
 describe("ContainerManager — workspace container resource caps", () => {

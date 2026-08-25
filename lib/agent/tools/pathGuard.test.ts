@@ -31,9 +31,16 @@ function makeRunner() {
 
 const noopBroadcast = () => {};
 
-// Paths that must all be rejected: parent traversal, absolute, and a sneaky path that only
-// escapes after normalization collapses the `..` segments.
-const ESCAPING = ["../etc/passwd", "/etc/passwd", "foo/../../etc/passwd"];
+// Paths that must all be rejected: parent traversal, absolute, a sneaky path that only escapes
+// after normalization collapses the `..` segments, and two that borrow the workspace root's name
+// without actually starting at it.
+const ESCAPING = [
+  "../etc/passwd",
+  "/etc/passwd",
+  "foo/../../etc/passwd",
+  "/workspacefoo/x",
+  "/workspace/../etc/passwd",
+];
 
 // protected _call invoked directly — we are testing the guard, not zod/invoke wrapping.
 type Callable = { _call(input: unknown): Promise<string> };
@@ -53,8 +60,7 @@ describe("file tools wire the workspace containment guard", () => {
     { name: "file_read", call: (file_path) => callOf(new FileReadTool(runner))({ file_path }) },
     {
       name: "file_write",
-      call: (file_path) =>
-        callOf(new FileWriteTool(runner, WORKSPACE_DIR, noopBroadcast))({ file_path, content: "x" }),
+      call: (file_path) => callOf(new FileWriteTool(runner, WORKSPACE_DIR, noopBroadcast))({ file_path, content: "x" }),
     },
     {
       name: "file_edit (edit branch)",
@@ -80,6 +86,13 @@ describe("file tools wire the workspace containment guard", () => {
 
       it("reaches the container for a legitimate relative path", async () => {
         await call("src/index.ts");
+        expect(exec).toHaveBeenCalled();
+      });
+
+      // The prompt calls the working directory /workspace, so the agent addresses files that way.
+      // The guard used to reject it alongside real escapes, costing a turn on every first write.
+      it("reaches the container for the container's own /workspace form", async () => {
+        await call("/workspace/src/index.ts");
         expect(exec).toHaveBeenCalled();
       });
     });

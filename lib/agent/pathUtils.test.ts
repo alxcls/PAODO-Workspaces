@@ -34,6 +34,28 @@ describe("normalizeRelpath — containment guard", () => {
     expect(normalizeRelpath("/etc/passwd")).toBeNull();
     expect(normalizeRelpath("/")).toBeNull();
   });
+
+  // The agent is told /workspace is its working directory and uses that form freely in shell
+  // commands, so it reaches for it here too. It names the same file a relative path does.
+  it("accepts the container's own /workspace form and returns it relative", () => {
+    expect(normalizeRelpath("/workspace/hello.py")).toBe("hello.py");
+    expect(normalizeRelpath("/workspace/src/index.ts")).toBe("src/index.ts");
+    expect(normalizeRelpath("/workspace/src/./a/../b.ts")).toBe("src/b.ts");
+  });
+
+  it("rejects the workspace root itself, which is a directory and not a file", () => {
+    expect(normalizeRelpath("/workspace")).toBeNull();
+    expect(normalizeRelpath("/workspace/")).toBeNull();
+  });
+
+  // The prefix must match on a path boundary, and must be judged after normalization — otherwise
+  // "/workspace/../etc/passwd" would trim to a path that reads as contained.
+  it("rejects paths that only look like they start at the workspace root", () => {
+    expect(normalizeRelpath("/workspacefoo/x")).toBeNull();
+    expect(normalizeRelpath("/workspace-other/x")).toBeNull();
+    expect(normalizeRelpath("/workspace/../etc/passwd")).toBeNull();
+    expect(normalizeRelpath("/workspace/a/../../etc/passwd")).toBeNull();
+  });
 });
 
 describe("normalizeDirPath — containment guard", () => {
@@ -50,6 +72,16 @@ describe("normalizeDirPath — containment guard", () => {
     expect(normalizeDirPath("..")).toBeNull();
     expect(normalizeDirPath("../..")).toBeNull();
     expect(normalizeDirPath("/var")).toBeNull();
+    expect(normalizeDirPath("/workspacefoo")).toBeNull();
+    expect(normalizeDirPath("/workspace/../etc")).toBeNull();
+  });
+
+  // Unlike a file path, the root is a legitimate directory to name — it is the listing the agent
+  // asks for most often, and "/workspace" is how the prompt spells it.
+  it("accepts the container's own /workspace form, root included", () => {
+    expect(normalizeDirPath("/workspace")).toBe(".");
+    expect(normalizeDirPath("/workspace/")).toBe(".");
+    expect(normalizeDirPath("/workspace/src/components")).toBe("src/components");
   });
 });
 
@@ -88,6 +120,12 @@ describe("containWorkspacePath — normalize + contain in one step", () => {
 
   it("returns the normalized relpath for a legitimate path", async () => {
     expect(await containWorkspacePath(WORKSPACE, "src/./a/../b.ts")).toBe("src/b.ts");
+  });
+
+  // The relpath it hands back is what the container write is built from, so the /workspace form
+  // has to come out of here relative — not merely be allowed through.
+  it("returns a relpath for the container's /workspace form, against a host dir that is named differently", async () => {
+    expect(await containWorkspacePath(WORKSPACE, "/workspace/src/b.ts")).toBe("src/b.ts");
   });
 
   it("rejects a lexical escape", async () => {

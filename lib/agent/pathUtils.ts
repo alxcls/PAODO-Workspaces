@@ -11,23 +11,43 @@
 import path from "path";
 import { resolveContained } from "@/lib/files/containment";
 
+// The container's own name for the workspace root. The system prompt tells the agent /workspace is
+// its working directory and execute_command takes absolute paths there, so it forms them for the
+// file tools too — a correct path that used to be rejected as an escape.
+const CONTAINER_ROOT = "/workspace";
+
+// Trims CONTAINER_ROOT off an already-normalized absolute path, or returns null if it addresses
+// anything else. Only ever called post-normalize, so "/workspace/../etc/passwd" has already
+// collapsed to "/etc/passwd" and cannot match; "/workspacefoo" fails the segment boundary.
+// Returns "" for the root itself, which each caller interprets for its own path kind.
+function trimContainerRoot(normalized: string): string | null {
+  if (normalized === CONTAINER_ROOT) return "";
+  if (!normalized.startsWith(`${CONTAINER_ROOT}/`)) return null;
+  return normalized.slice(CONTAINER_ROOT.length + 1).replace(/\/+$/, "");
+}
+
 export function normalizeRelpath(filePath: string): string | null {
   const normalized = path.posix.normalize(filePath);
-  if (normalized.startsWith("..") || normalized.startsWith("/")) return null;
-  return normalized;
+  // "" means the caller named the workspace root, which is a directory, never a file.
+  if (normalized.startsWith("/")) return trimContainerRoot(normalized) || null;
+  return normalized.startsWith("..") ? null : normalized;
 }
 
 export function normalizeDirPath(dirPath: string | undefined): string | null {
   if (!dirPath || dirPath === ".") return ".";
   const normalized = path.posix.normalize(dirPath);
-  if (normalized.startsWith("..") || normalized.startsWith("/")) return null;
-  return normalized;
+  if (normalized.startsWith("/")) {
+    const trimmed = trimContainerRoot(normalized);
+    return trimmed === null ? null : trimmed || ".";
+  }
+  return normalized.startsWith("..") ? null : normalized;
 }
 
 /**
- * Realpath-based containment check for a workspace-relative path. `workspaceDir` is the host path
- * for the workspace (not the container's `/workspace` view). Returns null if `relpath` escapes — via
- * `..`, an absolute path, or a symlink anywhere along the way.
+ * Realpath-based containment check for a workspace path. `workspaceDir` is the host path for the
+ * workspace (not the container's `/workspace` view, which `relpath` may itself be expressed in).
+ * Returns null if `relpath` escapes — via `..`, an absolute path outside `/workspace`, or a symlink
+ * anywhere along the way.
  */
 export async function resolveWorkspacePath(workspaceDir: string, relpath: string): Promise<string | null> {
   const normalized = normalizeRelpath(relpath);

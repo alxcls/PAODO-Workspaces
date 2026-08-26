@@ -11,3 +11,6 @@ export const HOMES_DIR_NAME = ".homes";
 export const workspaceHomeSubpath = (workspaceId: string): string => `${HOMES_DIR_NAME}/${workspaceId}`;
 export const workspaceHomeDir = (workspaceId: string): string =>
   path.join(WORKSPACES_ROOT, HOMES_DIR_NAME, workspaceId);
+
+/** Receipt for a finished seed. A sibling of the home, so it sits outside the mount the agent sees. */
+export const workspaceHomeSeededMarker = (workspaceId: string): string => `${workspaceHomeDir(workspaceId)}.seeded`;

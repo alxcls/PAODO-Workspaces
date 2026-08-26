@@ -8,7 +8,7 @@
 //                   <homeDir>      → /home/dev   (durable agent home — see seedAgentHome)
 // Resource limits:  CONTAINER_MEMORY / CONTAINER_CPUS / CONTAINER_PIDS_LIMIT env vars
 //                   (defaults: 1g / 1.0 / 512)
-import { mkdir, readdir, rm } from "fs/promises";
+import { access, mkdir, rm, writeFile } from "fs/promises";
 import { spawn } from "child_process";
 import { randomUUID } from "crypto";
 import path from "path";
@@ -18,7 +18,7 @@ import { ImageManager, HASH_LABEL } from "./imageManager";
 import type { IContainerManager, OutputSink } from "../interfaces";
 import { EXEC_OUTPUT_MAX_BYTES, EXEC_OUTPUT_KEEP, EXEC_OUTPUT_MAX_BACKLOG, EXEC_KILL_GRACE_MS } from "../limits";
 import { containerName, networkName } from "./naming";
-import { workspaceHomeDir, workspaceHomeSubpath } from "../paths";
+import { workspaceHomeDir, workspaceHomeSeededMarker, workspaceHomeSubpath } from "../paths";
 import { BackgroundTaskManager, type BackgroundTask } from "./backgroundTaskManager";
 import { ProxyNetworkManager } from "./proxyNetworkManager";
 import { capacityProfile } from "../capacityProfile";
@@ -255,14 +255,21 @@ export class ContainerManager implements IContainerManager {
    * tree in with `cp -a`, preserving uid 1000 ownership so the agent can still write it afterwards.
    *
    * Fatal on failure by design: a container started on an empty home is broken in a way that reads
-   * as "node is missing" rather than "setup failed", so this fails loudly at create instead.
+   * as "node is missing" rather than "setup failed", so this fails loudly at create instead. The
+   * marker written at the end is what makes that hold on the retry too — see below.
    */
   private async seedAgentHome(workspaceId: string): Promise<void> {
     const homeDir = workspaceHomeDir(workspaceId);
     // Must exist before docker run either way: volume-subpath refuses to mount a missing subpath.
     await mkdir(homeDir, { recursive: true });
-    // Anything already here belongs to the agent from a previous container — never re-seed over it.
-    if ((await readdir(homeDir)).length > 0) return;
+    // A marker, not the directory's contents, is what says "done": a copy killed partway (disk full,
+    // host restart) leaves files that would otherwise pass for a finished seed forever after.
+    const marker = workspaceHomeSeededMarker(workspaceId);
+    const seeded = await access(marker).then(
+      () => true,
+      () => false,
+    );
+    if (seeded) return;
 
     const r = await this.docker.cmd(
       "run",
@@ -274,12 +281,14 @@ export class ContainerManager implements IContainerManager {
       "none",
       ...this.buildMountArg(homeDir, workspaceHomeSubpath(workspaceId), SEED_TARGET),
       CONTAINER_IMAGE,
+      // Overwrites what it finds rather than skipping it, so a retry completes a partial home.
       "cp",
       "-a",
       `${AGENT_HOME}/.`,
       `${SEED_TARGET}/`,
     );
     if (r.code !== 0) throw new Error(`agent home seed failed: ${r.stderr || `exit ${r.code}`}`);
+    await writeFile(marker, "");
     log.info(
       { event: "workspace_agent_home_seeded", outcome: "agent_home_ready", workspaceId },
       "agent home seeded from image",

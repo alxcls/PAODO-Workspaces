@@ -10,7 +10,7 @@
 // halves that have to hold together: the mount is always there, and it is filled from the image
 // exactly once — a container started on an empty home reads as "node is missing", not "setup broke".
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { mkdtemp, mkdir, writeFile, rm } from "fs/promises";
+import { access, mkdtemp, mkdir, writeFile, rm } from "fs/promises";
 import { tmpdir } from "os";
 import path from "path";
 import type { IDockerClient, DockerResult } from "./dockerClient";
@@ -100,6 +100,7 @@ describe("agent home — filling it from the image", () => {
     const ContainerManager = await loadManager(VOLUME);
     await mkdir(path.join(root, ".homes", "ws1", ".nvm"), { recursive: true });
     await writeFile(path.join(root, ".homes", "ws1", ".bashrc"), "installed by the agent");
+    await writeFile(path.join(root, ".homes", "ws1.seeded"), "");
 
     const { docker, calls } = makeDocker();
     await new ContainerManager(docker).ensure("ws1", "/w");
@@ -115,5 +116,23 @@ describe("agent home — filling it from the image", () => {
     await expect(new ContainerManager(docker).ensure("ws1", "/w")).rejects.toThrow(/agent home seed failed/);
     // The whole point: a container on an empty home would come up with no node and no python.
     expect(containerRun(calls)).toBeUndefined();
+    // No receipt, so the retry below still knows the home is unfinished.
+    await expect(access(path.join(root, ".homes", "ws1.seeded"))).rejects.toThrow();
+  });
+
+  // The failure above leaves a half-copied tree behind. Judging "already seeded" by whether the
+  // directory has anything in it would skip the retry and boot a workspace missing half its tooling.
+  it("re-seeds after a copy that died partway, rather than trusting the files it left", async () => {
+    const ContainerManager = await loadManager(VOLUME);
+    const { docker: failing } = makeDocker({ failSeed: true });
+    await expect(new ContainerManager(failing).ensure("ws1", "/w")).rejects.toThrow(/agent home seed failed/);
+    await mkdir(path.join(root, ".homes", "ws1", ".nvm"), { recursive: true });
+
+    const { docker, calls } = makeDocker();
+    await new ContainerManager(docker).ensure("ws1", "/w");
+
+    expect(seedRun(calls)).toBeDefined();
+    expect(containerRun(calls)).toBeDefined();
+    await expect(access(path.join(root, ".homes", "ws1.seeded"))).resolves.toBeUndefined();
   });
 });

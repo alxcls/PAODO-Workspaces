@@ -7,7 +7,7 @@ import { disconnectWorkspace } from "@/lib/drives/store";
 import { removeWorkspaceFromGraph } from "@/lib/agent/graph";
 import type { WorkspaceDeleteDeps, WorkspaceDeleteStage } from "@/lib/operations/workspace/delete";
 import { createAuditLogger, createLogger } from "./logger";
-import { WORKSPACES_ROOT, workspaceHomeDir } from "./paths";
+import { WORKSPACES_ROOT, workspaceHomeDir, workspaceHomeSeededMarker } from "./paths";
 import { getCredentialProxy } from "./proxy";
 import { deleteInternetAccessPolicy } from "./proxy/internetAccessPolicy";
 import { removeWorkspace as removeWorkspaceCredentials } from "./security/credentialStore";
@@ -51,10 +51,14 @@ export function workspaceDeleteDeps(): WorkspaceDeleteDeps {
         stage("agent_permissions", ({ id }) =>
           rm(path.join(WORKSPACES_ROOT, ".agent-permissions", `${id}.json`), { force: true }),
         ),
-        // Hundreds of MB of installed runtimes per workspace — grouped with the container removal
-        // above so nothing is still holding these files open. Owned by uid 1000 like the app, so a
-        // plain rm reaches them; only the workspace tree needs the root-container treatment.
-        stage("agent_home", ({ id }) => rm(workspaceHomeDir(id), { recursive: true, force: true })),
+        // Hundreds of MB of installed runtimes. Grouped with the container removal above so nothing
+        // still holds them open; uid 1000 owns them, so only the workspace tree needs a root rm.
+        stage("agent_home", async ({ id }) => {
+          // Receipt first: a stage failure keeps the workspace addressable, so the half-done state
+          // must be a home with no receipt (re-seeds) rather than a receipt with no home (no tools).
+          await rm(workspaceHomeSeededMarker(id), { force: true });
+          await rm(workspaceHomeDir(id), { recursive: true, force: true });
+        }),
       ],
     ],
   };

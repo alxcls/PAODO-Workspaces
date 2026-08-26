@@ -7,7 +7,7 @@ import { disconnectWorkspace } from "@/lib/drives/store";
 import { removeWorkspaceFromGraph } from "@/lib/agent/graph";
 import type { WorkspaceDeleteDeps, WorkspaceDeleteStage } from "@/lib/operations/workspace/delete";
 import { createAuditLogger, createLogger } from "./logger";
-import { WORKSPACES_ROOT, workspaceHomeDir, workspaceHomeSeededMarker } from "./paths";
+import { WORKSPACES_ROOT, workspaceAptRecipeFile, workspaceHomeDir, workspaceHomeSeededMarker } from "./paths";
 import { getCredentialProxy } from "./proxy";
 import { deleteInternetAccessPolicy } from "./proxy/internetAccessPolicy";
 import { removeWorkspace as removeWorkspaceCredentials } from "./security/credentialStore";
@@ -57,6 +57,7 @@ export function workspaceDeleteDeps(): WorkspaceDeleteDeps {
           // Receipt first: a stage failure keeps the workspace addressable, so the half-done state
           // must be a home with no receipt (re-seeds) rather than a receipt with no home (no tools).
           await rm(workspaceHomeSeededMarker(id), { force: true });
+          await rm(workspaceAptRecipeFile(id), { force: true });
           await rm(workspaceHomeDir(id), { recursive: true, force: true });
         }),
       ],

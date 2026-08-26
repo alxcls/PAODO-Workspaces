@@ -7,6 +7,10 @@
 // metacharacters, paths, or local .deb installs are possible — only named packages (optionally
 // pinned `name=version`) from the image's configured apt repositories. The one command here that
 // does go through a shell (discardAptDownloads) is a fixed string with nothing interpolated into it.
+//
+// Being that single channel is also what makes the install recoverable: every system package a
+// workspace has passes through here, so recording them on success yields an exact recipe to replay
+// into a rebuilt container — see aptRecipe.ts for why the packages themselves cannot be kept.
 
 import { StructuredTool } from "@langchain/core/tools";
 import { z } from "zod";
@@ -30,7 +34,15 @@ Provide bare package names (optionally pinned as name=version). Paths, URLs, and
 Node version managers (nvm) and Python (pyenv) and language package managers (npm, pip) still work from execute_command — only system packages go through this tool.`;
   schema = schema;
 
-  constructor(private runner: PrivilegedRunner) {
+  /**
+   * `record` persists what was installed so a rebuilt container can get it back (see aptRecipe.ts).
+   * Injected rather than imported so this tool stays free of the filesystem, and so the recording
+   * and the install can never disagree about which workspace they belong to.
+   */
+  constructor(
+    private runner: PrivilegedRunner,
+    private record: (packages: string[]) => void,
+  ) {
     super();
   }
 
@@ -59,6 +71,9 @@ Node version managers (nvm) and Python (pyenv) and language package managers (np
       if (install.code !== 0) {
         return `Error: apt-get install failed:\n${install.stderr || install.stdout}`;
       }
+      // Only on success: a package that failed to install must not be replayed into every future
+      // rebuild of this container, where it would fail again.
+      this.record(packages);
       return `Installed: ${packages.join(", ")}\n${install.stdout}`.trim();
     } finally {
       await this.discardAptDownloads();

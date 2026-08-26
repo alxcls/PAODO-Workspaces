@@ -122,6 +122,25 @@ export const EXEC_OUTPUT_MAX_BACKLOG = 8 * 1024 * 1024;
  */
 export const EXEC_KILL_GRACE_MS = 2_000;
 
+/**
+ * How long the apt recipe replay may take before the rebuilt container is handed over without it.
+ *
+ * This is the one step of container creation with no bound of its own: `docker exec` has no timeout,
+ * and the replay runs inside _ensureContainer, which every command in the workspace waits on. An apt
+ * stalled on an unreachable mirror therefore hangs the workspace itself rather than one tool call —
+ * and hangs it silently, with no error and nothing in the logs to explain the stall.
+ *
+ * The replay was already built to prefer the lesser evil: a workspace missing ffmpeg is degraded and
+ * the agent can install it again, a workspace that never starts is dead. Without a clock that choice
+ * only covers apt failing, not apt never answering, which lands on the outcome it set out to avoid.
+ *
+ * Minutes rather than seconds because it is a backstop and not a policy. Recipes hold packages the
+ * agent installed one at a time, so they are small, but a cold index plus a compiler toolchain over
+ * a slow mirror is honest work — and cutting that short costs the workspace the very tooling the
+ * rebuild exists to give back. Long enough that only a genuine stall reaches it.
+ */
+export const APT_REPLAY_TIMEOUT_MS = 5 * 60_000;
+
 // ---------------------------------------------------------------------------
 // File reads — lib/agent/tools/fileRead.ts, lib/agent/tools/driveRead.ts
 // ---------------------------------------------------------------------------

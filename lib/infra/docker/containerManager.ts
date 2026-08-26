@@ -16,9 +16,16 @@ import { createLogger, exitAfterLogs } from "../logger";
 import { envArgs, type IDockerClient } from "./dockerClient";
 import { ImageManager, HASH_LABEL } from "./imageManager";
 import type { IContainerManager, OutputSink } from "../interfaces";
-import { EXEC_OUTPUT_MAX_BYTES, EXEC_OUTPUT_KEEP, EXEC_OUTPUT_MAX_BACKLOG, EXEC_KILL_GRACE_MS } from "../limits";
+import {
+  EXEC_OUTPUT_MAX_BYTES,
+  EXEC_OUTPUT_KEEP,
+  EXEC_OUTPUT_MAX_BACKLOG,
+  EXEC_KILL_GRACE_MS,
+  APT_REPLAY_TIMEOUT_MS,
+} from "../limits";
 import { containerName, networkName } from "./naming";
 import { workspaceHomeDir, workspaceHomeSeededMarker, workspaceHomeSubpath } from "../paths";
+import { readAptRecipe } from "../aptRecipe";
 import { BackgroundTaskManager, type BackgroundTask } from "./backgroundTaskManager";
 import { ProxyNetworkManager } from "./proxyNetworkManager";
 import { capacityProfile } from "../capacityProfile";
@@ -295,6 +302,153 @@ export class ContainerManager implements IContainerManager {
     );
   }
 
+  /**
+   * Installs the recipe, returning the packages that could not be installed.
+   *
+   * One call first, because that is the case that always works and it resolves the set together.
+   * But apt-get commits or aborts the WHOLE transaction, so a single package the repos no longer
+   * carry — an aged-out pin, a rename — would otherwise take every other package down with it and
+   * hand back a bare container. The retry costs one apt-get per package, and only when something is
+   * already wrong, to salvage everything that is still installable.
+   */
+  private async installRecipePackages(
+    name: string,
+    packages: string[],
+    asRoot: { asRoot: true; trimStdout: true },
+  ): Promise<string[]> {
+    const install = (pkgs: string[]) =>
+      this.docker.exec(name, ["apt-get", "install", "-y", "--no-install-recommends", ...pkgs], asRoot);
+
+    if ((await install(packages)).code === 0) return [];
+
+    const failed: string[] = [];
+    for (const pkg of packages) {
+      if ((await install([pkg])).code !== 0) failed.push(pkg);
+    }
+    return failed;
+  }
+
+  /** Severity tracks how much of the workspace's tooling is actually missing, not whether apt erred. */
+  private reportReplay(workspaceId: string, packages: string[], failed: string[]): void {
+    const restored = packages.filter((p) => !failed.includes(p));
+    if (failed.length === 0) {
+      log.info(
+        { event: "apt_recipe_replayed", outcome: "system_packages_restored", workspaceId, packages },
+        "reinstalled system packages into rebuilt container",
+      );
+      return;
+    }
+    const total = { workspaceId, failed, restored, failedCount: failed.length, restoredCount: restored.length };
+    if (restored.length === 0) {
+      log.error(
+        { event: "apt_recipe_replay_failed", outcome: "system_packages_not_restored", ...total },
+        "apt recipe replay failed — the rebuilt container has none of its system packages",
+      );
+      return;
+    }
+    log.warn(
+      { event: "apt_recipe_replay_incomplete", outcome: "system_packages_partially_restored", ...total },
+      "apt recipe replay incomplete — some system packages are missing from the rebuilt container",
+    );
+  }
+
+  /** Refreshes the index and installs the recipe. Resolves however it goes; never rejects. */
+  private async runRecipeReplay(
+    workspaceId: string,
+    name: string,
+    packages: string[],
+    asRoot: { asRoot: true; trimStdout: true },
+  ): Promise<void> {
+    try {
+      const update = await this.docker.exec(name, ["apt-get", "update"], asRoot);
+      if (update.code !== 0) {
+        log.error(
+          {
+            event: "apt_recipe_replay_failed",
+            outcome: "system_packages_not_restored",
+            workspaceId,
+            packages,
+            stderr: update.stderr,
+          },
+          "apt index refresh failed — the rebuilt container has none of its system packages",
+        );
+        return;
+      }
+      const failed = await this.installRecipePackages(name, packages, asRoot);
+      this.reportReplay(workspaceId, packages, failed);
+    } catch (err) {
+      log.error(
+        { event: "apt_recipe_replay_failed", outcome: "system_packages_not_restored", err, workspaceId, packages },
+        "apt recipe replay failed — the rebuilt container has none of its system packages",
+      );
+    }
+  }
+
+  /**
+   * Reinstalls the system packages this workspace had before its container was rebuilt.
+   *
+   * Only the create path calls this: `docker start` on a stopped container keeps its writable layer,
+   * so the packages are still there. Never throws — a workspace missing ffmpeg is degraded, one that
+   * refuses to start is dead, and the agent can always run apt_install again.
+   *
+   * The deadline is what makes that last sentence true of a stall and not just of a failure. Nothing
+   * underneath it has a clock — `docker exec` has no timeout — and every command in the workspace
+   * waits on the create path, so an apt hung on an unreachable mirror would hang the workspace with
+   * it. Past APT_REPLAY_TIMEOUT_MS the container is handed over as it stands.
+   *
+   * The whole replay stops there rather than salvaging the packages the stall never reached, which
+   * is the one place this parts ways with installRecipePackages. A package that FAILS releases the
+   * dpkg lock on its way out, so the next one can still install; a package that HANGS holds it, and
+   * every retry behind it would do nothing but collect lock errors.
+   *
+   * Abandoning the exec does not stop apt inside the container either, which is why nothing is
+   * cleaned up on that path: it is still running and may yet land the install we stopped waiting for.
+   */
+  private async replayAptRecipe(workspaceId: string, internetAccess: boolean): Promise<void> {
+    const packages = readAptRecipe(workspaceId);
+    if (packages.length === 0) return;
+    // An internet-less workspace sits on an --internal network with no route to the repos. Expected,
+    // not a failure: apt_install is not even offered to the agent in that state (see buildTools).
+    if (!internetAccess) {
+      log.info(
+        { event: "apt_recipe_replay_skipped", outcome: "system_packages_not_restored", workspaceId, packages },
+        "skipping apt recipe replay — workspace has no internet access",
+      );
+      return;
+    }
+
+    const name = containerName(workspaceId);
+    const asRoot = { asRoot: true, trimStdout: true } as const;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const deadline = new Promise<"timeout">((resolve) => {
+      timer = setTimeout(() => resolve("timeout"), APT_REPLAY_TIMEOUT_MS);
+    });
+
+    try {
+      const outcome = await Promise.race([this.runRecipeReplay(workspaceId, name, packages, asRoot), deadline]);
+      if (outcome === "timeout") {
+        log.error(
+          {
+            event: "apt_recipe_replay_timed_out",
+            outcome: "system_packages_not_restored",
+            workspaceId,
+            packages,
+            timeoutMs: APT_REPLAY_TIMEOUT_MS,
+          },
+          "apt recipe replay timed out — continuing without the system packages so the workspace can start",
+        );
+        return;
+      }
+      // Same reason as the apt_install tool: the .debs and the index are pure download cache, and
+      // this container is never recreated, so anything left here accumulates for its whole life.
+      await this.docker
+        .exec(name, ["/bin/sh", "-c", "apt-get clean; rm -rf /var/lib/apt/lists/*"], asRoot)
+        .catch(() => {});
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   private async _ensureContainer(workspaceId: string, workspaceDir: string): Promise<void> {
     let stage = "inspect_container";
     // Fails closed (no internet) if the workspace record can't be found at all — only a record
@@ -305,10 +459,8 @@ export class ContainerManager implements IContainerManager {
     try {
       const status = await this.getContainerStatus(workspaceId);
 
-      // An existing container is ALWAYS reused as-is — never torn down and rebuilt. Its writable
-      // layer still holds every apt package installed here; the rest of what the agent installs now
-      // lives on the durable /home/dev mount (see seedAgentHome) and would survive a rebuild. A
-      // container that drifts from the image is therefore working as intended, not stale.
+      // An existing container is ALWAYS reused as-is — drift from the image is intended, not stale.
+      // Its state is recoverable anyway: /home/dev is durable, and apt packages replay from the recipe.
       if (status === "running") {
         // Reattaching to a still-running container (e.g. after an app restart wiped our
         // in-memory task map). Rebuild it from the container's pidfiles so a survivor
@@ -443,6 +595,11 @@ export class ContainerManager implements IContainerManager {
       // when the proxy isn't set up). See containerCredentials.installProxyCA.
       stage = "install_proxy_ca";
       await this.workspaceDeps.installProxyCA(this.docker, containerName(workspaceId), workspaceId);
+
+      // After the CA, not before: apt reaches the repos through the credential proxy, and the
+      // GitHub CLI source the image adds is HTTPS, so an untrusted CA fails the refresh outright.
+      stage = "replay_apt_recipe";
+      await this.replayAptRecipe(workspaceId, internetAccess);
     } catch (err) {
       const exhaustion = asDockerNetworkPoolExhaustedError(err);
       if (!reportInfrastructureResourceExhaustion(log, exhaustion ?? err, { workspaceId, stage })) {

@@ -4,10 +4,11 @@
 //
 // Container naming: ws_<workspaceId>
 // Network naming:   wsnet_<workspaceId>  (isolated per-workspace bridge — no inter-container traffic)
-// Bind mount:       <workspaceDir> → /workspace  (host files, shared with file tools)
+// Bind mounts:      <workspaceDir> → /workspace  (host files, shared with file tools)
+//                   <homeDir>      → /home/dev   (durable agent home — see seedAgentHome)
 // Resource limits:  CONTAINER_MEMORY / CONTAINER_CPUS / CONTAINER_PIDS_LIMIT env vars
 //                   (defaults: 1g / 1.0 / 512)
-import { rm } from "fs/promises";
+import { access, mkdir, rm, writeFile } from "fs/promises";
 import { spawn } from "child_process";
 import { randomUUID } from "crypto";
 import path from "path";
@@ -17,6 +18,7 @@ import { ImageManager, HASH_LABEL } from "./imageManager";
 import type { IContainerManager, OutputSink } from "../interfaces";
 import { EXEC_OUTPUT_MAX_BYTES, EXEC_OUTPUT_KEEP, EXEC_OUTPUT_MAX_BACKLOG, EXEC_KILL_GRACE_MS } from "../limits";
 import { containerName, networkName } from "./naming";
+import { workspaceHomeDir, workspaceHomeSeededMarker, workspaceHomeSubpath } from "../paths";
 import { BackgroundTaskManager, type BackgroundTask } from "./backgroundTaskManager";
 import { ProxyNetworkManager } from "./proxyNetworkManager";
 import { capacityProfile } from "../capacityProfile";
@@ -77,6 +79,11 @@ const EXEC_PIDFILE_PREFIX = "paodo-exec-";
 // "paodo_ws") + "_" + volume key ("workspaces"). Falls back to a plain bind mount when unset
 // so local dev (app running directly on host) still works without Docker Compose.
 const WORKSPACES_VOLUME_NAME = process.env.WORKSPACES_VOLUME_NAME ?? "";
+// The agent's home inside the container — the `dev` user created in Dockerfile.workspace. Mounted
+// from durable storage, so npm globals, pip packages and extra node/python versions outlive the
+// container. SEED_TARGET is where the same directory is attached while it is being filled.
+const AGENT_HOME = "/home/dev";
+const SEED_TARGET = "/seed";
 
 /** Workspace policy and credential material needed by the Docker lifecycle. The concrete
  * workspace/secret stores are wired only by defaultContainerManager.ts. */
@@ -223,21 +230,69 @@ export class ContainerManager implements IContainerManager {
     return "stopped";
   }
 
-  // Builds the volume args for docker run.
-  // When WORKSPACES_VOLUME_NAME is set (production / Docker Compose), uses Docker 25+ volume
-  // subpath mounting — necessary because the Docker daemon sees host paths, not app-container
-  // paths, so a plain -v /app/data/<name>:/workspace would point at a non-existent host path.
-  // When unset (local dev, app runs directly on host), falls back to a plain bind mount using
-  // the resolved host path so local workspaces work without Docker Compose.
-  private buildVolumeArg(workspaceDir: string): string[] {
-    if (!WORKSPACES_VOLUME_NAME) {
-      return ["-v", `${workspaceDir}:/workspace`];
-    }
-    const workspaceName = path.basename(workspaceDir);
+  // Production (WORKSPACES_VOLUME_NAME set) uses Docker 25+ volume-subpath mounting: the Docker
+  // daemon sees host paths, not app-container paths, so a plain bind of /app/data/<id> hits nothing.
+  // Local dev (app on the host) falls back to a plain bind so it works without Docker Compose.
+  private buildMountArg(hostDir: string, subpath: string, target: string): string[] {
+    if (!WORKSPACES_VOLUME_NAME) return ["-v", `${hostDir}:${target}`];
+    return ["--mount", `type=volume,source=${WORKSPACES_VOLUME_NAME},target=${target},volume-subpath=${subpath}`];
+  }
+
+  // Both durable mounts: the workspace tree the user sees, and the agent's home. Everything the
+  // agent can write therefore survives container recreation — see seedAgentHome for why home needs it.
+  private buildVolumeArgs(workspaceId: string, workspaceDir: string): string[] {
     return [
-      "--mount",
-      `type=volume,source=${WORKSPACES_VOLUME_NAME},target=/workspace,volume-subpath=${workspaceName}`,
+      ...this.buildMountArg(workspaceDir, path.basename(workspaceDir), "/workspace"),
+      ...this.buildMountArg(workspaceHomeDir(workspaceId), workspaceHomeSubpath(workspaceId), AGENT_HOME),
     ];
+  }
+
+  /**
+   * Fill a workspace's durable home from the image, once, before its container first starts.
+   *
+   * The image ships ~250MB under /home/dev (nvm's Node, pyenv) that the mount would otherwise hide,
+   * leaving the workspace with no node and no python at all. A throwaway root container copies that
+   * tree in with `cp -a`, preserving uid 1000 ownership so the agent can still write it afterwards.
+   *
+   * Fatal on failure by design: a container started on an empty home is broken in a way that reads
+   * as "node is missing" rather than "setup failed", so this fails loudly at create instead. The
+   * marker written at the end is what makes that hold on the retry too — see below.
+   */
+  private async seedAgentHome(workspaceId: string): Promise<void> {
+    const homeDir = workspaceHomeDir(workspaceId);
+    // Must exist before docker run either way: volume-subpath refuses to mount a missing subpath.
+    await mkdir(homeDir, { recursive: true });
+    // A marker, not the directory's contents, is what says "done": a copy killed partway (disk full,
+    // host restart) leaves files that would otherwise pass for a finished seed forever after.
+    const marker = workspaceHomeSeededMarker(workspaceId);
+    const seeded = await access(marker).then(
+      () => true,
+      () => false,
+    );
+    if (seeded) return;
+
+    const r = await this.docker.cmd(
+      "run",
+      "--rm",
+      "-u",
+      "0",
+      // It copies a directory and exits; nothing here should be reachable from or over the network.
+      "--network",
+      "none",
+      ...this.buildMountArg(homeDir, workspaceHomeSubpath(workspaceId), SEED_TARGET),
+      CONTAINER_IMAGE,
+      // Overwrites what it finds rather than skipping it, so a retry completes a partial home.
+      "cp",
+      "-a",
+      `${AGENT_HOME}/.`,
+      `${SEED_TARGET}/`,
+    );
+    if (r.code !== 0) throw new Error(`agent home seed failed: ${r.stderr || `exit ${r.code}`}`);
+    await writeFile(marker, "");
+    log.info(
+      { event: "workspace_agent_home_seeded", outcome: "agent_home_ready", workspaceId },
+      "agent home seeded from image",
+    );
   }
 
   private async _ensureContainer(workspaceId: string, workspaceDir: string): Promise<void> {
@@ -251,8 +306,8 @@ export class ContainerManager implements IContainerManager {
       const status = await this.getContainerStatus(workspaceId);
 
       // An existing container is ALWAYS reused as-is — never torn down and rebuilt. Its writable
-      // layer holds everything the agent installed (apt packages, pip/npm modules, nvm/pyenv
-      // runtimes), which is the workspace's real content; the image is only where it started. A
+      // layer still holds every apt package installed here; the rest of what the agent installs now
+      // lives on the durable /home/dev mount (see seedAgentHome) and would survive a rebuild. A
       // container that drifts from the image is therefore working as intended, not stale.
       if (status === "running") {
         // Reattaching to a still-running container (e.g. after an app restart wiped our
@@ -282,6 +337,9 @@ export class ContainerManager implements IContainerManager {
       log.debug({ workspaceId }, "creating container");
       stage = "ensure_network";
       await this.ensureNetwork(workspaceId, internetAccess);
+      // Before the container exists, so its /home/dev mount has the image's runtimes to start from.
+      stage = "seed_agent_home";
+      await this.seedAgentHome(workspaceId);
       stage = "hash_workspace_image";
       // Only the create path uses this — it is recorded as a label on the new container. Computed
       // here rather than before the branches above so a reused container never pays to read and
@@ -317,7 +375,7 @@ export class ContainerManager implements IContainerManager {
         `--memory=${CONTAINER_MEMORY}`,
         `--cpus=${CONTAINER_CPUS}`,
         `--pids-limit=${CONTAINER_PIDS}`,
-        ...this.buildVolumeArg(workspaceDir),
+        ...this.buildVolumeArgs(workspaceId, workspaceDir),
         // Recorded for diagnostics only — which base image this container was born from. Nothing
         // acts on it: a newer image never triggers a rebuild, because that would discard everything
         // the agent has installed since. New images apply to newly created workspaces.

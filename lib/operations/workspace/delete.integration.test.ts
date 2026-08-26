@@ -86,6 +86,21 @@ describe("workspace deletion cascade", () => {
     expect(schedules.getSchedule(survivor.id)?.prompt).toBe("stays put");
   });
 
+  it("removes the agent's home and its seed receipt together", async () => {
+    const { workspaces, operations, deletion } = await freshModules();
+    const paths = await import("../../infra/paths");
+    const ws = await workspaces.defaultWorkspaceStore.createWorkspace("homed-ws");
+    fs.mkdirSync(path.join(paths.workspaceHomeDir(ws.id), ".nvm"), { recursive: true });
+    fs.writeFileSync(paths.workspaceHomeSeededMarker(ws.id), "");
+
+    await operations.deleteWorkspace(ws.id, deletion.workspaceDeleteDeps());
+
+    // A receipt outliving its home is the dangerous half: it tells the next seed that a now-empty
+    // home is already filled, booting a container with no node and no python.
+    expect(fs.existsSync(paths.workspaceHomeSeededMarker(ws.id))).toBe(false);
+    expect(fs.existsSync(paths.workspaceHomeDir(ws.id))).toBe(false);
+  });
+
   it("deletes a workspace that never had a schedule without error", async () => {
     const { workspaces, schedules, operations, deletion } = await freshModules();
     const ws = await workspaces.defaultWorkspaceStore.createWorkspace("unscheduled-ws");

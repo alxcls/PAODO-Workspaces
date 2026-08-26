@@ -8,6 +8,7 @@ export default defineConfig({
   test: {
     environment: "node",
     include: ["**/*.integration.test.ts"],
+    setupFiles: ["./vitest.setup.ts"],
     testTimeout: 60_000, // docker run is slow
   },
   resolve: {

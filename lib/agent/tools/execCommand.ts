@@ -37,7 +37,7 @@ function diagnoseStderr(stderr: string): string {
       "\n[setup] The container cannot resolve its runtime user. This is a container-level fault, not something you can fix from the shell — report it to the workspace owner. Do NOT suggest deleting or recreating the container: that would erase every package installed in this workspace.";
   } else if (trimmed.includes("Permission denied")) {
     out +=
-      "\n[permission] You run as a non-root user and cannot modify system paths (e.g. /etc, /root, /usr). For workspace files, check ownership; to install system packages use the apt_install tool instead of apt-get.";
+      "\n[permission] You run as a non-root user and cannot modify system paths (e.g. /etc, /root, /usr). For workspace files, check ownership; to install system packages use the apt_install tool instead of apt-get. If you are building from source, configure with --prefix=$HOME/.local — your home is writable and persists.";
   }
   return out;
 }

@@ -1,9 +1,9 @@
 // The workspace container is stateful and must never be destroyed automatically.
 //
-// Its writable layer holds everything the agent has installed since creation — apt packages, pip
-// and npm modules, nvm/pyenv runtimes — which is the workspace's real content. The image is only
-// where it started. A container that has drifted from its image is working as intended, so nothing
-// short of an explicit workspace deletion may `docker rm` it.
+// Its writable layer holds every apt package installed since creation. The rest of what the agent
+// installs — pip/npm modules, nvm/pyenv runtimes — now sits on the durable /home/dev mount and would
+// survive a rebuild, but the apt half would not. A container that has drifted from its image is
+// working as intended, so nothing short of an explicit workspace deletion may `docker rm` it.
 //
 // This regressed once already: an internet-access toggle changed a credential fingerprint, the
 // fingerprint mismatch triggered a rebuild, and a workspace silently lost its installed packages
@@ -241,7 +241,8 @@ describe("secrets reach the container per command, not at creation", () => {
     };
     await new ContainerManager(docker, workspaceDeps).ensure("ws1", "/w");
 
-    const runArgs = calls.find((c) => c[0] === "run")!;
+    // The container run, not the one-shot that seeds the agent home — only this one carries --name.
+    const runArgs = calls.find((c) => c[0] === "run" && c.includes("--name"))!;
     expect(runArgs.join(" ")).not.toContain("API_TOKEN");
     expect(runArgs.join(" ")).not.toContain("p-opaque-token");
     // The static proxy wiring does still belong at create time.

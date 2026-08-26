@@ -5,6 +5,9 @@ export default defineConfig({
   test: {
     environment: "node",
     include: ["**/*.test.ts"],
+    // Every file gets its own temp WORKSPACES_ROOT, so a file that forgets to set one cannot
+    // write into the developer's real ./data. Files that set their own still override this.
+    setupFiles: ["./vitest.setup.ts"],
     // Integration tests need real Docker — they run in their own tier
     // (vitest.integration.config.ts) so `npm test` stays fast and portable.
     exclude: ["**/node_modules/**", "**/*.integration.test.ts"],

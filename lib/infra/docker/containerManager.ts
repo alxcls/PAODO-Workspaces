@@ -297,6 +297,56 @@ export class ContainerManager implements IContainerManager {
   }
 
   /**
+   * Installs the recipe, returning the packages that could not be installed.
+   *
+   * One call first, because that is the case that always works and it resolves the set together.
+   * But apt-get commits or aborts the WHOLE transaction, so a single package the repos no longer
+   * carry — an aged-out pin, a rename — would otherwise take every other package down with it and
+   * hand back a bare container. The retry costs one apt-get per package, and only when something is
+   * already wrong, to salvage everything that is still installable.
+   */
+  private async installRecipePackages(
+    name: string,
+    packages: string[],
+    asRoot: { asRoot: true; trimStdout: true },
+  ): Promise<string[]> {
+    const install = (pkgs: string[]) =>
+      this.docker.exec(name, ["apt-get", "install", "-y", "--no-install-recommends", ...pkgs], asRoot);
+
+    if ((await install(packages)).code === 0) return [];
+
+    const failed: string[] = [];
+    for (const pkg of packages) {
+      if ((await install([pkg])).code !== 0) failed.push(pkg);
+    }
+    return failed;
+  }
+
+  /** Severity tracks how much of the workspace's tooling is actually missing, not whether apt erred. */
+  private reportReplay(workspaceId: string, packages: string[], failed: string[]): void {
+    const restored = packages.filter((p) => !failed.includes(p));
+    if (failed.length === 0) {
+      log.info(
+        { event: "apt_recipe_replayed", outcome: "system_packages_restored", workspaceId, packages },
+        "reinstalled system packages into rebuilt container",
+      );
+      return;
+    }
+    const total = { workspaceId, failed, restored, failedCount: failed.length, restoredCount: restored.length };
+    if (restored.length === 0) {
+      log.error(
+        { event: "apt_recipe_replay_failed", outcome: "system_packages_not_restored", ...total },
+        "apt recipe replay failed — the rebuilt container has none of its system packages",
+      );
+      return;
+    }
+    log.warn(
+      { event: "apt_recipe_replay_incomplete", outcome: "system_packages_partially_restored", ...total },
+      "apt recipe replay incomplete — some system packages are missing from the rebuilt container",
+    );
+  }
+
+  /**
    * Reinstalls the system packages this workspace had before its container was rebuilt.
    *
    * Only the create path calls this: `docker start` on a stopped container keeps its writable layer,
@@ -320,33 +370,25 @@ export class ContainerManager implements IContainerManager {
     const asRoot = { asRoot: true, trimStdout: true } as const;
     try {
       const update = await this.docker.exec(name, ["apt-get", "update"], asRoot);
-      const install =
-        update.code === 0
-          ? await this.docker.exec(name, ["apt-get", "install", "-y", "--no-install-recommends", ...packages], asRoot)
-          : update;
-      if (install.code !== 0) {
-        // A pin that has aged out of the repos lands here. Loud, with the package list, because the
-        // fix is a human or agent decision — not something to paper over on every future rebuild.
-        log.warn(
+      if (update.code !== 0) {
+        log.error(
           {
             event: "apt_recipe_replay_failed",
             outcome: "system_packages_not_restored",
             workspaceId,
             packages,
-            stderr: install.stderr,
+            stderr: update.stderr,
           },
-          "apt recipe replay failed — system packages are missing from the rebuilt container",
+          "apt index refresh failed — the rebuilt container has none of its system packages",
         );
         return;
       }
-      log.info(
-        { event: "apt_recipe_replayed", outcome: "system_packages_restored", workspaceId, packages },
-        "reinstalled system packages into rebuilt container",
-      );
+      const failed = await this.installRecipePackages(name, packages, asRoot);
+      this.reportReplay(workspaceId, packages, failed);
     } catch (err) {
-      log.warn(
+      log.error(
         { event: "apt_recipe_replay_failed", outcome: "system_packages_not_restored", err, workspaceId, packages },
-        "apt recipe replay failed — system packages are missing from the rebuilt container",
+        "apt recipe replay failed — the rebuilt container has none of its system packages",
       );
     } finally {
       // Same reason as the apt_install tool: the .debs and the index are pure download cache, and

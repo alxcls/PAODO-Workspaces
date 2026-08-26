@@ -39,7 +39,11 @@ async function writeRecipe(workspaceId: string, packages: string[]) {
   await writeFile(path.join(root, ".homes", `${workspaceId}.seeded`), "");
 }
 
-function makeDocker(opts: { failUpdate?: boolean; failInstall?: boolean; throwOnExec?: boolean } = {}) {
+// `unavailable` models packages the repos no longer carry — an aged-out pin, a rename. apt-get
+// commits or aborts the whole transaction, so any install naming one of them fails entirely.
+function makeDocker(
+  opts: { failUpdate?: boolean; failInstall?: boolean; throwOnExec?: boolean; unavailable?: string[] } = {},
+) {
   const execs: string[][] = [];
   const docker: IDockerClient = {
     cmd: async (...args: string[]): Promise<DockerResult> => {
@@ -51,7 +55,12 @@ function makeDocker(opts: { failUpdate?: boolean; failInstall?: boolean; throwOn
       execs.push(cmdArgs);
       if (opts.throwOnExec && cmdArgs[0] === "apt-get") throw new Error("docker daemon went away");
       if (opts.failUpdate && cmdArgs[1] === "update") return { stdout: "", stderr: "network unreachable", code: 1 };
-      if (opts.failInstall && cmdArgs[1] === "install") return { stdout: "", stderr: "no such package", code: 100 };
+      if (cmdArgs[1] === "install") {
+        if (opts.failInstall) return { stdout: "", stderr: "no such package", code: 100 };
+        if (opts.unavailable?.some((p) => cmdArgs.includes(p))) {
+          return { stdout: "", stderr: "Version not found", code: 100 };
+        }
+      }
       return OK;
     },
     build: async () => {},
@@ -67,6 +76,12 @@ const deps = (internetAccess: boolean) => ({
 });
 
 const aptInstall = (execs: string[][]) => execs.find((c) => c[0] === "apt-get" && c[1] === "install");
+const aptInstalls = (execs: string[][]) => execs.filter((c) => c[0] === "apt-get" && c[1] === "install");
+const installedPackages = (execs: string[][]) =>
+  aptInstalls(execs)
+    .slice(1)
+    .filter((c) => c.length === 5)
+    .map((c) => c[4]);
 const aptUpdate = (execs: string[][]) => execs.find((c) => c[0] === "apt-get" && c[1] === "update");
 const aptCleanup = (execs: string[][]) => execs.find((c) => c.join(" ").includes("apt-get clean"));
 
@@ -133,6 +148,45 @@ describe("apt recipe — replaying it into a rebuilt container", () => {
     await new ContainerManager(docker, deps(true)).ensure("ws1", "/w");
 
     expect(aptInstall(execs)).toBeUndefined();
+  });
+});
+
+// apt-get commits or aborts the whole transaction. Left as a single call, one package the repos no
+// longer carry — which happens on its own, at the next point release, with nobody doing anything
+// wrong — would take the other nine down with it and hand back a bare container. That is the exact
+// failure this branch exists to prevent, arriving through the recovery path itself.
+describe("apt recipe — one unavailable package does not cost the workspace the rest", () => {
+  it("installs everything else when one package can no longer be installed", async () => {
+    const ContainerManager = await loadManager();
+    await writeRecipe("ws1", ["ffmpeg=7:6.1.1-3ubuntu5", "htop", "tmux", "rsync"]);
+    const { docker, execs } = makeDocker({ unavailable: ["ffmpeg=7:6.1.1-3ubuntu5"] });
+
+    await new ContainerManager(docker, deps(true)).ensure("ws1", "/w");
+
+    expect(installedPackages(execs)).toEqual(["ffmpeg=7:6.1.1-3ubuntu5", "htop", "tmux", "rsync"]);
+    // The bulk attempt plus one retry per package — nothing skipped after the first failure.
+    expect(aptInstalls(execs)).toHaveLength(5);
+  });
+
+  it("keeps the single bulk install when nothing is wrong", async () => {
+    const ContainerManager = await loadManager();
+    await writeRecipe("ws1", ["ffmpeg", "htop", "tmux"]);
+    const { docker, execs } = makeDocker();
+
+    await new ContainerManager(docker, deps(true)).ensure("ws1", "/w");
+
+    // The retry loop is the salvage path, not the normal one: three packages must cost one call.
+    expect(aptInstalls(execs)).toHaveLength(1);
+  });
+
+  it("does not retry individually when the index refresh is what failed", async () => {
+    const ContainerManager = await loadManager();
+    await writeRecipe("ws1", ["ffmpeg", "htop"]);
+    const { docker, execs } = makeDocker({ failUpdate: true });
+
+    await new ContainerManager(docker, deps(true)).ensure("ws1", "/w");
+
+    expect(aptInstalls(execs)).toHaveLength(0);
   });
 });
 

@@ -32,6 +32,7 @@ import { isCaller } from "@/lib/agent/graph";
 import { defaultContainerManager } from "../infra/docker/defaultContainerManager";
 import { defaultWorkspaceStore } from "@/lib/infra/workspace/registry";
 import { getVersioning } from "../infra/services";
+import { recordAptPackages } from "../infra/aptRecipe";
 import { broadcastToWorkspace } from "../infra/realtime/wsHub";
 import type {
   IContainerManager,
@@ -120,7 +121,7 @@ export function buildTools(
     new StopTaskTool(workspaceId, containers),
     // apt_install and http_get need a route out. Dropped from the bound list rather than left to
     // error, so the model cannot even attempt them when the workspace has no network.
-    ...(config.internetAccess ? [new AptInstallTool(runner)] : []),
+    ...(config.internetAccess ? [new AptInstallTool(runner, (pkgs) => recordAptPackages(workspaceId, pkgs))] : []),
     new FileReadTool(runner),
     new FileEditTool(runner, workspaceDir, broadcast),
     new FileWriteTool(runner, workspaceDir, broadcast),

@@ -96,8 +96,8 @@ RUN git clone --depth=1 --branch $PYENV_VERSION_TAG https://github.com/pyenv/pye
 # on PATH. BASH_ENV is the one startup file a non-interactive bash does read, so it is where the
 # default Node version has to be selected.
 #
-# `nvm alias default <v>` writes $NVM_DIR/alias/default, which lives in the container's writable
-# layer — so the choice survives for the life of the workspace, like everything else installed in it.
+# `nvm alias default <v>` writes $NVM_DIR/alias/default. $NVM_DIR is under /home/dev, which is a
+# durable mount, so the choice outlives the container itself — not just the session that set it.
 #
 # The loaded-guard is exported so nested bash (a build script, a Makefile recipe) inherits it and
 # skips the ~150ms re-source; --no-use keeps nvm.sh from picking a version before we ask for the

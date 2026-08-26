@@ -14,3 +14,9 @@ export const workspaceHomeDir = (workspaceId: string): string =>
 
 /** Receipt for a finished seed. A sibling of the home, so it sits outside the mount the agent sees. */
 export const workspaceHomeSeededMarker = (workspaceId: string): string => `${workspaceHomeDir(workspaceId)}.seeded`;
+
+/**
+ * System packages this workspace installed, replayed into a rebuilt container. A sibling of the
+ * home for the same reason as the marker: durable, but not writable by the agent it describes.
+ */
+export const workspaceAptRecipeFile = (workspaceId: string): string => `${workspaceHomeDir(workspaceId)}.apt.json`;

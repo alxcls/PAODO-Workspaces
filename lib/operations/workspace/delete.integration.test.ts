@@ -86,12 +86,13 @@ describe("workspace deletion cascade", () => {
     expect(schedules.getSchedule(survivor.id)?.prompt).toBe("stays put");
   });
 
-  it("removes the agent's home and its seed receipt together", async () => {
+  it("removes the agent's home, its seed receipt and its apt recipe together", async () => {
     const { workspaces, operations, deletion } = await freshModules();
     const paths = await import("../../infra/paths");
     const ws = await workspaces.defaultWorkspaceStore.createWorkspace("homed-ws");
     fs.mkdirSync(path.join(paths.workspaceHomeDir(ws.id), ".nvm"), { recursive: true });
     fs.writeFileSync(paths.workspaceHomeSeededMarker(ws.id), "");
+    fs.writeFileSync(paths.workspaceAptRecipeFile(ws.id), JSON.stringify(["ffmpeg"]));
 
     await operations.deleteWorkspace(ws.id, deletion.workspaceDeleteDeps());
 
@@ -99,6 +100,9 @@ describe("workspace deletion cascade", () => {
     // home is already filled, booting a container with no node and no python.
     expect(fs.existsSync(paths.workspaceHomeSeededMarker(ws.id))).toBe(false);
     expect(fs.existsSync(paths.workspaceHomeDir(ws.id))).toBe(false);
+    // Orphaned state otherwise: a recipe nothing will ever replay, naming packages for a workspace
+    // whose files, container and history are all gone.
+    expect(fs.existsSync(paths.workspaceAptRecipeFile(ws.id))).toBe(false);
   });
 
   it("deletes a workspace that never had a schedule without error", async () => {

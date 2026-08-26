@@ -10,6 +10,7 @@ import { mkdtemp, mkdir, writeFile, rm } from "fs/promises";
 import { tmpdir } from "os";
 import path from "path";
 import type { IDockerClient, DockerResult } from "./dockerClient";
+import { APT_REPLAY_TIMEOUT_MS } from "../limits";
 
 const OK: DockerResult = { stdout: "", stderr: "", code: 0 };
 
@@ -42,7 +43,15 @@ async function writeRecipe(workspaceId: string, packages: string[]) {
 // `unavailable` models packages the repos no longer carry — an aged-out pin, a rename. apt-get
 // commits or aborts the whole transaction, so any install naming one of them fails entirely.
 function makeDocker(
-  opts: { failUpdate?: boolean; failInstall?: boolean; throwOnExec?: boolean; unavailable?: string[] } = {},
+  opts: {
+    failUpdate?: boolean;
+    failInstall?: boolean;
+    throwOnExec?: boolean;
+    unavailable?: string[];
+    // An apt that never answers — a mirror that accepted the connection and then went quiet. Nothing
+    // under the replay has a clock of its own, so this hangs forever unless the deadline cuts it.
+    hangOn?: "update" | "install";
+  } = {},
 ) {
   const execs: string[][] = [];
   const docker: IDockerClient = {
@@ -53,6 +62,7 @@ function makeDocker(
     },
     exec: async (_name: string, cmdArgs: string[]): Promise<DockerResult> => {
       execs.push(cmdArgs);
+      if (opts.hangOn && cmdArgs[1] === opts.hangOn) return new Promise<DockerResult>(() => {});
       if (opts.throwOnExec && cmdArgs[0] === "apt-get") throw new Error("docker daemon went away");
       if (opts.failUpdate && cmdArgs[1] === "update") return { stdout: "", stderr: "network unreachable", code: 1 };
       if (cmdArgs[1] === "install") {
@@ -213,6 +223,76 @@ describe("apt recipe — a failed replay never costs the workspace its container
     const { docker } = makeDocker({ throwOnExec: true });
 
     await expect(new ContainerManager(docker, deps(true)).ensure("ws1", "/w")).resolves.toBeUndefined();
+  });
+});
+
+// A stall is not a failure: apt never answers, so the code below it never returns. Nothing in the
+// replay has a clock — `docker exec` has no timeout — so the deadline is the only thing that ends it.
+describe("apt recipe — a stalled replay never costs the workspace its container", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /**
+   * The create path is real I/O — the seed, the image hash — so the deadline does not exist yet when
+   * ensure() is called, and advancing the clock straight away would fire nothing. setImmediate is
+   * left real so each turn lets that I/O land; only then has the replay armed its timer.
+   */
+  async function reachTheStall(execs: string[][], hangOn: string) {
+    for (let turn = 0; turn < 1_000; turn++) {
+      if (execs.some((c) => c[0] === "apt-get" && c[1] === hangOn)) return;
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+    throw new Error(`replay never reached apt-get ${hangOn}`);
+  }
+
+  async function ensureWithStall(hangOn: "update" | "install") {
+    const ContainerManager = await loadManager();
+    await writeRecipe("ws1", ["ffmpeg", "htop"]);
+    const { docker, execs } = makeDocker({ hangOn });
+
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const ensured = new ContainerManager(docker, deps(true)).ensure("ws1", "/w");
+    await reachTheStall(execs, hangOn);
+    await vi.advanceTimersByTimeAsync(APT_REPLAY_TIMEOUT_MS);
+    return { ensured, execs };
+  }
+
+  it("hands the container over when the install never answers", async () => {
+    const { ensured } = await ensureWithStall("install");
+    await expect(ensured).resolves.toBeUndefined();
+  });
+
+  it("hands the container over when the index refresh never answers", async () => {
+    const { ensured } = await ensureWithStall("update");
+    await expect(ensured).resolves.toBeUndefined();
+  });
+
+  // Abandoning the exec does not stop apt inside the container. Wiping the index out from under a
+  // still-running install would sabotage the packages a slow-but-working replay is about to land.
+  it("leaves the abandoned apt's downloads alone", async () => {
+    const { ensured, execs } = await ensureWithStall("install");
+    await ensured;
+
+    expect(aptCleanup(execs)).toBeUndefined();
+  });
+
+  // A 5-minute handle left behind by every container create would pin the event loop for no reason.
+  it("disarms the deadline once the replay is done", async () => {
+    const ContainerManager = await loadManager();
+    await writeRecipe("empty", []);
+    await writeRecipe("replayed", ["ffmpeg"]);
+    const { docker } = makeDocker();
+    const manager = new ContainerManager(docker, deps(true));
+
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    await manager.ensure("empty", "/w");
+    const perWorkspace = vi.getTimerCount();
+    await manager.ensure("replayed", "/w");
+
+    // Measured against a workspace with nothing to replay, so the idle timer ensure() always arms
+    // is counted rather than assumed: a finished replay must leave nothing of its own on top.
+    expect(vi.getTimerCount()).toBe(perWorkspace * 2);
   });
 });
 

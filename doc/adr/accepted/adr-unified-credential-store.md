@@ -58,7 +58,7 @@ removeWorkspace(subject): void               // both workspace kinds, for worksp
 
 **Storage: JSON + `globalSingleton`** at `WORKSPACES_ROOT/.credentials.json`, matching the eleven
 other configuration stores. SQLite (`.paodo.db`) stays reserved for high-volume append data
-(`conversations`, `usage_turns`).
+(`conversations`, `sessions`, `turns`).
 
 **Prefixes are derived from `kind`** by one internal table rather than hardcoded at three mint sites.
 They are retained deliberately: a leaked key stays identifiable in a log or a secret scanner.
@@ -187,7 +187,7 @@ not a minted key.
 
 - Related: `doc/prd/accepted/prd-cli-access.md`, `doc/trigger-operation-architecture.md`
 - Deliberately out of scope: **actor attribution** ("which credential started this run?").
-  `usage_turns.origin` (`lib/data/migrations/001-initial-schema.ts`) already constrains to
+  `sessions.origin` (`lib/data/migrations/001-baseline.ts`) already constrains to
   `('chat','api','mcp','scheduled','agent','manual')`, so that work is adding `'cli'` and threading
   `origin` through run creation — not inventing a vocabulary. `CredentialKind` names were chosen to sit
   alongside it.

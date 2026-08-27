@@ -7,8 +7,8 @@ The application has two durable but distinct data models:
 
 - Conversation replay state: conversation metadata plus the serialized messages required to resume
   an agent chat.
-- Execution history: immutable per-LLM-turn usage, cost, reasoning, output, errors, and ordered tool
-  calls used by the monitoring dashboard and chat token display.
+- Execution history: session-level provenance and prompts plus immutable per-LLM-turn usage, cost,
+  reasoning, output, and ordered tool calls used by the monitoring dashboard and chat token display.
 
 These models share an operational boundary: both must survive restarts, be ready before their
 feature stores query them, and be backed up consistently. They do not share authority. Conversation
@@ -33,15 +33,17 @@ application version.
 Feature stores own only their domain queries:
 
 - `conversations` is authoritative for replayable conversation metadata and messages.
-- `usage_turns` is authoritative for per-LLM-turn token facts, frozen cost, text, and errors.
-- `usage_tool_calls` stores the ordered tools associated with an execution turn.
+- `sessions` is authoritative for one run's workspace, conversation, origin, input, resolved
+  Markdown system prompt, lifecycle, and terminal error.
+- `turns` is authoritative for each model call's token facts, frozen cost, text, and ordered tool-call
+  JSON.
 
-`usage_turns.conversation_id` is a logical association, not a foreign key to `conversations`.
+`sessions.conversation_id` is a logical association, not a foreign key to `conversations`.
 Execution history therefore survives conversation deletion. Replay messages keep only the stable
 execution-turn identifier needed to attach the execution ledger’s aggregate token total when a
 conversation is reopened; they do not store a second token snapshot.
 
-A usage turn and its tool calls are committed in one transaction. The database uses WAL mode,
+A turn and its tool-call JSON are committed in one statement. The database uses WAL mode,
 `synchronous=FULL`, foreign-key enforcement, and a busy timeout. Large execution text remains in
 SQLite but is omitted from the dashboard’s lightweight list query and loaded only for a selected
 session. The dashboard’s 5000-turn list limit bounds one response and is not a retention policy.
@@ -97,4 +99,4 @@ Related requirements:
 
 Implementation:
 `lib/data/database.ts`, `lib/data/migrations/`, `lib/conversations/store.ts`,
-`lib/usage/store.ts`, `app/api/usage/`, and `app/dashboard/page.tsx`.
+`lib/usage/record.ts`, `lib/usage/queries.ts`, `app/api/usage/`, and `app/dashboard/page.tsx`.

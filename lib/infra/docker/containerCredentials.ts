@@ -35,7 +35,8 @@ const WORKSPACES_VOLUME_NAME = process.env.WORKSPACES_VOLUME_NAME ?? "";
 // (REQUESTS_CA_BUNDLE / CURL_CA_BUNDLE / SSL_CERT_FILE) point at. Built by installProxyCA below.
 const COMBINED_CA_BUNDLE = "/etc/proxy-ca-bundle.crt";
 
-// Path is deterministic — avoids module-isolation issues with getCACertPath() across Next.js bundles.
+// Recomputed from WORKSPACES_ROOT rather than read off proxyCA's module state, which each Next.js
+// bundle instantiates separately — this stays correct in a bundle that never ran ensureCA.
 const CA_CERT_PATH = path.join(WORKSPACES_ROOT, ".proxy-ca", "ca.crt");
 
 // The proxy is only wired up when its CA exists (ensureCA writes the CA alongside the HMAC key

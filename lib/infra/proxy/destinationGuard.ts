@@ -92,6 +92,3 @@ export function makeGuardedLookup(isBlocked: (ip: string) => boolean = isBlocked
     });
   };
 }
-
-// Default guard used by the proxy in production.
-export const guardedLookup: net.LookupFunction = makeGuardedLookup();

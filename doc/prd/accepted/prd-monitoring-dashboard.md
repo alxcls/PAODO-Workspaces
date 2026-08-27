@@ -63,12 +63,14 @@ loads a bounded recent window without deleting older database records.
 
 ## Implementation notes
 
-The store (`lib/usage/store.ts`) commits one `TurnRecord` and its ordered tool calls to
-SQLite per model turn via `appendUsage`; `recordTurnUsage` folds a `turn_usage` event into the store
-under a session/workspace context and is shared by all three call sites (chat route, agent stream,
-nested skill calls) so the field mapping can't drift. Lightweight list queries omit large text and
-tool I/O; full detail is selected by `sessionId` only when its drawer opens. Sessions are grouped
-client-side by `sessionId`, a UUID generated per HTTP request in the chat route. The in-chat counter
+Writes live in `lib/usage/record.ts`, reads in `lib/usage/queries.ts`. A session is a row of its own:
+`startUsageSession` opens it, `appendUsage` commits one `TurnRecord` and its ordered tool calls per
+model turn, and `finishUsageSession` closes it with a terminal status. `recordTurnUsage` folds a
+`turn_usage` event into a turn under a session/workspace context and is shared by all three call
+sites (chat route, agent stream, nested skill calls) so the field mapping can't drift. Everything a
+session owns — workspace, origin, input, prompt, status, error — is stored once on `sessions` rather
+than repeated on every turn, so the list query joins the two. Lightweight list queries omit large
+text and tool I/O; full detail is selected by `sessionId` only when its drawer opens. The in-chat counter
 is driven by the `turn_usage` SSE events forwarded from the chat route: the hook sums every model
 turn in the agent loop and shows one total on its final visible assistant output. Reopened
 conversations derive the same aggregate from SQLite. The dashboard retains the underlying per-turn

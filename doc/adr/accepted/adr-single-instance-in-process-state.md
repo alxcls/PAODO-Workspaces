@@ -40,4 +40,4 @@ Running 2+ instances is explicitly out of scope. Doing so safely would require e
 ## Notes
 
 - Related: `adr-global-object-hot-reload-survival.md` (why the state is on `global`), `adr-metadata-storage-json-vs-db.md`, `adr-container-per-workspace-sandbox.md`.
-- Load-bearing files: `lib/infra/workspaceStore.ts`, `lib/infra/apiKeyStore.ts`, `lib/infra/wsHub.ts`, `lib/infra/containerManager.ts`, `lib/infra/todoStore.ts`, `server.ts`.
+- Load-bearing files: `lib/infra/workspace/registry.ts`, `lib/infra/security/credentialStore.ts`, `lib/infra/realtime/wsHub.ts`, `lib/infra/docker/containerManager.ts`, `lib/todos/store.ts`, `server.ts`.

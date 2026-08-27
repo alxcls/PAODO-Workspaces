@@ -25,4 +25,4 @@ Alternatives considered
 - External object storage (S3/GCS) for scalability — deferred.
 - Streamed uploads to avoid buffering — deferred.
 
-Files: `lib/infra/workspaceStore.ts`, `app/api/workspaces/[id]/files/upload/route.ts`, `lib/infra/rateLimit.ts`
+Files: `lib/infra/workspace/registry.ts`, `app/api/workspaces/[id]/files/upload/route.ts`, `lib/infra/security/rateLimit.ts`

@@ -9,7 +9,7 @@ import { buildPromptConfig, buildSystemPrompt } from "./systemPrompt";
 export type PromptWorkspace = Pick<Workspace, "id" | "name" | "dir">;
 
 /** The workspace's system prompt as it would be sent now: model config, AGENTS.md, drives, secrets. */
-export function buildWorkspaceSystemPrompt(ws: PromptWorkspace, config?: LLMProviderConfig): SystemMessage {
+function buildWorkspaceSystemPrompt(ws: PromptWorkspace, config?: LLMProviderConfig): SystemMessage {
   return buildSystemPrompt(
     ws.name,
     buildPromptConfig(config ?? loadAgentConfig(ws.id)),

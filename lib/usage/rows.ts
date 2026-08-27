@@ -64,7 +64,7 @@ const INSERT_TURN_SQL = `
   )
 `;
 
-export function isToolStatus(value: unknown): value is ToolStatus {
+function isToolStatus(value: unknown): value is ToolStatus {
   return value === "ok" || value === "error" || value === "needs_input";
 }
 

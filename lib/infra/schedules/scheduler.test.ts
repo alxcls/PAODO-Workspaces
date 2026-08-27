@@ -40,9 +40,7 @@ vi.mock("../../agent/runBroker", () => ({
     h.startRun(p);
     return {
       alreadyRunning: h.alreadyRunning,
-      ...(h.capacityReached
-        ? { capacityReached: { active: 10, limit: 10, available: 0, atCapacity: true } }
-        : {}),
+      ...(h.capacityReached ? { capacityReached: { active: 10, limit: 10, available: 0, atCapacity: true } } : {}),
     };
   },
   subscribe: (_w: string, _c: string, cb: (e: { type: string }) => void) => {
@@ -51,8 +49,8 @@ vi.mock("../../agent/runBroker", () => ({
   },
 }));
 vi.mock("@/lib/conversations/store", () => ({
-  createConversation: (workspaceId: string, opts?: { title?: string; kind?: "user" | "skill-call" | "scheduled" }) => {
-    h.createConversation(workspaceId, opts);
+  createConversation: (workspaceId: string) => {
+    h.createConversation(workspaceId);
     return { id: "conv-1" };
   },
   getMessages: () => h.messages,
@@ -118,7 +116,7 @@ describe("scheduler tick", () => {
   it("fires a due enabled schedule exactly once and does not re-fire while in flight", () => {
     seed();
     scheduler._tick();
-    expect(h.createConversation).toHaveBeenCalledWith("w1", { kind: "scheduled" });
+    expect(h.createConversation).toHaveBeenCalledWith("w1");
     expect(h.startRun).toHaveBeenCalledTimes(1);
     expect(h.startRun.mock.calls[0][0]).toMatchObject({
       workspaceId: "w1",

@@ -17,10 +17,6 @@ const log = createLogger("conversations");
 export interface ConversationMeta {
   id: string;
   title: string;
-  /** "skill-call" marks a conversation created by an agent-to-agent call_agent invocation;
-   *  "scheduled" marks one started automatically by a workspace schedule (vs the default
-   *  user-initiated chat). Stored as provenance metadata for API/UI consumers. */
-  kind?: "user" | "skill-call" | "scheduled";
   createdAt: string;
   updatedAt: string;
   lastMessageAt: string;
@@ -42,7 +38,6 @@ const store = g._conversations;
 interface ConversationRow {
   id: string;
   title: string;
-  kind: string | null;
   created_at: string;
   updated_at: string;
   last_message_at: string;
@@ -53,7 +48,6 @@ function rowToMeta(row: ConversationRow): ConversationMeta {
   return {
     id: row.id,
     title: row.title,
-    ...(row.kind ? { kind: row.kind as ConversationMeta["kind"] } : {}),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     lastMessageAt: row.last_message_at,
@@ -70,15 +64,14 @@ function insertConversation(
     .prepare(
       `
         INSERT INTO conversations (
-          workspace_id, id, title, kind, created_at, updated_at, last_message_at, messages_json
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+          workspace_id, id, title, created_at, updated_at, last_message_at, messages_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
       `,
     )
     .run(
       workspaceId,
       meta.id,
       meta.title,
-      meta.kind ?? null,
       meta.createdAt,
       meta.updatedAt,
       meta.lastMessageAt,
@@ -104,7 +97,7 @@ function ensureLoaded(workspaceId: string): WorkspaceConversations {
     const rows = conn
       .prepare(
         `
-          SELECT id, title, kind, created_at, updated_at, last_message_at
+          SELECT id, title, created_at, updated_at, last_message_at
           FROM conversations
           WHERE workspace_id = ?
           ORDER BY last_message_at DESC, updated_at DESC, id DESC
@@ -164,17 +157,13 @@ export function setActiveId(workspaceId: string, convId: string): void {
   if (s.metas.some((m) => m.id === convId)) s.activeId = convId;
 }
 
-export function createConversation(
-  workspaceId: string,
-  opts?: { title?: string; kind?: ConversationMeta["kind"] },
-): ConversationMeta {
+export function createConversation(workspaceId: string, opts?: { title?: string }): ConversationMeta {
   const s = ensureLoaded(workspaceId);
   const now = new Date().toISOString();
   const id = crypto.randomUUID();
   const meta: ConversationMeta = {
     id,
     title: opts?.title ?? id.slice(0, 8), // default: short, stable id label; never rewritten
-    ...(opts?.kind ? { kind: opts.kind } : {}),
     createdAt: now,
     updatedAt: now,
     lastMessageAt: now,
@@ -275,13 +264,12 @@ export function persist(workspaceId: string, convId: string): void {
       .prepare(
         `
           UPDATE conversations
-          SET title = ?, kind = ?, updated_at = ?, last_message_at = ?, messages_json = ?
+          SET title = ?, updated_at = ?, last_message_at = ?, messages_json = ?
           WHERE workspace_id = ? AND id = ?
         `,
       )
       .run(
         meta.title,
-        meta.kind ?? null,
         meta.updatedAt,
         meta.lastMessageAt,
         JSON.stringify(serializeMessages(msgs)),

@@ -13,6 +13,7 @@ import type { Currency } from "../models/currency";
 export type ToolStatus = "ok" | "error" | "needs_input";
 /** How this agent run was initiated. `manual` is retained to render historical records. */
 export type SessionOrigin = "chat" | "api" | "mcp" | "scheduled" | "agent" | "manual";
+export type SessionStatus = "running" | "success" | "failed" | "cancelled" | "timeout" | "limit_reached" | "incomplete";
 
 export interface ToolCallRecord {
   name: string;
@@ -26,17 +27,25 @@ export interface RunErrorRecord {
   message: string;
 }
 
+export interface SessionRecord {
+  id: string;
+  workspaceId: string;
+  workspaceName: string;
+  conversationId?: string;
+  origin: SessionOrigin;
+  userInput?: string;
+  /** Missing only on sessions migrated from a schema that did not retain prompts. */
+  systemPrompt?: string;
+  startedAt: string;
+  completedAt?: string;
+  status: SessionStatus;
+  error?: RunErrorRecord;
+}
+
 export interface TurnRecord {
   id: string;
   sessionId: string;
-  /** The callee/UI conversation this run belongs to, when it has one. */
-  conversationId?: string;
-  workspaceId: string;
-  workspaceName: string;
-  origin?: SessionOrigin;
   timestamp: string;
-  /** The user message that started this session — set only on the session's first turn. */
-  userInput?: string;
   /** The concrete model id this turn ran on. */
   model?: string;
   /** Total model input, including cache reads and cache writes. */
@@ -51,23 +60,18 @@ export interface TurnRecord {
   costCurrency?: Currency;
   reasoningText?: string;
   outputText?: string;
-  error?: RunErrorRecord;
   toolCalls: ToolCallRecord[];
 }
 
 export type NewTurnRecord = Omit<TurnRecord, "id" | "timestamp" | "cost" | "costCurrency"> & { id?: string };
 
-export type TurnUsageFields = Omit<
-  TurnRecord,
-  "id" | "timestamp" | "sessionId" | "conversationId" | "workspaceId" | "workspaceName" | "cost"
-> & { turnId: string };
+export type TurnUsageFields = Omit<TurnRecord, "id" | "timestamp" | "sessionId" | "cost" | "costCurrency"> & {
+  turnId: string;
+};
 
-export interface UsageContext {
-  sessionId: string;
-  conversationId?: string;
-  workspaceId: string;
-  workspaceName: string;
-  origin?: SessionOrigin;
+export interface SessionDetailRecord {
+  session: SessionRecord;
+  turns: TurnRecord[];
 }
 
 /** Lightweight dashboard fields; full text and tool I/O stay in SQLite but are not selected. */

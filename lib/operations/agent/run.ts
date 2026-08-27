@@ -2,16 +2,13 @@ import type { IWorkspaceStore } from "@/lib/infra/interfaces";
 import { AIMessage, HumanMessage } from "@langchain/core/messages";
 import { getStore } from "@/lib/infra/services";
 import * as conversations from "@/lib/conversations/store";
-import type { ConversationMeta } from "@/lib/conversations/store";
 import * as broker from "@/lib/agent/runBroker";
 import { refreshWorkspaceSystemPrompt } from "@/lib/agent/workspacePrompt";
 import type { SessionOrigin } from "@/lib/usage/types";
 import { ExecutionCapacityReachedError } from "@/lib/agent/executionCapacity";
 import { ConversationNotFoundError, RunInputInvalidError } from "./errors";
 
-export type RunConversationTarget =
-  | { mode: "existing"; id: string }
-  | { mode: "create"; kind?: ConversationMeta["kind"] };
+export type RunConversationTarget = { mode: "existing"; id: string } | { mode: "create" };
 
 export interface StartWorkspaceRunInput {
   prompt: string;
@@ -50,9 +47,7 @@ export function startWorkspaceRun(
 
   const conversationStore = deps.conversations ?? conversations;
   const conversationId =
-    input.conversation.mode === "create"
-      ? conversationStore.createConversation(ws.id, { kind: input.conversation.kind }).id
-      : input.conversation.id;
+    input.conversation.mode === "create" ? conversationStore.createConversation(ws.id).id : input.conversation.id;
   const messages = conversationStore.getMessages(ws.id, conversationId);
   if (!messages) throw new ConversationNotFoundError();
 

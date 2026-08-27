@@ -43,14 +43,14 @@ async function freshStore() {
   closeGlobalDb();
   fs.rmSync(ROOT, { recursive: true, force: true });
   fs.mkdirSync(ROOT, { recursive: true });
-  return loadStore();
+  const store = await loadStore();
+  startTestSession(store);
+  return store;
 }
 
 function baseTurn(over: Record<string, unknown> = {}) {
   return {
     sessionId: "s1",
-    workspaceId: "w1",
-    workspaceName: "WS",
     inputTokensTotal: 100,
     inputTokensCacheRead: 60,
     inputTokensCacheWrite: 0,
@@ -61,17 +61,73 @@ function baseTurn(over: Record<string, unknown> = {}) {
   };
 }
 
+type UsageStore = Awaited<ReturnType<typeof loadStore>>;
+
+function startTestSession(store: UsageStore, over: Record<string, unknown> = {}) {
+  store.startUsageSession({
+    id: "s1",
+    workspaceId: "w1",
+    workspaceName: "WS",
+    origin: "manual",
+    systemPrompt: "",
+    ...over,
+  });
+}
+
+/** getSessionDetail is nullable for the 404 path; every test here writes the session first. */
+function detailOf(store: UsageStore, sessionId: string) {
+  const detail = store.getSessionDetail(sessionId);
+  if (!detail) throw new Error(`expected stored session detail for ${sessionId}`);
+  return detail;
+}
+
+async function freshEmptyStore() {
+  closeGlobalDb();
+  fs.rmSync(ROOT, { recursive: true, force: true });
+  fs.mkdirSync(ROOT, { recursive: true });
+  return loadStore();
+}
+
 describe("usageStore", () => {
   beforeEach(() => {
     closeGlobalDb();
     vi.resetModules();
   });
 
+  it("stores the resolved Markdown system prompt and run provenance once on the session", async () => {
+    const store = await freshEmptyStore();
+    store.startUsageSession({
+      id: "s1",
+      workspaceId: "w1",
+      workspaceName: "WS",
+      conversationId: "c1",
+      origin: "scheduled",
+      userInput: "run the report",
+      systemPrompt: "# System\n\nFollow the workspace instructions.",
+    });
+    store.appendUsage(baseTurn({ sessionId: "s1", conversationId: "c1" }));
+    store.finishUsageSession("s1", "success");
+
+    const conn = new Database(DB_FILE, { readonly: true });
+    expect(
+      conn.prepare("SELECT origin, user_input, system_prompt, status FROM sessions WHERE id = 's1'").get(),
+    ).toEqual({
+      origin: "scheduled",
+      user_input: "run the report",
+      system_prompt: "# System\n\nFollow the workspace instructions.",
+      status: "success",
+    });
+    expect(
+      (conn.prepare("SELECT count(*) AS count FROM turns WHERE session_id = 's1'").get() as { count: number }).count,
+    ).toBe(1);
+    conn.close();
+  });
+
   it("persists complete turns in SQLite without creating a new JSONL journal", async () => {
-    const store = await freshStore();
+    const store = await freshEmptyStore();
+    startTestSession(store, { userInput: "fix the bug" });
     store.appendUsage(
       baseTurn({
-        userInput: "fix the bug",
         reasoningText: "I should read the file first",
         outputText: "Done — the bug was a missing null check.",
         toolCalls: [{ name: "file_read", args: { file_path: "a.ts" }, output: "line1\nline2", status: "ok" }],
@@ -80,24 +136,28 @@ describe("usageStore", () => {
 
     expect(fs.existsSync(DB_FILE)).toBe(true);
     expect(fs.existsSync(JSONL_FILE)).toBe(false);
-    expect(store.getSessionDetail("s1")).toMatchObject([
-      {
-        userInput: "fix the bug",
-        reasoningText: "I should read the file first",
-        outputText: "Done — the bug was a missing null check.",
-        toolCalls: [
-          {
-            name: "file_read",
-            args: { file_path: "a.ts" },
-            output: "line1\nline2",
-            status: "ok",
-          },
-        ],
-      },
-    ]);
+    expect(detailOf(store, "s1")).toMatchObject({
+      session: { userInput: "fix the bug" },
+      turns: [
+        {
+          reasoningText: "I should read the file first",
+          outputText: "Done — the bug was a missing null check.",
+          toolCalls: [
+            {
+              name: "file_read",
+              args: { file_path: "a.ts" },
+              output: "line1\nline2",
+              status: "ok",
+            },
+          ],
+        },
+      ],
+    });
   });
 
-  it("commits a turn and all of its ordered tool calls atomically", async () => {
+  // Tool calls are serialized before the INSERT runs, so unserializable arguments abort the write
+  // outright rather than storing a turn whose tool calls went missing.
+  it("writes no turn at all when its tool arguments cannot be serialized", async () => {
     const store = await freshStore();
     const circular: Record<string, unknown> = {};
     circular.self = circular;
@@ -110,39 +170,36 @@ describe("usageStore", () => {
 
     expect(store.listUsageLight()).toEqual([]);
     const conn = new Database(DB_FILE, { readonly: true });
-    expect((conn.prepare("SELECT count(*) AS count FROM usage_turns").get() as { count: number }).count).toBe(0);
-    expect((conn.prepare("SELECT count(*) AS count FROM usage_tool_calls").get() as { count: number }).count).toBe(0);
+    expect((conn.prepare("SELECT count(*) AS count FROM turns").get() as { count: number }).count).toBe(0);
+    expect((conn.prepare("SELECT count(*) AS count FROM sessions").get() as { count: number }).count).toBe(1);
     conn.close();
   });
 
   it("records a terminal error even when the run completed no model turn", async () => {
-    const store = await freshStore();
-    store.recordRunError(
-      { sessionId: "failed-session", workspaceId: "w1", workspaceName: "WS", origin: "agent" },
-      { code: "TIMEOUT", message: "The workspace exceeded its limit." },
-      "do the work",
-    );
+    const store = await freshEmptyStore();
+    startTestSession(store, { id: "failed-session", origin: "agent", userInput: "do the work" });
+    store.recordRunError("failed-session", { code: "TIMEOUT", message: "The workspace exceeded its limit." });
 
-    expect(store.getSessionDetail("failed-session")).toMatchObject([
-      {
-        userInput: "do the work",
-        inputTokensTotal: 0,
-        outputTokensTotal: 0,
-        toolCalls: [],
-        error: { code: "TIMEOUT", message: "The workspace exceeded its limit." },
-      },
-    ]);
-    expect(store.listUsageLight()[0].error).toEqual({
-      code: "TIMEOUT",
-      message: "The workspace exceeded its limit.",
+    expect(detailOf(store, "failed-session").turns).toEqual([]);
+    const conn = new Database(DB_FILE, { readonly: true });
+    expect(
+      conn
+        .prepare("SELECT user_input, status, error_code, error_message FROM sessions WHERE id = ?")
+        .get("failed-session"),
+    ).toEqual({
+      user_input: "do the work",
+      status: "timeout",
+      error_code: "TIMEOUT",
+      error_message: "The workspace exceeded its limit.",
     });
+    conn.close();
   });
 
   it("generates an id when an optional id is explicitly undefined", async () => {
     const store = await freshStore();
     store.appendUsage(baseTurn({ id: undefined }));
 
-    expect(store.getSessionDetail("s1")[0].id).toMatch(
+    expect(detailOf(store, "s1").turns[0].id).toMatch(
       /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
     );
   });
@@ -168,11 +225,14 @@ describe("usageStore", () => {
   });
 
   it("reports whether each run's conversation still exists, keeping the id either way", async () => {
-    const store = await freshStore();
+    const store = await freshEmptyStore();
     const conversations = await import("../conversations/store");
     const live = conversations.createConversation("w1");
-    store.appendUsage(baseTurn({ sessionId: "kept", conversationId: live.id }));
-    store.appendUsage(baseTurn({ sessionId: "orphan", conversationId: "deleted-conversation" }));
+    startTestSession(store, { id: "kept", conversationId: live.id });
+    startTestSession(store, { id: "orphan", conversationId: "deleted-conversation" });
+    startTestSession(store, { id: "external" });
+    store.appendUsage(baseTurn({ sessionId: "kept" }));
+    store.appendUsage(baseTurn({ sessionId: "orphan" }));
     store.appendUsage(baseTurn({ sessionId: "external" }));
 
     const bySession = new Map(store.listUsageLight().map((r) => [r.sessionId, r]));
@@ -204,7 +264,7 @@ describe("usageStore", () => {
       }),
     );
 
-    expect(store.getSessionDetail("s1").flatMap((turn) => turn.toolCalls.map((tool) => tool.name))).toEqual([
+    expect(detailOf(store, "s1").turns.flatMap((turn) => turn.toolCalls.map((tool) => tool.name))).toEqual([
       "first",
       "second",
       "third",
@@ -212,7 +272,9 @@ describe("usageStore", () => {
   });
 
   it("preserves recording order for turns that share a timestamp", async () => {
-    const store = await freshStore();
+    const store = await freshEmptyStore();
+    startTestSession(store, { id: "caller", workspaceId: "w-caller", userInput: "call the callee" });
+    startTestSession(store, { id: "callee", workspaceId: "w-callee", userInput: "do the work" });
     // Freeze the clock so every turn gets an identical millisecond timestamp — the case fast or
     // zero-token turns hit in production. Order must come from the recording sequence, not the
     // timestamp or the random UUID tiebreaker.
@@ -220,32 +282,34 @@ describe("usageStore", () => {
     vi.setSystemTime(new Date("2026-07-24T00:00:00.000Z"));
     try {
       // A caller workspace run that invokes a callee workspace run, recorded in that order.
-      store.appendUsage(baseTurn({ sessionId: "caller", workspaceId: "w-caller", userInput: "call the callee" }));
-      store.appendUsage(baseTurn({ sessionId: "callee", workspaceId: "w-callee", userInput: "do the work" }));
-      store.appendUsage(baseTurn({ sessionId: "caller", workspaceId: "w-caller", userInput: "wrap up" }));
+      store.appendUsage(baseTurn({ sessionId: "caller", id: "caller-1" }));
+      store.appendUsage(baseTurn({ sessionId: "callee", id: "callee-1" }));
+      store.appendUsage(baseTurn({ sessionId: "caller", id: "caller-2" }));
     } finally {
       vi.useRealTimers();
     }
 
     // The dashboard list is newest-first in recording order, regardless of the shared timestamp.
     expect(store.listUsageLight().map((r) => r.sessionId)).toEqual(["caller", "callee", "caller"]);
-    // The caller's own drawer keeps its two turns in the order they ran.
-    expect(store.getSessionDetail("caller").map((t) => t.userInput)).toEqual(["call the callee", "wrap up"]);
+    // The caller's own drawer keeps its two turns in the order they ran, and drops the callee's.
+    expect(detailOf(store, "caller").turns.map((t) => t.id)).toEqual(["caller-1", "caller-2"]);
   });
 
   it("filters the lightweight list by workspace", async () => {
-    const store = await freshStore();
-    store.appendUsage(baseTurn({ sessionId: "a", workspaceId: "w1" }));
-    store.appendUsage(baseTurn({ sessionId: "b", workspaceId: "w2" }));
+    const store = await freshEmptyStore();
+    startTestSession(store, { id: "a", workspaceId: "w1" });
+    startTestSession(store, { id: "b", workspaceId: "w2" });
+    store.appendUsage(baseTurn({ sessionId: "a" }));
+    store.appendUsage(baseTurn({ sessionId: "b" }));
 
     expect(store.listUsageLight("w1").map((record) => record.sessionId)).toEqual(["a"]);
     expect(store.listUsageLight("w2").map((record) => record.sessionId)).toEqual(["b"]);
   });
 
   it("keeps per-turn detail while projecting a session total onto its visible output", async () => {
-    const store = await freshStore();
-    const context = { sessionId: "run-1", conversationId: "conv-1", workspaceId: "w1", workspaceName: "WS" };
-    store.recordTurnUsage(context, {
+    const store = await freshEmptyStore();
+    startTestSession(store, { id: "run-1", conversationId: "conv-1" });
+    store.recordTurnUsage("run-1", {
       turnId: "turn-tool",
       inputTokensTotal: 100,
       inputTokensCacheRead: 40,
@@ -255,7 +319,7 @@ describe("usageStore", () => {
       outputText: "I will inspect it",
       toolCalls: [{ name: "file_read", args: { file_path: "a.txt" }, output: "body", status: "ok" }],
     });
-    store.recordTurnUsage(context, {
+    store.recordTurnUsage("run-1", {
       turnId: "turn-output",
       inputTokensTotal: 123,
       inputTokensCacheRead: 20,
@@ -278,7 +342,7 @@ describe("usageStore", () => {
         ],
       ]),
     );
-    expect(store.getSessionDetail("run-1").map((turn) => turn.id)).toEqual(["turn-tool", "turn-output"]);
+    expect(detailOf(store, "run-1").turns.map((turn) => turn.id)).toEqual(["turn-tool", "turn-output"]);
   });
 
   it("freezes priced cost when the record is written", async () => {
@@ -286,7 +350,7 @@ describe("usageStore", () => {
     store.appendUsage(baseTurn({ model: "chatgpt-4o-latest" }));
 
     expect(store.listUsageLight()[0].cost).toBeTypeOf("number");
-    expect(store.getSessionDetail("s1")[0].cost).toBe(store.listUsageLight()[0].cost);
+    expect(detailOf(store, "s1").turns[0].cost).toBe(store.listUsageLight()[0].cost);
   });
 
   // Both read paths, because they build their SELECTs separately — one could carry the currency
@@ -296,7 +360,7 @@ describe("usageStore", () => {
     store.appendUsage(baseTurn({ model: "qwen3.6-35b-a3b" }));
 
     expect(store.listUsageLight()[0].costCurrency).toBe("EUR");
-    expect(store.getSessionDetail("s1")[0].costCurrency).toBe("EUR");
+    expect(detailOf(store, "s1").turns[0].costCurrency).toBe("EUR");
   });
 
   it("records a dollar-priced turn as dollars, so the two are told apart", async () => {
@@ -317,12 +381,12 @@ describe("usageStore", () => {
   it("retains records beyond the dashboard response cap", async () => {
     const store = await freshStore();
     for (let i = 0; i < 5001; i++) {
-      store.appendUsage(baseTurn({ sessionId: `s${i}` }));
+      store.appendUsage(baseTurn());
     }
 
     expect(store.listUsageLight()).toHaveLength(5000);
     const conn = new Database(DB_FILE, { readonly: true });
-    expect((conn.prepare("SELECT count(*) AS count FROM usage_turns").get() as { count: number }).count).toBe(5001);
+    expect((conn.prepare("SELECT count(*) AS count FROM turns").get() as { count: number }).count).toBe(5001);
     conn.close();
   });
 
@@ -332,7 +396,7 @@ describe("usageStore", () => {
 
     closeGlobalDb();
     const reopened = await loadStore();
-    expect(reopened.getSessionDetail("s1")[0].outputText).toBe("persist me");
+    expect(detailOf(reopened, "s1").turns[0].outputText).toBe("persist me");
   });
 
   it("surfaces database corruption without deleting or replacing the damaged file", async () => {

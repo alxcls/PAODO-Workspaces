@@ -20,7 +20,7 @@ import {
   originLabel,
   type LightSession,
 } from "@/lib/client/usageSessions";
-import type { LightTurnRecord, RunErrorRecord, TurnRecord, ToolStatus } from "@/lib/usage/types";
+import type { LightTurnRecord, RunErrorRecord, SessionDetailRecord, ToolStatus } from "@/lib/usage/types";
 
 // Tool-outcome dot: green success / red failure. From the caller's view a NEEDS_INPUT call
 // didn't return a usable result, so it reads red too (the corrected re-call is the green row).
@@ -76,38 +76,31 @@ interface ToolRef {
 // Right-side detail drawer. Turn mode (selected === null) shows the user input + a list of every
 // tool execution in the session. Clicking a tool switches to tool mode: reasoning + args + output.
 function DetailDrawer({ session, onClose, width }: { session: LightSession; onClose: () => void; width: number }) {
-  const [detail, setDetail] = useState<TurnRecord[] | null>(null);
+  const [detail, setDetail] = useState<SessionDetailRecord | null | undefined>(null);
   const [selected, setSelected] = useState<ToolRef | null>(null);
 
   // The drawer is remounted per session (keyed on sessionId by the parent), so state starts
   // fresh — the effect only loads the detail.
   useEffect(() => {
     fetch(`/api/usage/${session.sessionId}`)
-      .then((r) => r.json())
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error("session not found"))))
       .then(setDetail)
-      .catch(() => setDetail([]));
+      .catch(() => setDetail(undefined));
   }, [session.sessionId]);
 
-  const userInput = useMemo(() => detail?.find((t) => t.userInput)?.userInput ?? "", [detail]);
-  // The agent's first reasoning, before any tool runs, is the reasoning of the first turn —
-  // the one carrying userInput (iteration 1). Shown as an overview block in turn mode.
-  const firstReasoning = useMemo(() => detail?.find((t) => t.userInput)?.reasoningText ?? "", [detail]);
+  const turns = useMemo(() => detail?.turns ?? [], [detail]);
+  const userInput = detail?.session.userInput ?? "";
+  const firstReasoning = turns[0]?.reasoningText ?? "";
   // The agent's final answer lives on the terminal turn — the one that made no tool calls.
   // Fall back to the latest turn's prose for a failed or incomplete run. detail is chronological,
   // so the last entry is newest.
   const agentResponse = useMemo(
-    () => detail?.find((t) => t.toolCalls.length === 0)?.outputText ?? detail?.at(-1)?.outputText ?? "",
-    [detail],
+    () => turns.find((t) => t.toolCalls.length === 0)?.outputText ?? turns.at(-1)?.outputText ?? "",
+    [turns],
   );
-  const runError = useMemo(() => {
-    if (!detail) return undefined;
-    for (let i = detail.length - 1; i >= 0; i--) {
-      if (detail[i].error) return detail[i].error;
-    }
-    return undefined;
-  }, [detail]);
-  const selTool = selected && detail ? detail[selected.turnIdx]?.toolCalls[selected.toolIdx] : null;
-  const selTurn = selected && detail ? detail[selected.turnIdx] : null;
+  const runError = detail?.session.error;
+  const selTool = selected ? turns[selected.turnIdx]?.toolCalls[selected.toolIdx] : null;
+  const selTurn = selected ? turns[selected.turnIdx] : null;
   const selReasoning = selTurn?.reasoningText;
 
   return (
@@ -122,8 +115,10 @@ function DetailDrawer({ session, onClose, width }: { session: LightSession; onCl
         </button>
       </div>
 
-      {!detail ? (
+      {detail === null ? (
         <div className="flex-1 flex items-center justify-center text-text-3 text-ms">Loading…</div>
+      ) : detail === undefined ? (
+        <div className="flex-1 flex items-center justify-center text-text-3 text-ms">Session unavailable.</div>
       ) : selected && selTool ? (
         // ── tool mode ───────────────────────────────────────────────────────────────
         <div className="flex-1 overflow-auto px-5 py-4 flex flex-col gap-4">
@@ -160,7 +155,7 @@ function DetailDrawer({ session, onClose, width }: { session: LightSession; onCl
           <Section title="User input">
             <p className="text-ms text-text-1 whitespace-pre-wrap leading-relaxed">{userInput || "—"}</p>
           </Section>
-          <SystemPromptSection workspaceId={session.workspaceId} />
+          <SystemPromptSection prompt={detail.session.systemPrompt} />
           {firstReasoning && (
             <Section title="Reasoning">
               <p className="text-xs text-text-2 whitespace-pre-wrap leading-relaxed">{firstReasoning}</p>
@@ -171,7 +166,7 @@ function DetailDrawer({ session, onClose, width }: { session: LightSession; onCl
               <p className="text-xs text-text-3">No tool calls in this turn.</p>
             ) : (
               <ul className="flex flex-col gap-1">
-                {detail.flatMap((turn, turnIdx) =>
+                {turns.flatMap((turn, turnIdx) =>
                   turn.toolCalls.map((tc, toolIdx) => (
                     <li key={`${turnIdx}-${toolIdx}`}>
                       <button
@@ -227,47 +222,13 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   );
 }
 
-// Collapsed by default, fetches the workspace's CURRENT system prompt every time it's expanded
-// (it isn't stored per turn — see /api/workspaces/[id]/system-prompt). Re-fetching on each expand
-// (rather than caching after the first) matters here: internet-access / secrets can be toggled
-// live while this drawer stays open, and a stale cached prompt would silently misreport them.
-function SystemPromptSection({ workspaceId }: { workspaceId: string }) {
+function SystemPromptSection({ prompt }: { prompt?: string }) {
   const [open, setOpen] = useState(false);
-  // The fetched prompt is paired with the expansion it belongs to, and "Loading…" is derived from
-  // that pairing rather than reset by the effect. Resetting in the effect body cascaded an extra
-  // render on every expand; deriving also discards a response that lands after another expand or a
-  // workspace switch, which the old version would have shown under the wrong heading.
-  const [expansion, setExpansion] = useState(0);
-  const [loaded, setLoaded] = useState<{ key: string; prompt: string } | null>(null);
-  const key = `${workspaceId}#${expansion}`;
-  const prompt = loaded?.key === key ? loaded.prompt : null;
-
-  useEffect(() => {
-    if (!open) return;
-    let active = true;
-    void (async () => {
-      let text = "";
-      try {
-        const response = await fetch(`/api/workspaces/${workspaceId}/system-prompt`);
-        text = ((await response.json()) as { prompt?: string }).prompt ?? "";
-      } catch {
-        /* leave it empty — the section renders an em dash rather than breaking */
-      }
-      if (active) setLoaded({ key, prompt: text });
-    })();
-    return () => {
-      active = false;
-    };
-  }, [open, key, workspaceId]);
 
   return (
     <div className="flex flex-col gap-1.5">
       <button
-        onClick={() => {
-          // Bump before opening so the prompt re-fetches on every expand, not just the first.
-          if (!open) setExpansion((n) => n + 1);
-          setOpen((v) => !v);
-        }}
+        onClick={() => setOpen((value) => !value)}
         className="flex items-center gap-1.5 text-2xs font-semibold text-text-3 tracking-[.06em] uppercase hover:text-text-1 transition-colors self-start"
       >
         <span className={`inline-block transition-transform text-sm leading-none ${open ? "rotate-90" : ""}`}>›</span>
@@ -275,16 +236,14 @@ function SystemPromptSection({ workspaceId }: { workspaceId: string }) {
       </button>
       {open && (
         <div className="rounded border border-border bg-bg-tint p-3">
-          {prompt === null ? (
-            <p className="text-xs text-text-3">Loading…</p>
-          ) : prompt ? (
+          {prompt ? (
             <div className="md-prose md-drawer text-text-1 max-h-[50vh] overflow-auto">
               <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
                 {prompt}
               </ReactMarkdown>
             </div>
           ) : (
-            <p className="text-xs text-text-3">—</p>
+            <p className="text-xs text-text-3">Not retained for this historical session.</p>
           )}
         </div>
       )}

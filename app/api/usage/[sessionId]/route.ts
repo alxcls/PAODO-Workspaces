@@ -7,5 +7,8 @@ import { getSessionDetail } from "@/lib/usage/queries";
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ sessionId: string }> }) {
   const { sessionId } = await params;
-  return NextResponse.json(getSessionDetail(sessionId));
+  const detail = getSessionDetail(sessionId);
+  return detail
+    ? NextResponse.json(detail)
+    : NextResponse.json({ error: "Usage session not found" }, { status: 404 });
 }

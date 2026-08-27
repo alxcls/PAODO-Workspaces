@@ -9,7 +9,7 @@ import type { BaseMessage } from "@langchain/core/messages";
 // The dir never needs to exist — every read fails soft to an empty cache and the
 // injected fakes below keep executeSkill from touching disk.
 vi.hoisted(() => {
-  process.env.WORKSPACES_ROOT = "/tmp/executeskill-test-data";
+  process.env.WORKSPACES_ROOT = `/tmp/executeskill-test-data-${process.pid}`;
 });
 
 import { executeSkill, type ExecuteSkillOptions } from "./executeSkill";
@@ -321,13 +321,9 @@ describe("executeSkill — callee run and output contract", () => {
     expect(runner.inputs).toHaveLength(3); // initial run + 2 retries, then stop
   });
 
-  it("records the callee's token usage under the CALLEE workspace, one session across retries", async () => {
-    // Without this, nested runs are invisible in the usage dashboard — only the
-    // caller's own runner is recorded by the chat route / agent stream.
+  it("records all callee turns under one session across retries", async () => {
     const recorded: Array<{
       sessionId: string;
-      workspaceId: string;
-      workspaceName: string;
       inputTokensTotal: number;
     }> = [];
     const responses = ["not json", GOOD_OUTPUT];
@@ -356,7 +352,7 @@ describe("executeSkill — callee run and output contract", () => {
         { run },
         {
           appendUsageFn: (r) => {
-            recorded.push(r as (typeof recorded)[number]);
+            recorded.push(r);
           },
         },
       ),
@@ -364,8 +360,6 @@ describe("executeSkill — callee run and output contract", () => {
     expect(res.state).toBe("completed");
     expect(recorded).toHaveLength(2); // initial run + one correction retry
     expect(recorded[0]).toMatchObject({
-      workspaceId: CALLEE.id,
-      workspaceName: "stock-agent",
       inputTokensTotal: 100,
     });
     expect(recorded[1].sessionId).toBe(recorded[0].sessionId);
@@ -458,16 +452,13 @@ describe("executeSkill — callee run and output contract", () => {
   });
 
   it("persists the callee run as a skill-call conversation in the callee workspace and returns its id", async () => {
-    const createConversationFn = vi.fn(
-      (_wsId: string, o?: { title?: string; kind?: "user" | "skill-call" | "scheduled" }) => ({
-        id: "conv-1",
-        title: o?.title ?? "",
-        kind: o?.kind,
-        createdAt: "",
-        updatedAt: "",
-        lastMessageAt: "",
-      }),
-    );
+    const createConversationFn = vi.fn((_wsId: string, o?: { title?: string }) => ({
+      id: "conv-1",
+      title: o?.title ?? "",
+      createdAt: "",
+      updatedAt: "",
+      lastMessageAt: "",
+    }));
     const persistFn = vi.fn();
 
     const runner = fakeRunner([GOOD_OUTPUT]);
@@ -480,7 +471,7 @@ describe("executeSkill — callee run and output contract", () => {
     );
 
     expect(res).toMatchObject({ state: "completed", conversationId: "conv-1" });
-    expect(createConversationFn).toHaveBeenCalledWith(CALLEE.id, { kind: "skill-call" });
+    expect(createConversationFn).toHaveBeenCalledWith(CALLEE.id);
     expect(persistFn).toHaveBeenCalledWith(CALLEE.id, "conv-1");
   });
 
@@ -685,7 +676,7 @@ describe("executeSkill — callee run and output contract", () => {
           { run },
           {
             signal: callerTimeout.signal,
-            appendUsageFn: (record) => recorded.push(record as unknown as Record<string, unknown>),
+            recordRunErrorFn: (sessionId, error) => recorded.push({ sessionId, error }),
           },
         ),
       );
@@ -695,7 +686,7 @@ describe("executeSkill — callee run and output contract", () => {
       expect(res).toMatchObject({ state: "failed", code: "CANCELLED", conversationId: FAKE_CONV_ID });
       expect(recorded).toHaveLength(1);
       expect(recorded[0]).toMatchObject({
-        workspaceId: CALLEE.id,
+        sessionId: expect.any(String),
         error: {
           code: "CANCELLED",
           message: 'Workspace "stock-agent" was cancelled because caller workspace "shop-agent" timed out.',

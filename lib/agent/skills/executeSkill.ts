@@ -23,6 +23,7 @@ import { createLogger } from "../../infra/logger";
 import type { runAgent, AgentEvent } from "../runner";
 import { createWorkspaceRunTimeout, USER_STOPPED_CONVERSATION_MESSAGE, WorkspaceRunTimeoutError } from "../runTimeout";
 import { ExecutionCapacityReachedError, type ExecutionCapacityGate } from "../executionCapacity";
+import { contentToParagraphs } from "@/lib/transcript/content";
 // runner and runBroker are imported dynamically inside executeSkill, to break the cycle:
 // tools/index → AgentCallTool → executeSkill → runner → buildTools → tools/index
 
@@ -41,6 +42,7 @@ export interface ExecuteSkillOptions {
   resolvedSkill?: SkillDefinition;
   runAgentFn?: typeof runAgent;
   appendUsageFn?: typeof appendUsage;
+  recordRunErrorFn?: typeof recordRunError;
   createConversationFn?: typeof createConversation;
   getMessagesFn?: typeof getMessages;
   persistFn?: typeof persist;
@@ -143,17 +145,7 @@ async function runCalleeTurn(
       };
     }
     if (event.type === "turn_usage") {
-      recordTurnUsage(
-        {
-          sessionId,
-          conversationId,
-          workspaceId: callee.id,
-          workspaceName: callee.name,
-          origin: opts.origin ?? "agent",
-        },
-        event,
-        recordUsage,
-      );
+      recordTurnUsage(sessionId, event, recordUsage);
     }
   }
   return { text };
@@ -239,9 +231,7 @@ export async function executeSkill(
 
   // Created only after every pre-run rejection is ruled out, so failed validations leave no empty
   // conversations. No title, so the session is named like one started from the chat UI.
-  const conv = (opts.createConversationFn ?? createConversation)(callee.id, {
-    kind: "skill-call",
-  });
+  const conv = (opts.createConversationFn ?? createConversation)(callee.id);
   const messages = (opts.getMessagesFn ?? getMessages)(callee.id, conv.id) ?? ([] as BaseMessage[]);
   refreshWorkspaceSystemPrompt(callee, messages, config);
 
@@ -259,18 +249,7 @@ ${buildStructuredResponderBlock(skill)}`;
   let runStatus: "success" | "failed" | "timeout" | "cancelled" = "success";
   const fail = (code: SkillErrorCode, message: string): SkillCallResult => {
     runStatus = code === "TIMEOUT" ? "timeout" : code === "CANCELLED" ? "cancelled" : "failed";
-    recordRunError(
-      {
-        sessionId,
-        conversationId: conv.id,
-        workspaceId: callee.id,
-        workspaceName: callee.name,
-        origin: opts.origin ?? "agent",
-      },
-      { code, message },
-      firstInput,
-      opts.appendUsageFn ?? appendUsage,
-    );
+    (opts.recordRunErrorFn ?? recordRunError)(sessionId, { code, message });
     // The callee's own conversation is persisted in the finally below and is deep-linked from the
     // caller's transcript. Without this it opens on a prompt with no reply and no reason.
     noteRunError(messages, message);
@@ -284,7 +263,9 @@ ${buildStructuredResponderBlock(skill)}`;
   try {
     liveRun = startExternalRun(callee.id, conv.id, firstInput, {
       sessionId,
+      workspaceName: callee.name,
       origin: opts.origin ?? "agent",
+      systemPrompt: messages[0]?._getType() === "system" ? contentToParagraphs(messages[0].content) : "",
       capacity: opts.capacity,
     });
   } catch (err) {

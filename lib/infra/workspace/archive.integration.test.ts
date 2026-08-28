@@ -7,11 +7,14 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { WorkspaceVersioning } from "../git/workspaceVersioning";
-import { archiveWorkspace, verifyArchive } from "./archive";
-import { HOME_MEMBER, MANIFEST_MEMBER } from "../../workspace/archive";
+import { archiveWorkspace, archiveFileName } from "./archive";
+import { verifyArchive } from "../archive/core";
+import { MANIFEST_MEMBER } from "../../archive/manifest";
+import { HOME_MEMBER } from "../../workspace/archive";
 import type { Workspace } from "../../workspace/types";
 
 const ID = "ws-archive-int";
+const DEPLOYMENT = "test-deployment";
 
 function makeWorkspace(dir: string): Workspace {
   return {
@@ -39,6 +42,7 @@ describe("archiveWorkspace (real git + tar)", () => {
   let workspace: Workspace;
 
   beforeEach(async () => {
+    process.env.PAODO_DEPLOYMENT = DEPLOYMENT;
     root = fs.mkdtempSync(path.join(os.tmpdir(), "archive-int-"));
     dir = path.join(root, ID);
     out = path.join(root, "backups");
@@ -64,7 +68,19 @@ describe("archiveWorkspace (real git + tar)", () => {
     fs.writeFileSync(path.join(home, ".bashrc"), "export PATH=$PATH\n");
     fs.writeFileSync(path.join(root, ".homes", `${ID}.apt.json`), JSON.stringify({ packages: ["ripgrep"] }));
   });
-  afterEach(() => fs.rmSync(root, { recursive: true, force: true }));
+  afterEach(() => {
+    delete process.env.PAODO_DEPLOYMENT;
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  it("names the deployment it came from, and refuses to run unlabelled", async () => {
+    const { manifest } = await archiveWorkspace(workspace, out, { rootDir: root });
+    expect(manifest.kind).toBe("workspace");
+    expect(manifest.source.deployment).toBe(DEPLOYMENT);
+
+    delete process.env.PAODO_DEPLOYMENT;
+    await expect(archiveWorkspace(workspace, out, { rootDir: root })).rejects.toThrow(/PAODO_DEPLOYMENT/);
+  });
 
   it("writes every member and leads the tar with the manifest", async () => {
     const result = await archiveWorkspace(workspace, out, { rootDir: root });
@@ -99,7 +115,23 @@ describe("archiveWorkspace (real git + tar)", () => {
     const result = await archiveWorkspace(workspace, out, { rootDir: root });
 
     expect(path.dirname(result.path)).toBe(out);
-    expect(path.basename(result.path)).toMatch(/^paodo-ws-reporting-agent-ws-archive-int-.*\.tar$/);
+    expect(path.basename(result.path)).toMatch(new RegExp(`^paodo-ws-${DEPLOYMENT}-${ID}-.*-reporting-agent\\.tar$`));
+  });
+
+  /** A rename must move neither the group nor its order, so id and timestamp both lead the slug. */
+  it("sorts a renamed workspace beside its own history, in the order it was captured", async () => {
+    const renamed = { ...workspace, name: "Q3 Reporting" };
+    const [before, after] = [
+      archiveFileName(workspace, DEPLOYMENT, new Date("2026-08-27T21:00:00Z")),
+      archiveFileName(renamed, DEPLOYMENT, new Date("2026-09-01T21:00:00Z")),
+    ];
+    const other = archiveFileName(
+      { ...workspace, id: "ws-other", name: "Reporting Agent" },
+      DEPLOYMENT,
+      new Date("2026-08-27T21:05:00Z"),
+    );
+
+    expect([after, other, before].sort()).toEqual([before, after, other]);
   });
 
   it("uses an explicit .tar destination verbatim", async () => {
@@ -107,6 +139,11 @@ describe("archiveWorkspace (real git + tar)", () => {
     const result = await archiveWorkspace(workspace, explicit, { rootDir: root });
 
     expect(result.path).toBe(explicit);
+  });
+
+  it("rejects a destination asking for an archive suffix it does not write", async () => {
+    const wrong = path.join(out, "nightly.tar.gz");
+    await expect(archiveWorkspace(workspace, wrong, { rootDir: root })).rejects.toThrow(/writes \.tar archives/);
   });
 
   it("reads the manifest without unpacking the archive", async () => {

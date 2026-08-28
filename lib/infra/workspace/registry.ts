@@ -402,9 +402,8 @@ function defaultLoad(): WorkspaceRecord[] | null {
     log.debug("workspace registry not found — starting fresh");
     return null;
   }
-  // Production startup independently treats this as fatal. Keeping the import-time loader
-  // defensive prevents malformed-but-valid JSON from throwing before server.ts installs its fatal
-  // handlers; local development retains the historical empty-registry fallback.
+  // Startup refuses to boot on a malformed registry, on every run. This loader stays defensive only
+  // because it runs at import time — before server.ts installs the fatal handlers that report it.
   try {
     assertWorkspaceRegistryRecords(records);
     return records as unknown as WorkspaceRecord[];

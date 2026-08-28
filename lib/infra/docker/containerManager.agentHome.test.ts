@@ -27,13 +27,12 @@ afterEach(async () => {
   await rm(root, { recursive: true, force: true });
 });
 
-// WORKSPACES_ROOT and WORKSPACES_VOLUME_NAME are read once at module load, so each shape needs a
-// fresh module graph — the same dynamic-import trick containerManager.persistence.test.ts uses.
-async function loadManager(volume: string | undefined) {
+// WORKSPACES_ROOT and WORKSPACES_VOLUME_NAME are read once at module load, so the per-test temp root
+// needs a fresh module graph — the same dynamic-import trick containerManager.persistence.test.ts uses.
+async function loadManager(volume: string) {
   vi.resetModules();
   process.env.WORKSPACES_ROOT = root;
-  if (volume) process.env.WORKSPACES_VOLUME_NAME = volume;
-  else delete process.env.WORKSPACES_VOLUME_NAME;
+  process.env.WORKSPACES_VOLUME_NAME = volume;
   return (await import("./containerManager")).ContainerManager;
 }
 
@@ -68,16 +67,6 @@ describe("agent home — the durable mount", () => {
     const args = containerRun(calls)!.join(" ");
     expect(args).toContain(`type=volume,source=${VOLUME},target=/workspace,volume-subpath=w`);
     expect(args).toContain(`type=volume,source=${VOLUME},target=/home/dev,volume-subpath=.homes/ws1`);
-  });
-
-  it("mounts both as plain binds in local dev, where there is no named volume", async () => {
-    const ContainerManager = await loadManager(undefined);
-    const { docker, calls } = makeDocker();
-    await new ContainerManager(docker).ensure("ws1", "/w");
-
-    const args = containerRun(calls)!;
-    expect(args).toContain("/w:/workspace");
-    expect(args).toContain(`${path.join(root, ".homes", "ws1")}:/home/dev`);
   });
 });
 

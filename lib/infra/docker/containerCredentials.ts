@@ -18,7 +18,6 @@ import {
 } from "../security/workspaceSecretStore";
 import { deriveProxySecret } from "../proxy/proxyCA";
 import { WORKSPACES_ROOT } from "../paths";
-import { runtimeMode } from "../runtimeMode";
 import type { IDockerClient } from "./dockerClient";
 import { createLogger } from "../logger";
 
@@ -99,18 +98,14 @@ export function buildExecEnv(workspaceId: string, internetAccess: boolean): Reco
  */
 export function buildRunEnv(workspaceId: string): CredentialEnv {
   const proxyReady = hasProxyCA();
-  // Containerized app: reach the proxy sidecar by its network alias. Host dev loop: the proxy runs
-  // in-process, reachable via the host gateway.
-  const proxyHost = runtimeMode.containerized
-    ? `${CREDENTIAL_PROXY_ALIAS}:${CREDENTIAL_PROXY_PORT}`
-    : `host.docker.internal:${CREDENTIAL_PROXY_PORT}`;
+  // The sidecar is reached by its network alias, the only route a workspace gets. No host-gateway
+  // entry: nothing in the sandbox has a reason to resolve the host, and it is not ours to hand out.
+  const proxyHost = `${CREDENTIAL_PROXY_ALIAS}:${CREDENTIAL_PROXY_PORT}`;
   // The password is the workspace's derived proxy secret, so the proxy can verify this container is
   // who it claims to be — a container that knows another workspace's id still can't forge its identity.
   const proxyUrl = proxyReady ? `http://${workspaceId}:${deriveProxySecret(workspaceId)}@${proxyHost}` : "";
   const proxyEnvArgs = proxyReady
     ? [
-        // --add-host makes host.docker.internal resolve to the host gateway on Linux Docker
-        "--add-host=host.docker.internal:host-gateway",
         "-e",
         `HTTP_PROXY=${proxyUrl}`,
         "-e",

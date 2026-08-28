@@ -2,39 +2,27 @@ import { describe, expect, it } from "vitest";
 import { readRuntimeMode } from "./runtimeMode";
 
 describe("runtime mode", () => {
-  it("treats an empty environment as the host dev loop", () => {
-    expect(readRuntimeMode({})).toEqual({
+  it("reads a dev run: hot reload, on the same volume a deployment uses", () => {
+    expect(readRuntimeMode({ WORKSPACES_VOLUME_NAME: "paodo_ws_workspaces" })).toEqual({
       hotReload: true,
-      workspacesVolume: null,
-      containerized: false,
+      workspacesVolume: "paodo_ws_workspaces",
       hardenedBrowser: false,
     });
   });
 
-  it("reads the deployed stack from both axes together", () => {
+  it("reads a deployment: prebuilt, on the same volume", () => {
     expect(readRuntimeMode({ NODE_ENV: "production", WORKSPACES_VOLUME_NAME: "paodo_ws_workspaces" })).toEqual({
       hotReload: false,
       workspacesVolume: "paodo_ws_workspaces",
-      containerized: true,
       hardenedBrowser: true,
     });
   });
 
-  // The two axes are independent, so each half alone is a reachable state rather than a mistake
-  // to normalize away: `npm run dev` against a compose volume, or a prebuilt server on the host.
-  it("keeps the two axes independent", () => {
-    const builtOnHost = readRuntimeMode({ NODE_ENV: "production" });
-    expect(builtOnHost.hotReload).toBe(false);
-    expect(builtOnHost.containerized).toBe(false);
-
-    const hotReloadOnVolume = readRuntimeMode({ WORKSPACES_VOLUME_NAME: "paodo_ws_workspaces" });
-    expect(hotReloadOnVolume.hotReload).toBe(true);
-    expect(hotReloadOnVolume.containerized).toBe(true);
-  });
-
-  it("ignores a blank or whitespace-only volume name", () => {
-    expect(readRuntimeMode({ WORKSPACES_VOLUME_NAME: "" }).containerized).toBe(false);
-    expect(readRuntimeMode({ WORKSPACES_VOLUME_NAME: "   " }).containerized).toBe(false);
+  // Only the compile strategy separates the two, so the volume is the constant across them.
+  it("reports no volume when nothing mounts one, leaving the check to startup", () => {
+    expect(readRuntimeMode({}).workspacesVolume).toBeNull();
+    expect(readRuntimeMode({ WORKSPACES_VOLUME_NAME: "" }).workspacesVolume).toBeNull();
+    expect(readRuntimeMode({ WORKSPACES_VOLUME_NAME: "   " }).workspacesVolume).toBeNull();
   });
 
   it("trims a volume name so it can be compared and passed to docker verbatim", () => {

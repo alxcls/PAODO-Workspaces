@@ -24,11 +24,10 @@ process.on("unhandledRejection", (err) => fatal("unhandledRejection", err));
 
 import next from "next";
 import { WebSocketServer } from "ws";
-import { getStore, getContainers, getVersioning, getCredentialProxy } from "./lib/infra/services";
+import { getStore, getContainers, getVersioning } from "./lib/infra/services";
 import { ensureCA } from "./lib/infra/proxy/proxyCA";
 import { reconcileInternetAccessPolicy } from "./lib/infra/proxy/internetAccessPolicy";
 import { WORKSPACES_ROOT, workspaceRegistryFile } from "./lib/infra/paths";
-import { getWorkspaceRules } from "./lib/infra/security/workspaceSecretStore";
 import { getSecretsEncKey } from "./lib/infra/security/secretsEncryption";
 import { getProviderVaultKey } from "./lib/infra/security/providerKeyEncryption";
 import { assertProviderVaultAvailable, PROVIDER_VAULT_FILE } from "./lib/infra/security/providerKeyVault";
@@ -71,7 +70,11 @@ import { startPriceRefresher, stopPriceRefresher } from "./lib/models/priceRefre
 import { checkApiRateLimit } from "./lib/infra/security/rateLimit";
 import { availableProviders } from "./lib/agent/buildModel";
 import { purgeProviderKeysExcept } from "./lib/infra/security/providerKeyStore";
-import { assertDataRootAvailable, assertWorkspaceRegistryAvailable } from "./lib/infra/startupChecks";
+import {
+  assertDataRootAvailable,
+  assertWorkspaceRegistryAvailable,
+  assertWorkspacesVolumeConfigured,
+} from "./lib/infra/startupChecks";
 import { appDataDb, PAODO_DB_FILE } from "./lib/data/database";
 import { validate as validateCredential } from "./lib/infra/security/credentialStore";
 import { capacityProfile } from "./lib/infra/capacityProfile";
@@ -116,15 +119,13 @@ try {
   exitAfterLogs(1);
 }
 
-// Which of the two worlds this process is in, and the roots it will actually read and write.
-// The host loop and a compose stack keep entirely separate state, so this is the line to check
-// first whenever the data on screen is not the data you expected.
+// The roots this process will actually read and write, and whether it compiles on demand. Check
+// this line first whenever the data on screen is not the data you expected.
 log.info(
   {
     event: "runtime_mode_resolved",
     outcome: "runtime_mode_loaded",
     hotReload: runtimeMode.hotReload,
-    containerized: runtimeMode.containerized,
     workspacesVolume: runtimeMode.workspacesVolume,
     dataRoot: WORKSPACES_ROOT,
     providerVaultRoot: PROVIDER_VAULT_ROOT,
@@ -482,6 +483,18 @@ wss.on("connection", (ws, req) => {
 // would make the very screen that fixes it unreachable. A workspace with no usable provider fails at
 // the start of its conversation instead, naming the provider and the fix (lib/agent/providerFailure.ts).
 
+// Before the data root is touched: without the volume, every workspace mount would resolve against
+// the daemon's host filesystem instead, and the app would run on state nothing else can see.
+try {
+  assertWorkspacesVolumeConfigured(runtimeMode.workspacesVolume);
+} catch (err) {
+  log.fatal(
+    { event: "startup_workspaces_volume_unconfigured", outcome: "process_exit", err },
+    "WORKSPACES_VOLUME_NAME is unset — start through docker compose, which sets it",
+  );
+  exitAfterLogs(1);
+}
+
 try {
   assertDataRootAvailable(WORKSPACES_ROOT);
 } catch (err) {
@@ -638,8 +651,6 @@ async function assertGitAvailable() {
   log.warn("git is not available — workspace snapshots will be disabled until git is installed.");
 }
 
-const CREDENTIAL_PROXY_PORT = parseInt(process.env.CREDENTIAL_PROXY_PORT ?? "9998", 10);
-
 assertGitAvailable()
   .then(() => getContainers().assertDockerAvailable())
   .then(async () => {
@@ -668,23 +679,13 @@ assertGitAvailable()
       );
       exitAfterLogs(1);
     }
-    if (!runtimeMode.containerized) {
-      // Host dev loop: the app runs on the host, so it hosts the proxy in-process at
-      // host.docker.internal:9998. Reload persisted rules (lost on restart).
-      const proxy = getCredentialProxy();
-      proxy.listen(CREDENTIAL_PROXY_PORT);
-      for (const ws of getStore().listWorkspaces()) {
-        proxy.setRules(ws.id, getWorkspaceRules(ws.id));
-      }
-    } else {
-      // Production: the proxy runs in the `credproxy` sidecar (so the app never joins a workspace
-      // network). A redeploy recreates the sidecar and drops its attachments — reconnect running
-      // workspaces so their egress keeps working.
-      await getContainers().reattachProxyNetworks();
-      // Boot-time reattach only heals sidecar recreations that coincide with an app restart. Keep a
-      // reconcile loop running so an independent sidecar restart self-heals within one interval.
-      startProxyReconciler();
-    }
+    // The proxy runs in the `credproxy` sidecar, never in this process, so the app never joins a
+    // workspace network. A redeploy recreates the sidecar and drops its attachments — reconnect
+    // running workspaces so their egress keeps working.
+    await getContainers().reattachProxyNetworks();
+    // Boot-time reattach only heals sidecar recreations that coincide with an app restart. Keep a
+    // reconcile loop running so an independent sidecar restart self-heals within one interval.
+    startProxyReconciler();
   })
   // Before the listener opens: in `iap` mode this fetches the provider's signing keys, and a failure
   // must stop the boot rather than leave every request failing closed against an empty key set.

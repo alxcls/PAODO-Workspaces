@@ -138,10 +138,12 @@ describe("buildRunEnv — proxy wiring gated on the CA", () => {
     existsSync.mockReturnValue(true);
     const { envArgs, hasProxyCA: ready } = buildRunEnv("ws1");
     expect(ready).toBe(true);
-    // Local-dev host (no WORKSPACES_VOLUME_NAME in the test env) — the auth carries id:derived-secret.
-    expect(envValue(envArgs, "HTTP_PROXY")).toBe("http://ws1:derived-ws1@host.docker.internal:9998");
+    // The sidecar's network alias, and auth carrying id:derived-secret.
+    expect(envValue(envArgs, "HTTP_PROXY")).toBe("http://ws1:derived-ws1@credproxy:9998");
     expect(envValue(envArgs, "http_proxy")).toBe(envValue(envArgs, "HTTP_PROXY"));
     expect(envValue(envArgs, "HTTPS_PROXY")).toBe(envValue(envArgs, "HTTP_PROXY"));
+    // A workspace gets one route out, the sidecar. The host gateway is not among them.
+    expect(envArgs).not.toContain("--add-host=host.docker.internal:host-gateway");
   });
 
   it("exempts ONLY loopback from the proxy (own-server curls bypass it; real hosts still proxied)", () => {

@@ -5,6 +5,15 @@ import path from "path";
 import { randomUUID } from "crypto";
 import { workspaceRegistryFile } from "./paths";
 
+/**
+ * The app orchestrates workspaces through volume-subpath mounts, which only resolve when its own
+ * state lives on that named volume. Running without one used to be a supported host mode; it no
+ * longer is, so an unset name is a misconfiguration to fail on rather than a second code path.
+ */
+export function assertWorkspacesVolumeConfigured(volume: string | null): asserts volume is string {
+  if (!volume) throw new Error("WORKSPACES_VOLUME_NAME is unset — the app runs only against the workspaces volume");
+}
+
 export function assertDataRootAvailable(root: string): void {
   fs.mkdirSync(root, { recursive: true });
   if (!fs.statSync(root).isDirectory()) throw new Error(`workspace data root is not a directory: ${root}`);

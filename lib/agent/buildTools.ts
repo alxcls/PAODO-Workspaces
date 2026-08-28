@@ -145,7 +145,7 @@ export function buildTools(
           new DriveLsTool(workspaceId),
           new DriveReadTool(workspaceId),
           new DriveDeleteTool(workspaceId),
-          new DriveDownloadTool(workspaceId, runner),
+          new DriveDownloadTool(workspaceId, workspaceDir),
           new DriveUploadTool(workspaceId, workspaceDir),
         ]
       : []),

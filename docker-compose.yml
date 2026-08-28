@@ -38,21 +38,24 @@ services:
     environment:
       - DOCKER_HOST=tcp://socket-proxy:2375
       - WORKSPACES_VOLUME_NAME=paodo_ws_workspaces
-      - WORKSPACES_ROOT=/app/data
-      - PAODO_PROVIDER_VAULT_ROOT=/app/provider-vault
-      - PAODO_PROVIDER_KEY_FILE=/app/provider-key/master.key
-      - PAODO_WORKSPACE_SECRET_VAULT_ROOT=/app/workspace-secret-vault
-      - PAODO_WORKSPACE_SECRET_KEY_FILE=/app/workspace-secret-key/master.key
+      - WORKSPACES_ROOT=/var/lib/paodo/data
+      - PAODO_PROVIDER_VAULT_ROOT=/var/lib/paodo/provider-vault
+      - PAODO_PROVIDER_KEY_FILE=/var/lib/paodo/provider-key/master.key
+      - PAODO_WORKSPACE_SECRET_VAULT_ROOT=/var/lib/paodo/workspace-secret-vault
+      - PAODO_WORKSPACE_SECRET_KEY_FILE=/var/lib/paodo/workspace-secret-key/master.key
+    # State lives under /var/lib/paodo, never under /app: the dev overlay bind-mounts the working
+    # tree at /app, and Docker creates a mount point for every volume — nested here, each one would
+    # appear as an empty directory in the maintainer's repository.
     volumes:
-      - workspaces:/app/data
-      # Its own volume, nested inside /app/data, so credproxy can mount just this directory without
-      # a subpath into `workspaces` — Docker requires a subpath to pre-exist, which it does not on a
-      # first deployment. The app is the only writer (ensureCA).
-      - proxy-ca:/app/data/.proxy-ca
-      - provider-vault:/app/provider-vault
-      - provider-key:/app/provider-key
-      - workspace-secret-vault:/app/workspace-secret-vault
-      - workspace-secret-key:/app/workspace-secret-key
+      - workspaces:/var/lib/paodo/data
+      # Its own volume, nested inside the workspaces root, so credproxy can mount just this directory
+      # without a subpath into `workspaces` — Docker requires a subpath to pre-exist, which it does
+      # not on a first deployment. The app is the only writer (ensureCA).
+      - proxy-ca:/var/lib/paodo/data/.proxy-ca
+      - provider-vault:/var/lib/paodo/provider-vault
+      - provider-key:/var/lib/paodo/provider-key
+      - workspace-secret-vault:/var/lib/paodo/workspace-secret-vault
+      - workspace-secret-key:/var/lib/paodo/workspace-secret-key
     depends_on:
       socket-proxy:
         condition: service_started
@@ -93,9 +96,9 @@ services:
     # workspace secrets live in the encrypted vault below; its key is a file on a different mount.
     # Provider credentials live in two app-only volumes this service cannot access.
     environment:
-      - WORKSPACES_ROOT=/app/data
-      - PAODO_WORKSPACE_SECRET_VAULT_ROOT=/app/workspace-secret-vault
-      - PAODO_WORKSPACE_SECRET_KEY_FILE=/app/workspace-secret-key/master.key
+      - WORKSPACES_ROOT=/var/lib/paodo/data
+      - PAODO_WORKSPACE_SECRET_VAULT_ROOT=/var/lib/paodo/workspace-secret-vault
+      - PAODO_WORKSPACE_SECRET_KEY_FILE=/var/lib/paodo/workspace-secret-key/master.key
       - CREDENTIAL_PROXY_PORT=9998
       # Pin explicitly: without NODE_ENV the logger treats the sidecar as dev and logs at debug.
       - NODE_ENV=production
@@ -104,9 +107,9 @@ services:
       # Only .proxy-ca (CA, HMAC key, internet-access policy) — NOT the whole workspaces volume,
       # which also holds the conversation database, the registry and every workspace's files. This
       # is the one container the untrusted sandbox can reach, so it gets the two files it reads.
-      - proxy-ca:/app/data/.proxy-ca:ro
-      - workspace-secret-vault:/app/workspace-secret-vault:ro
-      - workspace-secret-key:/app/workspace-secret-key:ro
+      - proxy-ca:/var/lib/paodo/data/.proxy-ca:ro
+      - workspace-secret-vault:/var/lib/paodo/workspace-secret-vault:ro
+      - workspace-secret-key:/var/lib/paodo/workspace-secret-key:ro
     depends_on:
       - app
     restart: unless-stopped

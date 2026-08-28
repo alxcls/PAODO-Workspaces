@@ -7,9 +7,7 @@
 // capability with different gating (see workspaceAccess); egress does not block them, so nothing here
 // applies to them.
 import { getStore } from "@/lib/infra/services";
-import { getCredentialProxy } from "@/lib/infra/proxy";
 import {
-  getWorkspaceRules,
   deleteSecret,
   listSecretMeta,
   normalizeDomain,
@@ -58,7 +56,7 @@ export interface WorkspaceSecretInput {
 /** The raw per-secret metadata the store hands back, before this module derives `blockedBy` from it. */
 type SecretMeta = ReturnType<typeof listSecretMeta>[number];
 
-/** Persistence for a secret, as one step: the proxy's rules are part of storing it, not a follow-up. */
+/** Persistence for a secret. Writing the store is the whole job — the proxy sidecar watches that file. */
 export interface SecretStore {
   save(id: string, name: string, value: string, domains: string[]): Omit<ThirdPartySecret, "blockedBy">;
   read(id: string): SecretMeta[];
@@ -81,21 +79,16 @@ function defaultSecretStore(): SecretStore & SecretDeleter {
   return {
     save: (id, name, value, domains) => {
       setSecret(id, name, value, domains);
-      getCredentialProxy().setRules(id, getWorkspaceRules(id));
       const saved = listSecretMeta(id).find((item) => item.name === name);
       if (!saved) throw new WorkspaceUpdateFailure("failed to store third-party secret");
       return saved;
     },
-    delete: (id, name) => {
-      const deleted = deleteSecret(id, name);
-      if (deleted) getCredentialProxy().setRules(id, getWorkspaceRules(id));
-      return deleted;
-    },
+    delete: deleteSecret,
     read: listSecretMeta,
   };
 }
 
-/** Deletes a third-party secret and atomically refreshes the proxy's spend rules. */
+/** Deletes a third-party secret. The proxy sidecar drops its spend rules when it sees the store change. */
 export function deleteWorkspaceSecret(
   id: string,
   name: string,

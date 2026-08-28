@@ -24,11 +24,10 @@ process.on("unhandledRejection", (err) => fatal("unhandledRejection", err));
 
 import next from "next";
 import { WebSocketServer } from "ws";
-import { getStore, getContainers, getVersioning, getCredentialProxy } from "./lib/infra/services";
+import { getStore, getContainers, getVersioning } from "./lib/infra/services";
 import { ensureCA } from "./lib/infra/proxy/proxyCA";
 import { reconcileInternetAccessPolicy } from "./lib/infra/proxy/internetAccessPolicy";
 import { WORKSPACES_ROOT, workspaceRegistryFile } from "./lib/infra/paths";
-import { getWorkspaceRules } from "./lib/infra/security/workspaceSecretStore";
 import { getSecretsEncKey } from "./lib/infra/security/secretsEncryption";
 import { getProviderVaultKey } from "./lib/infra/security/providerKeyEncryption";
 import { assertProviderVaultAvailable, PROVIDER_VAULT_FILE } from "./lib/infra/security/providerKeyVault";
@@ -71,13 +70,17 @@ import { startPriceRefresher, stopPriceRefresher } from "./lib/models/priceRefre
 import { checkApiRateLimit } from "./lib/infra/security/rateLimit";
 import { availableProviders } from "./lib/agent/buildModel";
 import { purgeProviderKeysExcept } from "./lib/infra/security/providerKeyStore";
-import { assertDataRootAvailable, assertWorkspaceRegistryAvailable } from "./lib/infra/startupChecks";
+import {
+  assertDataRootAvailable,
+  assertWorkspaceRegistryAvailable,
+  assertWorkspacesVolumeConfigured,
+} from "./lib/infra/startupChecks";
 import { appDataDb, PAODO_DB_FILE } from "./lib/data/database";
 import { validate as validateCredential } from "./lib/infra/security/credentialStore";
 import { capacityProfile } from "./lib/infra/capacityProfile";
+import { runtimeMode } from "./lib/infra/runtimeMode";
 import { executionCapacity } from "./lib/agent/executionCapacity";
 
-const dev = process.env.NODE_ENV !== "production";
 const rawPort = process.env.PORT ?? "3000";
 const port = Number(rawPort);
 
@@ -115,6 +118,20 @@ try {
   );
   exitAfterLogs(1);
 }
+
+// The roots this process will actually read and write, and whether it compiles on demand. Check
+// this line first whenever the data on screen is not the data you expected.
+log.info(
+  {
+    event: "runtime_mode_resolved",
+    outcome: "runtime_mode_loaded",
+    hotReload: runtimeMode.hotReload,
+    workspacesVolume: runtimeMode.workspacesVolume,
+    dataRoot: WORKSPACES_ROOT,
+    providerVaultRoot: PROVIDER_VAULT_ROOT,
+  },
+  "runtime mode resolved",
+);
 
 log.info(
   {
@@ -176,7 +193,7 @@ function authenticateHeader(scheme: string | null): Record<string, string> {
 
 function setSecurityHeaders(res: import("http").ServerResponse): void {
   const headers = buildSecurityHeaders({
-    isProduction: process.env.NODE_ENV === "production",
+    isProduction: runtimeMode.hardenedBrowser,
   });
   for (const [name, value] of Object.entries(headers)) res.setHeader(name, value);
 }
@@ -196,7 +213,7 @@ httpServer.on("error", (err) => {
 });
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-const app = next({ dev, httpServer, port, webpack: true } as any);
+const app = next({ dev: runtimeMode.hotReload, httpServer, port, webpack: true } as any);
 const handle = app.getRequestHandler();
 
 httpServer.on("request", (req, res) => {
@@ -326,7 +343,7 @@ httpServer.on("request", (req, res) => {
   // Mint the /ws session cookie only in `basic` mode, and only for a verified UI credential.
   // Programmatic platform tokens and route-authenticated agent/MCP credentials never become sessions.
   if (uiAuth.mode === "basic" && authResult === "ok" && sessionCookieNeedsRefresh(req.headers["cookie"])) {
-    res.setHeader("Set-Cookie", mintSessionCookie({ isProduction: process.env.NODE_ENV === "production" }));
+    res.setHeader("Set-Cookie", mintSessionCookie({ isProduction: runtimeMode.hardenedBrowser }));
   }
 
   if (isCsrf({ method, pathname, secFetchSite: req.headers["sec-fetch-site"] as string | undefined })) {
@@ -466,6 +483,18 @@ wss.on("connection", (ws, req) => {
 // would make the very screen that fixes it unreachable. A workspace with no usable provider fails at
 // the start of its conversation instead, naming the provider and the fix (lib/agent/providerFailure.ts).
 
+// Before the data root is touched: without the volume, every workspace mount would resolve against
+// the daemon's host filesystem instead, and the app would run on state nothing else can see.
+try {
+  assertWorkspacesVolumeConfigured(runtimeMode.workspacesVolume);
+} catch (err) {
+  log.fatal(
+    { event: "startup_workspaces_volume_unconfigured", outcome: "process_exit", err },
+    "WORKSPACES_VOLUME_NAME is unset — start through docker compose, which sets it",
+  );
+  exitAfterLogs(1);
+}
+
 try {
   assertDataRootAvailable(WORKSPACES_ROOT);
 } catch (err) {
@@ -503,49 +532,51 @@ try {
   exitAfterLogs(1);
 }
 
-if (!dev) {
-  try {
-    assertWorkspaceRegistryAvailable(WORKSPACES_ROOT);
-  } catch (err) {
-    log.fatal(
-      {
-        event: "startup_workspace_registry_unavailable",
-        outcome: "process_exit",
-        err,
-        filePath: workspaceRegistryFile(),
-      },
-      "existing workspace registry could not be read safely — refusing to start",
-    );
-    exitAfterLogs(1);
-  }
-  try {
-    assertProviderVaultAvailable();
-  } catch (err) {
-    log.fatal(
-      {
-        event: "startup_provider_vault_unavailable",
-        outcome: "process_exit",
-        err,
-        filePath: PROVIDER_VAULT_FILE,
-      },
-      "existing encrypted provider vault could not be read safely — refusing to start",
-    );
-    exitAfterLogs(1);
-  }
-  try {
-    assertWorkspaceSecretVaultAvailable();
-  } catch (err) {
-    log.fatal(
-      {
-        event: "startup_workspace_secret_vault_unavailable",
-        outcome: "process_exit",
-        err,
-        filePath: WORKSPACE_SECRET_VAULT_FILE,
-      },
-      "existing encrypted workspace-secret vault could not be read safely — refusing to start",
-    );
-    exitAfterLogs(1);
-  }
+// Unconditional, like assertDataRootAvailable above. Each of these reports state that is present
+// but unreadable, and all three treat a missing file as a first run — so a fresh clone is unaffected
+// and the only thing a hot-reload exemption would buy is starting on top of corruption, which is
+// worse here than in a deployed stack: this is where corruption gets made.
+try {
+  assertWorkspaceRegistryAvailable(WORKSPACES_ROOT);
+} catch (err) {
+  log.fatal(
+    {
+      event: "startup_workspace_registry_unavailable",
+      outcome: "process_exit",
+      err,
+      filePath: workspaceRegistryFile(),
+    },
+    "existing workspace registry could not be read safely — refusing to start",
+  );
+  exitAfterLogs(1);
+}
+try {
+  assertProviderVaultAvailable();
+} catch (err) {
+  log.fatal(
+    {
+      event: "startup_provider_vault_unavailable",
+      outcome: "process_exit",
+      err,
+      filePath: PROVIDER_VAULT_FILE,
+    },
+    "existing encrypted provider vault could not be read safely — refusing to start",
+  );
+  exitAfterLogs(1);
+}
+try {
+  assertWorkspaceSecretVaultAvailable();
+} catch (err) {
+  log.fatal(
+    {
+      event: "startup_workspace_secret_vault_unavailable",
+      outcome: "process_exit",
+      err,
+      filePath: WORKSPACE_SECRET_VAULT_FILE,
+    },
+    "existing encrypted workspace-secret vault could not be read safely — refusing to start",
+  );
+  exitAfterLogs(1);
 }
 
 // Withdrawing a provider destroys its key, and this is where that happens: availability is read from
@@ -602,32 +633,28 @@ try {
   exitAfterLogs(1);
 }
 
-// Snapshots (workspace version history) shell out to the `git` binary, and those failures are
-// swallowed at runtime so a run never breaks. That makes a missing git invisible — which is exactly
-// how it silently disabled history in the production image once. Probe at boot: refuse to start in
-// production (like the Docker guard), warn in dev where snapshots are non-critical. Unlike the
-// credentials guard above, staying gated on NODE_ENV is fine — missing history is a degraded feature,
-// not an open door.
+// Snapshots shell out to `git` and swallow the failure, so a missing binary disables version history
+// invisibly — as it once did in production. Both runners install it, so absence means a broken image.
 async function assertGitAvailable() {
   if (await getVersioning().isGitAvailable()) return;
-  if (!dev) {
-    log.fatal(
-      { event: "startup_git_unavailable", outcome: "process_exit" },
-      "git is not available — workspace version history (snapshots) would silently no-op. Refusing to start.",
-    );
-    exitAfterLogs(1);
-  }
-  log.warn("git is not available — workspace snapshots will be disabled until git is installed.");
+  log.fatal(
+    { event: "startup_git_unavailable", outcome: "process_exit" },
+    "git is not available — workspace version history (snapshots) would silently no-op. Refusing to start.",
+  );
+  exitAfterLogs(1);
 }
-
-const CREDENTIAL_PROXY_PORT = parseInt(process.env.CREDENTIAL_PROXY_PORT ?? "9998", 10);
 
 assertGitAvailable()
   .then(() => getContainers().assertDockerAvailable())
   .then(async () => {
     // The app owns CA generation (writable data mount); the credproxy sidecar only loads it.
     try {
-      ensureCA(WORKSPACES_ROOT, { strictExisting: !dev });
+      // Strict on both axes. Nothing on disk still generates a fresh CA, so a first run is
+      // unaffected; what this refuses is silently replacing partial or unreadable material, which
+      // invalidates the CA already baked into every existing workspace container at
+      // /etc/proxy-ca.crt and rotates every derived proxy secret. That surfaces only as "the agent
+      // lost internet". Remedy is `rm -rf data/.proxy-ca` plus recreating workspaces.
+      ensureCA(WORKSPACES_ROOT, { strictExisting: true });
     } catch (err) {
       log.fatal(
         { event: "startup_proxy_key_material_invalid", outcome: "process_exit", err },
@@ -645,23 +672,13 @@ assertGitAvailable()
       );
       exitAfterLogs(1);
     }
-    if (!process.env.WORKSPACES_VOLUME_NAME) {
-      // Local dev: the app runs on the host, so it hosts the proxy in-process at
-      // host.docker.internal:9998. Reload persisted rules (lost on restart).
-      const proxy = getCredentialProxy();
-      proxy.listen(CREDENTIAL_PROXY_PORT);
-      for (const ws of getStore().listWorkspaces()) {
-        proxy.setRules(ws.id, getWorkspaceRules(ws.id));
-      }
-    } else {
-      // Production: the proxy runs in the `credproxy` sidecar (so the app never joins a workspace
-      // network). A redeploy recreates the sidecar and drops its attachments — reconnect running
-      // workspaces so their egress keeps working.
-      await getContainers().reattachProxyNetworks();
-      // Boot-time reattach only heals sidecar recreations that coincide with an app restart. Keep a
-      // reconcile loop running so an independent sidecar restart self-heals within one interval.
-      startProxyReconciler();
-    }
+    // The proxy runs in the `credproxy` sidecar, never in this process, so the app never joins a
+    // workspace network. A redeploy recreates the sidecar and drops its attachments — reconnect
+    // running workspaces so their egress keeps working.
+    await getContainers().reattachProxyNetworks();
+    // Boot-time reattach only heals sidecar recreations that coincide with an app restart. Keep a
+    // reconcile loop running so an independent sidecar restart self-heals within one interval.
+    startProxyReconciler();
   })
   // Before the listener opens: in `iap` mode this fetches the provider's signing keys, and a failure
   // must stop the boot rather than leave every request failing closed against an empty key set.

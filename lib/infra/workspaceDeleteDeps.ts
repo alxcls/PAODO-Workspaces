@@ -8,7 +8,6 @@ import { removeWorkspaceFromGraph } from "@/lib/agent/graph";
 import type { WorkspaceDeleteDeps, WorkspaceDeleteStage } from "@/lib/operations/workspace/delete";
 import { createAuditLogger, createLogger } from "./logger";
 import { WORKSPACES_ROOT, workspaceAptRecipeFile, workspaceHomeDir, workspaceHomeSeededMarker } from "./paths";
-import { getCredentialProxy } from "./proxy";
 import { deleteInternetAccessPolicy } from "./proxy/internetAccessPolicy";
 import { removeWorkspace as removeWorkspaceCredentials } from "./security/credentialStore";
 import { deleteAllForWorkspace } from "./security/workspaceSecretStore";
@@ -36,8 +35,8 @@ export function workspaceDeleteDeps(): WorkspaceDeleteDeps {
       [stage("credentials", ({ id }) => removeWorkspaceCredentials(id))],
       [
         stage("conversations", ({ id }) => deleteWorkspaceConversations(id)),
+        // Clears the proxy's rules too: the sidecar drops any workspace missing from the store file.
         stage("third_party_secrets", ({ id }) => deleteAllForWorkspace(id)),
-        stage("credential_proxy_rules", ({ id }) => getCredentialProxy().clearRules(id)),
         stage("internet_access_policy", ({ id }) => deleteInternetAccessPolicy(id)),
         stage("schedule", ({ id }) => clearSchedule(id)),
       ],

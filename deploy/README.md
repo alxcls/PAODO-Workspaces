@@ -92,7 +92,7 @@ Compose keeps six named volumes deliberately separate:
 - `workspace-secret-vault` contains encrypted third-party secrets intended for proxy injection;
 - `workspace-secret-key` unlocks only the workspace-secret vault.
 
-`proxy-ca` is mounted at `/app/data/.proxy-ca` — writable in `app`, read-only in `credproxy`, which
+`proxy-ca` is mounted at `/var/lib/paodo/data/.proxy-ca` — writable in `app`, read-only in `credproxy`, which
 gets no other view of `workspaces`. Keeping it a volume of its own is what lets `credproxy` start on
 a first deployment: a subpath mount requires the path to already exist in the volume, and on a fresh
 install nothing has created it yet.

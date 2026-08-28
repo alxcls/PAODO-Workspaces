@@ -9,8 +9,8 @@
 // server.ts) periodically re-runs reattachProxyNetworks, so an independent sidecar restart self-heals
 // within one interval instead of waiting for the next app reboot.
 //
-// reattachProxyNetworks() is already prod-guarded (no-op when WORKSPACES_VOLUME_NAME is unset) and
-// idempotent (a repeat connect is a no-op), so the tick is cheap and safe to run unconditionally.
+// reattachProxyNetworks() is idempotent (a repeat connect is a no-op), so the tick is cheap and
+// safe to run unconditionally.
 import { getContainers } from "../services";
 import { createLogger } from "../logger";
 import { globalSingleton } from "../globalSingleton";

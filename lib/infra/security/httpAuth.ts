@@ -12,6 +12,7 @@
 import type { IncomingMessage } from "http";
 import { isPlatformRouteAllowed } from "./platformAccessPolicy";
 import { isLoopbackAddress } from "./rateLimit";
+import { runtimeMode } from "../runtimeMode";
 import type { UiAuthenticator } from "./uiAuth";
 
 // Tracks per-IP credential failures and blocks an IP once it exceeds `max` failures within
@@ -148,7 +149,7 @@ export function trustedRequestHosts(
  */
 export function trustedRequestOrigins(
   env: TrustedHostEnvironment = { PAODO_TRUSTED_HOSTS: process.env.PAODO_TRUSTED_HOSTS },
-  dev = process.env.NODE_ENV !== "production",
+  dev = runtimeMode.hotReload,
 ): ReadonlySet<string> {
   // Loopback only while no public hostname is declared: declaring one is the edit validateRequestHost
   // already forced, so the safe set needs no second step. NODE_ENV can't tell — compose builds prod.

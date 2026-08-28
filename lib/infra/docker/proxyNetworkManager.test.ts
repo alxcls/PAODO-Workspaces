@@ -1,17 +1,14 @@
 // ProxyNetworkManager has had no direct coverage — it was only exercised indirectly through
-// containerManager.proxy.test.ts's ensure() flow. These pin it in isolation: the enabled/no-op-in-dev
-// gate, attach/detach/verify's self-heal and loud-failure behavior, and reattachAll's new
-// shouldAttach filter (which excludes internet-access-off workspaces from the boot-time reattach —
-// reattaching the sidecar to one of those would hand its network a live route back to the internet).
-import { describe, it, expect, vi } from "vitest";
+// containerManager.proxy.test.ts's ensure() flow. These pin it in isolation: attach/detach/verify's
+// self-heal and loud-failure behavior, and reattachAll's shouldAttach filter (which excludes
+// internet-access-off workspaces from the boot-time reattach — reattaching the sidecar to one of
+// those would hand its network a live route back to the internet).
+import { describe, it, expect } from "vitest";
 import type { IDockerClient, DockerResult } from "./dockerClient";
 
 const OK: DockerResult = { stdout: "", stderr: "", code: 0 };
 const SIDECAR = "paodo_ws_credproxy";
 
-// enabled reads WORKSPACES_VOLUME_NAME at module import time — set it before importing so
-// ProxyNetworkManager behaves as it does in production (a sidecar exists to attach).
-process.env.WORKSPACES_VOLUME_NAME = "paodo_ws_workspaces";
 const { ProxyNetworkManager } = await import("./proxyNetworkManager");
 
 function makeDocker(handler?: (args: string[]) => DockerResult | undefined) {
@@ -26,23 +23,6 @@ function makeDocker(handler?: (args: string[]) => DockerResult | undefined) {
   };
   return { docker, calls };
 }
-
-describe("ProxyNetworkManager — disabled (local dev)", () => {
-  it("every method no-ops when WORKSPACES_VOLUME_NAME is unset", async () => {
-    process.env.WORKSPACES_VOLUME_NAME = "";
-    vi.resetModules();
-    const { ProxyNetworkManager: DevPNM } = await import("./proxyNetworkManager");
-    const { docker, calls } = makeDocker();
-    const mgr = new DevPNM(docker);
-    await mgr.attach("ws1");
-    await mgr.detach("ws1");
-    await mgr.verify("ws1");
-    await mgr.reattachAll();
-    expect(calls).toHaveLength(0);
-    process.env.WORKSPACES_VOLUME_NAME = "paodo_ws_workspaces";
-    vi.resetModules();
-  });
-});
 
 describe("ProxyNetworkManager.attach", () => {
   it("connects the sidecar with the credproxy alias", async () => {

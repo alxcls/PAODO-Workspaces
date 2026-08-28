@@ -27,9 +27,6 @@ const CREDENTIAL_PROXY_PORT = process.env.CREDENTIAL_PROXY_PORT ?? "9998";
 // Network alias the workspace's HTTP_PROXY targets (prod: the credproxy sidecar). Mirrored in
 // containerManager, which owns the `docker network connect --alias` that makes it resolve.
 const CREDENTIAL_PROXY_ALIAS = process.env.CREDENTIAL_PROXY_ALIAS ?? "credproxy";
-// Set in production / Docker Compose. Its presence is how we tell "app is containerized" (reach the
-// proxy sidecar by alias) from "local dev, app on host" (reach the in-process proxy via the gateway).
-const WORKSPACES_VOLUME_NAME = process.env.WORKSPACES_VOLUME_NAME ?? "";
 
 // Combined CA bundle (container system roots + proxy CA) that replacement-style trust vars
 // (REQUESTS_CA_BUNDLE / CURL_CA_BUNDLE / SSL_CERT_FILE) point at. Built by installProxyCA below.
@@ -101,18 +98,14 @@ export function buildExecEnv(workspaceId: string, internetAccess: boolean): Reco
  */
 export function buildRunEnv(workspaceId: string): CredentialEnv {
   const proxyReady = hasProxyCA();
-  // Prod (containerized app): reach the proxy sidecar by its network alias. Local dev (app on the
-  // host): the proxy runs in-process, reachable via the host gateway.
-  const proxyHost = WORKSPACES_VOLUME_NAME
-    ? `${CREDENTIAL_PROXY_ALIAS}:${CREDENTIAL_PROXY_PORT}`
-    : `host.docker.internal:${CREDENTIAL_PROXY_PORT}`;
+  // The sidecar is reached by its network alias, the only route a workspace gets. No host-gateway
+  // entry: nothing in the sandbox has a reason to resolve the host, and it is not ours to hand out.
+  const proxyHost = `${CREDENTIAL_PROXY_ALIAS}:${CREDENTIAL_PROXY_PORT}`;
   // The password is the workspace's derived proxy secret, so the proxy can verify this container is
   // who it claims to be — a container that knows another workspace's id still can't forge its identity.
   const proxyUrl = proxyReady ? `http://${workspaceId}:${deriveProxySecret(workspaceId)}@${proxyHost}` : "";
   const proxyEnvArgs = proxyReady
     ? [
-        // --add-host makes host.docker.internal resolve to the host gateway on Linux Docker
-        "--add-host=host.docker.internal:host-gateway",
         "-e",
         `HTTP_PROXY=${proxyUrl}`,
         "-e",
@@ -154,7 +147,7 @@ export function buildRunEnv(workspaceId: string): CredentialEnv {
         "-e",
         `GIT_SSL_CAINFO=${COMBINED_CA_BUNDLE}`,
         // The CA is NOT bind-mounted: the Docker daemon resolves -v sources as HOST paths, but
-        // CA_CERT_PATH (/app/data/…) is the app CONTAINER's volume mount — a -v of it would make Docker
+        // CA_CERT_PATH (/var/lib/paodo/data/…) is the app CONTAINER's volume mount — a -v of it would make Docker
         // create an empty dir on the host and mount that, so /etc/proxy-ca.crt would be an unreadable
         // directory and no MITM cert would ever verify. Instead installProxyCA writes the PEM into the
         // container over stdin (same host-vs-container-path reason as buildVolumeArg).

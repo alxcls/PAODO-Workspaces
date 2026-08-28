@@ -6,9 +6,8 @@
 // CREDENTIAL_PROXY_ALIAS (a network alias); CREDENTIAL_PROXY_CONTAINER is the container name the app
 // runs `docker network connect` against.
 //
-// This is prod-only orchestration: when WORKSPACES_VOLUME_NAME is unset (local dev), there is no
-// sidecar (the proxy is in-process) and every method here is a no-op. The env-var / CA-trust side of
-// proxy wiring lives in containerCredentials.ts.
+// The app always runs containerized alongside that sidecar, so every method here is unconditional.
+// The env-var / CA-trust side of proxy wiring lives in containerCredentials.ts.
 import { createLogger } from "../logger";
 import type { IDockerClient } from "./dockerClient";
 import { networkName } from "./naming";
@@ -17,23 +16,14 @@ const log = createLogger("container");
 
 const CREDENTIAL_PROXY_ALIAS = process.env.CREDENTIAL_PROXY_ALIAS ?? "credproxy";
 const CREDENTIAL_PROXY_CONTAINER = process.env.CREDENTIAL_PROXY_CONTAINER ?? "paodo_ws_credproxy";
-// Set in production (Docker Compose); its presence is the "we're containerized, a sidecar exists"
-// signal that gates all of the below.
-const WORKSPACES_VOLUME_NAME = process.env.WORKSPACES_VOLUME_NAME ?? "";
 
 export class ProxyNetworkManager {
   constructor(private docker: IDockerClient) {}
 
-  // True only in production, where a credproxy sidecar exists to attach.
-  get enabled(): boolean {
-    return !!WORKSPACES_VOLUME_NAME;
-  }
-
   // Attach the sidecar (never the app itself) to a workspace's isolated network so the workspace
   // resolves `${CREDENTIAL_PROXY_ALIAS}` to the proxy and can reach nothing else the app hosts.
-  // Idempotent: a repeat connect ("already exists") is not an error. No-op in local dev.
+  // Idempotent: a repeat connect ("already exists") is not an error.
   async attach(workspaceId: string): Promise<void> {
-    if (!this.enabled) return;
     const r = await this.docker.cmd(
       "network",
       "connect",
@@ -65,9 +55,8 @@ export class ProxyNetworkManager {
   // Guarantee the workspace can reach the credential proxy before the agent runs against it. If the
   // sidecar isn't on the network (typically because a redeploy recreated it and dropped the
   // attachment), reattach and re-check; if it still isn't reachable, throw with an actionable message
-  // rather than letting egress silently black-hole. No-op in local dev.
+  // rather than letting egress silently black-hole.
   async verify(workspaceId: string): Promise<void> {
-    if (!this.enabled) return;
     if (await this.isAttached(workspaceId)) return;
     log.warn({ workspaceId }, "credential proxy not attached to workspace network — reattaching");
     await this.attach(workspaceId);
@@ -79,9 +68,8 @@ export class ProxyNetworkManager {
   }
 
   // Detach the sidecar before removing a workspace network — `network rm` fails while an endpoint is
-  // still attached. Non-fatal (the sidecar may not be attached). No-op in local dev.
+  // still attached. Non-fatal (the sidecar may not be attached).
   async detach(workspaceId: string): Promise<void> {
-    if (!this.enabled) return;
     const r = await this.docker.cmd(
       "network",
       "disconnect",
@@ -95,13 +83,12 @@ export class ProxyNetworkManager {
   // On boot, reconnect the sidecar to every running workspace network that should have one. A
   // redeploy recreates the sidecar (and the app), dropping its attachments while workspace
   // containers keep running; without this their egress would black-hole until they are recreated.
-  // No-op in local dev. `shouldAttach` lets the caller (containerManager, which owns workspace
+  // `shouldAttach` lets the caller (containerManager, which owns workspace
   // policy) exclude internet-access-off workspaces — reattaching the sidecar to one of those would
   // hand its network a live route back to the real internet via the sidecar's other interface, even
   // though the workspace's own network stays --internal. This class stays free of workspaceStore
   // itself; it only knows container/network names.
   async reattachAll(shouldAttach: (workspaceId: string) => boolean = () => true): Promise<void> {
-    if (!this.enabled) return;
     const r = await this.docker.cmd("ps", "--filter", "name=^ws_", "--format", "{{.Names}}");
     if (r.code !== 0) {
       log.warn({ stderr: r.stderr }, "reattachProxyNetworks: docker ps failed");

@@ -28,7 +28,7 @@ afterEach(async () => {
 async function loadManager() {
   vi.resetModules();
   process.env.WORKSPACES_ROOT = root;
-  delete process.env.WORKSPACES_VOLUME_NAME;
+  process.env.WORKSPACES_VOLUME_NAME = "paodo_ws_workspaces";
   return (await import("./containerManager")).ContainerManager;
 }
 
@@ -57,7 +57,12 @@ function makeDocker(
   const docker: IDockerClient = {
     cmd: async (...args: string[]): Promise<DockerResult> => {
       if (args[0] === "inspect") return { stdout: "", stderr: "no such object", code: 1 };
-      if (args[0] === "network" && args[1] === "inspect") return { stdout: "", stderr: "no such network", code: 1 };
+      // The --format form is the sidecar-attachment probe, which must report the sidecar as an
+      // endpoint; the bare form is the does-this-network-exist check, which must not.
+      if (args[0] === "network" && args[1] === "inspect") {
+        if (args.includes("--format")) return { stdout: "paodo_ws_credproxy ", stderr: "", code: 0 };
+        return { stdout: "", stderr: "no such network", code: 1 };
+      }
       return OK;
     },
     exec: async (_name: string, cmdArgs: string[]): Promise<DockerResult> => {

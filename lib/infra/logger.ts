@@ -11,9 +11,9 @@
 // in that entry ("Unhandled scheme") — which failed every dev-server request with a 500.
 import { AsyncLocalStorage } from "async_hooks";
 import pino from "pino";
+import { runtimeMode } from "./runtimeMode";
 
-const isDev = process.env.NODE_ENV !== "production";
-const level = process.env.LOG_LEVEL ?? (isDev ? "debug" : "info");
+const level = process.env.LOG_LEVEL ?? (runtimeMode.hotReload ? "debug" : "info");
 
 // Routine records are buffered and drained asynchronously so Docker stdout backpressure cannot
 // block the Node.js event loop on every request. The cap prevents a stalled Docker log reader from

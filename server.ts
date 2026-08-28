@@ -633,22 +633,15 @@ try {
   exitAfterLogs(1);
 }
 
-// Snapshots (workspace version history) shell out to the `git` binary, and those failures are
-// swallowed at runtime so a run never breaks. That makes a missing git invisible — which is exactly
-// how it silently disabled history in the production image once. Probe at boot: refuse to start in
-// a deployed stack (like the Docker guard), warn on the host loop where snapshots are non-critical
-// and a contributor without git should still get a running app. Unlike the credentials guard above,
-// staying gated is fine — missing history is a degraded feature, not an open door.
+// Snapshots shell out to `git` and swallow the failure, so a missing binary disables version history
+// invisibly — as it once did in production. Both runners install it, so absence means a broken image.
 async function assertGitAvailable() {
   if (await getVersioning().isGitAvailable()) return;
-  if (!runtimeMode.hotReload) {
-    log.fatal(
-      { event: "startup_git_unavailable", outcome: "process_exit" },
-      "git is not available — workspace version history (snapshots) would silently no-op. Refusing to start.",
-    );
-    exitAfterLogs(1);
-  }
-  log.warn("git is not available — workspace snapshots will be disabled until git is installed.");
+  log.fatal(
+    { event: "startup_git_unavailable", outcome: "process_exit" },
+    "git is not available — workspace version history (snapshots) would silently no-op. Refusing to start.",
+  );
+  exitAfterLogs(1);
 }
 
 assertGitAvailable()

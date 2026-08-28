@@ -10,7 +10,7 @@ import { atomicSaveJson, readJson } from "../jsonPersist";
 import { scaffoldWorkspaceDir } from "./scaffold";
 import { validateWorkspaceName, normalizeForUniqueness, WorkspaceNameError } from "../../workspace/name";
 import { defaultWorkspaceVersioning } from "../git";
-import { WORKSPACES_ROOT } from "../paths";
+import { WORKSPACES_ROOT, workspaceRegistryFile } from "../paths";
 import type { IWorkspaceStore } from "../interfaces";
 import type { ReasoningEffort } from "../../models/llmSelection";
 import { setInternetAccessPolicy } from "../proxy/internetAccessPolicy";
@@ -36,7 +36,7 @@ interface WorkspaceRecord {
   internetAccess?: boolean;
 }
 
-const REGISTRY_FILE = path.join(WORKSPACES_ROOT, ".workspaces.json");
+const REGISTRY_FILE = workspaceRegistryFile();
 
 type PersistFn = (records: WorkspaceRecord[]) => void;
 type LoadFn = () => WorkspaceRecord[] | null;

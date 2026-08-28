@@ -53,9 +53,12 @@ network and authentication boundaries. The UI and usage routes stay behind the s
 authenticated HTTPS ingress and PAODO Basic Auth; the public Caddy gateway exposes only separately
 authenticated programmatic API and MCP routes.
 
-Create backups through
-`npm run backup:database -- /path/on/separate-storage/paodo.db`, then copy the snapshot to separately
-backed-up or remote storage. A second file on the same Docker volume is not disaster recovery.
+Create backups through `npm run backup:database -- /path/on/separate-storage`, which writes a
+`paodo-db-<deployment>-<timestamp>.tar.gz` holding the database and the workspace registry, and
+refuses to overwrite an existing archive. `PAODO_DEPLOYMENT` names the deployment inside it and is
+required. Check one with `npm run backup:database -- --verify <archive.tar.gz>`, which rehashes every
+member against the manifest. Then copy the archive to separately backed-up or remote storage: a
+second file on the same Docker volume is not disaster recovery.
 
 Consequences
 

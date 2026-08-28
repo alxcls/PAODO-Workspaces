@@ -3,6 +3,7 @@
 import fs from "fs";
 import path from "path";
 import { randomUUID } from "crypto";
+import { workspaceRegistryFile } from "./paths";
 
 export function assertDataRootAvailable(root: string): void {
   fs.mkdirSync(root, { recursive: true });
@@ -51,7 +52,7 @@ export function assertWorkspaceRegistryRecords(value: unknown): asserts value is
 
 /** Missing is the valid first-run state; an existing unreadable or malformed registry is not. */
 export function assertWorkspaceRegistryAvailable(root: string): void {
-  const file = path.join(root, ".workspaces.json");
+  const file = workspaceRegistryFile(root);
   let raw: string;
   try {
     raw = fs.readFileSync(file, "utf8");

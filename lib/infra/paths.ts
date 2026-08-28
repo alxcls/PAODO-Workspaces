@@ -7,6 +7,9 @@ export const WORKSPACES_ROOT = process.env.WORKSPACES_ROOT ?? path.resolve(proce
 // internal stores (.proxy-ca, .versioning) so it is never mistaken for a workspace directory.
 export const HOMES_DIR_NAME = ".homes";
 
+/** The workspace registry, captured in the database archive beside the rows it indexes. */
+export const workspaceRegistryFile = (root: string = WORKSPACES_ROOT): string => path.join(root, ".workspaces.json");
+
 /** Durable `/home/dev` for one workspace. Relative form is what the volume-subpath mount needs. */
 export const workspaceHomeSubpath = (workspaceId: string): string => `${HOMES_DIR_NAME}/${workspaceId}`;
 

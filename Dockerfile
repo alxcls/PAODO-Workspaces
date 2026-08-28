@@ -39,13 +39,13 @@ RUN npm ci
 # node user cannot write. .next is added to that list because Next writes there on every compile.
 RUN mkdir -p \
       /app/.next \
-      /app/data \
-      /app/data/.proxy-ca \
-      /app/provider-vault \
-      /app/provider-key \
-      /app/workspace-secret-vault \
-      /app/workspace-secret-key && \
-    chown -R node:node /app
+      /var/lib/paodo/data \
+      /var/lib/paodo/data/.proxy-ca \
+      /var/lib/paodo/provider-vault \
+      /var/lib/paodo/provider-key \
+      /var/lib/paodo/workspace-secret-vault \
+      /var/lib/paodo/workspace-secret-key && \
+    chown -R node:node /app /var/lib/paodo
 USER node
 CMD ["npx", "tsx", "server.ts"]
 
@@ -83,13 +83,13 @@ COPY scripts/ ./scripts/
 # .proxy-ca is a mount point for its own volume: Docker seeds a fresh named volume from the image
 # path, so this is what makes it node-owned rather than root-owned and unwritable.
 RUN mkdir -p \
-      /app/data \
-      /app/data/.proxy-ca \
-      /app/provider-vault \
-      /app/provider-key \
-      /app/workspace-secret-vault \
-      /app/workspace-secret-key && \
-    chown -R node:node /app
+      /var/lib/paodo/data \
+      /var/lib/paodo/data/.proxy-ca \
+      /var/lib/paodo/provider-vault \
+      /var/lib/paodo/provider-key \
+      /var/lib/paodo/workspace-secret-vault \
+      /var/lib/paodo/workspace-secret-key && \
+    chown -R node:node /app /var/lib/paodo
 USER node
 
 ARG PORT=3000

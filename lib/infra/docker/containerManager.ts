@@ -239,7 +239,7 @@ export class ContainerManager implements IContainerManager {
   }
 
   // A containerized app uses Docker 25+ volume-subpath mounting: the Docker daemon sees host paths,
-  // not app-container paths, so a plain bind of /app/data/<id> hits nothing. The host dev loop falls
+  // not app-container paths, so a plain bind of /var/lib/paodo/data/<id> hits nothing. The host dev loop falls
   // back to a plain bind so it works without Docker Compose.
   private buildMountArg(hostDir: string, subpath: string, target: string): string[] {
     const volume = WORKSPACES_VOLUME_NAME;

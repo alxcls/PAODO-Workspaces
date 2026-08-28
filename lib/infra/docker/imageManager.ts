@@ -35,7 +35,7 @@ export class ImageManager {
     }
 
     // Pipe the Dockerfile on stdin with an empty build context ("-") to avoid tarring
-    // the mounted /app/data volume, which may contain files unreadable by the app user.
+    // the mounted workspaces volume, which may contain files unreadable by the app user.
     const dockerfile = await readFile(dockerfilePath);
     const buildArgs = ["build", "-t", imageName];
     if (hash) buildArgs.push("--label", `${HASH_LABEL}=${hash}`);

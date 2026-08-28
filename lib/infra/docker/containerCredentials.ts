@@ -152,7 +152,7 @@ export function buildRunEnv(workspaceId: string): CredentialEnv {
         "-e",
         `GIT_SSL_CAINFO=${COMBINED_CA_BUNDLE}`,
         // The CA is NOT bind-mounted: the Docker daemon resolves -v sources as HOST paths, but
-        // CA_CERT_PATH (/app/data/…) is the app CONTAINER's volume mount — a -v of it would make Docker
+        // CA_CERT_PATH (/var/lib/paodo/data/…) is the app CONTAINER's volume mount — a -v of it would make Docker
         // create an empty dir on the host and mount that, so /etc/proxy-ca.crt would be an unreadable
         // directory and no MITM cert would ever verify. Instead installProxyCA writes the PEM into the
         // container over stdin (same host-vs-container-path reason as buildVolumeArg).

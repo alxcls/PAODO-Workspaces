@@ -1,0 +1,22 @@
+# Development overlay. Runs the same topology as a deployment — socket proxy, credproxy sidecar,
+# named volumes, volume-subpath mounts — with the working tree mounted over /app so Next compiles
+# on demand. This is what `npm run dev` uses; docker-compose.yml alone is what a server runs.
+#
+# Both axes are set independently here: NODE_ENV stays unset for hot reload, WORKSPACES_VOLUME_NAME
+# stays inherited so the container behaves as a deployed one. See lib/infra/runtimeMode.ts.
+services:
+  app:
+    build:
+      target: dev
+    environment:
+      # Overrides the base file's production value. Everything else about the service is unchanged.
+      - NODE_ENV=development
+    volumes:
+      - .:/app
+      # Anonymous volumes shadowing the bind. node_modules must stay the image's linux/arm64 build —
+      # the host tree holds darwin binaries for better-sqlite3 and would fail to load. .next is kept
+      # out of the working tree so a dev compile never collides with a `npm run build` artifact.
+      - /app/node_modules
+      - /app/.next
+    # Next's dev compiler is heavier than the built server it replaces.
+    mem_limit: ${APP_MEMORY_LIMIT:-4g}

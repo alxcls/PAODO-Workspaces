@@ -7,7 +7,8 @@
     "npm": "11.6.2"
   },
   "scripts": {
-    "dev": "tsx server.ts",
+    "dev": "docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build",
+    "dev:down": "docker compose -f docker-compose.yml -f docker-compose.dev.yml down",
     "build": "next build",
     "lint": "eslint .",
     "format": "prettier --write .",

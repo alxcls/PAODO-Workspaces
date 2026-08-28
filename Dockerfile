@@ -18,7 +18,38 @@ COPY . .
 # before copying node_modules into the runner. This also avoids installing native addons twice.
 RUN npm run build && npm prune --omit=dev
 
-# Stage 2: production runner
+# Stage 2: development runner. Same topology as the production runner — socket proxy, credproxy
+# sidecar, volume-subpath mounts — but with the source bind-mounted and Next compiling on demand.
+# Dev dependencies stay installed (typescript, tailwind) because nothing is prebuilt here, and the
+# image deliberately carries no source: docker-compose.dev.yml mounts the working tree over /app.
+FROM node:22-trixie-slim AS dev
+WORKDIR /app
+RUN npm install -g npm@11.6.2
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends python3 make g++ docker-cli git ca-certificates && \
+    rm -rf /var/lib/apt/lists/*
+COPY package*.json ./
+RUN npm ci
+# Same `node` user as the production runner, and for the same reason the volumes require it: compose
+# drops every capability, so root has no CAP_DAC_OVERRIDE to bypass the uid-1000 ownership the data
+# and vault volumes were seeded with. .next is pre-created so its anonymous volume inherits that
+# ownership too — Next writes there on every compile.
+# The same mount points the production runner creates, for the same reason: Docker seeds a fresh
+# named volume from the image path, so a directory missing here becomes a root-owned volume the
+# node user cannot write. .next is added to that list because Next writes there on every compile.
+RUN mkdir -p \
+      /app/.next \
+      /app/data \
+      /app/data/.proxy-ca \
+      /app/provider-vault \
+      /app/provider-key \
+      /app/workspace-secret-vault \
+      /app/workspace-secret-key && \
+    chown -R node:node /app
+USER node
+CMD ["npx", "tsx", "server.ts"]
+
+# Stage 3: production runner
 FROM node:22-trixie-slim AS runner
 WORKDIR /app
 ENV NODE_ENV=production

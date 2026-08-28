@@ -18,6 +18,7 @@ import {
 } from "../security/workspaceSecretStore";
 import { deriveProxySecret } from "../proxy/proxyCA";
 import { WORKSPACES_ROOT } from "../paths";
+import { runtimeMode } from "../runtimeMode";
 import type { IDockerClient } from "./dockerClient";
 import { createLogger } from "../logger";
 
@@ -27,9 +28,6 @@ const CREDENTIAL_PROXY_PORT = process.env.CREDENTIAL_PROXY_PORT ?? "9998";
 // Network alias the workspace's HTTP_PROXY targets (prod: the credproxy sidecar). Mirrored in
 // containerManager, which owns the `docker network connect --alias` that makes it resolve.
 const CREDENTIAL_PROXY_ALIAS = process.env.CREDENTIAL_PROXY_ALIAS ?? "credproxy";
-// Set in production / Docker Compose. Its presence is how we tell "app is containerized" (reach the
-// proxy sidecar by alias) from "local dev, app on host" (reach the in-process proxy via the gateway).
-const WORKSPACES_VOLUME_NAME = process.env.WORKSPACES_VOLUME_NAME ?? "";
 
 // Combined CA bundle (container system roots + proxy CA) that replacement-style trust vars
 // (REQUESTS_CA_BUNDLE / CURL_CA_BUNDLE / SSL_CERT_FILE) point at. Built by installProxyCA below.
@@ -101,9 +99,9 @@ export function buildExecEnv(workspaceId: string, internetAccess: boolean): Reco
  */
 export function buildRunEnv(workspaceId: string): CredentialEnv {
   const proxyReady = hasProxyCA();
-  // Prod (containerized app): reach the proxy sidecar by its network alias. Local dev (app on the
-  // host): the proxy runs in-process, reachable via the host gateway.
-  const proxyHost = WORKSPACES_VOLUME_NAME
+  // Containerized app: reach the proxy sidecar by its network alias. Host dev loop: the proxy runs
+  // in-process, reachable via the host gateway.
+  const proxyHost = runtimeMode.containerized
     ? `${CREDENTIAL_PROXY_ALIAS}:${CREDENTIAL_PROXY_PORT}`
     : `host.docker.internal:${CREDENTIAL_PROXY_PORT}`;
   // The password is the workspace's derived proxy secret, so the proxy can verify this container is

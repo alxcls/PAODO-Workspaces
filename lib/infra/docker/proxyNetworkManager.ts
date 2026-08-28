@@ -6,10 +6,11 @@
 // CREDENTIAL_PROXY_ALIAS (a network alias); CREDENTIAL_PROXY_CONTAINER is the container name the app
 // runs `docker network connect` against.
 //
-// This is prod-only orchestration: when WORKSPACES_VOLUME_NAME is unset (local dev), there is no
-// sidecar (the proxy is in-process) and every method here is a no-op. The env-var / CA-trust side of
-// proxy wiring lives in containerCredentials.ts.
+// This is containerized-only orchestration: on the host dev loop there is no sidecar (the proxy is
+// in-process) and every method here is a no-op. The env-var / CA-trust side of proxy wiring lives in
+// containerCredentials.ts.
 import { createLogger } from "../logger";
+import { runtimeMode } from "../runtimeMode";
 import type { IDockerClient } from "./dockerClient";
 import { networkName } from "./naming";
 
@@ -17,16 +18,13 @@ const log = createLogger("container");
 
 const CREDENTIAL_PROXY_ALIAS = process.env.CREDENTIAL_PROXY_ALIAS ?? "credproxy";
 const CREDENTIAL_PROXY_CONTAINER = process.env.CREDENTIAL_PROXY_CONTAINER ?? "paodo_ws_credproxy";
-// Set in production (Docker Compose); its presence is the "we're containerized, a sidecar exists"
-// signal that gates all of the below.
-const WORKSPACES_VOLUME_NAME = process.env.WORKSPACES_VOLUME_NAME ?? "";
 
 export class ProxyNetworkManager {
   constructor(private docker: IDockerClient) {}
 
-  // True only in production, where a credproxy sidecar exists to attach.
+  // True only when containerized, where a credproxy sidecar exists to attach.
   get enabled(): boolean {
-    return !!WORKSPACES_VOLUME_NAME;
+    return runtimeMode.containerized;
   }
 
   // Attach the sidecar (never the app itself) to a workspace's isolated network so the workspace

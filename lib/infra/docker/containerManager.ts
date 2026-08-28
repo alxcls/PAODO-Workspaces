@@ -29,6 +29,7 @@ import { readAptRecipe } from "../aptRecipe";
 import { BackgroundTaskManager, type BackgroundTask } from "./backgroundTaskManager";
 import { ProxyNetworkManager } from "./proxyNetworkManager";
 import { capacityProfile } from "../capacityProfile";
+import { runtimeMode } from "../runtimeMode";
 import { asDockerNetworkPoolExhaustedError, reportInfrastructureResourceExhaustion } from "./infrastructureFailure";
 
 // Re-exported for back-compat with external consumers.
@@ -84,8 +85,8 @@ const EXEC_PIDFILE_DIR = "/tmp";
 const EXEC_PIDFILE_PREFIX = "paodo-exec-";
 // Docker volume name is deterministic: compose project name (fixed in docker-compose.yml as
 // "paodo_ws") + "_" + volume key ("workspaces"). Falls back to a plain bind mount when unset
-// so local dev (app running directly on host) still works without Docker Compose.
-const WORKSPACES_VOLUME_NAME = process.env.WORKSPACES_VOLUME_NAME ?? "";
+// so the host dev loop still works without Docker Compose.
+const WORKSPACES_VOLUME_NAME = runtimeMode.workspacesVolume;
 // The agent's home inside the container — the `dev` user created in Dockerfile.workspace. Mounted
 // from durable storage, so npm globals, pip packages and extra node/python versions outlive the
 // container. SEED_TARGET is where the same directory is attached while it is being filled.
@@ -237,12 +238,13 @@ export class ContainerManager implements IContainerManager {
     return "stopped";
   }
 
-  // Production (WORKSPACES_VOLUME_NAME set) uses Docker 25+ volume-subpath mounting: the Docker
-  // daemon sees host paths, not app-container paths, so a plain bind of /app/data/<id> hits nothing.
-  // Local dev (app on the host) falls back to a plain bind so it works without Docker Compose.
+  // A containerized app uses Docker 25+ volume-subpath mounting: the Docker daemon sees host paths,
+  // not app-container paths, so a plain bind of /app/data/<id> hits nothing. The host dev loop falls
+  // back to a plain bind so it works without Docker Compose.
   private buildMountArg(hostDir: string, subpath: string, target: string): string[] {
-    if (!WORKSPACES_VOLUME_NAME) return ["-v", `${hostDir}:${target}`];
-    return ["--mount", `type=volume,source=${WORKSPACES_VOLUME_NAME},target=${target},volume-subpath=${subpath}`];
+    const volume = WORKSPACES_VOLUME_NAME;
+    if (!volume) return ["-v", `${hostDir}:${target}`];
+    return ["--mount", `type=volume,source=${volume},target=${target},volume-subpath=${subpath}`];
   }
 
   // Both durable mounts: the workspace tree the user sees, and the agent's home. Everything the
@@ -1108,13 +1110,14 @@ export class ContainerManager implements IContainerManager {
     }
   }
 
-  // Deletes a workspace directory from the volume. In production (WORKSPACES_VOLUME_NAME set) it
-  // mounts the full volume and removes the subdir as root (-u 0) — the agent now runs as uid 1000 so
-  // its files are normally removable directly, but a throwaway root rm also clears any legacy
-  // root-owned files left by workspaces created before the non-root migration.
-  // In local dev falls back to a plain fs.rm since the app runs as the host user.
+  // Deletes a workspace directory from the volume. When containerized it mounts the full volume and
+  // removes the subdir as root (-u 0) — the agent now runs as uid 1000 so its files are normally
+  // removable directly, but a throwaway root rm also clears any legacy root-owned files left by
+  // workspaces created before the non-root migration.
+  // On the host dev loop this falls back to a plain fs.rm since the app runs as the host user.
   async deleteWorkspaceDir(workspaceDir: string): Promise<void> {
-    if (WORKSPACES_VOLUME_NAME) {
+    const volume = WORKSPACES_VOLUME_NAME;
+    if (volume) {
       const workspaceName = path.basename(workspaceDir);
       const r = await this.docker.cmd(
         "run",
@@ -1122,7 +1125,7 @@ export class ContainerManager implements IContainerManager {
         "-u",
         "0",
         "-v",
-        `${WORKSPACES_VOLUME_NAME}:/data`,
+        `${volume}:/data`,
         CONTAINER_IMAGE,
         "rm",
         "-rf",

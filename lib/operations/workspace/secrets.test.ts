@@ -216,7 +216,7 @@ describe("storing a third-party secret", () => {
 });
 
 describe("deleting a third-party secret", () => {
-  it("delegates the store-and-proxy mutation through one operation", () => {
+  it("delegates the store mutation through one operation", () => {
     const calls: unknown[][] = [];
     expect(
       deleteWorkspaceSecret("ws-1", "API_TOKEN", lookup(offline), {

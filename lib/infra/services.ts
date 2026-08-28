@@ -8,10 +8,6 @@ import { defaultWorkspaceStore } from "@/lib/infra/workspace/registry";
 import { defaultContainerManager } from "./docker/defaultContainerManager";
 import { defaultWorkspaceVersioning } from "./git";
 import type { IWorkspaceStore, IContainerManager, IWorkspaceVersioning } from "./interfaces";
-// The credential proxy is a fourth infra singleton. It is re-exported here for convenience but is
-// not part of the swappable Services bundle below (no interface/fake) — it's a process-wide MITM
-// server accessed directly via getCredentialProxy() and also imported straight by workspaceStore.
-export { getCredentialProxy } from "./proxy";
 
 interface Services {
   store: IWorkspaceStore;

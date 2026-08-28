@@ -5,8 +5,8 @@
 // subpath elsewhere on disk. resolveWorkspacePath goes further: it realpaths the workspace tree the
 // same way the HTTP upload route does (lib/files/containment.ts), catching that case too.
 // The workspace's host-visible directory and the sandbox container's /workspace mount are the same
-// filesystem (same Docker volume in prod, same bind mount in local dev), so a host-side check here
-// validly covers what a container-side `docker exec ... tee /workspace/<relpath>` would actually do.
+// filesystem — one named Docker volume, mounted whole into the app and by subpath into the sandbox,
+// in every mode — so a host-side check here validly covers what a container-side write would do.
 
 import path from "path";
 import { resolveContained } from "@/lib/files/containment";

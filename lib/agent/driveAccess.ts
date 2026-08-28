@@ -7,6 +7,7 @@ import { normalizeRelpath } from "./pathUtils";
 import { toolError } from "./toolUtils";
 import { formatOutputBytes } from "@/lib/infra/limits";
 import { resolveDriveDir, type Drive } from "@/lib/drives/store";
+import { buildTree, type TreeNode } from "@/lib/files/tree";
 
 export interface ResolvedDrivePath {
   drive: Drive;
@@ -77,7 +78,7 @@ export async function readFileBounded(
     handle = await fs.open(absPath, "r");
     // One byte more than the stat said, so that a file which grew in between reads as "changed"
     // rather than coming back silently short of itself. Sizing to the stat rather than to the limit
-    // is what keeps a 2KB read from allocating the whole 50MB ceiling.
+    // is what keeps a 2KB read from allocating the whole transfer ceiling.
     const expected = Math.min(stat.size, limit);
     const buf = Buffer.alloc(expected + 1);
     const { bytesRead } = await handle.read(buf, 0, buf.length, 0);
@@ -96,4 +97,51 @@ export async function readFileBounded(
   } finally {
     await handle?.close();
   }
+}
+
+/**
+ * Every file under `absDir`, POSIX-relative to it, for a folder transfer that copies them one by one.
+ *
+ * Reuses the shared tree walker, so the same ignore contract that hides node_modules/.git from every
+ * other file surface hides them here too — a folder push never carries a regenerable build dir. There
+ * is no file-count ceiling: each file is still bounded individually on transfer, so a whole directory
+ * costs no more heap than its largest file, and the caller asked for the whole folder.
+ */
+export async function enumerateDriveFolder(absDir: string): Promise<string[]> {
+  const { nodes } = await buildTree(absDir, { maxDepth: Infinity });
+  const files: string[] = [];
+  collectFiles(nodes, files);
+  return files;
+}
+
+function collectFiles(nodes: TreeNode[], out: string[]): void {
+  for (const node of nodes) {
+    if (node.type === "directory") collectFiles(node.children ?? [], out);
+    else out.push(node.path);
+  }
+}
+
+/**
+ * One line summarizing a folder transfer: how much moved, and every file that did not and why. A
+ * per-file error is collected rather than fatal, so one unreadable or oversized file never aborts the
+ * rest — the same "keep going, report the gap" stance the drive_ls truncation notice takes.
+ *
+ * When nothing moved it leads with `Error:` instead of the success verb: this is only reached with a
+ * non-empty folder, so `moved === 0` means every file failed, and "Uploaded 0 files" would let the
+ * agent record a total failure as a success.
+ */
+export function formatFolderTransfer(verb: string, moved: number, bytes: number, target: string, skipped: string[]): string {
+  const skipClause = skipped.length ? `Skipped ${skipped.length}: ${skipped.join("; ")}` : "";
+  if (moved === 0) {
+    return `Error: nothing transferred to ${target} — all ${skipped.length} file${skipped.length === 1 ? "" : "s"} failed. ${skipClause}`;
+  }
+  const head = `${verb} ${moved} file${moved === 1 ? "" : "s"} to ${target} (${formatOutputBytes(bytes)})`;
+  return skipClause ? `${head}. ${skipClause}` : head;
+}
+
+// Collapse a tool's verbose `Error: ...` string to its first sentence, for listing many skips compactly.
+export function compactError(message: string): string {
+  const stripped = message.replace(/^Error:\s*/, "").trim();
+  const end = stripped.indexOf(". ");
+  return end === -1 ? stripped : stripped.slice(0, end);
 }

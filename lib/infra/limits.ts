@@ -169,15 +169,19 @@ export const MAX_FILE_READ_BYTES = 400_000;
  *
  * Judge this one by its peak, not by the file: drive_download holds the raw bytes, a base64 copy of
  * them (~1.33×, since exec stdin is text-only), and the copy the runner makes writing that to the
- * child — roughly 3.7× the file size, all live at the same moment. 50MB therefore costs ~185MB of
+ * child — roughly 3.7× the file size, all live at the same moment. 100MB therefore costs ~370MB of
  * transient heap, which is the number this was chosen against. Raising it to 500MB would not cost
  * 500MB, it would cost 1.85GB and cross V8's string limit on the base64 copy on the way.
+ *
+ * A folder transfer moves its files one at a time through this same path, so the peak is per-file
+ * and does not grow with the folder — a whole directory costs no more transient heap than its
+ * single largest file.
  *
  * Large enough for what drives are actually for — a dataset, a SQLite database, a build artifact
  * handed to the next agent. A file past it is a sign the work wants a different shape (split it, or
  * have the agent process it in place rather than moving it), and the tools say so when they refuse.
  */
-export const MAX_DRIVE_TRANSFER_BYTES = 50 * 1024 * 1024;
+export const MAX_DRIVE_TRANSFER_BYTES = 100 * 1024 * 1024;
 
 /**
  * How many entries `drive_ls` renders for one directory.

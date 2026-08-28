@@ -6,7 +6,6 @@ import { describe, it, expect, beforeEach, afterAll, vi } from "vitest";
 import fs from "fs";
 import os from "os";
 import path from "path";
-import type { ExecRunner, ExecResult } from "../interfaces";
 import { MAX_FILE_READ_BYTES, MAX_DRIVE_TRANSFER_BYTES, MAX_DRIVE_LISTING_ENTRIES } from "@/lib/infra/limits";
 
 const ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "drivelimits-test-"));
@@ -25,17 +24,6 @@ async function freshModules() {
   const { DriveUploadTool } = await import("./driveUpload");
   const { DriveLsTool } = await import("./driveLs");
   return { store, DriveReadTool, DriveDownloadTool, DriveUploadTool, DriveLsTool };
-}
-
-function captureRunner(): { runner: ExecRunner; calls: { cmd: string[]; stdin?: string }[] } {
-  const calls: { cmd: string[]; stdin?: string }[] = [];
-  const runner: ExecRunner = {
-    async exec(cmd, opts): Promise<ExecResult> {
-      calls.push({ cmd, stdin: opts?.stdin });
-      return { code: 0, stdout: "", stderr: "" };
-    },
-  };
-  return { runner, calls };
 }
 
 type Mods = Awaited<ReturnType<typeof freshModules>>;
@@ -88,18 +76,19 @@ describe("drive_read ceiling", () => {
 });
 
 describe("drive transfer ceiling", () => {
-  it("drive_download refuses an oversized file before touching the container", async () => {
+  it("drive_download refuses an oversized file without writing it", async () => {
     const dir = seedDrive("data");
     sparseFile(path.join(dir, "big.bin"), MAX_DRIVE_TRANSFER_BYTES + 1);
+    const workspaceDir = path.join(ROOT, "ws1");
+    fs.mkdirSync(workspaceDir, { recursive: true });
 
-    const { runner, calls } = captureRunner();
-    const result = await new mods.DriveDownloadTool("ws1", runner).invoke({ drive_name: "data", path: "big.bin" });
+    const result = await new mods.DriveDownloadTool("ws1", workspaceDir).invoke({ drive_name: "data", path: "big.bin" });
 
     expect(result).toMatch(/^Error:/);
-    expect(result).toContain("50.0MB");
-    // Nothing was spawned: refusing after the mkdir would leave an empty directory behind, and
-    // refusing after the base64 encode would already have cost the memory the ceiling exists to save.
-    expect(calls).toHaveLength(0);
+    expect(result).toContain("100.0MB");
+    // A partial or zero-length file at the dest would be worse than the refusal: the agent would find
+    // a file where it expected one and read it as complete.
+    expect(fs.existsSync(path.join(workspaceDir, "downloads/data/big.bin"))).toBe(false);
   });
 
   it("drive_upload refuses an oversized file without creating the destination", async () => {

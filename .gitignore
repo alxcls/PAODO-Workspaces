@@ -45,9 +45,9 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
-# runtime data
-/data/*
-!/data/.gitkeep
+# runtime data. Deployed state lives on the named volumes; this only appears if a script runs
+# outside compose and hits the cwd fallback in lib/infra/paths.ts.
+/data/
 /.data-backup
 /.paodo-provider-vault/
 /.paodo-provider-key/

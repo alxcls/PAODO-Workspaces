@@ -8,6 +8,26 @@ Dockerfile
 **/*.test.ts
 **/*.integration.test.ts
 e2e
+test-results
+playwright-report
+# Host build output and local reports. The builder runs its own `npm run build`, so a host .next is
+# dead weight in the context; captured logs hold client IPs and belong in no image.
+.next
+coverage
+logs
+*.tsbuildinfo
+.DS_Store
+# Local runtime state. The deployed app reads none of it — every path resolves under
+# /var/lib/paodo, which compose backs with named volumes — and it holds credentials in the clear.
+data
+# Maintainer-local tooling and notes, never read at build or run time.
+.claude
+cli
+db
+dev_tools
+doc
+deploy
+*.local.md
 .paodo-provider-vault
 .paodo-provider-key
 .paodo-workspace-secret-vault

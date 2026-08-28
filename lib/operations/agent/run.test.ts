@@ -26,12 +26,11 @@ function harness(
 ) {
   const calls: string[] = [];
   const messages = options.messages === undefined ? ([] as BaseMessage[]) : options.messages;
-  const createConversation = vi.fn((_workspaceId: string, opts?: { kind?: "user" | "skill-call" | "scheduled" }) => {
+  const createConversation = vi.fn((_workspaceId: string, _opts?: { title?: string }) => {
     calls.push("createConversation");
     return {
       id: "conv-created",
       title: "conv-cre",
-      ...(opts?.kind ? { kind: opts.kind } : {}),
       createdAt: "2026-01-01T00:00:00.000Z",
       updatedAt: "2026-01-01T00:00:00.000Z",
       lastMessageAt: "2026-01-01T00:00:00.000Z",
@@ -96,17 +95,18 @@ describe("startWorkspaceRun", () => {
     );
   });
 
-  it("creates a conversation and forwards its requested kind", () => {
+  it("creates a conversation and puts the requested origin on the session", () => {
     const h = harness({ workspace: WORKSPACE });
 
     const receipt = startWorkspaceRun(
       WORKSPACE.id,
-      { prompt: "go", origin: "scheduled", conversation: { mode: "create", kind: "scheduled" } },
+      { prompt: "go", origin: "scheduled", conversation: { mode: "create" } },
       h.deps,
     );
 
-    expect(h.createConversation).toHaveBeenCalledWith(WORKSPACE.id, { kind: "scheduled" });
+    expect(h.createConversation).toHaveBeenCalledWith(WORKSPACE.id);
     expect(h.getMessages).toHaveBeenCalledWith(WORKSPACE.id, "conv-created");
+    expect(h.startRun).toHaveBeenCalledWith(expect.objectContaining({ origin: "scheduled" }));
     expect(receipt?.conversationId).toBe("conv-created");
   });
 
@@ -191,7 +191,7 @@ describe("startWorkspaceRun", () => {
     expect(() =>
       startWorkspaceRun(
         WORKSPACE.id,
-        { prompt: "scheduled work", origin: "scheduled", conversation: { mode: "create", kind: "scheduled" } },
+        { prompt: "scheduled work", origin: "scheduled", conversation: { mode: "create" } },
         h.deps,
       ),
     ).toThrow(ExecutionCapacityReachedError);

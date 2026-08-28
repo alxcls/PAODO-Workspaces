@@ -106,7 +106,6 @@ const PATHS = [
   `/api/workspaces/${ID}/internet-access`,
   `/api/workspaces/${ID}/restore`,
   `/api/workspaces/${ID}/schedule`,
-  `/api/workspaces/${ID}/system-prompt`,
   `/api/workspaces/${ID}/../${ID}`,
   "/ws",
   "/settings",

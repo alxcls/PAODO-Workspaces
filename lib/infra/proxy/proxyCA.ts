@@ -14,7 +14,6 @@ const log = createLogger("proxyCA");
 
 let caKey: forge.pki.rsa.PrivateKey | null = null;
 let caCert: forge.pki.Certificate | null = null;
-let _caCertPath = "";
 
 // Host-only key used to derive each workspace's proxy secret (HMAC of its id). Never leaves the
 // host and is never handed to a container, so one workspace cannot derive another's secret.
@@ -59,7 +58,6 @@ export function ensureCA(dataDir: string, options: EnsureCAOptions = {}): void {
   const keyFile = path.join(caDir, "ca.key");
   const certFile = path.join(caDir, "ca.crt");
   const domainKeyFile = path.join(caDir, "domain.key");
-  _caCertPath = certFile;
 
   mkdirSync(caDir, { recursive: true });
   ensureProxyHmacKey(caDir, options.strictExisting ?? false);
@@ -121,10 +119,6 @@ export function ensureCA(dataDir: string, options: EnsureCAOptions = {}): void {
   chmodSync(keyFile, 0o600);
   chmodSync(domainKeyFile, 0o600);
   log.info({ certFile }, "proxy CA generated");
-}
-
-export function getCACertPath(): string {
-  return _caCertPath;
 }
 
 // Generate (once) and load the host-only HMAC key used to derive per-workspace proxy secrets.

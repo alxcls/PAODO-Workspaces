@@ -27,7 +27,7 @@ import { WebSocketServer } from "ws";
 import { getStore, getContainers, getVersioning, getCredentialProxy } from "./lib/infra/services";
 import { ensureCA } from "./lib/infra/proxy/proxyCA";
 import { reconcileInternetAccessPolicy } from "./lib/infra/proxy/internetAccessPolicy";
-import { WORKSPACES_ROOT } from "./lib/infra/paths";
+import { WORKSPACES_ROOT, workspaceRegistryFile } from "./lib/infra/paths";
 import { getWorkspaceRules } from "./lib/infra/security/workspaceSecretStore";
 import { getSecretsEncKey } from "./lib/infra/security/secretsEncryption";
 import { getProviderVaultKey } from "./lib/infra/security/providerKeyEncryption";
@@ -512,7 +512,7 @@ if (!dev) {
         event: "startup_workspace_registry_unavailable",
         outcome: "process_exit",
         err,
-        filePath: path.join(WORKSPACES_ROOT, ".workspaces.json"),
+        filePath: workspaceRegistryFile(),
       },
       "existing workspace registry could not be read safely — refusing to start",
     );

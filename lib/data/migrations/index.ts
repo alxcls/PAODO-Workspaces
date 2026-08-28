@@ -1,6 +1,8 @@
+// Forward-only schema migrations, keyed on SQLite's user_version. Each migration runs once, in
+// order, inside one transaction — a throw anywhere rolls the whole upgrade back and leaves the
+// database on its previous version.
 import type Database from "better-sqlite3";
-import { initialSchema } from "./001-initial-schema";
-import { costCurrency } from "./002-cost-currency";
+import { baselineSchema } from "./001-baseline";
 
 export interface Migration {
   version: number;
@@ -8,7 +10,7 @@ export interface Migration {
   up(db: Database.Database): void;
 }
 
-export const DATABASE_MIGRATIONS: readonly Migration[] = [initialSchema, costCurrency];
+export const DATABASE_MIGRATIONS: readonly Migration[] = [baselineSchema];
 
 function validateMigrations(migrations: readonly Migration[]): void {
   migrations.forEach((migration, index) => {

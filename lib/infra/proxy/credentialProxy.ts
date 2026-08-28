@@ -344,7 +344,7 @@ export class CredentialProxy {
         await this.handleMitm(socket, hostname, port, tokenMap, remaining, auth?.wsId);
       } else {
         // SSRF guard: refuse tunnels to internal addresses. IP literals are checked here (net.connect
-        // skips DNS for them, so guardedLookup would never see them); hostnames are validated by the
+        // skips DNS for them, so the lookup would never see them); hostnames are validated by the
         // lookup, which rejects a resolved address in a blocked range. The 200 is withheld until the
         // upstream is actually established, so a blocked target only ever gets a 403.
         if (net.isIP(hostname) && this.blockDestination(hostname)) {

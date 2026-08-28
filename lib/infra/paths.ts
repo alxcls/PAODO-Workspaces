@@ -7,16 +7,24 @@ export const WORKSPACES_ROOT = process.env.WORKSPACES_ROOT ?? path.resolve(proce
 // internal stores (.proxy-ca, .versioning) so it is never mistaken for a workspace directory.
 export const HOMES_DIR_NAME = ".homes";
 
+/** The workspace registry, captured in the database archive beside the rows it indexes. */
+export const workspaceRegistryFile = (root: string = WORKSPACES_ROOT): string => path.join(root, ".workspaces.json");
+
 /** Durable `/home/dev` for one workspace. Relative form is what the volume-subpath mount needs. */
 export const workspaceHomeSubpath = (workspaceId: string): string => `${HOMES_DIR_NAME}/${workspaceId}`;
-export const workspaceHomeDir = (workspaceId: string): string =>
-  path.join(WORKSPACES_ROOT, HOMES_DIR_NAME, workspaceId);
+
+// `root` defaults to the live WORKSPACES_ROOT; tooling that reads a root other than this process's
+// (archiving, tests) passes it explicitly rather than rewriting the returned path.
+export const workspaceHomeDir = (workspaceId: string, root: string = WORKSPACES_ROOT): string =>
+  path.join(root, HOMES_DIR_NAME, workspaceId);
 
 /** Receipt for a finished seed. A sibling of the home, so it sits outside the mount the agent sees. */
-export const workspaceHomeSeededMarker = (workspaceId: string): string => `${workspaceHomeDir(workspaceId)}.seeded`;
+export const workspaceHomeSeededMarker = (workspaceId: string, root: string = WORKSPACES_ROOT): string =>
+  `${workspaceHomeDir(workspaceId, root)}.seeded`;
 
 /**
  * System packages this workspace installed, replayed into a rebuilt container. A sibling of the
  * home for the same reason as the marker: durable, but not writable by the agent it describes.
  */
-export const workspaceAptRecipeFile = (workspaceId: string): string => `${workspaceHomeDir(workspaceId)}.apt.json`;
+export const workspaceAptRecipeFile = (workspaceId: string, root: string = WORKSPACES_ROOT): string =>
+  `${workspaceHomeDir(workspaceId, root)}.apt.json`;

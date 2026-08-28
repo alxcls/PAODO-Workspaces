@@ -24,9 +24,12 @@ export function appDataDb(): Database.Database {
   try {
     conn.pragma("journal_mode = WAL");
     conn.pragma("synchronous = FULL");
-    conn.pragma("foreign_keys = ON");
     conn.pragma("busy_timeout = 5000");
+    // Migrations reshape tables, so they run without enforcement and it is restored afterwards —
+    // the pragma is a no-op inside the transaction migrateDatabase opens, so it has to wrap it.
+    conn.pragma("foreign_keys = OFF");
     migrateDatabase(conn);
+    conn.pragma("foreign_keys = ON");
   } catch (err) {
     conn.close();
     throw err;

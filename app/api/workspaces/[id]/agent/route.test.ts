@@ -87,7 +87,7 @@ describe("POST /api/workspaces/[id]/agent — Bearer key auth & per-workspace sc
     expect(res.status).toBe(200);
     expect(reachedAgent(res)).toBe(true);
     expect(res.headers.get("x-conversation-id")).toBe("conv-created");
-    expect(h.createConversation).toHaveBeenCalledWith("ws-a", { kind: undefined });
+    expect(h.createConversation).toHaveBeenCalledWith("ws-a");
     expect(h.startRun).toHaveBeenCalledWith(
       expect.objectContaining({
         conversationId: "conv-created",
@@ -138,7 +138,8 @@ describe("POST /api/workspaces/[id]/agent — Bearer key auth & per-workspace sc
     expect(await res.json()).toMatchObject({
       ok: false,
       code: "CAPACITY_REACHED",
-      error: "Execution capacity reached: 10/10 agent runs are active. This request was not started. Try again when another run finishes.",
+      error:
+        "Execution capacity reached: 10/10 agent runs are active. This request was not started. Try again when another run finishes.",
       details: { active: 10, limit: 10, conversationId: "conv-created", origin: "api" },
     });
     expect(h.persist).toHaveBeenCalledWith("ws-a", "conv-created");

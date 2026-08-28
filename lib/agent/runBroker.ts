@@ -13,8 +13,9 @@ import { runAgent, type AgentEvent } from "./runner";
 import type { RunAgentOptions } from "./runner";
 import { noteRunError } from "./messageSerialization";
 import { getStore, getContainers, getVersioning } from "../infra/services";
-import { recordRunError, recordTurnUsage } from "@/lib/usage/record";
-import type { RunErrorRecord, SessionOrigin } from "@/lib/usage/types";
+import { finishUsageSession, recordRunError, recordTurnUsage, startUsageSession } from "@/lib/usage/record";
+import type { RunErrorRecord, SessionOrigin, SessionStatus } from "@/lib/usage/types";
+import { contentToParagraphs } from "@/lib/transcript/content";
 import * as conversations from "@/lib/conversations/store";
 import { createLogger } from "../infra/logger";
 import { createWorkspaceRunTimeout, USER_STOPPED_CONVERSATION_MESSAGE } from "./runTimeout";
@@ -43,7 +44,7 @@ interface RunSession {
 // final events before the session is evicted.
 const DONE_LINGER_MS = 30_000;
 
-type AgentRunStatus = "success" | "failed" | "timeout" | "cancelled" | "limit_reached" | "incomplete";
+type AgentRunStatus = SessionStatus;
 
 function statusFromEvent(current: AgentRunStatus, event: AgentEvent): AgentRunStatus {
   if (event.type === "limit_reached") return "limit_reached";
@@ -104,36 +105,9 @@ export function startRun(params: StartRunParams): {
   };
   const run = params.run ?? runAgent;
   const sessionId = crypto.randomUUID();
-  const origin =
-    params.origin ??
-    (conversations.getMeta(params.workspaceId, params.conversationId)?.kind === "scheduled" ? "scheduled" : "chat");
-  const recordUsage =
-    params.onTurnUsage ??
-    ((sid, event) =>
-      recordTurnUsage(
-        {
-          sessionId: sid,
-          conversationId: params.conversationId,
-          workspaceId: params.workspaceId,
-          workspaceName: params.workspaceName,
-          origin,
-        },
-        event,
-      ));
-  const recordError =
-    params.onRunError ??
-    ((sid, error) =>
-      recordRunError(
-        {
-          sessionId: sid,
-          conversationId: params.conversationId,
-          workspaceId: params.workspaceId,
-          workspaceName: params.workspaceName,
-          origin,
-        },
-        error,
-        params.userInput,
-      ));
+  const origin = params.origin ?? "chat";
+  const recordUsage = params.onTurnUsage ?? ((sid, event) => recordTurnUsage(sid, event));
+  const recordError = params.onRunError ?? ((sid, error) => recordRunError(sid, error));
   const persist = params.onPersist ?? (() => conversations.persist(params.workspaceId, params.conversationId));
 
   const runTimeout = createWorkspaceRunTimeout(
@@ -150,6 +124,17 @@ export function startRun(params: StartRunParams): {
     conversationId: params.conversationId,
     signal: runTimeout.signal,
   };
+  const leading = params.messages[0];
+  const systemPrompt = leading?._getType() === "system" ? contentToParagraphs(leading.content) : "";
+  startUsageSession({
+    id: sessionId,
+    workspaceId: params.workspaceId,
+    workspaceName: params.workspaceName,
+    conversationId: params.conversationId,
+    origin,
+    userInput: params.userInput,
+    systemPrompt,
+  });
   const capacity = params.capacity ?? executionCapacity;
   const executionSlot = capacity.tryAcquire();
   if (!executionSlot) {
@@ -167,6 +152,10 @@ export function startRun(params: StartRunParams): {
       },
       "agent run rejected at execution capacity",
     );
+    finishUsageSession(sessionId, "failed", {
+      code: "CAPACITY_REACHED",
+      message: "The agent execution capacity was reached before this session could start.",
+    });
     return { alreadyRunning: false, capacityReached: snapshot };
   }
   const capacityAtStart = capacity.snapshot();
@@ -342,6 +331,7 @@ export function startRun(params: StartRunParams): {
           "persist on run end failed",
         );
       }
+      finishUsageSession(sessionId, terminalStatus);
       log.info(
         {
           event: "agent_run_completed",
@@ -396,7 +386,13 @@ export function startExternalRun(
   workspaceId: string,
   conversationId: string,
   userInput: string,
-  opts: { sessionId?: string; origin?: SessionOrigin; capacity?: ExecutionCapacityGate } = {},
+  opts: {
+    sessionId?: string;
+    workspaceName?: string;
+    origin?: SessionOrigin;
+    systemPrompt?: string;
+    capacity?: ExecutionCapacityGate;
+  } = {},
 ): ExternalRun | null {
   const k = key(workspaceId, conversationId);
   const existing = sessions.get(k);
@@ -413,6 +409,15 @@ export function startExternalRun(
   };
   const sessionId = opts.sessionId ?? crypto.randomUUID();
   const origin = opts.origin ?? "agent";
+  startUsageSession({
+    id: sessionId,
+    workspaceId,
+    workspaceName: opts.workspaceName ?? workspaceId,
+    conversationId,
+    origin,
+    userInput,
+    systemPrompt: opts.systemPrompt ?? "",
+  });
   const capacity = opts.capacity ?? executionCapacity;
   const executionSlot = capacity.tryAcquire();
   if (!executionSlot) {
@@ -429,6 +434,10 @@ export function startExternalRun(
       },
       "external agent run rejected at execution capacity",
     );
+    finishUsageSession(sessionId, "failed", {
+      code: "CAPACITY_REACHED",
+      message: "The agent execution capacity was reached before this session could start.",
+    });
     throw new ExecutionCapacityReachedError(snapshot, { workspaceId, conversationId, origin });
   }
   const capacityAtStart = capacity.snapshot();
@@ -471,6 +480,7 @@ export function startExternalRun(
       if (!session.buffer.some((event) => event.type === "done") && terminalStatus === "success") {
         terminalStatus = "incomplete";
       }
+      finishUsageSession(sessionId, terminalStatus);
       log.info(
         {
           event: "agent_run_completed",

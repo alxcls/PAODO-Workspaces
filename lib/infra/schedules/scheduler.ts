@@ -70,7 +70,7 @@ function fire(entry: ScheduleEntry, now: Date): void {
       origin: "scheduled",
       // Keep scheduled sessions named the same way as user-created ones (short conversation id),
       // so each run has an immediately visible, stable identifier in the switcher.
-      conversation: { mode: "create", kind: "scheduled" },
+      conversation: { mode: "create" },
     });
     if (!receipt) {
       log.warn({ workspaceId: entry.workspaceId }, "schedule fire skipped — workspace not found");

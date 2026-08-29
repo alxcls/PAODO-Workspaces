@@ -5,7 +5,10 @@ import path from "path";
 import { pushArchive } from "./s3Sink";
 import { s3Source, type ObjectSource } from "./s3Source";
 import { sha256File, verifyArchive } from "../archive/core";
+import { createAuditLogger } from "../logger";
 import { SET_MANIFEST_MEMBER, type BackupSet } from "../../archive/setManifest";
+
+const audit = createAuditLogger("backup");
 
 export type PushObject = (localPath: string, key: string) => Promise<string>;
 
@@ -20,12 +23,40 @@ export async function pushSet(
   prefix: string,
   push: PushObject = pushArchive,
 ): Promise<string[]> {
-  const urls: string[] = [];
-  for (const entry of manifest.entries) {
-    urls.push(await push(path.join(setDir, entry.file), `${prefix}/${entry.file}`));
+  const bytes = manifest.entries.reduce((sum, entry) => sum + entry.bytes, 0);
+  try {
+    const urls: string[] = [];
+    for (const entry of manifest.entries) {
+      urls.push(await push(path.join(setDir, entry.file), `${prefix}/${entry.file}`));
+    }
+    urls.push(await push(path.join(setDir, SET_MANIFEST_MEMBER), `${prefix}/${SET_MANIFEST_MEMBER}`));
+    audit.info(
+      {
+        event: "backup_set_pushed",
+        outcome: "set_pushed_offsite",
+        instance: manifest.instance,
+        setId: manifest.id,
+        prefix,
+        members: manifest.entries.length,
+        bytes,
+      },
+      "backup set pushed to S3",
+    );
+    return urls;
+  } catch (err) {
+    audit.error(
+      {
+        event: "backup_set_push_failed",
+        outcome: "set_not_pushed_offsite",
+        err,
+        instance: manifest.instance,
+        setId: manifest.id,
+        prefix,
+      },
+      "backup set push to S3 failed before the commit marker",
+    );
+    throw err;
   }
-  urls.push(await push(path.join(setDir, SET_MANIFEST_MEMBER), `${prefix}/${SET_MANIFEST_MEMBER}`));
-  return urls;
 }
 
 export interface SetVerifyResult {
@@ -45,6 +76,32 @@ export async function verifySet(
   workDir: string,
   source: ObjectSource = s3Source(),
 ): Promise<SetVerifyResult> {
+  const result = await checkSet(prefix, workDir, source);
+  if (result.ok) {
+    audit.info(
+      {
+        event: "remote_backup_verified",
+        outcome: "remote_set_trusted",
+        prefix,
+        members: result.manifest?.entries.length,
+      },
+      "remote backup set verified",
+    );
+  } else {
+    audit.warn(
+      {
+        event: "remote_backup_verification_failed",
+        outcome: "remote_set_untrusted",
+        prefix,
+        problems: result.problems,
+      },
+      "remote backup set failed verification",
+    );
+  }
+  return result;
+}
+
+async function checkSet(prefix: string, workDir: string, source: ObjectSource): Promise<SetVerifyResult> {
   const markerKey = `${prefix}/${SET_MANIFEST_MEMBER}`;
   if (!(await source.exists(markerKey))) {
     return { ok: false, problems: [`${prefix}: no ${SET_MANIFEST_MEMBER} — the set is incomplete or does not exist`] };

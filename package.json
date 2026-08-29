@@ -17,6 +17,7 @@
     "graph": "tsx dev_tools/viz/generate-graph.ts && open dev_tools/viz/graph.html",
     "query-graph": "tsx dev_tools/query/query-graph.ts",
     "update-pricing": "tsx scripts/update-pricing.ts",
+    "backup:all": "tsx scripts/backup-all.ts",
     "backup:database": "tsx scripts/backup-database.ts",
     "backup:graph": "tsx scripts/backup-graph.ts",
     "backup:workspace": "tsx scripts/backup-workspace.ts",

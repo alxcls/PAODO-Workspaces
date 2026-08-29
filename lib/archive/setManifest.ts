@@ -1,24 +1,21 @@
-// The parent manifest that turns a pile of archives into one restorable set. Pure types and the
-// restore order: no filesystem or tar, so a future restore reads this without pulling infra in.
-import type { ArchiveKind, TarMember, ArchiveSource } from "./manifest";
+// The parent manifest that turns a pile of archives into one restorable set. Pure types: no
+// filesystem or tar, so a future restore reads this without pulling infra in.
+import type { ArchiveSource } from "./manifest";
 
 export const SET_MANIFEST_MEMBER = "backup.json";
 
-// Agents must exist before the rows keyed to them and the edges that reference them, so restore
-// applies members in this order regardless of how they sit in the manifest.
-export const RESTORE_ORDER: readonly ArchiveKind[] = ["workspace", "database", "graph"];
+// One archive file in a set. `file` only locates it; the entry's identity is its kind — plus the
+// workspaceId for a workspace, since those are the only members a deployment holds more than one of.
+export type SetEntry =
+  | { kind: "graph"; file: string; bytes: number; sha256: string }
+  | { kind: "database"; file: string; bytes: number; sha256: string }
+  | { kind: "workspace"; file: string; bytes: number; sha256: string; workspaceId: string };
 
-export interface SetMember extends TarMember {
-  kind: ArchiveKind;
-  /** Present only for workspace members, so a set names which agents it holds. */
-  workspaceId?: string;
-}
-
-export interface BackupSetManifest {
+export interface BackupSet {
   schemaVersion: number;
   kind: "set";
   /** `<stamp>-<random>`: sorts by time for rotation, the suffix keeps same-second runs distinct. */
   id: string;
   source: ArchiveSource;
-  members: SetMember[];
+  entries: SetEntry[];
 }

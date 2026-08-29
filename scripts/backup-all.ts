@@ -14,11 +14,7 @@ import { pushArchive } from "../lib/infra/backup/s3Sink";
 import { reportArchived } from "./archiveCli";
 import { isWorkspaceManifest } from "../lib/workspace/archive";
 import { SCHEMA_VERSIONS, type ArchiveManifest } from "../lib/archive/manifest";
-import {
-  SET_MANIFEST_MEMBER,
-  type BackupSetManifest,
-  type SetMember,
-} from "../lib/archive/setManifest";
+import { SET_MANIFEST_MEMBER, type BackupSet, type SetEntry } from "../lib/archive/setManifest";
 
 const USAGE = `Usage:
   npm run backup:all -- <destination-dir> [--push]`;
@@ -29,15 +25,16 @@ interface Written {
   manifest: ArchiveManifest;
 }
 
-async function setMemberOf(result: Written): Promise<SetMember> {
-  const workspaceId = isWorkspaceManifest(result.manifest) ? result.manifest.workspace.id : undefined;
-  return {
-    name: path.basename(result.path),
-    bytes: result.bytes,
-    sha256: await sha256File(result.path),
-    kind: result.manifest.kind,
-    ...(workspaceId ? { workspaceId } : {}),
-  };
+async function setEntryOf(result: Written): Promise<SetEntry> {
+  const { manifest } = result;
+  const file = path.basename(result.path);
+  const bytes = result.bytes;
+  const sha256 = await sha256File(result.path);
+  if (manifest.kind === "workspace") {
+    if (!isWorkspaceManifest(manifest)) throw new Error("workspace archive missing workspace manifest");
+    return { kind: "workspace", file, bytes, sha256, workspaceId: manifest.workspace.id };
+  }
+  return { kind: manifest.kind, file, bytes, sha256 };
 }
 
 async function main(): Promise<void> {
@@ -62,20 +59,20 @@ async function main(): Promise<void> {
     results.push(await archiveWorkspace(workspace, setDir, { image }));
   }
 
-  const manifest: BackupSetManifest = {
+  const manifest: BackupSet = {
     schemaVersion: SCHEMA_VERSIONS.set,
     kind: "set",
     id,
     source,
-    members: await Promise.all(results.map(setMemberOf)),
+    entries: await Promise.all(results.map(setEntryOf)),
   };
   const manifestPath = path.join(setDir, SET_MANIFEST_MEMBER);
   await writeFile(manifestPath, JSON.stringify(manifest, null, 2));
 
   for (const result of results) reportArchived(source.deployment, result);
   if (push) {
-    for (const member of manifest.members) {
-      console.log(`Pushed to ${await pushArchive(path.join(setDir, member.name), `${prefix}/${member.name}`)}`);
+    for (const entry of manifest.entries) {
+      console.log(`Pushed to ${await pushArchive(path.join(setDir, entry.file), `${prefix}/${entry.file}`)}`);
     }
     console.log(`Pushed to ${await pushArchive(manifestPath, `${prefix}/${SET_MANIFEST_MEMBER}`)}`);
   }

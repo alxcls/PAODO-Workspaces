@@ -45,8 +45,9 @@ async function main(): Promise<void> {
 
   const source = archiveSource(new Date());
   const id = randomBytes(6).toString("hex");
+  const instance = slugify(source.deployment);
   const stamp = archiveStamp(new Date(source.capturedAt));
-  const prefix = `${slugify(source.deployment)}/${stamp}-${id}`;
+  const prefix = `${instance}/${stamp}-${id}`;
   const setDir = path.join(dest, prefix);
 
   const image = {
@@ -64,6 +65,7 @@ async function main(): Promise<void> {
     schemaVersion: SCHEMA_VERSIONS.set,
     kind: "set",
     id,
+    instance,
     source,
     entries: await Promise.all(results.map(setEntryOf)),
   };

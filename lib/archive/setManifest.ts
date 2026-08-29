@@ -16,6 +16,9 @@ export interface BackupSet {
   kind: "set";
   /** Opaque unique token for this run. The capture time lives once, in source.capturedAt. */
   id: string;
+  /** The path segment this set is stored under (source.deployment, slugified). With the stamp of
+   *  source.capturedAt and id it reconstructs the object key: `<instance>/<stamp>-<id>/`. */
+  instance: string;
   source: ArchiveSource;
   entries: SetEntry[];
 }

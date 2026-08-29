@@ -4,15 +4,16 @@
 export const MANIFEST_MEMBER = "manifest.json";
 
 /** What the archive holds. Restore dispatches on this rather than guessing from the filename. */
-export type ArchiveKind = "workspace" | "database";
+export type ArchiveKind = "workspace" | "database" | "graph";
 
 /**
- * Per kind, because the two formats change independently: bumping one for a member it gained must
- * not relabel the other as a format this build has never seen. Restore reads this first.
+ * Per kind, because the formats change independently: bumping one for a member it gained must
+ * not relabel another as a format this build has never seen. Restore reads this first.
  */
 export const ARCHIVE_SCHEMA_VERSIONS: Record<ArchiveKind, number> = {
   workspace: 1,
   database: 1,
+  graph: 1,
 };
 
 export interface ArchiveMember {

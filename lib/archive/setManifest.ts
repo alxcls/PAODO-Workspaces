@@ -1,6 +1,6 @@
 // The parent manifest that turns a pile of archives into one restorable set. Pure types and the
 // restore order: no filesystem or tar, so a future restore reads this without pulling infra in.
-import type { ArchiveKind, ArchiveMember, ArchiveSource } from "./manifest";
+import type { ArchiveKind, TarMember, ArchiveSource } from "./manifest";
 
 export const SET_MANIFEST_MEMBER = "backup.json";
 export const SET_SCHEMA_VERSION = 1;
@@ -9,7 +9,7 @@ export const SET_SCHEMA_VERSION = 1;
 // applies members in this order regardless of how they sit in the manifest.
 export const RESTORE_ORDER: readonly ArchiveKind[] = ["workspace", "database", "graph"];
 
-export interface SetMember extends ArchiveMember {
+export interface SetMember extends TarMember {
   kind: ArchiveKind;
   /** Present only for workspace members, so a set names which agents it holds. */
   workspaceId?: string;

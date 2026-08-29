@@ -11,7 +11,7 @@ import {
   ARCHIVE_SCHEMA_VERSIONS,
   MANIFEST_MEMBER,
   type ArchiveManifest,
-  type ArchiveMember,
+  type TarMember,
   type ArchiveSource,
 } from "../../archive/manifest";
 
@@ -144,7 +144,7 @@ export async function resolveDestination(dest: string, suffix: string, fileName:
   return target;
 }
 
-export async function describeMembers(stageDir: string, names: string[]): Promise<ArchiveMember[]> {
+export async function describeMembers(stageDir: string, names: string[]): Promise<TarMember[]> {
   return Promise.all(
     names.map(async (name) => {
       const member = path.join(stageDir, name);

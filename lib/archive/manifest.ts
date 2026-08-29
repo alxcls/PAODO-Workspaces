@@ -16,7 +16,8 @@ export const ARCHIVE_SCHEMA_VERSIONS: Record<ArchiveKind, number> = {
   graph: 1,
 };
 
-export interface ArchiveMember {
+/** One file packed inside an archive tar, with its size and hash. Not a whole archive — see SetEntry. */
+export interface TarMember {
   name: string;
   bytes: number;
   sha256: string;
@@ -39,5 +40,5 @@ export interface ArchiveManifest {
   schemaVersion: number;
   kind: ArchiveKind;
   source: ArchiveSource;
-  contents: ArchiveMember[];
+  contents: TarMember[];
 }

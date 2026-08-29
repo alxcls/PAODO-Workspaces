@@ -14,7 +14,7 @@ export type SetEntry =
 export interface BackupSet {
   schemaVersion: number;
   kind: "set";
-  /** `<stamp>-<random>`: sorts by time for rotation, the suffix keeps same-second runs distinct. */
+  /** Opaque unique token for this run. The capture time lives once, in source.capturedAt. */
   id: string;
   source: ArchiveSource;
   entries: SetEntry[];

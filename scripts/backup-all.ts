@@ -44,8 +44,9 @@ async function main(): Promise<void> {
   if (!dest) throw new Error(USAGE);
 
   const source = archiveSource(new Date());
-  const id = `${archiveStamp(new Date(source.capturedAt))}-${randomBytes(3).toString("hex")}`;
-  const prefix = `${slugify(source.deployment)}/${id}`;
+  const id = randomBytes(6).toString("hex");
+  const stamp = archiveStamp(new Date(source.capturedAt));
+  const prefix = `${slugify(source.deployment)}/${stamp}-${id}`;
   const setDir = path.join(dest, prefix);
 
   const image = {

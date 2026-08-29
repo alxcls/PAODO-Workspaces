@@ -12,7 +12,7 @@ import {
   writeArchive,
 } from "../archive/core";
 import { createAuditLogger } from "../logger";
-import { ARCHIVE_SCHEMA_VERSIONS, MANIFEST_MEMBER } from "../../archive/manifest";
+import { SCHEMA_VERSIONS, MANIFEST_MEMBER } from "../../archive/manifest";
 import { GRAPH_MEMBER, GRAPH_MEMBER_ORDER, type GraphArchiveManifest } from "../../graph/archive";
 import { getGraph } from "../../agent/graph";
 
@@ -44,7 +44,7 @@ export async function archiveGraph(dest: string): Promise<GraphArchiveResult> {
     await writeFile(path.join(stageDir, GRAPH_MEMBER), JSON.stringify(graph, null, 2));
 
     const manifest: GraphArchiveManifest = {
-      schemaVersion: ARCHIVE_SCHEMA_VERSIONS.graph,
+      schemaVersion: SCHEMA_VERSIONS.graph,
       kind: "graph",
       source,
       contents: await describeMembers(stageDir, [GRAPH_MEMBER]),

@@ -8,10 +8,10 @@ import os from "os";
 import path from "path";
 import { SpawnCapture } from "../spawnCapture";
 import {
-  ARCHIVE_SCHEMA_VERSIONS,
+  SCHEMA_VERSIONS,
   MANIFEST_MEMBER,
   type ArchiveManifest,
-  type ArchiveMember,
+  type TarMember,
   type ArchiveSource,
 } from "../../archive/manifest";
 
@@ -144,7 +144,7 @@ export async function resolveDestination(dest: string, suffix: string, fileName:
   return target;
 }
 
-export async function describeMembers(stageDir: string, names: string[]): Promise<ArchiveMember[]> {
+export async function describeMembers(stageDir: string, names: string[]): Promise<TarMember[]> {
   return Promise.all(
     names.map(async (name) => {
       const member = path.join(stageDir, name);
@@ -209,7 +209,7 @@ export async function verifyArchive(archivePath: string): Promise<VerifyResult> 
   const manifest = JSON.parse(read.stdout) as ArchiveManifest;
 
   const problems: string[] = [];
-  const known = ARCHIVE_SCHEMA_VERSIONS[manifest.kind];
+  const known = SCHEMA_VERSIONS[manifest.kind];
   if (known === undefined) {
     problems.push(`archive kind "${manifest.kind}" is not one this build understands`);
   } else if (manifest.schemaVersion > known) {

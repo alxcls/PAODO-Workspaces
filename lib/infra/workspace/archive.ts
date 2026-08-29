@@ -16,7 +16,7 @@ import {
 import { createAuditLogger, createLogger } from "../logger";
 import { WORKSPACES_ROOT, workspaceHomeDir, workspaceAptRecipeFile } from "../paths";
 import { GitClient, type IGitClient } from "../git/gitClient";
-import { ARCHIVE_SCHEMA_VERSIONS, MANIFEST_MEMBER } from "../../archive/manifest";
+import { SCHEMA_VERSIONS, MANIFEST_MEMBER } from "../../archive/manifest";
 import {
   APT_MEMBER,
   CONFIG_MEMBER,
@@ -132,7 +132,7 @@ export async function archiveWorkspace(
     if (await writeHomeArchive(homeDir, path.join(stageDir, HOME_MEMBER))) present.push(HOME_MEMBER);
 
     const manifest: WorkspaceArchiveManifest = {
-      schemaVersion: ARCHIVE_SCHEMA_VERSIONS.workspace,
+      schemaVersion: SCHEMA_VERSIONS.workspace,
       kind: "workspace",
       workspace: {
         id: workspace.id,

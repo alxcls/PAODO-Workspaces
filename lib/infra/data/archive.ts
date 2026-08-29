@@ -15,7 +15,7 @@ import {
 } from "../archive/core";
 import { createAuditLogger } from "../logger";
 import { workspaceRegistryFile } from "../paths";
-import { ARCHIVE_SCHEMA_VERSIONS, MANIFEST_MEMBER } from "../../archive/manifest";
+import { SCHEMA_VERSIONS, MANIFEST_MEMBER } from "../../archive/manifest";
 import {
   DATABASE_MEMBER,
   DATABASE_MEMBER_ORDER,
@@ -63,7 +63,7 @@ export async function archiveDatabase(dest: string): Promise<DatabaseArchiveResu
     }
 
     const manifest: DatabaseArchiveManifest = {
-      schemaVersion: ARCHIVE_SCHEMA_VERSIONS.database,
+      schemaVersion: SCHEMA_VERSIONS.database,
       kind: "database",
       source,
       database: { userVersion },

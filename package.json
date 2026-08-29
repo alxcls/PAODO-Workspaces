@@ -17,6 +17,7 @@
     "graph": "tsx dev_tools/viz/generate-graph.ts && open dev_tools/viz/graph.html",
     "query-graph": "tsx dev_tools/query/query-graph.ts",
     "update-pricing": "tsx scripts/update-pricing.ts",
+    "backup:all": "tsx scripts/backup-all.ts",
     "backup:database": "tsx scripts/backup-database.ts",
     "backup:graph": "tsx scripts/backup-graph.ts",
     "backup:workspace": "tsx scripts/backup-workspace.ts",
@@ -30,6 +31,8 @@
     "test:e2e:all": "playwright test"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1121.0",
+    "@aws-sdk/lib-storage": "^3.1121.0",
     "@codemirror/lang-css": "^6.3.1",
     "@codemirror/lang-html": "^6.4.11",
     "@codemirror/lang-javascript": "^6.2.5",

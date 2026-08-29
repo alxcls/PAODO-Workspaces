@@ -110,12 +110,13 @@ export async function archiveWorkspace(
   const git = opts.git ?? new GitClient();
   const capturedAt = new Date();
   const source = archiveSource(capturedAt);
-  const target = await resolveDestination(dest, ARCHIVE_SUFFIX, () =>
-    archiveFileName(workspace, source.deployment, capturedAt),
-  );
-  const stageDir = await mkdtemp(path.join(os.tmpdir(), "paodo-archive-"));
+  let stageDir: string | undefined;
 
   try {
+    const target = await resolveDestination(dest, ARCHIVE_SUFFIX, () =>
+      archiveFileName(workspace, source.deployment, capturedAt),
+    );
+    stageDir = await mkdtemp(path.join(os.tmpdir(), "paodo-archive-"));
     const present: string[] = [CONFIG_MEMBER];
     await writeFile(path.join(stageDir, CONFIG_MEMBER), JSON.stringify(configOf(workspace), null, 2));
 
@@ -156,7 +157,13 @@ export async function archiveWorkspace(
       "workspace archived",
     );
     return { path: target, bytes, manifest };
+  } catch (err) {
+    audit.error(
+      { event: "workspace_archive_failed", outcome: "workspace_not_archived", err, workspaceId: workspace.id },
+      "workspace archive failed",
+    );
+    throw err;
   } finally {
-    await rm(stageDir, { recursive: true, force: true });
+    if (stageDir) await rm(stageDir, { recursive: true, force: true });
   }
 }

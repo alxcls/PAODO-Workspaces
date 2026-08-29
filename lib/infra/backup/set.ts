@@ -9,11 +9,14 @@ import { archiveDatabase } from "../data/archive";
 import { archiveWorkspace } from "../workspace/archive";
 import { archiveSource, archiveStamp, sha256File, slugify } from "../archive/core";
 import { hashDockerfile } from "../docker/dockerfileHasher";
+import { createAuditLogger } from "../logger";
 import { getStore } from "../services";
 import { SCHEMA_VERSIONS, type ArchiveManifest } from "../../archive/manifest";
 import { isWorkspaceManifest, type ArchiveImage } from "../../workspace/archive";
 import { SET_MANIFEST_MEMBER, type BackupSet, type SetEntry } from "../../archive/setManifest";
 import type { Workspace } from "../../workspace/types";
+
+const audit = createAuditLogger("backup");
 
 interface Archived {
   path: string;
@@ -58,24 +61,34 @@ export async function archiveSet(dest: string, opts: SetArchiveOptions = {}): Pr
   const prefix = `${instance}/${stamp}-${id}`;
   const setDir = path.join(dest, prefix);
 
-  const image =
-    opts.image ?? { ref: process.env.CONTAINER_IMAGE ?? "paodo-workspace", hash: await hashDockerfile("Dockerfile.workspace") };
-  const workspaces = opts.workspaces ?? getStore().listWorkspaces();
+  try {
+    const image = opts.image ?? {
+      ref: process.env.CONTAINER_IMAGE ?? "paodo-workspace",
+      hash: await hashDockerfile("Dockerfile.workspace"),
+    };
+    const workspaces = opts.workspaces ?? getStore().listWorkspaces();
 
-  const archives: Archived[] = [await archiveGraph(setDir), await archiveDatabase(setDir)];
-  for (const workspace of workspaces) {
-    archives.push(await archiveWorkspace(workspace, setDir, { image, rootDir: opts.rootDir }));
+    const archives: Archived[] = [await archiveGraph(setDir), await archiveDatabase(setDir)];
+    for (const workspace of workspaces) {
+      archives.push(await archiveWorkspace(workspace, setDir, { image, rootDir: opts.rootDir }));
+    }
+
+    const manifest: BackupSet = {
+      schemaVersion: SCHEMA_VERSIONS.set,
+      kind: "set",
+      id,
+      instance,
+      source,
+      entries: await Promise.all(archives.map(setEntryOf)),
+    };
+    await writeFile(path.join(setDir, SET_MANIFEST_MEMBER), JSON.stringify(manifest, null, 2));
+
+    return { manifest, setDir, prefix, archives };
+  } catch (err) {
+    audit.error(
+      { event: "backup_set_build_failed", outcome: "set_not_built", err, instance, setId: id, prefix },
+      "backup set build failed",
+    );
+    throw err;
   }
-
-  const manifest: BackupSet = {
-    schemaVersion: SCHEMA_VERSIONS.set,
-    kind: "set",
-    id,
-    instance,
-    source,
-    entries: await Promise.all(archives.map(setEntryOf)),
-  };
-  await writeFile(path.join(setDir, SET_MANIFEST_MEMBER), JSON.stringify(manifest, null, 2));
-
-  return { manifest, setDir, prefix, archives };
 }

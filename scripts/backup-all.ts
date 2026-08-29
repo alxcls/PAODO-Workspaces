@@ -13,10 +13,9 @@ import { getStore } from "../lib/infra/services";
 import { pushArchive } from "../lib/infra/backup/s3Sink";
 import { reportArchived } from "./archiveCli";
 import { isWorkspaceManifest } from "../lib/workspace/archive";
-import type { ArchiveManifest } from "../lib/archive/manifest";
+import { SCHEMA_VERSIONS, type ArchiveManifest } from "../lib/archive/manifest";
 import {
   SET_MANIFEST_MEMBER,
-  SET_SCHEMA_VERSION,
   type BackupSetManifest,
   type SetMember,
 } from "../lib/archive/setManifest";
@@ -64,7 +63,7 @@ async function main(): Promise<void> {
   }
 
   const manifest: BackupSetManifest = {
-    schemaVersion: SET_SCHEMA_VERSION,
+    schemaVersion: SCHEMA_VERSIONS.set,
     kind: "set",
     id,
     source,

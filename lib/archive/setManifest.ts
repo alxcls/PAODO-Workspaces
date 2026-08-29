@@ -3,7 +3,6 @@
 import type { ArchiveKind, TarMember, ArchiveSource } from "./manifest";
 
 export const SET_MANIFEST_MEMBER = "backup.json";
-export const SET_SCHEMA_VERSION = 1;
 
 // Agents must exist before the rows keyed to them and the edges that reference them, so restore
 // applies members in this order regardless of how they sit in the manifest.

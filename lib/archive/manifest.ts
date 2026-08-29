@@ -7,13 +7,15 @@ export const MANIFEST_MEMBER = "manifest.json";
 export type ArchiveKind = "workspace" | "database" | "graph";
 
 /**
- * Per kind, because the formats change independently: bumping one for a member it gained must
- * not relabel another as a format this build has never seen. Restore reads this first.
+ * Every manifest format in one registry — the three leaf archives and the "set" parent. Per kind,
+ * because they change independently: bumping one for a field it gained must not relabel another as
+ * a format this build has never seen. Restore reads this first.
  */
-export const ARCHIVE_SCHEMA_VERSIONS: Record<ArchiveKind, number> = {
+export const SCHEMA_VERSIONS: Record<ArchiveKind | "set", number> = {
   workspace: 1,
   database: 1,
   graph: 1,
+  set: 1,
 };
 
 /** One file packed inside an archive tar, with its size and hash. Not a whole archive — see SetEntry. */

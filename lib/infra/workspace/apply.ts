@@ -3,7 +3,7 @@
 import { mkdtemp, rm, copyFile, mkdir, writeFile, readFile } from "fs/promises";
 import os from "os";
 import path from "path";
-import { extractArchive, exists } from "../archive/core";
+import { extractArchive, exists, removeTree } from "../archive/core";
 import { createAuditLogger } from "../logger";
 import { WORKSPACES_ROOT, workspaceHomeDir, workspaceAptRecipeFile, workspaceHomeSeededMarker } from "../paths";
 import { GitClient, type IGitClient } from "../git/gitClient";
@@ -65,7 +65,7 @@ export async function applyWorkspaceArchive(
     if (!opts.force && ((await exists(workspaceDir)) || (await exists(homeDir)))) {
       throw new Error(`refusing to overwrite workspace ${id} without force`);
     }
-    for (const target of [workspaceDir, homeDir, gitDir, aptFile]) await rm(target, { recursive: true, force: true });
+    for (const target of [workspaceDir, homeDir, gitDir, aptFile]) await removeTree(target);
     await mkdir(workspaceDir, { recursive: true });
     await mkdir(homeDir, { recursive: true });
 

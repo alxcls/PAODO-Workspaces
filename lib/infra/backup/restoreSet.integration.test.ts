@@ -146,6 +146,21 @@ describe("restoreSet (real tar/git/sqlite)", () => {
     expect(log).toMatch(/init/);
   });
 
+  it("overwrites a workspace whose live home holds a read-only dir (go module cache)", async () => {
+    const { setDir, restoreSet, database } = await buildSet();
+    database.invalidateAppDataDb();
+
+    const readOnly = path.join(root, ".homes", WS_ID, "gopath", "pkg", "mod", "dep@v1");
+    fs.mkdirSync(readOnly, { recursive: true });
+    fs.writeFileSync(path.join(readOnly, "go.mod"), "module dep\n");
+    fs.chmodSync(readOnly, 0o555);
+
+    await expect(restoreSet(setDir, { rootDir: root, force: true })).resolves.toBeTruthy();
+    expect(fs.existsSync(path.join(root, ".homes", WS_ID, "gopath"))).toBe(false);
+    expect(fs.readFileSync(path.join(root, ".homes", WS_ID, ".bashrc"), "utf-8")).toBe("export ORIGINAL=1\n");
+    database.invalidateAppDataDb();
+  });
+
   it("aborts before writing a byte when an archive is corrupt", async () => {
     const { setDir, restoreSet, database } = await buildSet();
 

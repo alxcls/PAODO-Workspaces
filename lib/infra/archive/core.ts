@@ -3,7 +3,7 @@
 import { spawn, execFileSync } from "child_process";
 import { createHash } from "crypto";
 import { createReadStream } from "fs";
-import { mkdir, stat, access } from "fs/promises";
+import { mkdir, stat, access, rm } from "fs/promises";
 import os from "os";
 import path from "path";
 import { SpawnCapture } from "../spawnCapture";
@@ -170,6 +170,16 @@ export async function extractArchive(archivePath: string, into: string): Promise
   await mkdir(into, { recursive: true });
   const result = await run("tar", ["-xf", path.resolve(archivePath), "-C", into]);
   if (result.code !== 0) throw new Error(`tar extract of ${archivePath} failed: ${result.stderr || result.stdout}`);
+}
+
+/**
+ * Removes a tree that may hold read-only dirs (Go's module cache is 0555, git objects 0444): a dir
+ * with no write bit blocks unlinking its children even for the owner, so make it writable first.
+ */
+export async function removeTree(target: string): Promise<void> {
+  if (!(await exists(target))) return;
+  await run("chmod", ["-R", "u+w", target]);
+  await rm(target, { recursive: true, force: true });
 }
 
 export interface VerifyResult {

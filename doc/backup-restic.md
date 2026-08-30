@@ -57,6 +57,10 @@ COMPOSE_FILES='-f docker-compose.yml -f docker-compose.dev.yml' npm run backup:o
 
 ## Restore runbook
 
+Restore is deliberate, operator-run disaster recovery: you SSH into the box and put it back to one
+past day. It is never automatic. Two halves, mirroring backup — **restic fetches the set to disk**
+(plain restic, nothing PAODO-specific), then **`backup:restore` applies it back into live state**.
+
 Needs `restic`, the `.env` S3 keys, and the `restic-password` file. Export the repo env (or run from
 the repo dir where the script maps it for you):
 
@@ -67,17 +71,43 @@ export AWS_ACCESS_KEY_ID=<S3_ACCESS_KEY_ID from .env>
 export AWS_SECRET_ACCESS_KEY=<S3_SECRET_ACCESS_KEY from .env>
 ```
 
+**1. Pick a day and fetch it** — plain restic:
+
 ```bash
 restic snapshots                                    # list restorable days
 restic restore <snapshot-id> --target ~/restore     # restore a whole day
-restic mount /mnt/restic                            # browse snapshots to grab one file
-restic check                                        # verify structure (--read-data re-hashes, slow)
 ```
 
 Restore into a path with room and **not on tmpfs** — a set is a few GB, and some hosts mount `/tmp`
-as a small RAM disk that fills mid-restore. A dir under `$HOME` or a data volume is safe.
+as a small RAM disk that fills mid-restore. A dir under `$HOME` or a data volume is safe. The set
+lands at `~/restore/<instance>/<stamp>-<id>/` (the dir holding `backup.json`).
 
-Apply a restored set the same way as one built by `backup:all`.
+**2. Take the app down, apply the set, bring it back.** The app must be stopped: `backup:restore`
+overwrites the live database, graph and registry in place, and those are read once at startup — a
+running server would both corrupt the swap and ignore the new state. Run the apply in a one-off
+container that shares the same workspaces volume:
+
+```bash
+SET=~/restore/<instance>/<stamp>-<id>
+docker compose -f docker-compose.yml -f docker-compose.workspace-api.yml stop app
+docker compose -f docker-compose.yml -f docker-compose.workspace-api.yml \
+  run --rm -v "$SET":/restore:ro app npm run backup:restore -- /restore
+docker compose -f docker-compose.yml -f docker-compose.workspace-api.yml start app
+```
+
+`backup:restore` **verifies every archive against `backup.json` and its own manifest before writing a
+byte** — a torn set, or one from another deployment, aborts with nothing changed. It then restores in
+dependency order: workspaces (durable home + versioning history checked back out), then the database
+and its registry, then the graph. Everything is keyed by each workspace's **original id**, so
+conversation rows and graph edges stay connected.
+
+Overwriting existing live state, or restoring a set captured on a **different** deployment, requires
+`--force` (append it after `/restore`). A restore onto a healthy box is refused without it.
+
+```bash
+restic check   # verify repo structure any time (--read-data re-hashes, slow)
+restic mount /mnt/restic   # browse snapshots to grab a single file by hand
+```
 
 ## Notes
 

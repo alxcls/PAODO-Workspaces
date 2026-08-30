@@ -165,6 +165,13 @@ export async function writeArchive(
   return (await stat(target)).size;
 }
 
+/** Unpacks a whole archive into `into`, auto-detecting gzip. The inverse of writeArchive. */
+export async function extractArchive(archivePath: string, into: string): Promise<void> {
+  await mkdir(into, { recursive: true });
+  const result = await run("tar", ["-xf", path.resolve(archivePath), "-C", into]);
+  if (result.code !== 0) throw new Error(`tar extract of ${archivePath} failed: ${result.stderr || result.stdout}`);
+}
+
 export interface VerifyResult {
   ok: boolean;
   manifest: ArchiveManifest;

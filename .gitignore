@@ -38,6 +38,12 @@ yarn-error.log*
 .env*
 !.env.example
 
+# restic repo password — unlocks the offsite backups, never commit
+/restic-password
+
+# transient staging the offsite script builds the set into before restic reads it
+/.backup-staging
+
 # vercel
 .vercel
 
@@ -77,3 +83,6 @@ CLAUDE.md
 
 # Experimental CLI client — developed locally until it moves to its own repository
 /cli/
+
+# Local operator tool for provisioning S3 buckets — touches live infra, stays local
+/scripts/commission-s3-bucket.ts

@@ -1,23 +1,13 @@
 // Console reporting shared by both backup commands, so one archive reads the same whichever wrote
 // it. Lives here rather than in lib/ because printing to a terminal is a command's concern.
-import path from "path";
 import { verifyArchive } from "../lib/infra/archive/core";
 import { isWorkspaceManifest } from "../lib/workspace/archive";
 import type { ArchiveManifest } from "../lib/archive/manifest";
-import { pushArchive } from "../lib/infra/backup/s3Sink";
 
 interface ArchiveWritten {
   path: string;
   bytes: number;
   manifest: ArchiveManifest;
-}
-
-/** With `--push` in argv, ships the archive to S3 under `<deployment>/<filename>`; otherwise a no-op. */
-export async function maybePushArchive(result: ArchiveWritten, argv: string[]): Promise<void> {
-  if (!argv.includes("--push")) return;
-  const key = `${result.manifest.source.deployment}/${path.basename(result.path)}`;
-  const url = await pushArchive(result.path, key);
-  console.log(`Pushed to ${url}`);
 }
 
 /** Names the workspace when the archive holds one, so --verify identifies the file, not just its kind. */

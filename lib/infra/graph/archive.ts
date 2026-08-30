@@ -34,12 +34,13 @@ export function graphArchiveFileName(deployment: string, at: Date): string {
 export async function archiveGraph(dest: string): Promise<GraphArchiveResult> {
   const capturedAt = new Date();
   const source = archiveSource(capturedAt);
-  const target = await resolveDestination(dest, ARCHIVE_SUFFIX, () =>
-    graphArchiveFileName(source.deployment, capturedAt),
-  );
-  const stageDir = await mkdtemp(path.join(os.tmpdir(), "paodo-graph-archive-"));
+  let stageDir: string | undefined;
 
   try {
+    const target = await resolveDestination(dest, ARCHIVE_SUFFIX, () =>
+      graphArchiveFileName(source.deployment, capturedAt),
+    );
+    stageDir = await mkdtemp(path.join(os.tmpdir(), "paodo-graph-archive-"));
     const graph = getGraph();
     await writeFile(path.join(stageDir, GRAPH_MEMBER), JSON.stringify(graph, null, 2));
 
@@ -66,7 +67,13 @@ export async function archiveGraph(dest: string): Promise<GraphArchiveResult> {
       "graph archived",
     );
     return { path: target, bytes, manifest };
+  } catch (err) {
+    audit.error(
+      { event: "graph_archive_failed", outcome: "graph_not_archived", err, deployment: source.deployment },
+      "graph archive failed",
+    );
+    throw err;
   } finally {
-    await rm(stageDir, { recursive: true, force: true });
+    if (stageDir) await rm(stageDir, { recursive: true, force: true });
   }
 }

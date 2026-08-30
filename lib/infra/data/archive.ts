@@ -46,12 +46,13 @@ export function databaseArchiveFileName(deployment: string, at: Date): string {
 export async function archiveDatabase(dest: string): Promise<DatabaseArchiveResult> {
   const capturedAt = new Date();
   const source = archiveSource(capturedAt);
-  const target = await resolveDestination(dest, ARCHIVE_SUFFIX, () =>
-    databaseArchiveFileName(source.deployment, capturedAt),
-  );
-  const stageDir = await mkdtemp(path.join(os.tmpdir(), "paodo-db-archive-"));
+  let stageDir: string | undefined;
 
   try {
+    const target = await resolveDestination(dest, ARCHIVE_SUFFIX, () =>
+      databaseArchiveFileName(source.deployment, capturedAt),
+    );
+    stageDir = await mkdtemp(path.join(os.tmpdir(), "paodo-db-archive-"));
     const present: string[] = [DATABASE_MEMBER];
     await backupAppDataDb(path.join(stageDir, DATABASE_MEMBER));
     const userVersion = appDataDb().pragma("user_version", { simple: true }) as number;
@@ -79,7 +80,13 @@ export async function archiveDatabase(dest: string): Promise<DatabaseArchiveResu
       "database archived",
     );
     return { path: target, bytes, manifest };
+  } catch (err) {
+    audit.error(
+      { event: "database_archive_failed", outcome: "database_not_archived", err, deployment: source.deployment },
+      "database archive failed",
+    );
+    throw err;
   } finally {
-    await rm(stageDir, { recursive: true, force: true });
+    if (stageDir) await rm(stageDir, { recursive: true, force: true });
   }
 }

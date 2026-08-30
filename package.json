@@ -21,6 +21,7 @@
     "backup:database": "tsx scripts/backup-database.ts",
     "backup:graph": "tsx scripts/backup-graph.ts",
     "backup:workspace": "tsx scripts/backup-workspace.ts",
+    "backup:verify-remote": "tsx scripts/backup-verify-remote.ts",
     "check:mocks": "tsx scripts/check-mock-drift.ts",
     "test": "vitest run",
     "test:watch": "vitest",

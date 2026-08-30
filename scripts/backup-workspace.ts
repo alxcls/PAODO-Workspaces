@@ -4,10 +4,10 @@ import "dotenv/config";
 import { archiveWorkspace } from "../lib/infra/workspace/archive";
 import { hashDockerfile } from "../lib/infra/docker/dockerfileHasher";
 import { getStore } from "../lib/infra/services";
-import { maybePushArchive, reportArchived, verifyAndReport } from "./archiveCli";
+import { reportArchived, verifyAndReport } from "./archiveCli";
 
 const USAGE = `Usage:
-  npm run backup:workspace -- <workspace-id|name> <destination-dir-or-file> [--push]
+  npm run backup:workspace -- <workspace-id|name> <destination-dir-or-file>
   npm run backup:workspace -- --verify <archive.tar>`;
 
 async function main(): Promise<void> {
@@ -18,7 +18,7 @@ async function main(): Promise<void> {
     return;
   }
 
-  const [selector, destination] = args.filter((arg) => arg !== "--push");
+  const [selector, destination] = args;
   if (!selector || !destination) throw new Error(USAGE);
 
   const store = getStore();
@@ -30,7 +30,6 @@ async function main(): Promise<void> {
     image: { ref, hash: await hashDockerfile("Dockerfile.workspace") },
   });
   reportArchived(workspace.name, result);
-  await maybePushArchive(result, args);
 }
 
 void main().catch((error: unknown) => {

@@ -2,10 +2,10 @@
 // fatal when unset, so both have to be in the environment before either module evaluates.
 import "dotenv/config";
 import { archiveDatabase } from "../lib/infra/data/archive";
-import { maybePushArchive, reportArchived, verifyAndReport } from "./archiveCli";
+import { reportArchived, verifyAndReport } from "./archiveCli";
 
 const USAGE = `Usage:
-  npm run backup:database -- <destination-dir-or-file> [--push]
+  npm run backup:database -- <destination-dir-or-file>
   npm run backup:database -- --verify <archive.tar.gz>`;
 
 async function main(): Promise<void> {
@@ -16,12 +16,11 @@ async function main(): Promise<void> {
     return;
   }
 
-  const destination = args.find((arg) => arg !== "--push");
+  const destination = args[0];
   if (!destination) throw new Error(USAGE);
 
   const result = await archiveDatabase(destination);
   reportArchived(result.manifest.source.deployment, result);
-  await maybePushArchive(result, args);
 }
 
 void main().catch((error: unknown) => {

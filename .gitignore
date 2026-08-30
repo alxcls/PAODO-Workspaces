@@ -41,6 +41,9 @@ yarn-error.log*
 # restic repo password — unlocks the offsite backups, never commit
 /restic-password
 
+# transient staging the offsite script builds the set into before restic reads it
+/.backup-staging
+
 # vercel
 .vercel
 

@@ -68,11 +68,14 @@ export AWS_SECRET_ACCESS_KEY=<S3_SECRET_ACCESS_KEY from .env>
 ```
 
 ```bash
-restic snapshots                                      # list restorable days
-restic restore <snapshot-id> --target /var/lib/paodo/restore   # restore a whole day
-restic mount /mnt/restic                              # browse snapshots to grab one file
-restic check                                          # verify structure (--read-data re-hashes, slow)
+restic snapshots                                    # list restorable days
+restic restore <snapshot-id> --target ~/restore     # restore a whole day
+restic mount /mnt/restic                            # browse snapshots to grab one file
+restic check                                        # verify structure (--read-data re-hashes, slow)
 ```
+
+Restore into a path with room and **not on tmpfs** — a set is a few GB, and some hosts mount `/tmp`
+as a small RAM disk that fills mid-restore. A dir under `$HOME` or a data volume is safe.
 
 Apply a restored set the same way as one built by `backup:all`.
 

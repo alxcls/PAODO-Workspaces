@@ -18,7 +18,7 @@ PASSWORD_FILE="${RESTIC_PASSWORD_FILE:-$REPO_DIR/restic-password}"
 COMPOSE_FILES="${COMPOSE_FILES:--f docker-compose.yml -f docker-compose.workspace-api.yml}"
 APP_SERVICE="${APP_SERVICE:-app}"
 CONTAINER_STAGING="${CONTAINER_STAGING:-/tmp/backup-offsite}"
-HOST_STAGING="${HOST_STAGING:-/var/lib/paodo/backup-staging}"
+HOST_STAGING="${HOST_STAGING:-$REPO_DIR/.backup-staging}"
 KEEP_DAILY="${KEEP_DAILY:-7}"
 KEEP_WEEKLY="${KEEP_WEEKLY:-4}"
 

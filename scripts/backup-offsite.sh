@@ -9,7 +9,7 @@
 #   COMPOSE_FILES='-f docker-compose.yml -f docker-compose.dev.yml' scripts/backup-offsite.sh
 #
 # Reads S3_* and paths from the sibling .env. Run once with --init to create the repo, then without
-# args each night (see doc/backup-restic.md). Retention: keep the last 7 daily snapshots plus 4 weekly.
+# args each night (see doc/backup-restic.md). Retention: 7 daily + 4 weekly + 12 monthly + 1 yearly.
 set -euo pipefail
 
 REPO_DIR="${REPO_DIR:-$(cd "$(dirname "$0")/.." && pwd)}"
@@ -21,6 +21,8 @@ CONTAINER_STAGING="${CONTAINER_STAGING:-/tmp/backup-offsite}"
 HOST_STAGING="${HOST_STAGING:-$REPO_DIR/.backup-staging}"
 KEEP_DAILY="${KEEP_DAILY:-7}"
 KEEP_WEEKLY="${KEEP_WEEKLY:-4}"
+KEEP_MONTHLY="${KEEP_MONTHLY:-12}"
+KEEP_YEARLY="${KEEP_YEARLY:-1}"
 
 log() { printf '[offsite %s] %s\n' "$(date -u +%H:%M:%S)" "$*"; }
 fail() { printf '[offsite] ERROR: %s\n' "$*" >&2; exit 1; }
@@ -69,8 +71,10 @@ docker cp "$cid:$CONTAINER_STAGING/." "$HOST_STAGING/"
 log "restic backup → $RESTIC_REPOSITORY"
 restic backup "$HOST_STAGING" --tag paodo-set --host "$(hostname)"
 
-log "pruning: keep-daily=$KEEP_DAILY keep-weekly=$KEEP_WEEKLY"
-restic forget --tag paodo-set --keep-daily "$KEEP_DAILY" --keep-weekly "$KEEP_WEEKLY" --prune
+log "pruning: keep-daily=$KEEP_DAILY keep-weekly=$KEEP_WEEKLY keep-monthly=$KEEP_MONTHLY keep-yearly=$KEEP_YEARLY"
+restic forget --tag paodo-set \
+  --keep-daily "$KEEP_DAILY" --keep-weekly "$KEEP_WEEKLY" \
+  --keep-monthly "$KEEP_MONTHLY" --keep-yearly "$KEEP_YEARLY" --prune
 
 log "integrity check (structure)…"
 restic check

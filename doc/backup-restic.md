@@ -56,8 +56,10 @@ npm run backup:offsite
 ```
 
 It builds the set in the `app` container, copies it to the host, runs `restic backup`, prunes with
-`--keep-daily 7 --keep-weekly 4`, then runs a structural `restic check`. Against `npm run dev`, point
-it at the dev overlay:
+`--keep-daily 7 --keep-weekly 4 --keep-monthly 12 --keep-yearly 1`, then runs a structural
+`restic check`. That's a year of recovery points — fine-grained recently, coarse in the tail — for
+only ~24 retained snapshots, since restic prunes the churn between the monthly checkpoints. Against
+`npm run dev`, point it at the dev overlay:
 
 ```bash
 COMPOSE_FILES='-f docker-compose.yml -f docker-compose.dev.yml' npm run backup:offsite
@@ -119,8 +121,8 @@ restic mount /mnt/restic   # browse snapshots to grab a single file by hand
 
 ## Notes
 
-- Retention lives in the script (`--keep-daily 7 --keep-weekly 4`); override with `KEEP_DAILY` /
-  `KEEP_WEEKLY`.
+- Retention lives in the script (`7 daily + 4 weekly + 12 monthly + 1 yearly`); override any of
+  `KEEP_DAILY` / `KEEP_WEEKLY` / `KEEP_MONTHLY` / `KEEP_YEARLY`.
 - Restic is the only offsite path. The app's former direct-to-S3 layer (`--push`, `backup:verify-remote`,
   `s3Sink`/`s3Source`/`setTransfer`) has been removed; `backup:all` now only builds a set on disk.
 - Each box has its own bucket and repo, so losing one never touches the other.

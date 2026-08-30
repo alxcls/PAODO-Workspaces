@@ -34,12 +34,20 @@ Recovery depends on two secrets. Keep both safe or the backups are unrecoverable
    npm run backup:offsite -- --init
    ```
 
-4. **Schedule it** nightly (root `crontab -e`, or your scheduler of choice), a different minute per
-   box so they don't hit S3 at once:
+4. **Schedule it** — one opt-in command that installs a nightly systemd timer running
+   `backup-offsite.sh`. Scheduling is never automatic (a clone with no S3 must not get a failing
+   nightly job); this is the deliberate step that turns it on, per box:
 
-   ```cron
-   17 3 * * * cd /root/PAODO_WS && /usr/bin/npm run backup:offsite >> /var/log/paodo-backup.log 2>&1
+   ```bash
+   npm run backup:schedule      # 03:<stable-per-host-minute> nightly; self-elevates with sudo
    ```
+
+   Each box gets a distinct minute derived from its hostname so they never hit S3 on the same tick;
+   override with `BACKUP_HOUR` / `BACKUP_MINUTE`, or set the runtime user with `BACKUP_USER`. Check
+   it and see the next run with `systemctl list-timers paodo-backup.timer`, read a run's outcome with
+   `journalctl -u paodo-backup.service`, and remove it with
+   `bash scripts/install-backup-schedule.sh --uninstall`. A scheduled run on a box with no S3 wired
+   fails fast and writes nothing — the worst case is a failed unit in the log, never data loss.
 
 ## Running it
 
@@ -48,8 +56,10 @@ npm run backup:offsite
 ```
 
 It builds the set in the `app` container, copies it to the host, runs `restic backup`, prunes with
-`--keep-daily 7 --keep-weekly 4`, then runs a structural `restic check`. Against `npm run dev`, point
-it at the dev overlay:
+`--keep-daily 7 --keep-weekly 4 --keep-monthly 12 --keep-yearly 1`, then runs a structural
+`restic check`. That's a year of recovery points — fine-grained recently, coarse in the tail — for
+only ~24 retained snapshots, since restic prunes the churn between the monthly checkpoints. Against
+`npm run dev`, point it at the dev overlay:
 
 ```bash
 COMPOSE_FILES='-f docker-compose.yml -f docker-compose.dev.yml' npm run backup:offsite
@@ -111,8 +121,8 @@ restic mount /mnt/restic   # browse snapshots to grab a single file by hand
 
 ## Notes
 
-- Retention lives in the script (`--keep-daily 7 --keep-weekly 4`); override with `KEEP_DAILY` /
-  `KEEP_WEEKLY`.
+- Retention lives in the script (`7 daily + 4 weekly + 12 monthly + 1 yearly`); override any of
+  `KEEP_DAILY` / `KEEP_WEEKLY` / `KEEP_MONTHLY` / `KEEP_YEARLY`.
 - Restic is the only offsite path. The app's former direct-to-S3 layer (`--push`, `backup:verify-remote`,
   `s3Sink`/`s3Source`/`setTransfer`) has been removed; `backup:all` now only builds a set on disk.
 - Each box has its own bucket and repo, so losing one never touches the other.

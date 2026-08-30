@@ -23,6 +23,7 @@
     "backup:workspace": "tsx scripts/backup-workspace.ts",
     "backup:offsite": "bash scripts/backup-offsite.sh",
     "backup:restore": "tsx scripts/backup-restore.ts",
+    "backup:schedule": "bash scripts/install-backup-schedule.sh",
     "check:mocks": "tsx scripts/check-mock-drift.ts",
     "test": "vitest run",
     "test:watch": "vitest",

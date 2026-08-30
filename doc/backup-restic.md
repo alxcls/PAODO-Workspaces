@@ -34,12 +34,20 @@ Recovery depends on two secrets. Keep both safe or the backups are unrecoverable
    npm run backup:offsite -- --init
    ```
 
-4. **Schedule it** nightly (root `crontab -e`, or your scheduler of choice), a different minute per
-   box so they don't hit S3 at once:
+4. **Schedule it** — one opt-in command that installs a nightly systemd timer running
+   `backup-offsite.sh`. Scheduling is never automatic (a clone with no S3 must not get a failing
+   nightly job); this is the deliberate step that turns it on, per box:
 
-   ```cron
-   17 3 * * * cd /root/PAODO_WS && /usr/bin/npm run backup:offsite >> /var/log/paodo-backup.log 2>&1
+   ```bash
+   npm run backup:schedule      # 03:<stable-per-host-minute> nightly; self-elevates with sudo
    ```
+
+   Each box gets a distinct minute derived from its hostname so they never hit S3 on the same tick;
+   override with `BACKUP_HOUR` / `BACKUP_MINUTE`, or set the runtime user with `BACKUP_USER`. Check
+   it and see the next run with `systemctl list-timers paodo-backup.timer`, read a run's outcome with
+   `journalctl -u paodo-backup.service`, and remove it with
+   `bash scripts/install-backup-schedule.sh --uninstall`. A scheduled run on a box with no S3 wired
+   fails fast and writes nothing — the worst case is a failed unit in the log, never data loss.
 
 ## Running it
 

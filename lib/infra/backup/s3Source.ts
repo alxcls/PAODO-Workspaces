@@ -5,6 +5,7 @@ import { createWriteStream } from "fs";
 import { pipeline } from "stream/promises";
 import type { Readable } from "stream";
 import { GetObjectCommand, HeadObjectCommand, ListObjectsV2Command } from "@aws-sdk/client-s3";
+import type { GetObjectCommandOutput } from "@aws-sdk/client-s3";
 import { s3 } from "./s3Client";
 import { SET_MANIFEST_MEMBER } from "../../archive/setManifest";
 
@@ -42,6 +43,13 @@ async function setPrefixes(instance: string): Promise<string[]> {
   return prefixes;
 }
 
+async function getBody(key: string): Promise<NonNullable<GetObjectCommandOutput["Body"]>> {
+  const { client, bucket } = s3();
+  const res = await client.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
+  if (!res.Body) throw new Error(`${key}: object has no body`);
+  return res.Body;
+}
+
 export function s3Source(): ObjectSource {
   return {
     exists: objectExists,
@@ -53,14 +61,10 @@ export function s3Source(): ObjectSource {
       return complete;
     },
     async getText(key) {
-      const { client, bucket } = s3();
-      const res = await client.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
-      return res.Body!.transformToString();
+      return (await getBody(key)).transformToString();
     },
     async pull(key, localPath) {
-      const { client, bucket } = s3();
-      const res = await client.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
-      await pipeline(res.Body as Readable, createWriteStream(localPath));
+      await pipeline((await getBody(key)) as Readable, createWriteStream(localPath));
     },
   };
 }

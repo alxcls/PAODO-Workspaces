@@ -43,38 +43,52 @@ async function verifyEntries(setDir: string, manifest: BackupSet): Promise<strin
 
 export async function restoreSet(setDir: string, opts: RestoreSetOptions = {}): Promise<RestoreSetResult> {
   const root = opts.rootDir ?? WORKSPACES_ROOT;
-  const manifest = JSON.parse(await readFile(path.join(setDir, SET_MANIFEST_MEMBER), "utf-8")) as BackupSet;
+  // Named so a failure logs where it stopped: the box may be half-restored past this point.
+  let phase = "read_manifest";
+  try {
+    const manifest = JSON.parse(await readFile(path.join(setDir, SET_MANIFEST_MEMBER), "utf-8")) as BackupSet;
 
-  const here = deploymentName();
-  if (!opts.force && manifest.source.deployment !== here) {
-    throw new Error(
-      `set is from deployment "${manifest.source.deployment}", not "${here}" — pass force to restore across deployments.`,
-    );
-  }
+    const here = deploymentName();
+    if (!opts.force && manifest.source.deployment !== here) {
+      throw new Error(
+        `set is from deployment "${manifest.source.deployment}", not "${here}" — pass force to restore across deployments.`,
+      );
+    }
 
-  const problems = await verifyEntries(setDir, manifest);
-  if (problems.length > 0) {
-    throw new Error(`set failed verification; nothing was written:\n  ${problems.join("\n  ")}`);
-  }
+    phase = "verify";
+    const problems = await verifyEntries(setDir, manifest);
+    if (problems.length > 0) {
+      throw new Error(`set failed verification; nothing was written:\n  ${problems.join("\n  ")}`);
+    }
 
-  const workspaces: WorkspaceApplied[] = [];
-  for (const entry of manifest.entries) {
-    if (entry.kind === "workspace") {
+    const workspaces: WorkspaceApplied[] = [];
+    for (const entry of manifest.entries) {
+      if (entry.kind !== "workspace") continue;
+      phase = `workspace ${entry.workspaceId}`;
       workspaces.push(await applyWorkspaceArchive(path.join(setDir, entry.file), { rootDir: root, force: opts.force }));
     }
+
+    const dbEntry = manifest.entries.find((entry) => entry.kind === "database");
+    if (!dbEntry) throw new Error("set has no database archive");
+    phase = "database";
+    await applyDatabaseArchive(path.join(setDir, dbEntry.file), { rootDir: root, force: opts.force });
+
+    const graphEntry = manifest.entries.find((entry) => entry.kind === "graph");
+    if (!graphEntry) throw new Error("set has no graph archive");
+    phase = "graph";
+    await applyGraphArchive(path.join(setDir, graphEntry.file), { rootDir: root, force: opts.force });
+
+    audit.info(
+      { event: "set_restored", setId: manifest.id, instance: manifest.instance, workspaces: workspaces.length },
+      "backup set restored",
+    );
+    return { manifest, workspaces };
+  } catch (err) {
+    const wrote = phase !== "read_manifest" && phase !== "verify";
+    audit.error(
+      { event: "set_restore_failed", outcome: wrote ? "set_partially_restored" : "set_not_restored", setDir, phase, err },
+      "backup set restore failed",
+    );
+    throw err;
   }
-
-  const dbEntry = manifest.entries.find((entry) => entry.kind === "database");
-  if (!dbEntry) throw new Error("set has no database archive");
-  await applyDatabaseArchive(path.join(setDir, dbEntry.file), { rootDir: root, force: opts.force });
-
-  const graphEntry = manifest.entries.find((entry) => entry.kind === "graph");
-  if (!graphEntry) throw new Error("set has no graph archive");
-  await applyGraphArchive(path.join(setDir, graphEntry.file), { rootDir: root, force: opts.force });
-
-  audit.info(
-    { event: "set_restored", setId: manifest.id, instance: manifest.instance, workspaces: workspaces.length },
-    "backup set restored",
-  );
-  return { manifest, workspaces };
 }

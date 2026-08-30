@@ -13,7 +13,7 @@ import { MANIFEST_MEMBER } from "../../archive/manifest";
 
 const audit = createAuditLogger("restore");
 
-const DB_FILE_NAME = ".paodo.db";
+const DB_FILE_NAME = path.basename(PAODO_DB_FILE);
 
 export interface DatabaseApplyOptions {
   /** Root the database and registry live under. Defaults to the live PAODO_DB_FILE's dir. */

@@ -5,13 +5,10 @@ import os from "os";
 import path from "path";
 import { extractArchive, exists } from "../archive/core";
 import { createAuditLogger } from "../logger";
-import { WORKSPACES_ROOT } from "../paths";
+import { WORKSPACES_ROOT, workspaceGraphFile } from "../paths";
 import { GRAPH_MEMBER } from "../../graph/archive";
 
 const audit = createAuditLogger("restore");
-
-// Kept in step with GRAPH_FILE in lib/agent/graph.ts — the file that module reads at startup.
-const GRAPH_FILE_NAME = ".workspace-graph.json";
 
 export interface GraphApplyOptions {
   /** Root the graph file lives under. Defaults to WORKSPACES_ROOT. Overridable for tests. */
@@ -27,7 +24,7 @@ export async function applyGraphArchive(archivePath: string, opts: GraphApplyOpt
     stageDir = await mkdtemp(path.join(os.tmpdir(), "paodo-graph-restore-"));
     await extractArchive(archivePath, stageDir);
     await mkdir(root, { recursive: true });
-    const target = path.join(root, GRAPH_FILE_NAME);
+    const target = workspaceGraphFile(root);
     if (!opts.force && (await exists(target))) throw new Error(`refusing to overwrite ${target} without force`);
     await copyFile(path.join(stageDir, GRAPH_MEMBER), target);
     audit.info({ event: "graph_restored", path: target }, "graph restored");

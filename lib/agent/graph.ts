@@ -1,7 +1,6 @@
 // Persists the directed workspace connection graph to data/.workspace-graph.json. Edges flow from
 // caller (source) → callee (target): a DAG where only connected workspaces can call_agent each other.
-import path from "path";
-import { WORKSPACES_ROOT } from "../infra/paths";
+import { workspaceGraphFile } from "../infra/paths";
 import { atomicSaveJson, readJson } from "../infra/jsonPersist";
 import { globalSingleton } from "../infra/globalSingleton";
 import { createLogger } from "../infra/logger";
@@ -32,7 +31,7 @@ export interface GraphFile {
   positions: Record<string, NodePosition>;
 }
 
-const GRAPH_FILE = path.join(WORKSPACES_ROOT, ".workspace-graph.json");
+const GRAPH_FILE = workspaceGraphFile();
 
 // On a shared global holder, not a module-level `let`, so every Next.js module instance reads one
 // cache — otherwise an edge added via the API stays invisible to call-gating until restart.

@@ -10,6 +10,9 @@ export const HOMES_DIR_NAME = ".homes";
 /** The workspace registry, captured in the database archive beside the rows it indexes. */
 export const workspaceRegistryFile = (root: string = WORKSPACES_ROOT): string => path.join(root, ".workspaces.json");
 
+/** The deployment-wide agent connection graph, read at startup and rewritten on every edit. */
+export const workspaceGraphFile = (root: string = WORKSPACES_ROOT): string => path.join(root, ".workspace-graph.json");
+
 /** Durable `/home/dev` for one workspace. Relative form is what the volume-subpath mount needs. */
 export const workspaceHomeSubpath = (workspaceId: string): string => `${HOMES_DIR_NAME}/${workspaceId}`;
 

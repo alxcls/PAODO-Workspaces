@@ -257,17 +257,26 @@ describe("checkAuth", () => {
     expect(checkAuth("bad-ip", req({ authorization: basic("admin", "hunter2") }), UI, t)).toBe("blocked");
   });
 
-  it("exempts POST to the agent endpoint (Bearer API key auth)", () => {
+  it("exempts POST to the agent run and stop endpoints (Bearer API key auth)", () => {
     const r = req({ method: "POST", pathname: "/api/workspaces/ws1/agent" });
     // "exempt", never "ok": nothing about this caller has been verified here, and server.ts hands
     // out a /ws session cookie on "ok". This route is published on the DNS-direct public hostname,
     // so conflating the two would mint a working UI session for any anonymous caller.
     expect(checkAuth("ip", r, UI, tracker)).toBe("exempt");
-    // ...but only for that exact route, and only for POST
+    expect(checkAuth("ip", req({ method: "POST", pathname: "/api/workspaces/ws1/agent/stop" }), UI, tracker)).toBe(
+      "exempt",
+    );
+    // ...but only those two routes, and only for POST
     expect(checkAuth("ip", req({ method: "GET", pathname: "/api/workspaces/ws1/agent" }), UI, tracker)).toBe(
       "challenge",
     );
+    expect(checkAuth("ip", req({ method: "GET", pathname: "/api/workspaces/ws1/agent/stop" }), UI, tracker)).toBe(
+      "challenge",
+    );
     expect(checkAuth("ip", req({ method: "POST", pathname: "/api/workspaces/ws1/agent/extra" }), UI, tracker)).toBe(
+      "challenge",
+    );
+    expect(checkAuth("ip", req({ method: "POST", pathname: "/api/workspaces/ws1/agent/stop/extra" }), UI, tracker)).toBe(
       "challenge",
     );
   });

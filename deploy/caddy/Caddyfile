@@ -111,6 +111,11 @@
 			path_regexp workspaceAgent ^/api/workspaces/[^/]+/agent$
 		}
 
+		@workspaceAgentStop {
+			method POST
+			path_regexp workspaceAgentStop ^/api/workspaces/[^/]+/agent/stop$
+		}
+
 		@workspaceMcp {
 			method POST
 			path_regexp workspaceMcp ^/api/workspaces/[^/]+/mcp$
@@ -214,6 +219,10 @@
 
 		handle @workspaceAgent {
 			import agentUpstream
+		}
+
+		handle @workspaceAgentStop {
+			import cliUpstream
 		}
 
 		handle @workspaceMcp {

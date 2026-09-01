@@ -49,6 +49,21 @@ describe("apiConversationStream", () => {
     expect(events.at(-1)).toMatchObject({ type: "done", conversationId: "conv-1" });
   });
 
+  it("streams reasoning frames separately from answer tokens", async () => {
+    replayEvents.length = 0;
+    replayEvents.push(
+      { type: "reasoning", content: "thinking..." },
+      { type: "token", content: "answer" },
+      { type: "done" },
+    );
+
+    const events = await frames(apiConversationStream(req() as never, "ws-a", "conv-r"));
+
+    expect(events.find((e) => e.type === "reasoning")).toEqual({ type: "reasoning", content: "thinking..." });
+    const response = events.find((e) => e.type === "response");
+    expect(response).toMatchObject({ content: "answer" });
+  });
+
   it("exposes tool calls with args and pairs each result by id", async () => {
     replayEvents.length = 0;
     replayEvents.push(

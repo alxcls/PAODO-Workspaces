@@ -34,6 +34,9 @@ export function apiConversationStream(req: NextRequest, workspaceId: string, con
             response += event.content;
             send({ type: "token", content: event.content });
             break;
+          case "reasoning":
+            send({ type: "reasoning", content: event.content });
+            break;
           case "tool_start":
             send({ type: "tool_start", name: event.name, ...(event.id ? { id: event.id } : {}), args: event.args });
             break;

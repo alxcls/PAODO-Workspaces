@@ -8,6 +8,7 @@
 
 import { useCallback, useEffect } from "react";
 import CliAccessSection from "./CliAccessSection";
+import DiskUsageSection from "./DiskUsageSection";
 import ProviderKeysSection from "./ProviderKeysSection";
 
 interface SettingsModalProps {
@@ -59,6 +60,8 @@ export default function SettingsModal({ open, onClose }: SettingsModalProps) {
           <ProviderKeysSection open={open} />
           <div className="border-t border-border" />
           <CliAccessSection open={open} />
+          <div className="border-t border-border" />
+          <DiskUsageSection open={open} />
         </div>
       </div>
     </div>

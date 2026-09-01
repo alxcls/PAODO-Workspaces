@@ -4,44 +4,20 @@
 export const runtime = "nodejs";
 
 import { type NextRequest, NextResponse } from "next/server";
-import { requireWorkspace, rateLimited, subjectRateLimited } from "@/lib/api/guards";
+import { requireWorkspace, subjectRateLimited } from "@/lib/api/guards";
 import { appErrorResponse } from "@/lib/api/errorResponse";
-import { validate } from "@/lib/infra/security/credentialStore";
-import { getClientIp } from "@/lib/infra/realtime/clientIp";
-import { createAuditLogger, createLogger } from "@/lib/infra/logger";
-import { throttleLogWithSources } from "@/lib/infra/logThrottle";
+import { guardWorkspaceApi } from "@/lib/api/workspaceApiAuth";
+import { createLogger } from "@/lib/infra/logger";
 import { apiConversationStream } from "@/lib/api/workspaceRunStream";
 import { ConversationNotFoundError } from "@/lib/operations/agent/errors";
 import { startWorkspaceRun } from "@/lib/operations/agent/run";
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const limited = rateLimited(req, { policy: "publicAgentIp", logContext: { workspaceId: id } });
-  if (limited) return limited;
+  const denied = guardWorkspaceApi(req, id, "agent");
+  if (denied) return denied;
 
-  const plain = req.headers.get("authorization")?.replace(/^Bearer /, "") ?? "";
   const log = createLogger("api").child({ workspaceId: id, route: "agent" });
-  const audit = createAuditLogger("api").child({ workspaceId: id, route: "agent" });
-
-  if (!plain || !validate("workspace-api", id, plain)) {
-    // Reachable by anyone on the internet — this is one of the two routes the public Caddy gateway
-    // forwards — so the caller decides how often it logs. Per-IP rate limiting above bounds a single
-    // source; the throttle is what bounds a flood spread across many.
-    const ip = getClientIp(req);
-    const throttled = throttleLogWithSources("api_auth_unauthorized", ip);
-    if (throttled) {
-      audit.warn(
-        {
-          ip,
-          requestId: req.headers.get("x-request-id") ?? undefined,
-          event: "api_auth_unauthorized",
-          ...throttled,
-        },
-        "unauthorized request",
-      );
-    }
-    return new Response("Unauthorized", { status: 401 });
-  }
 
   const workspaceLimited = subjectRateLimited(`workspace:${id}`, "workspaceAgent", {
     logContext: { workspaceId: id, route: "agent" },

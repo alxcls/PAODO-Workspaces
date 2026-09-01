@@ -6,7 +6,7 @@ export const runtime = "nodejs";
 import { type NextRequest, NextResponse } from "next/server";
 import { requireWorkspace, subjectRateLimited } from "@/lib/api/guards";
 import { appErrorResponse } from "@/lib/api/errorResponse";
-import { authenticateWorkspaceApi } from "@/lib/api/workspaceApiAuth";
+import { guardWorkspaceApi } from "@/lib/api/workspaceApiAuth";
 import { createLogger } from "@/lib/infra/logger";
 import { apiConversationStream } from "@/lib/api/workspaceRunStream";
 import { ConversationNotFoundError } from "@/lib/operations/agent/errors";
@@ -14,7 +14,7 @@ import { startWorkspaceRun } from "@/lib/operations/agent/run";
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const denied = authenticateWorkspaceApi(req, id, "agent");
+  const denied = guardWorkspaceApi(req, id, "agent");
   if (denied) return denied;
 
   const log = createLogger("api").child({ workspaceId: id, route: "agent" });

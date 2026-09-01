@@ -4,13 +4,13 @@
 export const runtime = "nodejs";
 
 import type { NextRequest } from "next/server";
-import { authenticateWorkspaceApi } from "@/lib/api/workspaceApiAuth";
+import { guardWorkspaceApi } from "@/lib/api/workspaceApiAuth";
 import { notFound } from "@/lib/api/guards";
 import { stopWorkspaceConversation } from "@/lib/operations/conversations/manage";
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const denied = authenticateWorkspaceApi(req, id, "agent-stop");
+  const denied = guardWorkspaceApi(req, id, "agent-stop");
   if (denied) return denied;
 
   const body = (await req.json().catch(() => ({}))) as { conversationId?: string };

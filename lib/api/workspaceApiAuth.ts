@@ -9,8 +9,10 @@ import { getClientIp } from "@/lib/infra/realtime/clientIp";
 import { createAuditLogger } from "@/lib/infra/logger";
 import { throttleLogWithSources } from "@/lib/infra/logThrottle";
 
-/** Return a short-circuit Response (429 or 401) when auth fails, or null once the caller is trusted. */
-export function authenticateWorkspaceApi(req: NextRequest, id: string, route: string): Response | null {
+export type WorkspaceApiRoute = "agent" | "agent-stop";
+
+/** Returns a short-circuit Response (429 or 401) when the caller is rejected, or null once trusted. */
+export function guardWorkspaceApi(req: NextRequest, id: string, route: WorkspaceApiRoute): Response | null {
   const limited = rateLimited(req, { policy: "publicAgentIp", logContext: { workspaceId: id, route } });
   if (limited) return limited;
 

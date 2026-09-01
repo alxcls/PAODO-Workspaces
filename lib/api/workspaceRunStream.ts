@@ -32,6 +32,7 @@ export function apiConversationStream(req: NextRequest, workspaceId: string, con
         switch (event.type) {
           case "token":
             response += event.content;
+            send({ type: "token", content: event.content });
             break;
           case "tool_start":
             send({ type: "tool_start", name: event.name });
@@ -44,6 +45,8 @@ export function apiConversationStream(req: NextRequest, workspaceId: string, con
             send({ type: "error", message: event.message, ...(event.code ? { code: event.code } : {}) });
             break;
           case "done":
+            // Kept alongside the streamed `token` frames so non-streaming clients still get the whole
+            // answer in one frame; streaming clients accumulate the deltas and can ignore this.
             if (!failure) {
               send({ type: "response", content: response, iterationLimitReached: limitReached, conversationId });
             }

@@ -12,9 +12,9 @@ import { WORKSPACES_ROOT } from "@/lib/infra/paths";
 export async function GET() {
   try {
     const fs = await statfs(WORKSPACES_ROOT);
-    const total = fs.blocks * fs.bsize;
+    const used = (fs.blocks - fs.bfree) * fs.bsize;
     const free = fs.bavail * fs.bsize;
-    const used = total - free;
+    const total = used + free;
     return NextResponse.json(
       { available: true, total, used, free },
       { headers: { "Cache-Control": "no-store" } },

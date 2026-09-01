@@ -27,6 +27,24 @@ export async function checkFreeSpace(dir: string, neededBytes: number, reservedB
   return { ok: freeBytes >= neededBytes + reservedBytes, freeBytes };
 }
 
+export interface DiskUsage {
+  total: number;
+  used: number;
+  free: number;
+}
+
+/**
+ * Usage of `dir`'s filesystem for the settings storage bar. `free` is `bavail` (space an unprivileged
+ * writer can actually use), and `used`/`total` exclude the root-reserved blocks (`bfree - bavail`) so
+ * the bar reflects the space users can see rather than counting reservation they can never fill.
+ */
+export async function getDiskUsage(dir: string): Promise<DiskUsage> {
+  const stats = await fs.statfs(dir);
+  const used = (stats.blocks - stats.bfree) * stats.bsize;
+  const free = stats.bavail * stats.bsize;
+  return { total: used + free, used, free };
+}
+
 /**
  * Free-space guard for the write tools that report failure as a plain "Error: ..." string
  * (containerWrite's create path, file_edit's edit branch) — collapses the check-then-message

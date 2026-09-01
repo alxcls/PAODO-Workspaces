@@ -35,7 +35,11 @@ export function apiConversationStream(req: NextRequest, workspaceId: string, con
             send({ type: "token", content: event.content });
             break;
           case "tool_start":
-            send({ type: "tool_start", name: event.name });
+            send({ type: "tool_start", name: event.name, ...(event.id ? { id: event.id } : {}), args: event.args });
+            break;
+          case "tool_result":
+            // `id` pairs this result with its tool_start; parallel calls to one tool share a `name`.
+            send({ type: "tool_result", name: event.name, ...(event.id ? { id: event.id } : {}), result: event.result });
             break;
           case "limit_reached":
             limitReached = true;

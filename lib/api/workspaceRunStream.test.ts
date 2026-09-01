@@ -49,6 +49,30 @@ describe("apiConversationStream", () => {
     expect(events.at(-1)).toMatchObject({ type: "done", conversationId: "conv-1" });
   });
 
+  it("exposes tool calls with args and pairs each result by id", async () => {
+    replayEvents.length = 0;
+    replayEvents.push(
+      { type: "tool_start", name: "read_file", id: "call_1", args: { path: "a.ts" } },
+      { type: "tool_result", name: "read_file", id: "call_1", result: "file contents" },
+      { type: "done" },
+    );
+
+    const events = await frames(apiConversationStream(req() as never, "ws-a", "conv-tool"));
+
+    expect(events.find((e) => e.type === "tool_start")).toEqual({
+      type: "tool_start",
+      name: "read_file",
+      id: "call_1",
+      args: { path: "a.ts" },
+    });
+    expect(events.find((e) => e.type === "tool_result")).toEqual({
+      type: "tool_result",
+      name: "read_file",
+      id: "call_1",
+      result: "file contents",
+    });
+  });
+
   it("suppresses the aggregate response when the run fails", async () => {
     replayEvents.length = 0;
     replayEvents.push(

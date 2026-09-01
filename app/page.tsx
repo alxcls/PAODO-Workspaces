@@ -16,6 +16,8 @@ import { useWorkspaces } from "@/lib/client/hooks/useWorkspaces";
 import { useWorkspaceDescription } from "@/lib/client/hooks/useWorkspaceDescription";
 import { useWorkspaceInternetAccess } from "@/lib/client/hooks/useWorkspaceInternetAccess";
 import { useWorkspaceMeta } from "@/lib/client/hooks/useWorkspaceMeta";
+import { useWorkspaceStorage } from "@/lib/client/hooks/useWorkspaceStorage";
+import { formatBytes } from "@/lib/uploads/limits";
 
 function formatDate(iso: string) {
   try {
@@ -31,6 +33,7 @@ export default function HomePage() {
 
   const { workspaces, isCreating, create, rename, remove } = useWorkspaces();
   const selectedDetails = useWorkspaceMeta(selectedId);
+  const selectedStorage = useWorkspaceStorage(selectedId);
   const { description, save: saveDescription } = useWorkspaceDescription(selectedId);
   const { enabled: internetAccess, toggle: toggleInternetAccess } = useWorkspaceInternetAccess(selectedId);
 
@@ -320,6 +323,18 @@ export default function HomePage() {
 
                 <div className="text-text-2 text-sm">
                   Created {selectedDetails ? formatDate(selectedDetails.createdAt) : "—"}
+                  {selectedStorage && (
+                    <>
+                      {" · "}
+                      <span
+                        title={`Files ${formatBytes(selectedStorage.breakdown.workspace)} · Deps ${formatBytes(
+                          selectedStorage.breakdown.home,
+                        )} · History ${formatBytes(selectedStorage.breakdown.versioning)}`}
+                      >
+                        {formatBytes(selectedStorage.bytes)} on disk
+                      </span>
+                    </>
+                  )}
                 </div>
 
                 <div className="flex gap-2.5 mt-7 mb-2">

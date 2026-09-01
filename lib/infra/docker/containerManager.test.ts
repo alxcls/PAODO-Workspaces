@@ -34,6 +34,13 @@ function b64(s: string): string {
   return Buffer.from(s, "utf8").toString("base64");
 }
 
+// The scan emits "taskId<TAB>pgid<TAB>startedSec<TAB>base64(command)". STARTED_SEC is recent so the
+// per-task cap never trips in these rehydration tests.
+const STARTED_SEC = Math.floor(Date.now() / 1000);
+function taskLine(id: string, pgid: number, cmd: string): string {
+  return `${id}\t${pgid}\t${STARTED_SEC}\t${b64(cmd)}`;
+}
+
 function makeManager(opts: { pgid?: string; scanOut?: string } = {}) {
   const { docker, execCalls } = makeDocker(opts);
   const mgr = new ContainerManager(docker);
@@ -243,7 +250,7 @@ describe("ContainerManager remove result", () => {
 // again — surfaced in the agent's context and stoppable — instead of colliding invisibly.
 describe("ContainerManager background-task rehydration", () => {
   it("rebuilds the map from the container's live pidfiles (decoding the base64 command)", async () => {
-    const scanOut = `task-aaa\t7001\t${b64("npm run dev")}\ntask-bbb\t7002\t${b64("python3 -m http.server 8080")}`;
+    const scanOut = `${taskLine("task-aaa", 7001, "npm run dev")}\n${taskLine("task-bbb", 7002, "python3 -m http.server 8080")}`;
     const { mgr } = makeManager({ scanOut });
 
     expect(mgr.listBackground("ws1")).toHaveLength(0); // map starts empty (as after a restart)
@@ -260,20 +267,20 @@ describe("ContainerManager background-task rehydration", () => {
   });
 
   it("makes a rehydrated task stoppable via stopBackground", async () => {
-    const { mgr } = makeManager({ scanOut: `task-aaa\t7001\t${b64("npm run dev")}` });
+    const { mgr } = makeManager({ scanOut: taskLine("task-aaa", 7001, "npm run dev") });
     await rehydrate(mgr, "ws1");
     expect(await mgr.stopBackground("ws1", "task-aaa")).toBe(true);
     expect(mgr.listBackground("ws1")).toHaveLength(0);
   });
 
   it("falls back to a placeholder command when the .cmd file is missing", async () => {
-    const { mgr } = makeManager({ scanOut: "task-aaa\t7001\t" }); // empty base64 field
+    const { mgr } = makeManager({ scanOut: `task-aaa\t7001\t${STARTED_SEC}\t` }); // empty base64 field
     await rehydrate(mgr, "ws1");
     expect(mgr.listBackground("ws1")[0].command).toContain("unknown");
   });
 
   it("scans only once per workspace per process-lifetime", async () => {
-    const { mgr, execCalls } = makeManager({ scanOut: `task-aaa\t7001\t${b64("npm run dev")}` });
+    const { mgr, execCalls } = makeManager({ scanOut: taskLine("task-aaa", 7001, "npm run dev") });
     await rehydrate(mgr, "ws1");
     await rehydrate(mgr, "ws1");
     const scans = execCalls.filter((c) => c.join(" ").includes("kill -0"));
@@ -281,7 +288,7 @@ describe("ContainerManager background-task rehydration", () => {
   });
 
   it("re-scans after stop() clears the once-guard", async () => {
-    const { mgr, execCalls } = makeManager({ scanOut: `task-aaa\t7001\t${b64("npm run dev")}` });
+    const { mgr, execCalls } = makeManager({ scanOut: taskLine("task-aaa", 7001, "npm run dev") });
     await rehydrate(mgr, "ws1");
     await mgr.stop("ws1");
     await rehydrate(mgr, "ws1");

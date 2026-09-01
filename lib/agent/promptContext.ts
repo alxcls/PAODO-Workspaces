@@ -84,7 +84,7 @@ function buildBackgroundTasksInfo(workspaceId: string): string | undefined {
   if (!tasks.length) return undefined;
   const lines = tasks.map((t) => `- ${t.taskId}: \`${t.command}\` → log: ${t.logFile}`).join("\n");
   return `# Running background tasks
-Started earlier with execute_command(run_in_background: true) and still running. Read a task's output by tailing its log file, or stop it with the stop_task tool (e.g. to free port 8080 before restarting a server):
+These are processes running in your container right now:
 ${lines}`;
 }
 

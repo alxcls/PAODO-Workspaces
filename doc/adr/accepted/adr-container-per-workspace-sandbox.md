@@ -8,7 +8,7 @@ Agents run arbitrary shell commands and need filesystem and runtime isolation to
 Decision
 Run each workspace inside its own Docker container. All agent operations — both shell commands (`execute_command`) and file operations (`file_read`, `file_write`, `file_edit`, `list_directory`, `glob`) — are executed inside the container via `docker exec`. The workspace directory is mounted into the container using Docker 25+ volume subpath mounting (`--mount type=volume,source=<WORKSPACES_VOLUME_NAME>,target=/workspace,volume-subpath=<name>`), so the container's filesystem boundary is the workspace boundary at the OS level.
 
-Containers are started eagerly when an agent session begins and stopped after an idle timeout (`CONTAINER_IDLE_MS`, default 10 min), restarting automatically on the next session. Each container has its own isolated bridge network. CPU, memory, and process count are capped per container (`CONTAINER_CPUS`, `CONTAINER_MEMORY`, `CONTAINER_PIDS_LIMIT`).
+Containers are started eagerly when an agent session begins and stopped once nothing keeps them warm — no active run and no live background task — after a 2 min idle window, restarting automatically on the next session. Each container has its own isolated bridge network. CPU, memory, and process count are capped per container (`CONTAINER_CPUS`, `CONTAINER_MEMORY`, `CONTAINER_PIDS_LIMIT`).
 
 The `WORKSPACES_VOLUME_NAME` env var must be set to the runtime Docker volume name (compose project prefix + `_workspaces`). Run `docker volume ls | grep workspaces` to find the exact name. Requires Docker Engine ≥ 25.
 

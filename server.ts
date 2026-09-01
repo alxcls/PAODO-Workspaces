@@ -679,6 +679,9 @@ assertGitAvailable()
     // Boot-time reattach only heals sidecar recreations that coincide with an app restart. Keep a
     // reconcile loop running so an independent sidecar restart self-heals within one interval.
     startProxyReconciler();
+    // In-memory idle timers are lost on restart. Re-arm the task-aware reaper for every container
+    // that survived, so one left running through the restart still idles (and recovers task caps).
+    await getContainers().resumeIdleReapers();
   })
   // Before the listener opens: in `iap` mode this fetches the provider's signing keys, and a failure
   // must stop the boot rather than leave every request failing closed against an empty key set.

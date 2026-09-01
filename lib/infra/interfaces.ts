@@ -119,11 +119,17 @@ export interface IWorkspaceVersioning extends IAgentWorkspaceVersioning {
  *  credential-proxy reattach. Everything that manages a container's existence, not what runs inside it. */
 export interface IContainerLifecycle {
   ensure(workspaceId: string, workspaceDir: string): Promise<void>;
-  stop(workspaceId: string): Promise<void>;
+  /** Stop the container. `reason` (e.g. "no live tasks — idle") is logged when the stop is automatic. */
+  stop(workspaceId: string, reason?: string): Promise<void>;
   remove(workspaceId: string): Promise<void>;
   /** Rebuild the workspace's network for a new egress policy, leaving the container running. */
   applyInternetAccess(workspaceId: string, enabled: boolean): Promise<void>;
   reattachProxyNetworks(): Promise<void>;
+  /** Re-arm the task-aware idle reaper for every running container after an app restart. */
+  resumeIdleReapers(): Promise<void>;
+  /** A run has begun/ended for a workspace — keeps its container warm for the run's whole duration. */
+  noteRunStart(workspaceId: string): void;
+  noteRunEnd(workspaceId: string): void;
   deleteWorkspaceDir(workspaceDir: string): Promise<void>;
   assertDockerAvailable(): Promise<void>;
 }
@@ -176,6 +182,8 @@ export interface IBackgroundTasks {
   stopBackground(workspaceId: string, taskId: string): Promise<boolean>;
   /** Running background tasks for a workspace (for context surfacing / management across turns). */
   listBackground(workspaceId: string): BackgroundTask[];
+  /** Authoritative liveness pass: rebuild from pidfiles, prune exited, kill over-cap; returns survivors. */
+  reconcileBackgroundTasks(workspaceId: string): Promise<BackgroundTask[]>;
 }
 
 /** The full manager surface — the union of the three roles above. */

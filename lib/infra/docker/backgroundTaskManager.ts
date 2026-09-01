@@ -18,6 +18,10 @@ const log = createLogger("container");
 // clutters /workspace (which is bind-mounted and watched for file-change events).
 const TASK_DIR = "/tmp/paodo-tasks";
 
+// Per-task hard cap: a task is group-killed once it has run this long (measured from its own start),
+// so no single background process keeps a container alive forever.
+const CONTAINER_TASK_MAX_MS = 24 * 60 * 60 * 1000;
+
 // One agent-launched background process (dev server etc.). pgid == the pid of the setsid
 // session leader, so `kill -KILL -<pgid>` takes down the process and every child it spawned.
 export interface BackgroundTask {
@@ -25,6 +29,7 @@ export interface BackgroundTask {
   pgid: number;
   logFile: string;
   command: string;
+  startedAt: number; // epoch ms; drives the per-task cap, persisted via .started to survive a restart
 }
 
 export class BackgroundTaskManager {
@@ -56,6 +61,8 @@ export class BackgroundTaskManager {
     const logFile = `${TASK_DIR}/${taskId}.output`;
     const pidFile = `${TASK_DIR}/${taskId}.pid`;
     const cmdFile = `${TASK_DIR}/${taskId}.cmd`;
+    const startedFile = `${TASK_DIR}/${taskId}.started`;
+    const startedAt = Date.now();
     let stage = "launch_process";
 
     try {
@@ -65,9 +72,12 @@ export class BackgroundTaskManager {
       // detached tree on container stop. Same `echo $$ > pid; exec "$0" "$@"` idiom as execStreaming.
       // The command is also recorded verbatim to a .cmd file (via `printf '%s' "$1"` — argv, no
       // injection) so rehydrate() can recover it if the in-memory map is lost.
+      // .started records the launch epoch (seconds) so the per-task cap survives an app restart —
+      // rehydrate/reconcile read it back rather than restarting the 24h clock from zero on recovery.
       const launcher =
         `mkdir -p ${TASK_DIR}; ` +
         `printf '%s' "$1" > ${cmdFile}; ` +
+        `date +%s > ${startedFile}; ` +
         `setsid /bin/bash -c 'echo $$ > ${pidFile}; exec "$0" "$@"' ` +
         `/bin/bash -c "$1" > ${logFile} 2>&1 & `;
       const launch = await this.docker.exec(name, ["/bin/bash", "-c", launcher, "bash", command], { env });
@@ -89,7 +99,7 @@ export class BackgroundTaskManager {
       if (!read.code && Number.isInteger(pgid)) {
         let tasks = this.tasks.get(workspaceId);
         if (!tasks) this.tasks.set(workspaceId, (tasks = new Map()));
-        tasks.set(taskId, { taskId, pgid, logFile, command });
+        tasks.set(taskId, { taskId, pgid, logFile, command, startedAt });
         log.info(
           {
             event: "background_task_started",
@@ -139,7 +149,7 @@ export class BackgroundTaskManager {
       const result = await this.docker.exec(containerName(workspaceId), [
         "/bin/bash",
         "-c",
-        `kill -KILL -${task.pgid} 2>/dev/null; rm -f ${TASK_DIR}/${taskId}.pid ${TASK_DIR}/${taskId}.cmd`,
+        `kill -KILL -${task.pgid} 2>/dev/null; rm -f ${TASK_DIR}/${taskId}.pid ${TASK_DIR}/${taskId}.cmd ${TASK_DIR}/${taskId}.started`,
       ]);
       stopped = result.code === 0;
       if (!stopped) {
@@ -206,38 +216,86 @@ export class BackgroundTaskManager {
   async rehydrate(workspaceId: string): Promise<void> {
     if (this.rehydrated.has(workspaceId)) return;
     this.rehydrated.add(workspaceId);
-    // For each live pidfile, emit "taskId<TAB>pgid<TAB>base64(command)". The command is base64'd so
-    // arbitrary shell text can't break the line/field framing; decoded back in JS.
+    const live = await this.scanLiveTasks(workspaceId);
+    if (live && live.size) {
+      this.tasks.set(workspaceId, live);
+      log.debug({ workspaceId, count: live.size }, "rehydrated background tasks from container");
+    }
+  }
+
+  // Authoritative liveness pass (idle reaper, boot sweep): unlike rehydrate() it always rescans —
+  // rebuild from pidfiles (any session's task included), prune exited, kill over-cap; returns survivors.
+  async reconcile(workspaceId: string): Promise<BackgroundTask[]> {
+    const live = await this.scanLiveTasks(workspaceId);
+    if (!live) return this.list(workspaceId);
+    this.rehydrated.add(workspaceId);
+    if (live.size) this.tasks.set(workspaceId, live);
+    else this.tasks.delete(workspaceId);
+
+    const now = Date.now();
+    const survivors: BackgroundTask[] = [];
+    for (const task of live.values()) {
+      if (now - task.startedAt < CONTAINER_TASK_MAX_MS) {
+        survivors.push(task);
+        continue;
+      }
+      log.info(
+        {
+          event: "background_task_max_window_reached",
+          outcome: "background_task_killed",
+          workspaceId,
+          taskId: task.taskId,
+          pgid: task.pgid,
+          ranMs: now - task.startedAt,
+        },
+        "background task killed — max task window reached",
+      );
+      await this.stop(workspaceId, task.taskId);
+    }
+    return survivors;
+  }
+
+  // One `kill -0` scan of the pidfiles → the live task map (dead groups are skipped, so this also
+  // prunes). Line: "taskId<TAB>pgid<TAB>started<TAB>base64(command)". Null on any exec failure.
+  private async scanLiveTasks(workspaceId: string): Promise<Map<string, BackgroundTask> | null> {
     const scan =
       `shopt -s nullglob; for p in ${TASK_DIR}/*.pid; do ` +
       `pgid=$(cat "$p" 2>/dev/null); [ -n "$pgid" ] || continue; ` +
       `kill -0 -"$pgid" 2>/dev/null || continue; ` +
       `id=$(basename "$p" .pid); ` +
+      `started=$(cat "${TASK_DIR}/$id.started" 2>/dev/null); ` +
       `cmd=$(cat "${TASK_DIR}/$id.cmd" 2>/dev/null | base64 | tr -d "\\n"); ` +
-      `printf '%s\\t%s\\t%s\\n' "$id" "$pgid" "$cmd"; done`;
+      `printf '%s\\t%s\\t%s\\t%s\\n' "$id" "$pgid" "$started" "$cmd"; done`;
     const res = await this.docker
       .exec(containerName(workspaceId), ["/bin/bash", "-c", scan], { trimStdout: true })
       .catch((err) => {
-        log.warn({ err, workspaceId }, "failed to rehydrate background tasks");
+        log.warn({ err, workspaceId }, "failed to scan background tasks");
         return null;
       });
-    if (!res) return;
+    if (!res) return null;
     if (res.code !== 0) {
-      log.warn({ workspaceId, stderr: res.stderr }, "failed to rehydrate background tasks");
-      return;
+      // A stopped/missing container has no tasks to find — expected (e.g. a reaper pass after the
+      // container already went down), so keep it at debug rather than raising an alert.
+      if (/no such container|is not running/i.test(res.stderr)) {
+        log.debug({ workspaceId, stderr: res.stderr }, "background-task scan skipped — container not running");
+        return new Map();
+      }
+      log.warn({ workspaceId, stderr: res.stderr }, "failed to scan background tasks");
+      return null;
     }
-    if (!res.stdout) return;
     const tasks = new Map<string, BackgroundTask>();
+    if (!res.stdout) return tasks;
     for (const line of res.stdout.split("\n")) {
-      const [taskId, pgidStr, cmdB64] = line.split("\t");
+      const [taskId, pgidStr, startedStr, cmdB64] = line.split("\t");
       const pgid = parseInt(pgidStr, 10);
       if (!taskId || !Number.isInteger(pgid)) continue;
+      // A missing/blank .started (a task predating this feature) defaults to "now" so a legitimately
+      // running server is never nuked on the first scan for lacking a timestamp it never wrote.
+      const startedSec = parseInt(startedStr, 10);
+      const startedAt = Number.isInteger(startedSec) ? startedSec * 1000 : Date.now();
       const command = cmdB64 ? Buffer.from(cmdB64, "base64").toString("utf8") : "(unknown — recovered after restart)";
-      tasks.set(taskId, { taskId, pgid, logFile: `${TASK_DIR}/${taskId}.output`, command });
+      tasks.set(taskId, { taskId, pgid, logFile: `${TASK_DIR}/${taskId}.output`, command, startedAt });
     }
-    if (tasks.size) {
-      this.tasks.set(workspaceId, tasks);
-      log.debug({ workspaceId, count: tasks.size }, "rehydrated background tasks from container");
-    }
+    return tasks;
   }
 }

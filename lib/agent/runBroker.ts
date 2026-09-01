@@ -176,6 +176,9 @@ export function startRun(params: StartRunParams): {
     },
     "agent run started",
   );
+  // Keep the container warm for the whole run (paired with noteRunEnd in the finally below), so a
+  // long model turn between tool calls can never let the idle reaper stop it mid-run.
+  getContainers().noteRunStart(params.workspaceId);
 
   // Detached: not awaited, not tied to any request. Errors are surfaced as events by runAgent.
   void (async () => {
@@ -316,6 +319,8 @@ export function startRun(params: StartRunParams): {
       runTimeout.dispose();
       session.status = "done";
       executionSlot.release();
+      // Run over: hand the container back to the task-aware idle reaper.
+      getContainers().noteRunEnd(params.workspaceId);
       const capacityAtEnd = capacity.snapshot();
       try {
         persist();
@@ -458,6 +463,7 @@ export function startExternalRun(
     },
     "agent run started",
   );
+  getContainers().noteRunStart(workspaceId);
 
   return {
     publish: (event) => {
@@ -475,6 +481,7 @@ export function startExternalRun(
       if (session.status === "done") return;
       session.status = "done";
       executionSlot.release();
+      getContainers().noteRunEnd(workspaceId);
       const capacityAtEnd = capacity.snapshot();
       if (status) terminalStatus = status;
       if (!session.buffer.some((event) => event.type === "done") && terminalStatus === "success") {

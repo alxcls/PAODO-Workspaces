@@ -74,7 +74,12 @@ const CONTAINER_CPUS = capacityProfile.workspaceCpus;
 // rather than stopping. Threads count too, so anything thread-heavy (JVM, browser grids, `make -j`)
 // needs this raised. Hitting the cap surfaces as "Resource temporarily unavailable" on fork.
 const CONTAINER_PIDS = capacityProfile.workspacePidsLimit;
-const IDLE_TIMEOUT_MS = parseInt(process.env.CONTAINER_IDLE_MS ?? "", 10) || 10 * 60 * 1000;
+// Idle window once nothing keeps a container warm (no active run, no live task). Short and safe: a
+// run suppresses it and it re-arms only on run end, so it can never fire mid-run.
+const IDLE_TIMEOUT_MS = 2 * 60 * 1000;
+// How often to re-check liveness while a live task keeps a container warm, so a task that exits on
+// its own is noticed and the idle countdown can begin.
+const TASK_POLL_MS = 60 * 1000;
 // Where a command's over-cap output is parked so the agent can still read it (see ExecOutput).
 // Deliberately alongside /tmp/paodo-tasks: the agent is already taught to tail paths of that shape,
 // and neither is visible to the file tree, to git, or to workspace snapshots — which matters here,
@@ -145,6 +150,9 @@ export class ContainerManager implements IContainerManager {
     this.proxy = new ProxyNetworkManager(docker);
   }
   private idleTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  // Runs driving each workspace; > 0 means never idle. A counter (not a flag) so nested call_agent
+  // and concurrent runs nest cleanly — suppressed on run start, re-armed on run end.
+  private activeRuns = new Map<string, number>();
   // Prevents concurrent docker run/start/stop calls for the same workspace. Tagged by kind so
   // ensure() can still coalesce concurrent ensure() calls onto one shared promise (same desired
   // outcome), while a stop() in flight is never handed out that way — its promise resolves to
@@ -218,15 +226,56 @@ export class ContainerManager implements IContainerManager {
     if (internetAccess) await this.proxy.attach(workspaceId);
   }
 
-  private resetIdleTimer(workspaceId: string): void {
+  // A run has begun for this workspace: keep the container warm for its whole duration. Cancels any
+  // pending idle/poll timer so nothing can stop the container mid-run, however long a model turn runs.
+  noteRunStart(workspaceId: string): void {
+    this.activeRuns.set(workspaceId, (this.activeRuns.get(workspaceId) ?? 0) + 1);
     const existing = this.idleTimers.get(workspaceId);
-    if (existing) clearTimeout(existing);
+    if (existing) {
+      clearTimeout(existing);
+      this.idleTimers.delete(workspaceId);
+    }
+  }
+
+  // A run has ended. When it was the last one, start counting down to idle (task-aware). Rescans
+  // liveness authoritatively, since a run is exactly when a task may have been started or stopped.
+  noteRunEnd(workspaceId: string): void {
+    const next = (this.activeRuns.get(workspaceId) ?? 0) - 1;
+    if (next > 0) this.activeRuns.set(workspaceId, next);
+    else {
+      this.activeRuns.delete(workspaceId);
+      void this.scheduleReaper(workspaceId, true);
+    }
+  }
+
+  // When to stop an idle container: suppressed while a run is active; with no live task, arm the base
+  // window; with live task(s), keep warm and re-check on a poll (killing any past its cap).
+  private async scheduleReaper(workspaceId: string, rescan: boolean): Promise<void> {
+    const existing = this.idleTimers.get(workspaceId);
+    if (existing) {
+      clearTimeout(existing);
+      this.idleTimers.delete(workspaceId);
+    }
+    if ((this.activeRuns.get(workspaceId) ?? 0) > 0) return;
+
+    // rescan does the authoritative reconcile (a docker exec); the cheap ensure() path passes false.
+    const live = rescan ? await this.background.reconcile(workspaceId) : this.background.list(workspaceId);
+    // A run may have started while a rescan was in flight — don't arm a timer against it.
+    if ((this.activeRuns.get(workspaceId) ?? 0) > 0) return;
+
+    const hasTasks = live.length > 0;
     const t = setTimeout(() => {
-      void this.stop(workspaceId).catch((err) => {
-        log.warn({ err, workspaceId }, "idle container stop failed");
-      });
-    }, IDLE_TIMEOUT_MS);
+      if (hasTasks) void this.scheduleReaper(workspaceId, true);
+      else {
+        void this.stop(workspaceId, "no live tasks — idle").catch((err) => {
+          log.warn({ err, workspaceId }, "idle container stop failed");
+        });
+      }
+    }, hasTasks ? TASK_POLL_MS : IDLE_TIMEOUT_MS);
     t.unref();
+    // A concurrent schedule may have armed a timer during our await; clear it so we never orphan one.
+    const prev = this.idleTimers.get(workspaceId);
+    if (prev) clearTimeout(prev);
     this.idleTimers.set(workspaceId, t);
   }
 
@@ -675,7 +724,9 @@ export class ContainerManager implements IContainerManager {
       }
     })().finally(() => {
       if (this.startLocks.get(workspaceId)?.promise === p) this.startLocks.delete(workspaceId);
-      this.resetIdleTimer(workspaceId);
+      // Refresh the idle schedule for non-run activity (file-write fallback, internet toggle). During
+      // a run activeRuns > 0, so this no-ops and the run's own start/end owns the timer.
+      if ((this.activeRuns.get(workspaceId) ?? 0) === 0) void this.scheduleReaper(workspaceId, false);
     });
     this.startLocks.set(workspaceId, { kind: "ensure", promise: p });
     return p;
@@ -963,6 +1014,12 @@ export class ContainerManager implements IContainerManager {
     return this.background.list(workspaceId);
   }
 
+  // Authoritative liveness pass: rebuild the map from pidfiles (surfacing tasks from any session),
+  // prune exited ones, kill any past its cap; returns the survivors.
+  async reconcileBackgroundTasks(workspaceId: string): Promise<BackgroundTask[]> {
+    return this.background.reconcile(workspaceId);
+  }
+
   /**
    * Apply a workspace's internet-access setting to its live network, leaving the container alone.
    *
@@ -1016,7 +1073,29 @@ export class ContainerManager implements IContainerManager {
     });
   }
 
-  async stop(workspaceId: string): Promise<void> {
+  // Re-arm the idle reaper for every running container after a restart (in-memory timers are lost).
+  // scheduleReaper's reconcile recovers each task's cap from its .started file and reaps as needed.
+  async resumeIdleReapers(): Promise<void> {
+    const r = await this.docker.cmd("ps", "--filter", "name=^ws_", "--format", "{{.Names}}");
+    if (r.code !== 0) {
+      log.warn({ stderr: r.stderr }, "resumeIdleReapers: docker ps failed");
+      return;
+    }
+    for (const name of r.stdout
+      .split("\n")
+      .map((s) => s.trim())
+      .filter(Boolean)) {
+      void this.scheduleReaper(name.replace(/^ws_/, ""), true);
+    }
+  }
+
+  async stop(workspaceId: string, reason?: string): Promise<void> {
+    if (reason) {
+      log.info(
+        { event: "workspace_container_idled", outcome: "workspace_container_stopped", workspaceId, reason },
+        "workspace container stopped",
+      );
+    }
     // Wait out anything already in flight (an ensure() or another stop()) before claiming the slot
     // for our own teardown, so a concurrent ensure() (e.g. an agent tool call racing the
     // internet-access toggle route) can't interleave with this — reattaching the sidecar right as

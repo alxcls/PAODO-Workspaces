@@ -4,7 +4,7 @@
 // file tree (via treeRefreshKey) and the file viewer (via the imperative FileViewerHandle ref).
 "use client";
 
-import { use, useState, useEffect, useRef, Suspense, lazy } from "react";
+import { use, useState, useEffect, useCallback, useRef, Suspense, lazy } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import FileTreePanel from "@/components/workspace/FileTreePanel";
@@ -18,6 +18,7 @@ import ConversationBar from "@/components/workspace/ConversationBar";
 import ConsolePanel from "@/components/workspace/ConsolePanel";
 import HistoryPanel from "@/components/workspace/HistoryPanel";
 import SchedulePanel from "@/components/workspace/SchedulePanel";
+import BackgroundTasksIndicator from "@/components/workspace/BackgroundTasksIndicator";
 import TopBar from "@/components/layout/TopBar";
 import { useWorkspaceSocket } from "@/lib/client/hooks/useWorkspaceSocket";
 import { useWorkspaceMeta } from "@/lib/client/hooks/useWorkspaceMeta";
@@ -48,6 +49,20 @@ function WorkspacePageInner({ params }: { params: Promise<{ id: string }> }) {
   const [treeRefreshKey, setTreeRefreshKey] = useState(0);
   const [chatRatio, setChatRatio] = useState(0.62);
   const [isDragging, setIsDragging] = useState(false);
+  // Bumped on run start / turn end so the background-task badge refetches at once (that's exactly
+  // when a task is started or stopped) instead of waiting up to a full poll interval.
+  const [taskPoke, setTaskPoke] = useState(0);
+  // Stable identities: ChatPanel keys effects on these, so a fresh inline arrow each render would
+  // re-fire them in a loop. refresh and the setters are themselves stable.
+  const handleRunStart = useCallback(() => {
+    refresh();
+    setTaskPoke((k) => k + 1);
+  }, [refresh]);
+  const handleTurnComplete = useCallback(() => {
+    setTreeRefreshKey((k) => k + 1);
+    refresh();
+    setTaskPoke((k) => k + 1);
+  }, [refresh]);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const rightRef = useRef<HTMLDivElement>(null);
@@ -79,6 +94,7 @@ function WorkspacePageInner({ params }: { params: Promise<{ id: string }> }) {
         void refresh();
       }, 400);
     },
+    background_tasks_changed: () => setTaskPoke((k) => k + 1),
   });
 
   const startLeftDrag = useDragResize({
@@ -136,6 +152,7 @@ function WorkspacePageInner({ params }: { params: Promise<{ id: string }> }) {
         }
         right={
           <div className="flex items-center gap-2">
+            <BackgroundTasksIndicator workspaceId={id} poke={taskPoke} />
             <SchedulePanel workspaceId={id} />
             <HistoryPanel
               workspaceId={id}
@@ -215,11 +232,8 @@ function WorkspacePageInner({ params }: { params: Promise<{ id: string }> }) {
               workspaceId={id}
               conversationId={activeId}
               initialConversation={initial}
-              onRunStart={refresh}
-              onAgentTurnComplete={() => {
-                setTreeRefreshKey((k) => k + 1);
-                refresh();
-              }}
+              onRunStart={handleRunStart}
+              onAgentTurnComplete={handleTurnComplete}
             />
           </div>
           <div className="ws-right-handle" onMouseDown={startRowDrag} />

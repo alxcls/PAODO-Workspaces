@@ -9,10 +9,17 @@
 // NOT bring the container up — the owning ContainerManager calls ensure() before delegating here.
 import { randomUUID } from "crypto";
 import { createLogger } from "../logger";
+import { broadcastToWorkspace } from "../realtime/wsHub";
 import type { IDockerClient } from "./dockerClient";
 import { containerName } from "./naming";
 
 const log = createLogger("container");
+
+// Nudge any open UI to refetch its live-task list the instant a task starts or stops, so the
+// presence badge stays in sync without waiting on its poll. No-op when nobody is connected.
+function notifyTasksChanged(workspaceId: string): void {
+  broadcastToWorkspace(workspaceId, JSON.stringify({ type: "background_tasks_changed" }));
+}
 
 // In-container directory holding background-task log/pid/cmd files. Under /tmp so it never
 // clutters /workspace (which is bind-mounted and watched for file-change events).
@@ -100,6 +107,7 @@ export class BackgroundTaskManager {
         let tasks = this.tasks.get(workspaceId);
         if (!tasks) this.tasks.set(workspaceId, (tasks = new Map()));
         tasks.set(taskId, { taskId, pgid, logFile, command, startedAt });
+        notifyTasksChanged(workspaceId);
         log.info(
           {
             event: "background_task_started",
@@ -179,6 +187,7 @@ export class BackgroundTaskManager {
       );
     }
     this.tasks.get(workspaceId)?.delete(taskId);
+    notifyTasksChanged(workspaceId);
     if (stopped) {
       log.info(
         {
@@ -221,6 +230,18 @@ export class BackgroundTaskManager {
       this.tasks.set(workspaceId, live);
       log.debug({ workspaceId, count: live.size }, "rehydrated background tasks from container");
     }
+  }
+
+  // Safe liveness read for the UI: rescan pidfiles and prune anything that has exited (scanLiveTasks
+  // skips dead groups), so a task that ended on its own is reflected at once. Never kills — the cap
+  // is the reaper's job — so a GET driven by this stays side-effect-free.
+  async listLive(workspaceId: string): Promise<BackgroundTask[]> {
+    const live = await this.scanLiveTasks(workspaceId);
+    if (!live) return this.list(workspaceId);
+    this.rehydrated.add(workspaceId);
+    if (live.size) this.tasks.set(workspaceId, live);
+    else this.tasks.delete(workspaceId);
+    return [...live.values()];
   }
 
   // Authoritative liveness pass (idle reaper, boot sweep): unlike rehydrate() it always rescans —

@@ -45,6 +45,7 @@ const fakeContainers: IContainerManager = {
   startBackground: async () => ({ taskId: "fake-task", logFile: "/tmp/paodo-tasks/fake-task.output" }),
   stopBackground: async () => false,
   listBackground: () => [],
+  listBackgroundLive: async () => [],
   reconcileBackgroundTasks: async () => [],
   stop: async () => {},
   remove: async () => {},

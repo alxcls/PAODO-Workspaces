@@ -250,7 +250,8 @@ httpServer.on("request", (req, res) => {
     // Successful requests are the baseline "is anything happening" signal, so they log at info and
     // reach Docker's output in production; at debug they were invisible there and nothing but errors
     // ever showed up. Static assets and upload chunks stay out — high volume, nothing to observe.
-    else if (!url.startsWith("/_next/") && !url.includes("/files/upload")) log.info(meta, "http request");
+    else if (!url.startsWith("/_next/") && !url.includes("/files/upload") && !url.includes("/background-tasks"))
+      log.info(meta, "http request");
   };
   res.once("finish", logRequest);
   res.once("close", logRequest);

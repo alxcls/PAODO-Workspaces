@@ -182,6 +182,8 @@ export interface IBackgroundTasks {
   stopBackground(workspaceId: string, taskId: string): Promise<boolean>;
   /** Running background tasks for a workspace (for context surfacing / management across turns). */
   listBackground(workspaceId: string): BackgroundTask[];
+  /** Safe read for UI: rescan pidfiles, prune exited, return survivors (no kill — the reaper owns the cap). */
+  listBackgroundLive(workspaceId: string): Promise<BackgroundTask[]>;
   /** Authoritative liveness pass: rebuild from pidfiles, prune exited, kill over-cap; returns survivors. */
   reconcileBackgroundTasks(workspaceId: string): Promise<BackgroundTask[]>;
 }

@@ -1014,6 +1014,12 @@ export class ContainerManager implements IContainerManager {
     return this.background.list(workspaceId);
   }
 
+  // Safe read for the UI: rescan pidfiles and prune exited tasks (so a self-exited one clears
+  // promptly), without the reaper's cap-kill — a GET driven by this stays side-effect-free.
+  async listBackgroundLive(workspaceId: string): Promise<BackgroundTask[]> {
+    return this.background.listLive(workspaceId);
+  }
+
   // Authoritative liveness pass: rebuild the map from pidfiles (surfacing tasks from any session),
   // prune exited ones, kill any past its cap; returns the survivors.
   async reconcileBackgroundTasks(workspaceId: string): Promise<BackgroundTask[]> {

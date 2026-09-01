@@ -46,8 +46,8 @@ export class AuthFailureTracker {
   }
 }
 
-// The agent endpoint authenticates via Bearer API key, not Basic Auth — exempt POSTs to it.
-const PUBLIC_API_RE = /^\/api\/workspaces\/[^/]+\/agent$/;
+// The agent run and stop endpoints authenticate via Bearer API key, not Basic Auth — exempt POSTs.
+const PUBLIC_API_RE = /^\/api\/workspaces\/[^/]+\/agent(?:\/stop)?$/;
 // The Workspace MCP endpoint authenticates via its own Bearer secret (credentialStore's
 // "workspace-mcp" kind), not Basic
 // Auth, so exempt every method here. POST is the protocol channel: the route validates the secret

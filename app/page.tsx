@@ -321,10 +321,12 @@ export default function HomePage() {
                   <h1 className="text-[34px] font-semibold tracking-[-0.02em] my-1.5 text-text">{selected.name}</h1>
                 )}
 
-                <div className="text-text-2 text-sm">
-                  Created {selectedDetails ? formatDate(selectedDetails.createdAt) : "—"}
-                  {selectedStorage && (
+                {/* Rendered only once both the date and the size are loaded, so they appear together
+                    rather than the size popping in after the date; min-height reserves the line. */}
+                <div className="text-text-2 text-sm min-h-5">
+                  {selectedDetails && selectedStorage && (
                     <>
+                      Created {formatDate(selectedDetails.createdAt)}
                       {" · "}
                       <span
                         title={`Files ${formatBytes(selectedStorage.breakdown.workspace)} · Deps ${formatBytes(

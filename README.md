@@ -109,11 +109,23 @@ curl -X POST http://localhost:<port>/api/workspaces/<id>/agent \
   -d '{"message": "list all files and summarize what this workspace does"}'
 ```
 
-The response is a Server-Sent Events stream of `tool_start` progress events, ending in a single `response` event that carries the final answer, then `done`.
+The response is a Server-Sent Events stream. Each `data:` frame has a `type`:
+
+- `token` / `reasoning` — the answer and the agent's thinking, streamed as they are produced
+- `tool_start` / `tool_result` — each tool call with its `args` and output (`id` pairs them)
+- `error` — the run failed, with a `code`
+- `response` — terminal aggregate: the whole answer in one frame, for non-streaming clients
+- `done` — end of stream, carrying the `conversationId`
 
 Each call starts its own conversation, visible in the workspace UI. To thread calls together
 instead, pass the `conversationId` returned in the `X-Conversation-Id` header back in the next
-request body.
+request body. Stop an in-flight run with that id:
+
+```bash
+curl -X POST http://localhost:<port>/api/workspaces/<id>/agent/stop \
+  -H "Authorization: Bearer <api-key>" \
+  -d '{"conversationId": "<id>"}'
+```
 
 ## Workspace MCP access
 

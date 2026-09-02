@@ -10,7 +10,7 @@
 // The env-var / CA-trust side of proxy wiring lives in containerCredentials.ts.
 import { createLogger } from "../logger";
 import type { IDockerClient } from "./dockerClient";
-import { networkName } from "./naming";
+import { CONTAINER_PREFIX, networkName, workspaceIdFromContainerName } from "./naming";
 
 const log = createLogger("container");
 
@@ -89,7 +89,7 @@ export class ProxyNetworkManager {
   // though the workspace's own network stays --internal. This class stays free of workspaceStore
   // itself; it only knows container/network names.
   async reattachAll(shouldAttach: (workspaceId: string) => boolean = () => true): Promise<void> {
-    const r = await this.docker.cmd("ps", "--filter", "name=^ws_", "--format", "{{.Names}}");
+    const r = await this.docker.cmd("ps", "--filter", `name=^${CONTAINER_PREFIX}`, "--format", "{{.Names}}");
     if (r.code !== 0) {
       log.warn({ stderr: r.stderr }, "reattachProxyNetworks: docker ps failed");
       return;
@@ -98,8 +98,8 @@ export class ProxyNetworkManager {
       .split("\n")
       .map((s) => s.trim())
       .filter(Boolean)) {
-      const workspaceId = name.replace(/^ws_/, "");
-      if (!shouldAttach(workspaceId)) continue;
+      const workspaceId = workspaceIdFromContainerName(name);
+      if (workspaceId === null || !shouldAttach(workspaceId)) continue;
       await this.attach(workspaceId);
     }
   }

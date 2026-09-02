@@ -23,7 +23,13 @@ import {
   EXEC_KILL_GRACE_MS,
   APT_REPLAY_TIMEOUT_MS,
 } from "../limits";
-import { containerName, networkName } from "./naming";
+import {
+  CONTAINER_PREFIX,
+  containerName,
+  networkName,
+  workspaceIdFromContainerName,
+  workspaceIdFromNetworkName,
+} from "./naming";
 import { workspaceHomeDir, workspaceHomeSeededMarker, workspaceHomeSubpath } from "../paths";
 import { readAptRecipe } from "../aptRecipe";
 import { BackgroundTaskManager, type BackgroundTask } from "./backgroundTaskManager";
@@ -77,6 +83,9 @@ const CONTAINER_PIDS = capacityProfile.workspacePidsLimit;
 // Idle window once nothing keeps a container warm (no active run, no live task). Short and safe: a
 // run suppresses it and it re-arms only on run end, so it can never fire mid-run.
 const IDLE_TIMEOUT_MS = 2 * 60 * 1000;
+// How long a per-workspace network must stay empty before the lazy sweep reclaims it. A grace window
+// (a few reaper ticks) keeps a workspace that idles and quickly wakes from churning its network.
+const DEFAULT_NETWORK_GRACE_MS = 20 * 60 * 1000;
 // How often to re-check liveness while a live task keeps a container warm, so a task that exits on
 // its own is noticed and the idle countdown can begin.
 const TASK_POLL_MS = 60 * 1000;
@@ -163,6 +172,9 @@ export class ContainerManager implements IContainerManager {
   // graph edges and other state before the registry, so a failed/partial deletion must not let an
   // in-flight agent recreate the container while the caller retries the cleanup.
   private removingWorkspaces = new Set<string>();
+  // First time each managed network was seen empty by the sweep, so it is only reclaimed once it has
+  // stayed empty across the grace window rather than the instant a workspace idles.
+  private emptyNetworkSince = new Map<string, number>();
 
   // Creates the workspace's isolated network, or recreates it if its --internal flag doesn't match
   // the workspace's current internetAccess setting. Docker can't flip --internal on an existing
@@ -264,14 +276,17 @@ export class ContainerManager implements IContainerManager {
     if ((this.activeRuns.get(workspaceId) ?? 0) > 0) return;
 
     const hasTasks = live.length > 0;
-    const t = setTimeout(() => {
-      if (hasTasks) void this.scheduleReaper(workspaceId, true);
-      else {
-        void this.stop(workspaceId, "no live tasks — idle").catch((err) => {
-          log.warn({ err, workspaceId }, "idle container stop failed");
-        });
-      }
-    }, hasTasks ? TASK_POLL_MS : IDLE_TIMEOUT_MS);
+    const t = setTimeout(
+      () => {
+        if (hasTasks) void this.scheduleReaper(workspaceId, true);
+        else {
+          void this.stop(workspaceId, "no live tasks — idle").catch((err) => {
+            log.warn({ err, workspaceId }, "idle container stop failed");
+          });
+        }
+      },
+      hasTasks ? TASK_POLL_MS : IDLE_TIMEOUT_MS,
+    );
     t.unref();
     // A concurrent schedule may have armed a timer during our await; clear it so we never orphan one.
     const prev = this.idleTimers.get(workspaceId);
@@ -1047,11 +1062,8 @@ export class ContainerManager implements IContainerManager {
     }
 
     const p = (async () => {
-      // Only a RUNNING container has live networking to correct. A workspace that has never started
-      // has no network yet, and stop() removes the network of one that has — in both cases the next
-      // bring-up creates it with the flag this setting has already been persisted as, so building
-      // one here would only leave a network nothing is attached to, lingering until the workspace is
-      // next woken (and Docker's address pool is finite).
+      // Only a RUNNING container has live networking to correct. A stopped/never-started workspace has
+      // no attached endpoint; its network is (re)built on the next wake from the already-persisted flag.
       const status = await this.getContainerStatus(workspaceId);
       if (status !== "running") return;
 
@@ -1082,7 +1094,7 @@ export class ContainerManager implements IContainerManager {
   // Re-arm the idle reaper for every running container after a restart (in-memory timers are lost).
   // scheduleReaper's reconcile recovers each task's cap from its .started file and reaps as needed.
   async resumeIdleReapers(): Promise<void> {
-    const r = await this.docker.cmd("ps", "--filter", "name=^ws_", "--format", "{{.Names}}");
+    const r = await this.docker.cmd("ps", "--filter", `name=^${CONTAINER_PREFIX}`, "--format", "{{.Names}}");
     if (r.code !== 0) {
       log.warn({ stderr: r.stderr }, "resumeIdleReapers: docker ps failed");
       return;
@@ -1091,7 +1103,86 @@ export class ContainerManager implements IContainerManager {
       .split("\n")
       .map((s) => s.trim())
       .filter(Boolean)) {
-      void this.scheduleReaper(name.replace(/^ws_/, ""), true);
+      const workspaceId = workspaceIdFromContainerName(name);
+      if (workspaceId !== null) void this.scheduleReaper(workspaceId, true);
+    }
+  }
+
+  // Lazily reclaim per-workspace networks that stop() empties but no longer deletes inline (deleting
+  // the bridge churns host routing — see stop()). Removes only managed networks that have stayed
+  // empty across the grace window; a running or waking workspace still holds an endpoint, so its
+  // network reports > 0 attachments and is skipped. Failures are tolerated and retried next tick.
+  async sweepManagedNetworks(graceMs = DEFAULT_NETWORK_GRACE_MS): Promise<void> {
+    const ls = await this.docker.cmd(
+      "network",
+      "ls",
+      "--filter",
+      "label=com.paodo.managed=workspace",
+      "--format",
+      "{{.Name}}",
+    );
+    if (ls.code !== 0) {
+      log.warn({ stderr: ls.stderr }, "sweepManagedNetworks: docker network ls failed");
+      return;
+    }
+    const names = ls.stdout
+      .split("\n")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const live = new Set(names);
+    for (const name of [...this.emptyNetworkSince.keys()]) {
+      if (!live.has(name)) this.emptyNetworkSince.delete(name);
+    }
+    const now = Date.now();
+    for (const name of names) {
+      const workspaceId = workspaceIdFromNetworkName(name);
+      if (workspaceId === null) continue;
+      const attached = await this.networkEndpointCount(name);
+      if (attached === null) continue;
+      if (attached > 0) {
+        this.emptyNetworkSince.delete(name);
+        continue;
+      }
+      const since = this.emptyNetworkSince.get(name) ?? now;
+      if (!this.emptyNetworkSince.has(name)) this.emptyNetworkSince.set(name, now);
+      if (now - since < graceMs) continue;
+      await this.reclaimEmptyNetwork(workspaceId, name);
+    }
+  }
+
+  // Number of endpoints attached to a network (container + credproxy sidecar), or null if the inspect
+  // failed or the network vanished — both mean "skip and retry next tick".
+  private async networkEndpointCount(name: string): Promise<number | null> {
+    const r = await this.docker.cmd("network", "inspect", name, "--format", "{{len .Containers}}");
+    if (r.code !== 0) return null;
+    const n = parseInt(r.stdout.trim(), 10);
+    return Number.isFinite(n) ? n : null;
+  }
+
+  // Remove one emptied network under the per-workspace lock, so it can never race a wake's
+  // create+connect (ensure() waits out this "stop"-kind slot just like a real stop()).
+  private async reclaimEmptyNetwork(workspaceId: string, name: string): Promise<void> {
+    if (this.removingWorkspaces.has(workspaceId)) return;
+    for (;;) {
+      const inflight = this.startLocks.get(workspaceId);
+      if (!inflight) break;
+      await inflight.promise.catch(() => {});
+    }
+    const p = (async () => {
+      // Re-check under the lock: a wake between the network ls and here may have reattached a container.
+      if ((await this.networkEndpointCount(name)) !== 0) return;
+      const rm = await this.docker.cmd("network", "rm", name);
+      if (rm.code !== 0 && !isMissingNetwork(rm.stderr) && !/active endpoints/i.test(rm.stderr)) {
+        log.debug({ workspaceId, stderr: rm.stderr }, "network reaper: rm failed, will retry");
+        return;
+      }
+      this.emptyNetworkSince.delete(name);
+    })();
+    this.startLocks.set(workspaceId, { kind: "stop", promise: p });
+    try {
+      await p;
+    } finally {
+      if (this.startLocks.get(workspaceId)?.promise === p) this.startLocks.delete(workspaceId);
     }
   }
 
@@ -1121,18 +1212,17 @@ export class ContainerManager implements IContainerManager {
       // Background processes die with the container (tini reaps the tree) — just drop the bookkeeping.
       this.background.clear(workspaceId);
       const r = await this.docker.cmd("stop", containerName(workspaceId));
-      // A workspace that never ran has no container and is already in the desired stopped state.
-      // Every other non-zero result means Docker could not confirm the teardown; surface that to
-      // the internet-access operation after still attempting the idempotent network cleanup below.
+      // A workspace that never ran has no container and is already stopped; any other non-zero result
+      // is a teardown Docker could not confirm — surface it after the network cleanup below.
       const stopError =
         r.code !== 0 && !/no such container/i.test(r.stderr)
           ? new Error(`docker stop failed: ${r.stderr || `exit ${r.code}`}`)
           : null;
       if (stopError) log.warn({ workspaceId, stderr: r.stderr }, "docker stop failed");
+      // Empty the network but do NOT `network rm` here — deleting the bridge reloads host routing and
+      // blips the Cloudflare tunnel; networkReaper reclaims emptied networks lazily (reused on wake).
       await this.docker.cmd("network", "disconnect", networkName(workspaceId), containerName(workspaceId));
       await this.proxy.detach(workspaceId);
-      const net = await this.docker.cmd("network", "rm", networkName(workspaceId));
-      if (net.code !== 0) log.debug({ workspaceId, stderr: net.stderr }, "network rm on stop (may not exist)");
       if (stopError) throw stopError;
     })();
     this.startLocks.set(workspaceId, { kind: "stop", promise: p });

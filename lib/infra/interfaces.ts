@@ -127,6 +127,8 @@ export interface IContainerLifecycle {
   reattachProxyNetworks(): Promise<void>;
   /** Re-arm the task-aware idle reaper for every running container after an app restart. */
   resumeIdleReapers(): Promise<void>;
+  /** Lazily reclaim per-workspace networks that stop() emptied but no longer deletes inline. */
+  sweepManagedNetworks(graceMs?: number): Promise<void>;
   /** A run has begun/ended for a workspace — keeps its container warm for the run's whole duration. */
   noteRunStart(workspaceId: string): void;
   noteRunEnd(workspaceId: string): void;

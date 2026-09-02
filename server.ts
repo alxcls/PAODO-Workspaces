@@ -66,6 +66,7 @@ import { buildSecurityHeaders } from "./lib/infra/security/securityHeaders";
 import { startScheduler, stopScheduler } from "./lib/infra/schedules/scheduler";
 import { startProxyReconciler, stopProxyReconciler } from "./lib/infra/docker/proxyReconciler";
 import { startUploadSweeper, stopUploadSweeper } from "./lib/uploads/sweeper";
+import { startNetworkReaper, stopNetworkReaper } from "./lib/infra/docker/networkReaper";
 import { startPriceRefresher, stopPriceRefresher } from "./lib/models/priceRefresher";
 import { checkApiRateLimit } from "./lib/infra/security/rateLimit";
 import { availableProviders } from "./lib/agent/buildModel";
@@ -697,6 +698,9 @@ assertGitAvailable()
     startScheduler();
     // Reclaim upload temp files orphaned by a process kill mid-upload.
     startUploadSweeper();
+    // Reclaim per-workspace networks that idle-stop left empty (see networkReaper — deleting them
+    // inline on stop would blip the tunnel).
+    startNetworkReaper();
     // Keep LLM rates current without a redeploy. A turn's cost is frozen when it is written, so a
     // stale rate is permanently wrong in the database rather than a display bug — see priceRefresher.
     startPriceRefresher();
@@ -736,6 +740,7 @@ function shutdown(signal: NodeJS.Signals) {
     stopScheduler();
     stopProxyReconciler();
     stopUploadSweeper();
+    stopNetworkReaper();
     stopPriceRefresher();
     stopAllWatchers();
   } catch (err) {

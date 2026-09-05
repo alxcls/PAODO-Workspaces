@@ -1,6 +1,6 @@
-// Restores drives from their archive: the inverse of archiveDrives. The archive is authoritative —
-// live content, connections and registry are made to match it, cleared where the archive holds none.
-import { rm, copyFile, mkdir } from "fs/promises";
+// Restores drives from their archive: the inverse of archiveDrives. The archive is authoritative and
+// always carries all three members (empty when unset), so live state is replaced wholesale to match.
+import { copyFile, mkdir } from "fs/promises";
 import path from "path";
 import { withExtractedArchive, extractArchive, exists, removeTree } from "../archive/core";
 import { createAuditLogger } from "../logger";
@@ -14,12 +14,6 @@ export interface DrivesApplyOptions {
   rootDir?: string;
   /** Overwrite existing drive state rather than refuse. */
   force?: boolean;
-}
-
-/** Copies a staged member onto its live path, or removes the live file when the member is absent. */
-async function applyMember(staged: string, live: string): Promise<void> {
-  if (await exists(staged)) await copyFile(staged, live);
-  else await rm(live, { force: true });
 }
 
 export async function applyDrivesArchive(archivePath: string, opts: DrivesApplyOptions = {}): Promise<void> {
@@ -42,8 +36,8 @@ export async function applyDrivesArchive(archivePath: string, opts: DrivesApplyO
       await mkdir(contentDir, { recursive: true });
       await extractArchive(stagedContent, contentDir);
     }
-    await applyMember(path.join(stageDir, CONNECTIONS_MEMBER), connections);
-    await applyMember(path.join(stageDir, DRIVES_MEMBER), registry);
+    await copyFile(path.join(stageDir, CONNECTIONS_MEMBER), connections);
+    await copyFile(path.join(stageDir, DRIVES_MEMBER), registry);
 
     audit.info({ event: "drives_restored", path: registry }, "drives restored");
   });

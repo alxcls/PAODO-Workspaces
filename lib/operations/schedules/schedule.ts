@@ -76,8 +76,18 @@ function requireScheduleString(value: unknown, field: string): string {
  * reached `.trim()` as a number.
  */
 export function validateSchedule(input: ScheduleInput): ScheduleConfig {
+  // Checked first because it gates the prompt rule below. `enabled: "false"` is truthy, so coercing
+  // it would store a paused schedule as live and put a non-boolean in the file besides.
+  if (input.enabled !== undefined && typeof input.enabled !== "boolean") {
+    throw new ScheduleInvalidError("enabled must be a boolean", { field: "enabled" });
+  }
+  // Off unless a caller explicitly enables it — a schedule should never start firing from an omitted
+  // field, so the form, the API and any script all default to paused.
+  const enabled = input.enabled ?? false;
+
+  // A live schedule must have a prompt to fire; a paused one may be saved as a draft without one.
   const prompt = requireScheduleString(input.prompt ?? "", "prompt").trim();
-  if (!prompt) throw new ScheduleInvalidError("prompt is required", { field: "prompt" });
+  if (enabled && !prompt) throw new ScheduleInvalidError("prompt is required", { field: "prompt" });
 
   const intervalValue = input.intervalValue;
   if (!Number.isInteger(intervalValue) || (intervalValue as number) < MIN_INTERVAL_VALUE) {
@@ -120,13 +130,6 @@ export function validateSchedule(input: ScheduleInput): ScheduleConfig {
     }
   }
 
-  // Defaults to on: creating a schedule and leaving it paused is not what a caller asked for. Checked
-  // for type because `enabled: "false"` is truthy — coercing it would store a paused schedule as live,
-  // and store a non-boolean in the file besides.
-  if (input.enabled !== undefined && typeof input.enabled !== "boolean") {
-    throw new ScheduleInvalidError("enabled must be a boolean", { field: "enabled" });
-  }
-
   return {
     prompt,
     intervalValue: intervalValue as number,
@@ -134,7 +137,7 @@ export function validateSchedule(input: ScheduleInput): ScheduleConfig {
     startAt,
     ...(endAt ? { endAt } : {}),
     timezone,
-    enabled: input.enabled ?? true,
+    enabled,
   };
 }
 

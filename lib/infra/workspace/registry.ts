@@ -14,7 +14,7 @@ import { WORKSPACES_ROOT, workspaceRegistryFile } from "../paths";
 import type { IWorkspaceStore } from "../interfaces";
 import type { ReasoningEffort } from "../../models/llmSelection";
 import { setInternetAccessPolicy } from "../proxy/internetAccessPolicy";
-import { DEFAULT_MAX_RUN_MINUTES, normalizeMaxRunMinutes } from "../../workspace/limits";
+import { DEFAULT_MAX_ITERATIONS, DEFAULT_MAX_RUN_MINUTES, normalizeMaxRunMinutes } from "../../workspace/limits";
 import type { Workspace } from "../../workspace/types";
 import { assertWorkspaceRegistryRecords } from "../startupChecks";
 export type { Workspace } from "../../workspace/types";
@@ -99,7 +99,7 @@ export class WorkspaceStore implements IWorkspaceStore {
         name: r.name,
         dir,
         createdAt: new Date(r.createdAt),
-        maxIterations: r.maxIterations ?? 30,
+        maxIterations: r.maxIterations ?? DEFAULT_MAX_ITERATIONS,
         maxRunMinutes: normalizeMaxRunMinutes(r.maxRunMinutes),
         description: r.description,
         llmProvider: r.llmProvider,
@@ -194,7 +194,7 @@ export class WorkspaceStore implements IWorkspaceStore {
         name,
         dir,
         createdAt: new Date(),
-        maxIterations: 30,
+        maxIterations: DEFAULT_MAX_ITERATIONS,
         maxRunMinutes: DEFAULT_MAX_RUN_MINUTES,
         internetAccess: false,
       };

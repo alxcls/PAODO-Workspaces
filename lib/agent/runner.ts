@@ -35,6 +35,7 @@ import {
   type ProviderFailureCode,
 } from "./providerFailure";
 import { availableProviders } from "./buildModel";
+import { DEFAULT_MAX_ITERATIONS } from "@/lib/workspace/limits";
 
 const log = createLogger("agent");
 
@@ -157,7 +158,7 @@ export async function* runAgent(
   workspaceId: string,
   {
     signal,
-    maxIterations = 30,
+    maxIterations = DEFAULT_MAX_ITERATIONS,
     conversationId,
     notify,
     warmContainer,

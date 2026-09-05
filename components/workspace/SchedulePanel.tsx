@@ -62,7 +62,7 @@ const emptyForm = (): FormState => ({
   startAt: nowLocalInput(),
   endAt: "",
   timezone: browserTz(),
-  enabled: true,
+  enabled: false,
 });
 
 const endAtForInput = (endAt: string | undefined): string => {
@@ -386,6 +386,21 @@ export default function SchedulePanel({ workspaceId }: Props) {
   const [active, setActive] = useState(false);
   const close = useCallback(() => setOpen(false), []);
 
+  // Reflect a live schedule on the button without needing the modal opened first: the calendar icon
+  // reads purple whenever this workspace has an enabled schedule.
+  useEffect(() => {
+    let alive = true;
+    fetch(`/api/workspaces/${workspaceId}/schedule`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((s: ScheduleEntry | null) => {
+        if (alive) setActive(Boolean(s?.enabled));
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [workspaceId]);
+
   return (
     <>
       <button
@@ -394,7 +409,7 @@ export default function SchedulePanel({ workspaceId }: Props) {
         aria-label="Scheduled run"
         aria-expanded={open}
         onClick={() => setOpen(true)}
-        className={`btn btn-ghost btn-sm ${active ? "text-primary" : ""}`}
+        className={`btn btn-ghost btn-sm ${active ? "text-primary bg-primary-tint" : ""}`}
       >
         <CalendarIcon />
         <span>Schedule</span>

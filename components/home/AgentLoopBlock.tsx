@@ -4,6 +4,8 @@ import { useState, useEffect, useRef } from "react";
 import { isBoundedIntegerDraft } from "@/lib/client/integerDraft";
 import { confirmedValues } from "@/lib/client/workspaceReceipt";
 import {
+  DEFAULT_MAX_ITERATIONS,
+  DEFAULT_MAX_RUN_MINUTES,
   MAX_MAX_ITERATIONS,
   MAX_MAX_RUN_MINUTES,
   MIN_MAX_ITERATIONS,
@@ -15,10 +17,10 @@ const CONTROL_WIDTH = 80;
 const CONTROL_GAP = 8;
 
 export default function AgentLoopBlock({ wsId }: { wsId: string }) {
-  const [iterations, setIterations] = useState(30);
-  const [iterationsDraft, setIterationsDraft] = useState("30");
-  const [minutes, setMinutes] = useState(5);
-  const [minutesDraft, setMinutesDraft] = useState("5");
+  const [iterations, setIterations] = useState(DEFAULT_MAX_ITERATIONS);
+  const [iterationsDraft, setIterationsDraft] = useState(String(DEFAULT_MAX_ITERATIONS));
+  const [minutes, setMinutes] = useState(DEFAULT_MAX_RUN_MINUTES);
+  const [minutesDraft, setMinutesDraft] = useState(String(DEFAULT_MAX_RUN_MINUTES));
   const loadedForWsId = useRef<string | null>(null);
 
   useEffect(() => {
@@ -28,8 +30,8 @@ export default function AgentLoopBlock({ wsId }: { wsId: string }) {
       .then((r) => r.json())
       .then((d: { maxIterations?: number; maxRunMinutes?: number }) => {
         if (controller.signal.aborted) return;
-        const nextIterations = d.maxIterations ?? 30;
-        const nextMinutes = d.maxRunMinutes ?? 5;
+        const nextIterations = d.maxIterations ?? DEFAULT_MAX_ITERATIONS;
+        const nextMinutes = d.maxRunMinutes ?? DEFAULT_MAX_RUN_MINUTES;
         loadedForWsId.current = wsId;
         setIterations(nextIterations);
         setIterationsDraft(String(nextIterations));

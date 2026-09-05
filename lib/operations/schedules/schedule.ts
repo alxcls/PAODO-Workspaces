@@ -81,7 +81,9 @@ export function validateSchedule(input: ScheduleInput): ScheduleConfig {
   if (input.enabled !== undefined && typeof input.enabled !== "boolean") {
     throw new ScheduleInvalidError("enabled must be a boolean", { field: "enabled" });
   }
-  const enabled = input.enabled ?? true;
+  // Off unless a caller explicitly enables it — a schedule should never start firing from an omitted
+  // field, so the form, the API and any script all default to paused.
+  const enabled = input.enabled ?? false;
 
   // A live schedule must have a prompt to fire; a paused one may be saved as a draft without one.
   const prompt = requireScheduleString(input.prompt ?? "", "prompt").trim();

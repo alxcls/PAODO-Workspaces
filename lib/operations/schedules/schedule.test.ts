@@ -71,7 +71,7 @@ const stored: ScheduleEntry = {
 
 describe("schedule validation", () => {
   it("canonicalizes the values it accepts", () => {
-    expect(validateSchedule({ ...VALID, prompt: "  padded  ", endAt: "2026-08-01" })).toEqual({
+    expect(validateSchedule({ ...VALID, prompt: "  padded  ", endAt: "2026-08-01", enabled: true })).toEqual({
       prompt: "padded",
       intervalValue: 1,
       intervalUnit: "day",
@@ -82,10 +82,10 @@ describe("schedule validation", () => {
     });
   });
 
-  // Creating a schedule and leaving it paused is not what a caller asked for.
-  it("defaults enabled to true and treats a blank or null end bound as absent", () => {
-    expect(validateSchedule(VALID).enabled).toBe(true);
-    expect(validateSchedule({ ...VALID, enabled: false }).enabled).toBe(false);
+  // A schedule must never start firing from an omitted field, so an absent enable means paused.
+  it("defaults enabled to false and treats a blank or null end bound as absent", () => {
+    expect(validateSchedule(VALID).enabled).toBe(false);
+    expect(validateSchedule({ ...VALID, enabled: true }).enabled).toBe(true);
     expect(validateSchedule({ ...VALID, endAt: null })).not.toHaveProperty("endAt");
     expect(validateSchedule({ ...VALID, endAt: "   " })).not.toHaveProperty("endAt");
   });
@@ -100,7 +100,7 @@ describe("schedule validation", () => {
   // These messages are the whole contract for a caller with no form to validate against, so their
   // content is asserted rather than just the fact that something threw.
   it("names what it accepts on every rejection", () => {
-    expect(() => validateSchedule({ ...VALID, prompt: "   " })).toThrow("prompt is required");
+    expect(() => validateSchedule({ ...VALID, prompt: "   ", enabled: true })).toThrow("prompt is required");
     expect(() => validateSchedule({ ...VALID, intervalValue: 0 })).toThrow("intervalValue must be an integer >= 1");
     expect(() => validateSchedule({ ...VALID, intervalValue: 1.5 })).toThrow("intervalValue must be an integer >= 1");
     expect(() => validateSchedule({ ...VALID, intervalUnit: "fortnight" })).toThrow(
@@ -116,7 +116,8 @@ describe("schedule validation", () => {
 
   it("rejects a request that omits a required field rather than inventing a default", () => {
     for (const field of ["prompt", "intervalValue", "intervalUnit", "startAt", "timezone"] as const) {
-      const partial = { ...VALID };
+      // enabled: true so the prompt rule is in force — a paused schedule accepts an omitted prompt.
+      const partial: ScheduleInput = { ...VALID, enabled: true };
       delete partial[field];
       expect(() => validateSchedule(partial)).toThrow(AppError);
     }
@@ -145,7 +146,7 @@ describe("schedule validation", () => {
 describe("setting a workspace schedule", () => {
   it("mints an identity and computes the first run for a new schedule", () => {
     const schedules = fakeSchedules();
-    const entry = setWorkspaceSchedule("ws-1", VALID, deps(schedules));
+    const entry = setWorkspaceSchedule("ws-1", { ...VALID, enabled: true }, deps(schedules));
 
     expect(entry).toMatchObject({
       id: "generated-id",

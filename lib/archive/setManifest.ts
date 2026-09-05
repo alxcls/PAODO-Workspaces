@@ -9,6 +9,7 @@ export const SET_MANIFEST_MEMBER = "backup.json";
 export type SetEntry =
   | { kind: "graph"; file: string; bytes: number; sha256: string }
   | { kind: "database"; file: string; bytes: number; sha256: string }
+  | { kind: "drives"; file: string; bytes: number; sha256: string }
   | { kind: "workspace"; file: string; bytes: number; sha256: string; workspaceId: string };
 
 export interface BackupSet {

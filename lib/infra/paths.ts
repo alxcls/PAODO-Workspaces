@@ -13,6 +13,14 @@ export const workspaceRegistryFile = (root: string = WORKSPACES_ROOT): string =>
 /** The deployment-wide agent connection graph, read at startup and rewritten on every edit. */
 export const workspaceGraphFile = (root: string = WORKSPACES_ROOT): string => path.join(root, ".workspace-graph.json");
 
+/** The shared-drive registry and its workspace connections, siblings of the workspace registry. */
+export const drivesRegistryFile = (root: string = WORKSPACES_ROOT): string => path.join(root, ".drives.json");
+export const driveConnectionsFile = (root: string = WORKSPACES_ROOT): string =>
+  path.join(root, ".drive-connections.json");
+
+/** Root holding every drive's content, one `<driveId>/` subdir each. Never mounted into a container. */
+export const drivesContentDir = (root: string = WORKSPACES_ROOT): string => path.join(root, ".drives");
+
 /** Durable `/home/dev` for one workspace. Relative form is what the volume-subpath mount needs. */
 export const workspaceHomeSubpath = (workspaceId: string): string => `${HOMES_DIR_NAME}/${workspaceId}`;
 
@@ -31,3 +39,20 @@ export const workspaceHomeSeededMarker = (workspaceId: string, root: string = WO
  */
 export const workspaceAptRecipeFile = (workspaceId: string, root: string = WORKSPACES_ROOT): string =>
   `${workspaceHomeDir(workspaceId, root)}.apt.json`;
+
+/** A workspace's work-tree directory, keyed by its immutable id. */
+export const workspaceDir = (workspaceId: string, root: string = WORKSPACES_ROOT): string =>
+  path.join(root, workspaceId);
+
+/** The workspace's versioning git-dir, held outside the work-tree so the agent never sees it. */
+export const workspaceVersioningDir = (workspaceId: string, root: string = WORKSPACES_ROOT): string =>
+  path.join(root, ".versioning", workspaceId);
+
+/** Every on-disk artifact a workspace owns — the footprint restore rebuilds and a prune removes. */
+export const workspaceArtifactPaths = (workspaceId: string, root: string = WORKSPACES_ROOT): string[] => [
+  workspaceDir(workspaceId, root),
+  workspaceHomeDir(workspaceId, root),
+  workspaceVersioningDir(workspaceId, root),
+  workspaceAptRecipeFile(workspaceId, root),
+  workspaceHomeSeededMarker(workspaceId, root),
+];

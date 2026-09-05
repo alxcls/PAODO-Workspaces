@@ -14,7 +14,7 @@
 import path from "path";
 import fs from "fs";
 import { rm } from "fs/promises";
-import { WORKSPACES_ROOT } from "../infra/paths";
+import { drivesRegistryFile, driveConnectionsFile, drivesContentDir } from "../infra/paths";
 import { atomicSaveJson } from "../infra/jsonPersist";
 import { createLogger } from "../infra/logger";
 import { DriveNameError, normalizeForUniqueness, validateDriveName } from "./name";
@@ -37,9 +37,9 @@ export interface DriveConnection {
   targetHandle?: string;
 }
 
-const DRIVES_FILE = path.join(WORKSPACES_ROOT, ".drives.json");
-const CONNECTIONS_FILE = path.join(WORKSPACES_ROOT, ".drive-connections.json");
-const DRIVES_DIR = path.join(WORKSPACES_ROOT, ".drives");
+const DRIVES_FILE = drivesRegistryFile();
+const CONNECTIONS_FILE = driveConnectionsFile();
+const DRIVES_DIR = drivesContentDir();
 
 function readJson<T>(file: string, fallback: T): T {
   try {

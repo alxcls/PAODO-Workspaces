@@ -1,11 +1,18 @@
 // Restores one workspace from its archive: the inverse of archiveWorkspace. Rebuilds the durable
 // home, apt recipe and versioning repo (checked out into the work-tree), keyed by the original id.
-import { mkdtemp, rm, copyFile, mkdir, writeFile, readFile } from "fs/promises";
-import os from "os";
+import { copyFile, mkdir, writeFile, readFile } from "fs/promises";
 import path from "path";
-import { extractArchive, exists, removeTree } from "../archive/core";
+import { withExtractedArchive, extractArchive, exists, removeTree } from "../archive/core";
 import { createAuditLogger } from "../logger";
-import { WORKSPACES_ROOT, workspaceHomeDir, workspaceAptRecipeFile, workspaceHomeSeededMarker } from "../paths";
+import {
+  WORKSPACES_ROOT,
+  workspaceDir,
+  workspaceHomeDir,
+  workspaceVersioningDir,
+  workspaceAptRecipeFile,
+  workspaceHomeSeededMarker,
+  workspaceArtifactPaths,
+} from "../paths";
 import { GitClient, type IGitClient } from "../git/gitClient";
 import { MANIFEST_MEMBER, type ArchiveManifest } from "../../archive/manifest";
 import { APT_MEMBER, FILES_MEMBER, HOME_MEMBER, isWorkspaceManifest } from "../../workspace/archive";
@@ -48,25 +55,21 @@ export async function applyWorkspaceArchive(
 ): Promise<WorkspaceApplied> {
   const root = opts.rootDir ?? WORKSPACES_ROOT;
   const git = opts.git ?? new GitClient();
-  let stageDir: string | undefined;
-  try {
-    stageDir = await mkdtemp(path.join(os.tmpdir(), "paodo-ws-restore-"));
-    await extractArchive(archivePath, stageDir);
-
+  return withExtractedArchive(archivePath, async (stageDir) => {
     const manifest = JSON.parse(await readFile(path.join(stageDir, MANIFEST_MEMBER), "utf-8")) as ArchiveManifest;
     if (!isWorkspaceManifest(manifest)) throw new Error(`${archivePath} is not a workspace archive`);
     const { id, name } = manifest.workspace;
 
-    const workspaceDir = path.join(root, id);
+    const wsDir = workspaceDir(id, root);
     const homeDir = workspaceHomeDir(id, root);
-    const gitDir = path.join(root, ".versioning", id);
+    const gitDir = workspaceVersioningDir(id, root);
     const aptFile = workspaceAptRecipeFile(id, root);
 
-    if (!opts.force && ((await exists(workspaceDir)) || (await exists(homeDir)))) {
+    if (!opts.force && ((await exists(wsDir)) || (await exists(homeDir)))) {
       throw new Error(`refusing to overwrite workspace ${id} without force`);
     }
-    for (const target of [workspaceDir, homeDir, gitDir, aptFile]) await removeTree(target);
-    await mkdir(workspaceDir, { recursive: true });
+    for (const target of workspaceArtifactPaths(id, root)) await removeTree(target);
+    await mkdir(wsDir, { recursive: true });
     await mkdir(homeDir, { recursive: true });
 
     if (await exists(path.join(stageDir, HOME_MEMBER))) await extractArchive(path.join(stageDir, HOME_MEMBER), homeDir);
@@ -74,12 +77,10 @@ export async function applyWorkspaceArchive(
     await writeFile(workspaceHomeSeededMarker(id, root), "");
     if (await exists(path.join(stageDir, APT_MEMBER))) await copyFile(path.join(stageDir, APT_MEMBER), aptFile);
     if (await exists(path.join(stageDir, FILES_MEMBER))) {
-      await restoreVersioning(git, gitDir, workspaceDir, path.join(stageDir, FILES_MEMBER));
+      await restoreVersioning(git, gitDir, wsDir, path.join(stageDir, FILES_MEMBER));
     }
 
     audit.info({ event: "workspace_restored", workspaceId: id, name }, "workspace restored");
     return { id, name };
-  } finally {
-    if (stageDir) await rm(stageDir, { recursive: true, force: true });
-  }
+  });
 }

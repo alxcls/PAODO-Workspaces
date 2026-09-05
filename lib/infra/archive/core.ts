@@ -3,7 +3,7 @@
 import { spawn, execFileSync } from "child_process";
 import { createHash } from "crypto";
 import { createReadStream } from "fs";
-import { mkdir, stat, access, rm } from "fs/promises";
+import { mkdir, mkdtemp, stat, access, rm } from "fs/promises";
 import os from "os";
 import path from "path";
 import { SpawnCapture } from "../spawnCapture";
@@ -170,6 +170,20 @@ export async function extractArchive(archivePath: string, into: string): Promise
   await mkdir(into, { recursive: true });
   const result = await run("tar", ["-xf", path.resolve(archivePath), "-C", into]);
   if (result.code !== 0) throw new Error(`tar extract of ${archivePath} failed: ${result.stderr || result.stdout}`);
+}
+
+/** Extracts an archive into a throwaway staging dir, runs `fn` over it, and always cleans it up. */
+export async function withExtractedArchive<T>(
+  archivePath: string,
+  fn: (stageDir: string) => Promise<T>,
+): Promise<T> {
+  const stageDir = await mkdtemp(path.join(os.tmpdir(), "paodo-restore-"));
+  try {
+    await extractArchive(archivePath, stageDir);
+    return await fn(stageDir);
+  } finally {
+    await rm(stageDir, { recursive: true, force: true });
+  }
 }
 
 /**

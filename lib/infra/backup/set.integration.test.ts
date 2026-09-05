@@ -97,7 +97,7 @@ describe("archiveSet (real tar)", () => {
     const { setDir, manifest } = await run();
 
     const kinds = manifest.entries.map((e) => e.kind).sort();
-    expect(kinds).toEqual(["database", "graph", "workspace"]);
+    expect(kinds).toEqual(["database", "drives", "graph", "workspace"]);
 
     const ws = manifest.entries.find((e) => e.kind === "workspace");
     expect(ws).toMatchObject({ kind: "workspace", workspaceId: WS_ID });

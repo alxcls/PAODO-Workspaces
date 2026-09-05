@@ -62,6 +62,18 @@ function seedFilesystem(): void {
       2,
     ),
   );
+
+  fs.writeFileSync(
+    path.join(root, ".drives.json"),
+    JSON.stringify([{ id: "drive-1", name: "Shared", createdAt: "2026-02-03T04:05:06.000Z" }]),
+  );
+  fs.writeFileSync(
+    path.join(root, ".drive-connections.json"),
+    JSON.stringify([{ id: "link_1", driveId: "drive-1", workspaceId: WS_ID }]),
+  );
+  const driveContent = path.join(root, ".drives", "drive-1");
+  fs.mkdirSync(driveContent, { recursive: true });
+  fs.writeFileSync(path.join(driveContent, "shared.txt"), "drive payload\n");
 }
 
 async function freshModules() {
@@ -78,7 +90,7 @@ async function freshModules() {
 
 function wipeLiveState(invalidate: () => void): void {
   invalidate();
-  for (const rel of [WS_ID, ".versioning", ".homes", ".workspace-graph.json", ".workspaces.json"]) {
+  for (const rel of [WS_ID, ".versioning", ".homes", ".workspace-graph.json", ".workspaces.json", ".drives.json", ".drive-connections.json", ".drives"]) {
     fs.rmSync(path.join(root, rel), { recursive: true, force: true });
   }
   for (const sfx of ["", "-wal", "-shm"]) fs.rmSync(path.join(root, `.paodo.db${sfx}`), { force: true });
@@ -130,6 +142,12 @@ describe("restoreSet (real tar/git/sqlite)", () => {
     const registry = JSON.parse(fs.readFileSync(path.join(root, ".workspaces.json"), "utf-8"));
     expect(registry[0]).toMatchObject({ id: WS_ID, name: WS_NAME });
 
+    const drives = JSON.parse(fs.readFileSync(path.join(root, ".drives.json"), "utf-8"));
+    expect(drives[0]).toMatchObject({ id: "drive-1", name: "Shared" });
+    const connections = JSON.parse(fs.readFileSync(path.join(root, ".drive-connections.json"), "utf-8"));
+    expect(connections[0]).toMatchObject({ driveId: "drive-1", workspaceId: WS_ID });
+    expect(fs.readFileSync(path.join(root, ".drives", "drive-1", "shared.txt"), "utf-8")).toBe("drive payload\n");
+
     const row = database.appDataDb().prepare("SELECT title FROM conversations WHERE workspace_id = ?").get(WS_ID) as
       | { title: string }
       | undefined;
@@ -172,6 +190,47 @@ describe("restoreSet (real tar/git/sqlite)", () => {
     expect(fs.existsSync(path.join(target, ".paodo.db"))).toBe(false);
     expect(fs.existsSync(path.join(target, WS_ID))).toBe(false);
     fs.rmSync(target, { recursive: true, force: true });
+    database.invalidateAppDataDb();
+  });
+
+  it("restores a legacy set that predates the drives component", async () => {
+    const { setDir, restoreSet, database } = await buildSet();
+
+    const manifestPath = path.join(setDir, "backup.json");
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf-8"));
+    manifest.entries = manifest.entries.filter((e: { kind: string }) => e.kind !== "drives");
+    fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
+
+    wipeLiveState(database.invalidateAppDataDb);
+    await expect(restoreSet(setDir, { rootDir: root, force: true })).resolves.toBeTruthy();
+    expect(fs.existsSync(path.join(root, ".drives.json"))).toBe(false);
+    expect(fs.existsSync(path.join(root, WS_ID))).toBe(true);
+    database.invalidateAppDataDb();
+  });
+
+  it("prunes a workspace that drifted in after the snapshot", async () => {
+    const { setDir, restoreSet, database } = await buildSet();
+
+    // The box moves forward: a second workspace B appears on disk and in the registry after capture.
+    const bDir = path.join(root, "ws-B");
+    const bHome = path.join(root, ".homes", "ws-B");
+    fs.mkdirSync(bDir, { recursive: true });
+    fs.writeFileSync(path.join(bDir, "b.txt"), "b content\n");
+    fs.mkdirSync(bHome, { recursive: true });
+    fs.writeFileSync(
+      path.join(root, ".workspaces.json"),
+      JSON.stringify([
+        { id: WS_ID, name: WS_NAME },
+        { id: "ws-B", name: "Drifted" },
+      ]),
+    );
+    database.invalidateAppDataDb();
+
+    const result = await restoreSet(setDir, { rootDir: root, force: true });
+    expect(result.pruned).toEqual(["ws-B"]);
+    expect(fs.existsSync(bDir)).toBe(false);
+    expect(fs.existsSync(bHome)).toBe(false);
+    expect(fs.existsSync(path.join(root, WS_ID))).toBe(true);
     database.invalidateAppDataDb();
   });
 

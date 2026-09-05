@@ -15,12 +15,13 @@ async function main(): Promise<void> {
   const setDir = args.find((arg) => !arg.startsWith("--"));
   if (!setDir) throw new Error(USAGE);
 
-  const { manifest, workspaces } = await restoreSet(setDir, { force });
+  const { manifest, workspaces, pruned } = await restoreSet(setDir, { force });
 
   console.log(`Restored set ${manifest.instance}/${manifest.id} captured ${manifest.source.capturedAt}.`);
   const names = workspaces.map((w) => `${w.name} (${w.id})`).join(", ");
   console.log(`Workspaces: ${workspaces.length ? names : "none"}`);
-  console.log("Database, registry and graph restored. Restart the app to load the restored state.");
+  if (pruned.length) console.log(`Pruned ${pruned.length} workspace(s) absent from the set: ${pruned.join(", ")}`);
+  console.log("Database, registry, graph and drives restored. Restart the app to load the restored state.");
 }
 
 void main().catch((error: unknown) => {

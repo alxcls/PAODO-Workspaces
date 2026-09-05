@@ -19,6 +19,7 @@
     "update-pricing": "tsx scripts/update-pricing.ts",
     "backup:all": "tsx scripts/backup-all.ts",
     "backup:database": "tsx scripts/backup-database.ts",
+    "backup:drives": "tsx scripts/backup-drives.ts",
     "backup:graph": "tsx scripts/backup-graph.ts",
     "backup:workspace": "tsx scripts/backup-workspace.ts",
     "backup:offsite": "bash scripts/backup-offsite.sh",

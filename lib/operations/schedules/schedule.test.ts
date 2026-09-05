@@ -90,6 +90,13 @@ describe("schedule validation", () => {
     expect(validateSchedule({ ...VALID, endAt: "   " })).not.toHaveProperty("endAt");
   });
 
+  // A paused schedule is a draft: it never fires, so an empty prompt is allowed and only becomes
+  // required when the schedule is set live.
+  it("requires a prompt only when the schedule is enabled", () => {
+    expect(validateSchedule({ ...VALID, prompt: "  ", enabled: false }).prompt).toBe("");
+    expect(() => validateSchedule({ ...VALID, prompt: "  ", enabled: true })).toThrow("prompt is required");
+  });
+
   // These messages are the whole contract for a caller with no form to validate against, so their
   // content is asserted rather than just the fact that something threw.
   it("names what it accepts on every rejection", () => {

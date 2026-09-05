@@ -1,7 +1,7 @@
 # Offsite backups with restic
 
 One responsibility each: **PAODO's only job is to build a correct, self-describing backup set** (graph
-+ database + workspaces + manifest) with `npm run backup:all`. **Restic owns everything after that** —
++ database + drives + workspaces + manifest) with `npm run backup:all`. **Restic owns everything after that** —
 pushing it offsite, encrypting, deduping, pruning, and checking the repository. The app itself no
 longer talks to S3 at all.
 
@@ -108,8 +108,10 @@ docker compose -f docker-compose.yml -f docker-compose.workspace-api.yml start a
 `backup:restore` **verifies every archive against `backup.json` and its own manifest before writing a
 byte** — a torn set, or one from another deployment, aborts with nothing changed. It then restores in
 dependency order: workspaces (durable home + versioning history checked back out), then the database
-and its registry, then the graph. Everything is keyed by each workspace's **original id**, so
-conversation rows and graph edges stay connected.
+and its registry, then the drives (registry, connections and content), then the graph. Everything is
+keyed by each workspace's **original id**, so conversation rows, drive connections and graph edges
+stay connected. A set captured before drives were a component simply carries no drives archive, and
+restore skips it.
 
 Overwriting existing live state, or restoring a set captured on a **different** deployment, requires
 `--force` (append it after `/restore`). A restore onto a healthy box is refused without it.

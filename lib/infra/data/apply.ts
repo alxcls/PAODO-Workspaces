@@ -1,9 +1,8 @@
 // Restores the database and workspace registry from their archive: the inverse of archiveDatabase.
 // Refuses a DB from newer code and clears the stale WAL sidecar so no old-log replay corrupts it.
-import { mkdtemp, rm, copyFile, mkdir, readFile } from "fs/promises";
-import os from "os";
+import { rm, copyFile, mkdir, readFile } from "fs/promises";
 import path from "path";
-import { extractArchive, exists } from "../archive/core";
+import { withExtractedArchive, exists } from "../archive/core";
 import { createAuditLogger } from "../logger";
 import { workspaceRegistryFile } from "../paths";
 import { PAODO_DB_FILE, invalidateAppDataDb } from "../../data/database";
@@ -24,11 +23,7 @@ export interface DatabaseApplyOptions {
 
 export async function applyDatabaseArchive(archivePath: string, opts: DatabaseApplyOptions = {}): Promise<void> {
   const root = opts.rootDir ?? path.dirname(PAODO_DB_FILE);
-  let stageDir: string | undefined;
-  try {
-    stageDir = await mkdtemp(path.join(os.tmpdir(), "paodo-db-restore-"));
-    await extractArchive(archivePath, stageDir);
-
+  await withExtractedArchive(archivePath, async (stageDir) => {
     const manifest = JSON.parse(
       await readFile(path.join(stageDir, MANIFEST_MEMBER), "utf-8"),
     ) as DatabaseArchiveManifest;
@@ -48,11 +43,10 @@ export async function applyDatabaseArchive(archivePath: string, opts: DatabaseAp
     await mkdir(root, { recursive: true });
     for (const sidecar of [`${dbTarget}-wal`, `${dbTarget}-shm`]) await rm(sidecar, { force: true });
     await copyFile(path.join(stageDir, DATABASE_MEMBER), dbTarget);
-    if (await exists(path.join(stageDir, REGISTRY_MEMBER))) {
-      await copyFile(path.join(stageDir, REGISTRY_MEMBER), workspaceRegistryFile(root));
-    }
+    // Authoritative like the db itself: a set captured with no registry clears the live one.
+    const stagedRegistry = path.join(stageDir, REGISTRY_MEMBER);
+    if (await exists(stagedRegistry)) await copyFile(stagedRegistry, workspaceRegistryFile(root));
+    else await rm(workspaceRegistryFile(root), { force: true });
     audit.info({ event: "database_restored", path: dbTarget }, "database restored");
-  } finally {
-    if (stageDir) await rm(stageDir, { recursive: true, force: true });
-  }
+  });
 }

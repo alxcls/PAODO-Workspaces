@@ -6,6 +6,7 @@ import { randomBytes } from "crypto";
 import { writeFile } from "fs/promises";
 import { archiveGraph } from "../graph/archive";
 import { archiveDatabase } from "../data/archive";
+import { archiveDrives } from "../drives/archive";
 import { archiveWorkspace } from "../workspace/archive";
 import { archiveSource, archiveStamp, sha256File, slugify } from "../archive/core";
 import { hashDockerfile } from "../docker/dockerfileHasher";
@@ -68,7 +69,11 @@ export async function archiveSet(dest: string, opts: SetArchiveOptions = {}): Pr
     };
     const workspaces = opts.workspaces ?? getStore().listWorkspaces();
 
-    const archives: Archived[] = [await archiveGraph(setDir), await archiveDatabase(setDir)];
+    const archives: Archived[] = [
+      await archiveGraph(setDir),
+      await archiveDatabase(setDir),
+      await archiveDrives(setDir, { rootDir: opts.rootDir }),
+    ];
     for (const workspace of workspaces) {
       archives.push(await archiveWorkspace(workspace, setDir, { image, rootDir: opts.rootDir }));
     }

@@ -4,7 +4,7 @@
 export const MANIFEST_MEMBER = "manifest.json";
 
 /** What the archive holds. Restore dispatches on this rather than guessing from the filename. */
-export type ArchiveKind = "workspace" | "database" | "graph";
+export type ArchiveKind = "workspace" | "database" | "graph" | "drives";
 
 /**
  * Every manifest format in one registry — the three leaf archives and the "set" parent. Per kind,
@@ -15,6 +15,7 @@ export const SCHEMA_VERSIONS: Record<ArchiveKind | "set", number> = {
   workspace: 1,
   database: 1,
   graph: 1,
+  drives: 1,
   set: 1,
 };
 

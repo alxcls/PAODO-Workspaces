@@ -219,6 +219,15 @@ describe("archiveWorkspace (real git + tar)", () => {
     fs.rmSync(scratch, { recursive: true, force: true });
   });
 
+  it("fails loudly when the versioning repo is unreadable, rather than dropping its files silently", async () => {
+    // The original bug: a git error was treated as "no commits", so a broken repo shipped a fileless
+    // archive that read as successful. Force an error --work-tree cannot fix (unsupported repo format).
+    const gitDir = path.join(root, ".versioning", ID);
+    execFileSync("git", ["--git-dir", gitDir, "config", "core.repositoryformatversion", "99"]);
+
+    await expect(archiveWorkspace(workspace, out, { rootDir: root })).rejects.toThrow(/for-each-ref/);
+  });
+
   it("archives a workspace that has no snapshots yet", async () => {
     fs.rmSync(path.join(root, ".versioning"), { recursive: true, force: true });
     const result = await archiveWorkspace(workspace, out, { rootDir: root });

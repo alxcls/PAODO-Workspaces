@@ -14,7 +14,7 @@ import {
   writeArchive,
 } from "../archive/core";
 import { createAuditLogger, createLogger } from "../logger";
-import { WORKSPACES_ROOT, workspaceHomeDir, workspaceAptRecipeFile } from "../paths";
+import { WORKSPACES_ROOT, workspaceDir, workspaceHomeDir, workspaceAptRecipeFile } from "../paths";
 import { GitClient, type IGitClient } from "../git/gitClient";
 import { SCHEMA_VERSIONS, MANIFEST_MEMBER } from "../../archive/manifest";
 import {
@@ -63,11 +63,17 @@ export function archiveFileName(workspace: Workspace, deployment: string, at: Da
  * Bundles the workspace's snapshot history. A workspace whose versioning repo has no commits yet
  * yields no member rather than a failure — `git bundle` refuses to write an empty bundle.
  */
-async function writeFilesBundle(git: IGitClient, gitDir: string, out: string): Promise<boolean> {
+async function writeFilesBundle(git: IGitClient, gitDir: string, workTree: string, out: string): Promise<boolean> {
   if (!(await exists(gitDir))) return false;
-  const refs = await git.run(["--git-dir", gitDir, "for-each-ref", "--count=1", "--format=%(refname)"]);
-  if (refs.code !== 0 || !refs.stdout) return false;
-  const bundle = await git.run(["--git-dir", gitDir, "bundle", "create", out, "--all"]);
+  // Like every runtime git caller (workspaceVersioning.base), pass --work-tree explicitly. Omitting
+  // it falls back to the repo's stored core.worktree — an absolute path a moved root leaves stale.
+  const at = ["--git-dir", gitDir, "--work-tree", workTree];
+  const refs = await git.run([...at, "for-each-ref", "--count=1", "--format=%(refname)"]);
+  // A git failure is not an empty repo: conflating the two is how a broken repo shipped a fileless
+  // archive that read as successful. Only a clean run with no refs is a legitimate skip.
+  if (refs.code !== 0) throw new Error(`git for-each-ref failed: ${refs.stderr || refs.stdout}`);
+  if (!refs.stdout) return false;
+  const bundle = await git.run([...at, "bundle", "create", out, "--all"]);
   if (bundle.code !== 0) throw new Error(`git bundle failed: ${bundle.stderr || bundle.stdout}`);
   return true;
 }
@@ -127,7 +133,8 @@ export async function archiveWorkspace(
     }
 
     const gitDir = path.join(root, ".versioning", workspace.id);
-    if (await writeFilesBundle(git, gitDir, path.join(stageDir, FILES_MEMBER))) present.push(FILES_MEMBER);
+    const workTree = workspaceDir(workspace.id, root);
+    if (await writeFilesBundle(git, gitDir, workTree, path.join(stageDir, FILES_MEMBER))) present.push(FILES_MEMBER);
 
     const homeDir = workspaceHomeDir(workspace.id, root);
     if (await writeHomeArchive(homeDir, path.join(stageDir, HOME_MEMBER))) present.push(HOME_MEMBER);

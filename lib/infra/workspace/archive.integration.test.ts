@@ -202,6 +202,23 @@ describe("archiveWorkspace (real git + tar)", () => {
     await expect(archiveWorkspace(workspace, first.path, { rootDir: root })).rejects.toThrow(/Refusing to overwrite/);
   });
 
+  it("still captures the file history when the repo's stored worktree path is stale", async () => {
+    // Reproduces the migration failure: a repo created under an old root keeps an absolute
+    // core.worktree that no longer exists, which the backup must survive rather than skip the bundle.
+    const gitDir = path.join(root, ".versioning", ID);
+    execFileSync("git", ["--git-dir", gitDir, "config", "core.worktree", `/app/data/${ID}`]);
+
+    const { path: archive } = await archiveWorkspace(workspace, out, { rootDir: root });
+    expect(listMembers(archive)).toContain("files.bundle");
+
+    const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "archive-stale-"));
+    execFileSync("tar", ["-xf", archive, "-C", scratch, "files.bundle"]);
+    const clone = path.join(scratch, "restored");
+    execFileSync("git", ["clone", "-q", path.join(scratch, "files.bundle"), clone]);
+    expect(fs.readFileSync(path.join(clone, "report.md"), "utf-8")).toBe("quarterly numbers\n");
+    fs.rmSync(scratch, { recursive: true, force: true });
+  });
+
   it("archives a workspace that has no snapshots yet", async () => {
     fs.rmSync(path.join(root, ".versioning"), { recursive: true, force: true });
     const result = await archiveWorkspace(workspace, out, { rootDir: root });

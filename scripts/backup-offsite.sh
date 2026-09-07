@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Nightly offsite backup for one box. Builds a full set with the app's own backup:all, then hands it
+# Nightly offsite backup for one box. Builds a full set with the app's own backup, then hands it
 # to restic, which ships only the changed chunks to S3 and prunes old snapshots. The app's
 # set-building code is untouched; restic owns dedup, retention and integrity.
 #
@@ -60,7 +60,7 @@ cleanup() {
 trap cleanup EXIT
 
 log "building set inside the $APP_SERVICE container…"
-docker compose $COMPOSE_FILES exec -T "$APP_SERVICE" sh -lc "rm -rf '$CONTAINER_STAGING' && npm run backup:all -- '$CONTAINER_STAGING'"
+docker compose $COMPOSE_FILES exec -T "$APP_SERVICE" sh -lc "rm -rf '$CONTAINER_STAGING' && npm run backup -- '$CONTAINER_STAGING'"
 
 log "copying set out to the host…"
 rm -rf "$HOST_STAGING"; mkdir -p "$HOST_STAGING"

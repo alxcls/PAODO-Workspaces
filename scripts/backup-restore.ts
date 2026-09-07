@@ -4,10 +4,12 @@ import "dotenv/config";
 import { restoreSet } from "../lib/infra/backup/restoreSet";
 
 const USAGE = `Usage:
-  npm run backup:restore -- <set-dir> [--force]
+  npm run restore -- <set-dir> [--force]
 
-Applies a restic-restored backup set back onto this deployment. Overwriting existing state,
-or restoring a set captured on another deployment, requires --force.`;
+Applies a restic-restored backup set back onto this deployment as one coherent unit — db, graph,
+drives, registry and every workspace it holds. There is no per-store restore by design: those stores
+reference each other, so only a whole set restores consistently. Overwriting existing state, or
+restoring a set captured on another deployment, requires --force.`;
 
 async function main(): Promise<void> {
   const args = process.argv.slice(2);

@@ -6,7 +6,7 @@ import { reportArchived } from "./archiveCli";
 import { SET_MANIFEST_MEMBER } from "../lib/archive/setManifest";
 
 const USAGE = `Usage:
-  npm run backup:all -- <destination-dir>`;
+  npm run backup -- <destination-dir>`;
 
 async function main(): Promise<void> {
   const args = process.argv.slice(2);

@@ -5,7 +5,12 @@ import { useState, useRef, useEffect, memo } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import TokenUsageLine from "@/components/usage/TokenUsageLine";
+import MentionMenu from "@/components/workspace/MentionMenu";
 import { useAgentStream, toolLabel, type Message, type PacedState } from "@/lib/client/hooks/useAgentStream";
+import { useMentionCandidates } from "@/lib/client/hooks/useMentionCandidates";
+import type { TreeNode } from "@/lib/client/hooks/useFileOperations";
+import { activeMention, applyMention } from "@/lib/client/mentionQuery";
+import { filterMentions } from "@/lib/client/mentionFilter";
 import type { InitialConversation } from "@/lib/client/hooks/useConversations";
 
 // Borrows the tool-row shape on purpose: a rate-limit wait is work being done to us, so it reads as
@@ -163,6 +168,9 @@ export default function ChatPanel({
   onRunStart?: () => void;
 }) {
   const [draft, setDraft] = useState("");
+  const [mention, setMention] = useState<{ start: number; query: string } | null>(null);
+  const [activeIndex, setActiveIndex] = useState(0);
+  const { candidates, refresh: refreshMentions } = useMentionCandidates(workspaceId);
   const bottomRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
@@ -236,10 +244,38 @@ export default function ChatPanel({
     return () => document.removeEventListener("keydown", onKeyDown);
   }, [streaming, stop]);
 
+  const mentionItems = mention ? filterMentions(candidates, mention.query, 10) : [];
+  const menuOpen = mention !== null && mentionItems.length > 0;
+
+  function syncMention(value: string, caret: number) {
+    const m = activeMention(value, caret);
+    setMention(m);
+    setActiveIndex(0);
+    // Refetch only as the menu opens (closed -> open), so a fresh list appears each time you type "@"
+    // without a request on every keystroke while narrowing the query.
+    if (m && !mention) void refreshMentions();
+  }
+
+  function selectMention(node: TreeNode) {
+    const ta = taRef.current;
+    if (!mention || !ta) return;
+    const caret = ta.selectionStart ?? draft.length;
+    const { text, caret: next } = applyMention(draft, caret, mention.start, node.path, node.type === "directory");
+    setDraft(text);
+    setMention(null);
+    requestAnimationFrame(() => {
+      ta.focus();
+      ta.selectionStart = ta.selectionEnd = next;
+      ta.style.height = "auto";
+      ta.style.height = Math.min(ta.scrollHeight, 120) + "px";
+    });
+  }
+
   function handleSubmit() {
     if (!draft.trim() || streaming || !conversationId) return;
     const msg = draft.trim();
     setDraft("");
+    setMention(null);
     if (taRef.current) taRef.current.style.height = "auto";
     pinnedRef.current = true;
     sendMessage(msg);
@@ -275,7 +311,15 @@ export default function ChatPanel({
         <div ref={bottomRef} />
       </div>
 
-      <div className="flex items-end gap-2 px-3.5 pb-4 pt-3 border-t border-border bg-bg flex-shrink-0">
+      <div className="relative flex items-end gap-2 px-3.5 pb-4 pt-3 border-t border-border bg-bg flex-shrink-0">
+        {menuOpen && (
+          <MentionMenu
+            items={mentionItems}
+            activeIndex={activeIndex}
+            onHover={setActiveIndex}
+            onSelect={selectMention}
+          />
+        )}
         <textarea
           ref={taRef}
           className="textarea min-h-[38px] max-h-[120px] overflow-auto"
@@ -288,8 +332,38 @@ export default function ChatPanel({
             t.style.height = "auto";
             t.style.height = Math.min(t.scrollHeight, 120) + "px";
           }}
-          onChange={(e) => setDraft(e.target.value)}
+          onChange={(e) => {
+            setDraft(e.target.value);
+            syncMention(e.target.value, e.target.selectionStart ?? e.target.value.length);
+          }}
+          onSelect={(e) => {
+            const t = e.target as HTMLTextAreaElement;
+            syncMention(t.value, t.selectionStart ?? t.value.length);
+          }}
+          onBlur={() => setMention(null)}
           onKeyDown={(e) => {
+            if (menuOpen) {
+              if (e.key === "ArrowDown") {
+                e.preventDefault();
+                setActiveIndex((i) => (i + 1) % mentionItems.length);
+                return;
+              }
+              if (e.key === "ArrowUp") {
+                e.preventDefault();
+                setActiveIndex((i) => (i - 1 + mentionItems.length) % mentionItems.length);
+                return;
+              }
+              if (e.key === "Enter" || e.key === "Tab") {
+                e.preventDefault();
+                selectMention(mentionItems[activeIndex]);
+                return;
+              }
+              if (e.key === "Escape") {
+                e.preventDefault();
+                setMention(null);
+                return;
+              }
+            }
             if (e.key === "Enter" && !e.shiftKey) {
               e.preventDefault();
               handleSubmit();

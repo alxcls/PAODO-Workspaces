@@ -88,7 +88,10 @@ describe("WorkspaceVersioning", () => {
     await ver.initRepo(ID, DIR);
     for (const j of joinedCalls(git)) {
       expect(j).toContain(`--git-dir ${path.join(ROOT, ".versioning", "ws-1")}`);
-      expect(j).toContain("--work-tree /tmp/ws");
+      // `init` alone omits --work-tree so git never persists an absolute core.worktree a moved root
+      // would leave stale; every other command targets the work-tree explicitly.
+      if (j.endsWith(" init")) expect(j).not.toContain("--work-tree");
+      else expect(j).toContain("--work-tree /tmp/ws");
     }
   });
 

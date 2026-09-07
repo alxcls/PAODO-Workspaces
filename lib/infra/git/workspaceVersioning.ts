@@ -125,7 +125,9 @@ export class WorkspaceVersioning implements IWorkspaceVersioning {
   // Idempotent: `git init` is safe to re-run, so we always init then commit only if HEAD is absent.
   private async _initRepo(workspaceId: string, workspaceDir: string): Promise<void> {
     await mkdir(path.dirname(this.gitDirFor(workspaceId)), { recursive: true });
-    const init = await this.git.run([...this.base(workspaceId, workspaceDir), "init"]);
+    // init WITHOUT --work-tree: with our git-dir outside the tree, init would otherwise persist
+    // core.worktree as an absolute path, coupling the repo to today's root and breaking on a move.
+    const init = await this.git.run(["--git-dir", this.gitDirFor(workspaceId), "init"]);
     if (init.code !== 0) throw new Error(`git init failed: ${init.stderr || init.stdout}`);
     if (await this.headSha(workspaceId, workspaceDir)) return; // already has a root commit
     await this.addAll(workspaceId, workspaceDir);

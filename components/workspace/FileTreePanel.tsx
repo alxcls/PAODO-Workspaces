@@ -153,10 +153,13 @@ export default function FileTreePanel({
     return upload.uploadFolder(files);
   };
 
-  // Only pop up once the upload has actually finished (status back to null) and something failed
-  // to upload — a plain, silent success shows nothing.
+  // Pop up once the upload has finished (status back to null) and there's something to report —
+  // a genuine failure, or files the ignore rule left out. A plain, silent success shows nothing.
   const showResults =
-    !resultsDismissed && upload.status === null && upload.summary !== null && upload.summary.failed.length > 0;
+    !resultsDismissed &&
+    upload.status === null &&
+    upload.summary !== null &&
+    (upload.summary.failed.length > 0 || upload.summary.excluded > 0);
 
   const handleExternalDragOver = (event: DragEvent) => {
     if (!Array.from(event.dataTransfer.types).includes("Files")) return;
@@ -324,11 +327,11 @@ export default function FileTreePanel({
               {upload.summary.uploaded + upload.summary.failed.length === 1 ? "" : "s"} — {upload.summary.failed.length}{" "}
               failed.
             </p>
-            {/* Any genuine error (disk full, path rejected, network failure, ...) that stopped the
-                batch early gets its own plain-text line — separate from the count above and from
-                the routine exclusion notes below, so it doesn't read as just another bullet. */}
-            {upload.summary.stoppedReason && (
-              <p className="text-sm text-text-2 m-0 mb-2 leading-[1.5]">{upload.summary.stoppedReason}</p>
+            {/* A representative reason files failed (disk full, path rejected, network, ...) gets its
+                own plain-text line — separate from the count above and the routine exclusion notes
+                below, so it doesn't read as just another bullet. */}
+            {upload.summary.errorSummary && (
+              <p className="text-sm text-text-2 m-0 mb-2 leading-[1.5]">{upload.summary.errorSummary}</p>
             )}
             {upload.summary.notes.length > 0 && (
               <ul className="text-sm text-text-2 m-0 mb-3 pl-5 leading-[1.6] list-disc">
@@ -337,9 +340,13 @@ export default function FileTreePanel({
                 ))}
               </ul>
             )}
-            <div className="rounded border border-border bg-bg-tint text-2xs text-text-3 p-3 mb-[26px] max-h-[480px] overflow-y-auto font-mono whitespace-pre-wrap">
-              {upload.summary.failed.map((path) => `✗ ${path}`).join("\n")}
-            </div>
+            {/* Only the genuine failures get a ✗ list — excluded files are intentional and summarised
+                in the notes above, never listed here as if they'd failed. */}
+            {upload.summary.failed.length > 0 && (
+              <div className="rounded border border-border bg-bg-tint text-2xs text-text-3 p-3 mb-[26px] max-h-[480px] overflow-y-auto font-mono whitespace-pre-wrap">
+                {upload.summary.failed.map((path) => `✗ ${path}`).join("\n")}
+              </div>
+            )}
             <div className="flex gap-2.5 items-center flex-wrap">
               <button className="btn btn-primary" onClick={() => setResultsDismissed(true)}>
                 Close

@@ -35,26 +35,17 @@ const failureReason = async (res: Response): Promise<string> => {
 
 export interface UploadQueueResult {
   uploaded: number;
-  /**
-   * Every path that didn't make it in — a 413 (skipped, the queue kept draining) or, on a systemic
-   * failure, the file that failed plus everything still queued behind it (never attempted).
-   */
+  /** Every path that didn't make it in — each file is attempted on its own, so one failure only ever costs that one file. */
   notUploaded: string[];
-  /**
-   * Subset of `notUploaded` that were rejected as over the per-file size limit (413). Tracked
-   * separately rather than inferred from whether `hardFailure` is set: with bounded concurrency,
-   * a sibling worker can hit a 413 (skip, keep draining) in the same run where another worker's
-   * failure later aborts the batch, so both categories can legitimately appear in `notUploaded`
-   * together.
-   */
+  /** Subset of `notUploaded` rejected as over the per-file size limit (413), tracked so the summary can say "over the limit" rather than lumping them with genuine errors. */
   overLimit: string[];
-  /** Set only on a systemic failure (507, 400, 500, network) that stopped the remaining queue. */
-  hardFailure: string | null;
+  /** A representative server-provided reason a file failed (507 out of disk, 500, ...), shown for context. Informational only — it never stops the rest of the queue. */
+  errorSummary: string | null;
 }
 
 /**
- * Drain an upload queue, one request per file, bounded concurrency. Pulled out of the hook so the
- * skip-vs-abort behavior (413 skips and keeps going; anything else stops the remaining queue) can be
+ * Drain an upload queue, one request per file, bounded concurrency. Pulled out of the hook so its
+ * per-file behavior (every file is attempted; a failure only ever costs that one file) can be
  * unit-tested against a mocked fetch, independent of React state.
  */
 export async function runUploadQueue(
@@ -65,21 +56,16 @@ export async function runUploadQueue(
   const notUploaded: string[] = [];
   const overLimit: string[] = [];
   let uploaded = 0;
-  let hardFailure: string | null = null;
+  // First server-provided failure reason seen, kept only so the summary can explain why files failed.
+  // It never stops the queue — a file that can't upload is set aside and the rest keep going.
+  let errorSummary: string | null = null;
 
-  // A systemic failure (507 out of disk, 400 path traversal, 500, network) fails the batch: abort
-  // the in-flight siblings rather than pressing on and burying the cause under a pile of
-  // consequential errors. An individual 413 is handled separately below — it says nothing about the
-  // files still queued behind it.
-  const controller = new AbortController();
-
-  // Send one file, waiting out rate-limit pushback rather than failing the batch for it.
+  // Send one file, waiting out rate-limit pushback rather than counting a throttled file as failed.
   const send = async (entry: PathedFile): Promise<Response> => {
     for (let attempt = 0; ; attempt += 1) {
       const res = await fetch(`${opts.apiBase}/files/upload?path=${encodeURIComponent(entry.path)}`, {
         method: "POST",
         body: entry.file,
-        signal: controller.signal,
       });
       if (res.status !== 429 || attempt === RATE_LIMIT_RETRIES) return res;
 
@@ -89,33 +75,18 @@ export async function runUploadQueue(
     }
   };
 
-  // Set by whichever worker hits the first systemic failure. Workers never throw out to
-  // Promise.all below — if one did, Promise.all would settle (and this function would return) the
-  // moment that first worker rejects, without waiting for its siblings to unwind, so a sibling file
-  // that was genuinely in flight at that instant would never get its own notUploaded push recorded.
-  // Recording the failure and returning normally instead means Promise.all genuinely waits for every
-  // worker to finish draining or aborting before this function reads its results.
-  //
-  // Held in an object (not a plain `let`) because TS's control-flow narrowing doesn't account for a
-  // captured variable being reassigned inside these closures — it would otherwise narrow the type to
-  // `null` at the read site below regardless of what the workers actually did.
-  const failure: { first: Error | null } = { first: null };
-
   const worker = async () => {
     while (queue.length > 0) {
       const entry = queue.shift()!;
       let res: Response;
       try {
         res = await send(entry);
-      } catch (err) {
-        // Either a genuine per-request failure (network drop, ...) or this worker got aborted
-        // because a sibling already failed the batch — either way, this entry didn't upload.
+      } catch {
+        // A network drop on one file (or a throttled file that ran out of retries) costs only that
+        // file — record it and move on to the next.
         notUploaded.push(entry.path);
-        if (!controller.signal.aborted) {
-          failure.first = err instanceof Error ? err : new Error("Upload failed.");
-          controller.abort();
-        }
-        return;
+        errorSummary ??= "Some files could not be uploaded — check your connection and try them again.";
+        continue;
       }
       if (res.status === 413) {
         notUploaded.push(entry.path);
@@ -124,9 +95,8 @@ export async function runUploadQueue(
       }
       if (!res.ok) {
         notUploaded.push(entry.path);
-        failure.first = new Error(`${entry.path} — ${await failureReason(res)}`);
-        controller.abort();
-        return;
+        errorSummary ??= await failureReason(res);
+        continue;
       }
       uploaded += 1;
       opts.onProgress?.(uploaded);
@@ -134,32 +104,31 @@ export async function runUploadQueue(
   };
 
   await Promise.all(Array.from({ length: Math.min(CONCURRENCY, queue.length) }, worker));
-  if (failure.first) {
-    hardFailure = failure.first.message;
-    // Whatever was still sitting in the queue when the abort fired was never attempted at all.
-    notUploaded.push(...queue.map((entry) => entry.path));
-  }
 
-  return { uploaded, notUploaded, overLimit, hardFailure };
+  return { uploaded, notUploaded, overLimit, errorSummary };
 }
 
 /** Result of the most recently finished upload batch, shown in the results popup. */
 export interface UploadSummary {
   uploaded: number;
   /**
-   * Every path that didn't make it in, for any reason — excluded by an ignore pattern, over the
-   * per-file size limit, rejected by the server, or never attempted because a systemic failure
-   * stopped the queue. `uploaded + failed.length` is always the size of the attempted batch.
+   * Files we actually tried to put in and couldn't — over the per-file size limit, or rejected by
+   * the server / lost to the network. These are genuine failures: each is attempted on its own, so
+   * this only ever holds the specific files that couldn't upload, and `uploaded + failed.length` is
+   * the size of the attempted batch. Ignore-rule exclusions are deliberately NOT here — those are
+   * intentional, counted in `excluded`, and the upload lands fully around them.
    */
   failed: string[];
+  /** How many files the ignore rule left out (node_modules, .git, ...). Intentional, not a failure — reported for transparency only; the rest of the drop still uploads. */
+  excluded: number;
   /**
-   * One line per triggered failure category — e.g. `node_modules excluded (12 files)`, `3 files
-   * over the 1 GB limit` — so the cause of a batch of failures reads as a single sentence instead
-   * of forcing the reader to infer it from the raw path list below.
+   * One line per triggered category — e.g. `node_modules excluded (12 files)`, `3 files over the
+   * 1 GB limit` — so each cause reads as a single sentence instead of forcing the reader to infer it
+   * from the raw path list below.
    */
   notes: string[];
-  /** Set only when a systemic failure (507, 400, 500, network) stopped the batch early. */
-  stoppedReason: string | null;
+  /** A representative reason files failed (507 out of disk, 500, network, ...), shown for context. Informational — nothing was stopped on its account. */
+  errorSummary: string | null;
 }
 
 /**
@@ -216,12 +185,14 @@ export function useFileUpload(apiBase: string, onUploaded: () => void) {
 
     if (queue.length === 0) {
       // Nothing left to send — everything was excluded or oversized. No onUploaded() call: nothing
-      // in the workspace changed.
+      // in the workspace changed. Excluded files are intentional, so only the oversized ones count
+      // as failures here.
       setSummary({
         uploaded: 0,
-        failed: [...excludedPaths, ...clientOversized],
+        failed: [...clientOversized],
+        excluded: excludedPaths.length,
         notes: notesFor(clientOversized.length),
-        stoppedReason: null,
+        errorSummary: null,
       });
       setStatus(null);
       inFlight.current = false;
@@ -240,9 +211,10 @@ export function useFileUpload(apiBase: string, onUploaded: () => void) {
       const overLimitCount = clientOversized.length + result.overLimit.length;
       setSummary({
         uploaded: result.uploaded,
-        failed: [...excludedPaths, ...clientOversized, ...result.notUploaded],
+        failed: [...clientOversized, ...result.notUploaded],
+        excluded: excludedPaths.length,
         notes: notesFor(overLimitCount),
-        stoppedReason: result.hardFailure,
+        errorSummary: result.errorSummary,
       });
       onUploaded();
     } finally {

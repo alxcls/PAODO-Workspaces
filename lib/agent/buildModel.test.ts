@@ -319,7 +319,7 @@ describe("defaultModelSelection", () => {
   it("takes the first available provider's first model", () => {
     expect(defaultModelSelection(only("deepseek"))).toEqual({
       provider: "deepseek",
-      model: "deepseek-v4-flash",
+      model: "deepseek-flash",
       // No effort dial, so the stored value is the uniform placeholder the agent never sends.
       reasoningEffort: "low",
     });

@@ -11,7 +11,7 @@ describe("models catalog", () => {
   it("lists a provider's models from the curated catalog", () => {
     expect(listModels("anthropic")).toContain("claude-opus-4-8");
     // Order matters for deepseek: the first entry is what a bare provider choice resolves to.
-    expect(listModels("deepseek")).toEqual(["deepseek-v4-flash", "deepseek-v4-pro"]);
+    expect(listModels("deepseek")).toEqual(["deepseek-flash", "deepseek-v4-pro"]);
     expect(listModels("moonshot")).toContain("kimi-k3");
     expect(listModels("mistral")).toEqual(["codestral-latest", "mistral-large-latest", "mistral-medium-latest"]);
     expect(listModels("scaleway")).toEqual(["deepseek-v4-flash-0731", "qwen3.6-35b-a3b"]);

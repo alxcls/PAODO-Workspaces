@@ -15,9 +15,9 @@ export const AVAILABLE_MODELS: Record<string, readonly string[]> = {
   anthropic: ["claude-haiku-4-5", "claude-sonnet-5", "claude-opus-4-8"],
   // 5.1 and 5 are priced identically ($1.25/$10 per M); the newer of the two leads.
   openai: ["gpt-5.1", "gpt-5", "gpt-5.4", "gpt-5.5", "gpt-5.5-pro"],
-  // DeepSeek's Aug 16 2026 move to peak/off-peak pricing put Pro between $0.66 and $3.96 per M
-  // output depending on the hour; Flash is flat and cheaper at every hour, so it leads.
-  deepseek: ["deepseek-v4-flash", "deepseek-v4-pro"],
+  // `deepseek-flash` is V4.1 Flash (the old `deepseek-v4-flash` id now just aliases it); Pro stays a
+  // distinct, pricier model until DeepSeek reroutes it to V4.1 Flash on 14 Sep 2026. Flash leads.
+  deepseek: ["deepseek-flash", "deepseek-v4-pro"],
   moonshot: ["kimi-k3"],
   // The two generalist models retained for the ReAct loop. These are the API's own current aliases,
   // confirmed by GET /v1/models. Codestral is the code-specialist option, Medium supports optional

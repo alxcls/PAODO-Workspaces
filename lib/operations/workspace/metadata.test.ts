@@ -238,7 +238,7 @@ describe("workspace metadata validation", () => {
   // with a warning. This keeps programmatic triggers aligned with the UI, which cannot offer the level.
   it("rejects an effort outside the selected model's own levels", () => {
     expect(() => validateMetadata({ model: { provider: "deepseek", reasoningEffort: "xhigh" } }, CURRENT)).toThrow(
-      "reasoningEffort for deepseek-v4-flash must be one of: none, low, high, max",
+      "reasoningEffort for deepseek-flash must be one of: none, low, high, max",
     );
   });
 

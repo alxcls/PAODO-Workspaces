@@ -225,7 +225,7 @@ describe("workspace update body contract", () => {
     expect(await res.json()).toMatchObject({
       ok: false,
       code: "WORKSPACE_UPDATE_INVALID",
-      error: "reasoningEffort for deepseek-v4-flash must be one of: none, low, high, max",
+      error: "reasoningEffort for deepseek-flash must be one of: none, low, high, max",
     });
     expect(h.setWorkspaceLlm).not.toHaveBeenCalled();
   });

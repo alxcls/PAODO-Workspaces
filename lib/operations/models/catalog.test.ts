@@ -27,7 +27,7 @@ describe("model catalog", () => {
         hasKey: true,
       },
       deepseek: {
-        models: ["deepseek-v4-flash", "deepseek-v4-pro"],
+        models: ["deepseek-flash", "deepseek-v4-pro"],
         reasoningEfforts: ["none", "low", "high", "max"],
         hasKey: true,
       },

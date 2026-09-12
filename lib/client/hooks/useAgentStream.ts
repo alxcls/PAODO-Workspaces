@@ -175,13 +175,14 @@ export function useAgentStream(workspaceId: string, conversationId: string | nul
       let wasAborted = false;
       let outcome: StreamOutcome = "ok";
 
+      const controller = new AbortController();
       try {
-        abortRef.current = new AbortController();
+        abortRef.current = controller;
         const res = await fetch(`/api/workspaces/${workspaceId}/chat`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(body),
-          signal: abortRef.current.signal,
+          signal: controller.signal,
         });
 
         if (!res.ok || !res.body) {
@@ -282,24 +283,28 @@ export function useAgentStream(workspaceId: string, conversationId: string | nul
           outcome = "dropped";
         }
       } finally {
-        if (tokenTimerRef.current) {
-          clearTimeout(tokenTimerRef.current);
-          tokenTimerRef.current = null;
+        // Reset only if no newer run replaced this hook's controller: a fast-path attach that started
+        // a new consume owns abortRef now, while a switch to an idle conversation still resets here.
+        if (abortRef.current === controller) {
+          if (tokenTimerRef.current) {
+            clearTimeout(tokenTimerRef.current);
+            tokenTimerRef.current = null;
+          }
+          if (reasoningTimerRef.current) {
+            clearTimeout(reasoningTimerRef.current);
+            reasoningTimerRef.current = null;
+          }
+          flushToken();
+          flushReasoning();
+          // Finalize any tool row still spinning — on detach the stream is torn down before its
+          // tool_result arrives, so without this a tool bubble's spinner would run forever.
+          commit({ ...transcriptRef.current, messages: markAllToolsDone(transcriptRef.current.messages) });
+          abortRef.current = null;
+          setStreaming(false);
+          setPendingTools(0);
+          setPaced(null);
+          if (!wasAborted) onTurnCompleteRef.current?.();
         }
-        if (reasoningTimerRef.current) {
-          clearTimeout(reasoningTimerRef.current);
-          reasoningTimerRef.current = null;
-        }
-        flushToken();
-        flushReasoning();
-        // Finalize any tool row still spinning — on detach the stream is torn down before its
-        // tool_result arrives, so without this a tool bubble's spinner would run forever.
-        commit({ ...transcriptRef.current, messages: markAllToolsDone(transcriptRef.current.messages) });
-        abortRef.current = null;
-        setStreaming(false);
-        setPendingTools(0);
-        setPaced(null);
-        if (!wasAborted) onTurnCompleteRef.current?.();
       }
       return outcome;
     },

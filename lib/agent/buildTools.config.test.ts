@@ -57,7 +57,7 @@ describe("loadAgentConfig", () => {
     offerOnly("deepseek");
     const c = loadAgentConfig();
     expect(c.provider).toBe("deepseek");
-    expect(c.model).toBe("deepseek-v4-flash");
+    expect(c.model).toBe("deepseek-flash");
   });
 
   it("falls back to the first available provider for a workspace that hasn't chosen", () => {
@@ -72,7 +72,7 @@ describe("loadAgentConfig", () => {
     });
     const c = loadAgentConfig("ws-unset");
     expect(c.provider).toBe("deepseek");
-    expect(c.model).toBe("deepseek-v4-flash");
+    expect(c.model).toBe("deepseek-flash");
   });
 
   // The bug this pins: the fallback used to be a hardcoded deepseek, so a workspace that had never

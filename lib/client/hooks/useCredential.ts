@@ -1,18 +1,22 @@
-// Client-side lifecycle for one minted credential: load state, open/close the channel, generate or
-// rotate (revealing the plaintext once), revoke. Every credential endpoint answers the same four
-// verbs — see lib/api/credentialRoutes.ts — so the API-key block, the MCP block and the CLI access
-// modal all drive their UI from this one hook instead of each reimplementing the same fetch dance.
-//
-// `generate` and `rotate` are separate calls rather than one "mint whichever applies", because the
-// server distinguishes them: it refuses to generate over an existing credential and refuses to rotate
-// a missing one. That is what stops a click meant to create a key from silently replacing one another
-// operator is still using — but it means the caller can be wrong about which applies, so a 409 here
-// is treated as stale state and resolved by re-reading the server rather than shown as a dead end.
+/**
+ * Client-side lifecycle for one minted credential: load state, open/close the channel, generate or
+ * rotate (revealing the plaintext once), revoke. Every credential endpoint answers the same four
+ * verbs — see lib/api/credentialRoutes.ts — so the API-key block, the MCP block and the CLI access
+ * modal all drive their UI from this one hook instead of each reimplementing the same fetch dance.
+ *
+ * `generate` and `rotate` are separate calls rather than one "mint whichever applies", because the
+ * server distinguishes them: it refuses to generate over an existing credential and refuses to rotate
+ * a missing one. That is what stops a click meant to create a key from silently replacing one another
+ * operator is still using — but it means the caller can be wrong about which applies, so a 409 here
+ * is treated as stale state and resolved by re-reading the server rather than shown as a dead end.
+ */
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
 import { readApiError, type ApiFailure } from "@/lib/client/apiError";
 import { confirmedValues } from "@/lib/client/workspaceReceipt";
+import { fetchJson } from "@/lib/client/fetchJson";
+import { useAsyncResource } from "./useAsyncResource";
 
 /** The credential fields every endpoint returns, matching CredentialState in credentialStore.ts. */
 export interface CredentialSnapshot {
@@ -56,9 +60,9 @@ export function useCredential<TExtra extends object = Record<string, never>>(
 ) {
   const [enabled, setEnabled] = useState(false);
   const [hasKey, setHasKey] = useState(false);
-  // Named for what it is rather than "key": this is the transient plaintext, alive only between a
-  // mint and the operator dismissing it, whereas hasKey is the durable fact that one exists. It also
-  // keeps every component boundary clear of `key`, which React reserves for list identity.
+  /* Named for what it is rather than "key": this is the transient plaintext, alive only between a
+     mint and the operator dismissing it, whereas hasKey is the durable fact that one exists. It also
+     keeps every component boundary clear of `key`, which React reserves for list identity. */
   const [plaintext, setPlaintext] = useState<string | null>(null);
   const [extra, setExtra] = useState<TExtra | null>(null);
   const [busy, setBusy] = useState(false);
@@ -71,32 +75,29 @@ export function useCredential<TExtra extends object = Record<string, never>>(
       error: err instanceof Error ? err.message : fallback,
     });
 
+  // The initial GET runs through the shared async-resource (stale guard, retry). Its loading/error
+  // stay apart from `failure` (mutation errors, an inline banner): a failed first read replaces the
+  // panel body with a retry, while a failed toggle or mint leaves the controls in place beneath it.
+  const resource = useAsyncResource<CredentialSnapshot & TExtra>(
+    useCallback(
+      (signal) => fetchJson<CredentialSnapshot & TExtra>(endpoint, signal, `Could not load ${feature}.`),
+      [endpoint, feature],
+    ),
+    { enabled: load },
+  );
+
+  // Seed the mutable channel state from each completed load; the mutations below then drive it from
+  // here, so a resync or optimistic toggle is never clobbered by a stale load.
   useEffect(() => {
-    if (!load) return;
-    // `active` drops a response that arrives after the endpoint changed or the component unmounted,
-    // so a slow request for the previous workspace cannot overwrite the current one's state.
-    let active = true;
-    void (async () => {
-      try {
-        const response = await fetch(endpoint);
-        if (!response.ok) {
-          setFailure(await readApiError(response, `Could not load ${feature}.`));
-          return;
-        }
-        const body = (await response.json()) as CredentialSnapshot & TExtra;
-        if (!active) return;
-        setFailure(null);
-        setEnabled(body.enabled);
-        setHasKey(body.hasKey);
-        setExtra(body as unknown as TExtra);
-      } catch (err) {
-        if (active) fail(err, `Could not load ${feature}.`);
-      }
-    })();
-    return () => {
-      active = false;
-    };
-  }, [load, endpoint, feature]);
+    const data = resource.data;
+    if (!data) return;
+    /* eslint-disable react-hooks/set-state-in-effect */
+    setFailure(null);
+    setEnabled(data.enabled);
+    setHasKey(data.hasKey);
+    setExtra(data as unknown as TExtra);
+    /* eslint-enable react-hooks/set-state-in-effect */
+  }, [resource.data]);
 
   const toggle = useCallback(async () => {
     const next = !enabled;
@@ -208,6 +209,9 @@ export function useCredential<TExtra extends object = Record<string, never>>(
     plaintext,
     extra,
     busy,
+    loading: resource.loading,
+    loadError: resource.error,
+    reload: resource.reload,
     error: failure?.error ?? null,
     failure,
     toggle,

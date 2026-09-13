@@ -150,7 +150,7 @@ const noopDeps = {
   warmContainer: () => {},
   // A runnable config: an offered provider with a key. runAgent's preflight stops any run that lacks
   // either, so a config without them would end every test below at the first yield.
-  loadConfig: () => ({ provider: "deepseek", model: "deepseek-v4-flash", apiKey: "sk-test" }) as never,
+  loadConfig: () => ({ provider: "deepseek", model: "deepseek-flash", apiKey: "sk-test" }) as never,
   containers: {} as never,
   store: {} as never,
 };
@@ -293,7 +293,7 @@ describe("runAgent — history stays consistent across aborts", () => {
 
     for await (const event of runAgent([], "do work", "/tmp/ws", "ws-1", {
       ...noopDeps,
-      loadConfig: () => ({ provider: "deepseek", model: "deepseek-v4-flash", apiKey: "sk-test" }) as never,
+      loadConfig: () => ({ provider: "deepseek", model: "deepseek-flash", apiKey: "sk-test" }) as never,
       buildAgentTools,
     })) {
       events.push(event);
@@ -667,7 +667,7 @@ describe("runAgent — refuses to start without a usable provider", () => {
   }
 
   it("stops with a message naming the provider when no key is set", async () => {
-    const events = await collect({ provider: "deepseek", model: "deepseek-v4-flash" });
+    const events = await collect({ provider: "deepseek", model: "deepseek-flash" });
 
     expect(events).toEqual([
       { type: "error", code: "PROVIDER_KEY_MISSING", message: expect.stringContaining("No API key set for deepseek") },
@@ -678,7 +678,7 @@ describe("runAgent — refuses to start without a usable provider", () => {
   it("blames the switch, not the key, for a provider this deployment withdrew", async () => {
     vi.stubEnv("DEEPSEEK_AVAILABLE", "false");
 
-    const events = await collect({ provider: "deepseek", model: "deepseek-v4-flash" });
+    const events = await collect({ provider: "deepseek", model: "deepseek-flash" });
 
     expect(events[0]).toMatchObject({ type: "error", code: "PROVIDER_UNAVAILABLE" });
   });
@@ -699,7 +699,7 @@ describe("runAgent — refuses to start without a usable provider", () => {
   // Closing the stream properly matters as much as the message: the SSE consumer and runBroker both
   // key off `done`, and a generator that just returns leaves the run showing as still working.
   it("always closes the stream with done", async () => {
-    const events = await collect({ provider: "deepseek", model: "deepseek-v4-flash" });
+    const events = await collect({ provider: "deepseek", model: "deepseek-flash" });
     expect(events.at(-1)).toEqual({ type: "done" });
   });
 
@@ -709,7 +709,7 @@ describe("runAgent — refuses to start without a usable provider", () => {
     const messages: BaseMessage[] = [];
     for await (const _ of runAgent(messages, "do work", "/tmp/ws", "ws-1", {
       ...noopDeps,
-      loadConfig: () => ({ provider: "deepseek", model: "deepseek-v4-flash" }) as never,
+      loadConfig: () => ({ provider: "deepseek", model: "deepseek-flash" }) as never,
       buildAgentTools: explode as never,
       warmContainer: explode,
     })) {
@@ -725,7 +725,7 @@ describe("runAgent — refuses to start without a usable provider", () => {
     const events: AgentEvent[] = [];
     for await (const event of runAgent([], "do work", "/tmp/ws", "ws-1", {
       ...noopDeps,
-      loadConfig: () => ({ provider: "deepseek", model: "deepseek-v4-flash", apiKey: "sk" }) as never,
+      loadConfig: () => ({ provider: "deepseek", model: "deepseek-flash", apiKey: "sk" }) as never,
       buildAgentTools,
     })) {
       events.push(event);
@@ -775,7 +775,7 @@ describe("runAgent — compaction cost reaches the usage ledger", () => {
           for (let i = 0; i < compactions; i++) {
             deps.observe?.({
               provider: "deepseek",
-              model: "deepseek-v4-flash",
+              model: "deepseek-flash",
               stage: "compaction",
               usage: COMPACTION_USAGE,
               durationMs: 12,
@@ -824,7 +824,7 @@ describe("runAgent — compaction cost reaches the usage ledger", () => {
     const compaction = rows.filter((r) => r.inputTokensTotal === COMPACTION_USAGE.inputTokensTotal);
 
     expect(compaction).toHaveLength(1);
-    expect(compaction[0]).toMatchObject({ ...COMPACTION_USAGE, model: "deepseek-v4-flash", toolCalls: [] });
+    expect(compaction[0]).toMatchObject({ ...COMPACTION_USAGE, model: "deepseek-flash", toolCalls: [] });
   });
 
   // A shared turnId would make the second row an update of the first, and the dashboard would show

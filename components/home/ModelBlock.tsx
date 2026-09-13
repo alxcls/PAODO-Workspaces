@@ -1,6 +1,9 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import type { AsyncResource } from "@/lib/client/hooks/useAsyncResource";
+import type { WorkspaceDetails } from "@/lib/client/hooks/useWorkspaceDetails";
+import { AsyncState } from "@/components/shared/AsyncState";
 import { THINKING_OFF_EFFORT, type ReasoningEffort } from "@/lib/models/llmSelection";
 import { defaultEffortFor, effortsForModel } from "@/lib/models/selection";
 // The GET /api/models payload shape, imported from the module that SERVES it rather than redeclared
@@ -37,40 +40,64 @@ function LockedValue({ value, width }: { value: string; width: number }) {
 // Empty until the workspace read lands, rather than seeded with a guess at the default: the default is
 // the first provider .env makes available, which only the server knows. A hardcoded seed here would
 // flash a provider this deployment may have switched off, and would stick if the read failed.
-export default function ModelBlock({ wsId, catalogVersion = 0 }: { wsId: string; catalogVersion?: number }) {
-  const [provider, setProvider] = useState<string>("");
-  const [model, setModel] = useState<string>("");
-  const [effort, setEffort] = useState<string>("");
+export default function ModelBlock({
+  wsId,
+  workspace,
+  catalogVersion = 0,
+}: {
+  wsId: string;
+  workspace: AsyncResource<WorkspaceDetails>;
+  catalogVersion?: number;
+}) {
+  return (
+    <div className="flex flex-col gap-3 mt-4 border border-border rounded-card p-[14px_16px] bg-bg-tint">
+      <div>
+        <span className="text-ms font-semibold text-text">Model</span>
+        <span className="text-xs text-text-3 ml-2">Choose provider and model for this workspace</span>
+      </div>
+      {workspace.data ? (
+        <ModelForm key={wsId} wsId={wsId} initial={workspace.data} catalogVersion={catalogVersion} />
+      ) : (
+        <AsyncState
+          loading={workspace.loading}
+          error={workspace.error}
+          onRetry={workspace.reload}
+          errorLabel="Couldn’t load the model selection."
+        />
+      )}
+    </div>
+  );
+}
+
+function ModelForm({
+  wsId,
+  initial,
+  catalogVersion,
+}: {
+  wsId: string;
+  initial: WorkspaceDetails;
+  catalogVersion: number;
+}) {
+  type Selection = { provider: string; model: string; effort: string };
+  const [confirmed, setConfirmed] = useState<{ source: WorkspaceDetails; value: Selection } | null>(null);
+  const saved =
+    confirmed?.source === initial
+      ? confirmed.value
+      : {
+          provider: initial.llmProvider ?? "",
+          model: initial.llmModel ?? "",
+          effort: initial.reasoningEffort ?? "",
+        };
+  // An untouched form follows shared reads; an edit remains local until explicitly saved.
+  const [draft, setDraft] = useState<Selection | null>(null);
+  const { provider, model, effort } = draft ?? saved;
+  const editing = draft !== null;
+  const setProvider = (provider: string) => setDraft((current) => ({ ...(current ?? saved), provider }));
+  const setModel = (model: string) => setDraft((current) => ({ ...(current ?? saved), model }));
+  const setEffort = (effort: string) => setDraft((current) => ({ ...(current ?? saved), effort }));
   const [catalog, setCatalog] = useState<ModelCatalog>({});
   const [catalogLoaded, setCatalogLoaded] = useState(false);
-
-  const [saved, setSaved] = useState<{ provider: string; model: string; effort: string }>({
-    provider: "",
-    model: "",
-    effort: "",
-  });
   const [saving, setSaving] = useState(false);
-  // Committed view by default: dropdowns are locked to the saved selection until the user clicks Edit.
-  const [editing, setEditing] = useState(false);
-
-  // Load the workspace's current selection. The server already applies the defaults for a workspace
-  // that never picked, so what arrives is the complete selection — reasoningEffort excepted, which is
-  // absent for a provider with no effort dial.
-  useEffect(() => {
-    fetch(`/api/workspaces/${wsId}`)
-      .then((r) => r.json())
-      .then((d: { llmProvider?: string; llmModel?: string; reasoningEffort?: string }) => {
-        const p = d.llmProvider ?? "";
-        const m = d.llmModel ?? "";
-        const e = d.reasoningEffort ?? "";
-        setProvider(p);
-        setModel(m);
-        setEffort(e);
-        setSaved({ provider: p, model: m, effort: e });
-      })
-      .catch(() => {});
-  }, [wsId]);
-
   // Provider ids own their models and accepted effort levels, so changing a dropdown stays a local
   // lookup rather than another network request. The one thing that does invalidate the catalog is a
   // provider key being added or removed in Settings, since `hasKey` drives the warning below —
@@ -152,7 +179,7 @@ export default function ModelBlock({ wsId, catalogVersion = 0 }: { wsId: string;
     if (!validModel) return;
     // Nothing changed — just leave edit mode without a needless PATCH.
     if (!dirty) {
-      setEditing(false);
+      setDraft(null);
       return;
     }
     setSaving(true);
@@ -171,11 +198,8 @@ export default function ModelBlock({ wsId, catalogVersion = 0 }: { wsId: string;
         const savedProvider = confirmed.llmProvider ?? provider;
         const savedModel = confirmed.llmModel ?? selectedModel.trim();
         const savedEffort = confirmed.reasoningEffort ?? (efforts.length > 0 ? selectedEffort : "");
-        setProvider(savedProvider);
-        setModel(savedModel);
-        setEffort(savedEffort);
-        setSaved({ provider: savedProvider, model: savedModel, effort: savedEffort });
-        setEditing(false);
+        setConfirmed({ source: initial, value: { provider: savedProvider, model: savedModel, effort: savedEffort } });
+        setDraft(null);
       }
     } finally {
       setSaving(false);
@@ -183,12 +207,7 @@ export default function ModelBlock({ wsId, catalogVersion = 0 }: { wsId: string;
   };
 
   return (
-    <div className="flex flex-col gap-3 mt-4 border border-border rounded-card p-[14px_16px] bg-bg-tint">
-      <div>
-        <span className="text-ms font-semibold text-text">Model</span>
-        <span className="text-xs text-text-3 ml-2">Choose provider and model for this workspace</span>
-      </div>
-
+    <>
       <div className="flex flex-wrap items-center gap-2">
         {editing ? (
           <>
@@ -290,7 +309,7 @@ export default function ModelBlock({ wsId, catalogVersion = 0 }: { wsId: string;
                 Thinking
               </label>
             )}
-            <button className="btn" onClick={() => setEditing(true)}>
+            <button className="btn" onClick={() => setDraft(saved)}>
               Edit
             </button>
           </>
@@ -308,6 +327,6 @@ export default function ModelBlock({ wsId, catalogVersion = 0 }: { wsId: string;
           workspace.
         </p>
       )}
-    </div>
+    </>
   );
 }

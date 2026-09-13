@@ -10,6 +10,8 @@
 // object edited through `set(key, value)`; Field/LiveToggle keep the markup declarative.
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { AsyncState } from "@/components/shared/AsyncState";
+import { useAsyncResource, type AsyncResource } from "@/lib/client/hooks/useAsyncResource";
 import { timezoneOffsetMinutes, timezoneOptionLabel } from "@/lib/client/timezoneLabel";
 // The entity itself, not a copy of it. lib/schedules/types.ts is dependency-free — no store, no
 // luxon — so this panel types its fetch result and its unit picker from the same declaration the
@@ -136,7 +138,7 @@ function Field({
   );
 }
 
-function LiveToggle({ enabled, onToggle }: { enabled: boolean; onToggle: () => void }) {
+function LiveToggle({ enabled, onToggle, disabled }: { enabled: boolean; onToggle: () => void; disabled?: boolean }) {
   return (
     <button
       type="button"
@@ -144,6 +146,7 @@ function LiveToggle({ enabled, onToggle }: { enabled: boolean; onToggle: () => v
       aria-checked={enabled}
       aria-label={enabled ? "Live — pause schedule" : "Paused — resume schedule"}
       onClick={onToggle}
+      disabled={disabled}
       className="shrink-0 flex items-center gap-2.5 h-9 px-1 transition-colors outline-none focus-visible:ring-2 focus-visible:ring-primary-soft"
     >
       <span className={`text-ms font-semibold ${enabled ? "text-primary" : "text-text-2"}`}>
@@ -162,13 +165,18 @@ function LiveToggle({ enabled, onToggle }: { enabled: boolean; onToggle: () => v
 // Modal
 // ---------------------------------------------------------------------------
 
-interface ModalProps {
-  workspaceId: string;
-  onClose: () => void;
-  onStatus: (enabled: boolean) => void;
+/** `entry` is wrapped so a loaded "no schedule" (null) reads apart from a read still in flight. */
+interface ScheduleData {
+  entry: ScheduleEntry | null;
 }
 
-function ScheduleModal({ workspaceId, onClose, onStatus }: ModalProps) {
+interface ModalProps {
+  workspaceId: string;
+  schedule: AsyncResource<ScheduleData>;
+  onClose: () => void;
+}
+
+function ScheduleModal({ workspaceId, schedule, onClose }: ModalProps) {
   const url = `/api/workspaces/${workspaceId}/schedule`;
   const timezoneOptions = useMemo(() => {
     return allTimezones()
@@ -181,40 +189,25 @@ function ScheduleModal({ workspaceId, onClose, onStatus }: ModalProps) {
       });
   }, []);
 
-  const [loading, setLoading] = useState(true);
+  // Seeded from the panel's own read, so a modal opened after the button already knows its state
+  // renders the form at once with no loading pass. `null` means that read is still in flight.
+  const loaded = useMemo<FormState | null>(
+    () => (schedule.data ? (schedule.data.entry ? toForm(schedule.data.entry) : emptyForm()) : null),
+    [schedule.data],
+  );
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [form, setForm] = useState<FormState>(emptyForm);
+  const [initialForm] = useState(emptyForm);
+  const [draft, setDraft] = useState<FormState | null>(null);
+  const form = draft ?? loaded ?? initialForm;
+  const unavailable = schedule.loading || schedule.error || schedule.data === null;
 
-  const set = useCallback(<K extends keyof FormState>(key: K, value: FormState[K]) => {
-    setForm((f) => ({ ...f, [key]: value }));
-  }, []);
-
-  // Load the current schedule on open.
-  useEffect(() => {
-    let alive = true;
-    (async () => {
-      setLoading(true);
-      setError(null);
-      try {
-        const res = await fetch(url);
-        if (!res.ok) throw new Error(`Failed to load schedule (${res.status})`);
-        const s = (await res.json()) as ScheduleEntry | null;
-        if (!alive) return;
-        if (s) {
-          setForm(toForm(s));
-          onStatus(s.enabled);
-        }
-      } catch (err) {
-        if (alive) setError(err instanceof Error ? err.message : "Failed to load schedule");
-      } finally {
-        if (alive) setLoading(false);
-      }
-    })();
-    return () => {
-      alive = false;
-    };
-  }, [url, onStatus]);
+  const set = useCallback(
+    <K extends keyof FormState>(key: K, value: FormState[K]) => {
+      setDraft((current) => ({ ...(current ?? loaded ?? initialForm), [key]: value }));
+    },
+    [loaded, initialForm],
+  );
 
   // Dismiss on Escape.
   useEffect(() => {
@@ -226,6 +219,7 @@ function ScheduleModal({ workspaceId, onClose, onStatus }: ModalProps) {
   }, [onClose]);
 
   const save = async () => {
+    if (unavailable || saving) return;
     setSaving(true);
     setError(null);
     try {
@@ -238,8 +232,8 @@ function ScheduleModal({ workspaceId, onClose, onStatus }: ModalProps) {
         const body = (await res.json().catch(() => ({}))) as { error?: string };
         throw new Error(body.error ?? `Save failed (${res.status})`);
       }
-      const saved = (await res.json()) as ScheduleEntry;
-      onStatus(saved.enabled);
+      // Re-read so the button colour and the next open reflect what was just saved.
+      void schedule.reload();
       onClose();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Save failed");
@@ -274,12 +268,25 @@ function ScheduleModal({ workspaceId, onClose, onStatus }: ModalProps) {
               </p>
             </div>
           </div>
-          <LiveToggle enabled={form.enabled} onToggle={() => set("enabled", !form.enabled)} />
+          {/* Rendered only once the schedule has loaded: seeded from emptyForm it would paint Paused
+              and then animate to the loaded state on every open. Mounting it in its final state skips
+              that slide (CSS transitions don't fire on the first render). */}
+          {!unavailable && (
+            <LiveToggle enabled={form.enabled} onToggle={() => set("enabled", !form.enabled)} disabled={saving} />
+          )}
         </header>
 
         {/* Body */}
-        {loading ? (
-          <div className="py-20 grid place-items-center text-sm text-text-3">Loading…</div>
+        {unavailable ? (
+          <AsyncState
+            loading={schedule.loading}
+            error={schedule.error}
+            onRetry={schedule.reload}
+            loadingLabel="Loading schedule…"
+            errorLabel="Couldn’t load the schedule."
+            loadingDelayMs={0}
+            className="flex-1 min-h-0 justify-center p-7"
+          />
         ) : (
           <div className="flex-1 min-h-0 overflow-auto p-7 flex flex-col gap-6">
             {error && (
@@ -364,7 +371,7 @@ function ScheduleModal({ workspaceId, onClose, onStatus }: ModalProps) {
 
         {/* Footer */}
         <footer className="flex items-center gap-3 px-7 py-4 border-t border-border-soft shrink-0">
-          <button type="submit" className="btn btn-primary ml-auto" disabled={saving || loading}>
+          <button type="submit" className="btn btn-primary ml-auto" disabled={saving || unavailable}>
             {saving ? "Saving…" : "Save"}
           </button>
         </footer>
@@ -383,23 +390,21 @@ interface Props {
 
 export default function SchedulePanel({ workspaceId }: Props) {
   const [open, setOpen] = useState(false);
-  const [active, setActive] = useState(false);
   const close = useCallback(() => setOpen(false), []);
 
-  // Reflect a live schedule on the button without needing the modal opened first: the calendar icon
-  // reads purple whenever this workspace has an enabled schedule.
-  useEffect(() => {
-    let alive = true;
-    fetch(`/api/workspaces/${workspaceId}/schedule`)
-      .then((res) => (res.ok ? res.json() : null))
-      .then((s: ScheduleEntry | null) => {
-        if (alive) setActive(Boolean(s?.enabled));
-      })
-      .catch(() => {});
-    return () => {
-      alive = false;
-    };
-  }, [workspaceId]);
+  // One shared read drives both the button colour (purple whenever a schedule is live) and the modal,
+  // so opening it after the page has settled shows the form at once instead of a second load.
+  const schedule = useAsyncResource<ScheduleData>(
+    useCallback(
+      async (signal: AbortSignal) => {
+        const res = await fetch(`/api/workspaces/${workspaceId}/schedule`, { signal });
+        if (!res.ok) throw new Error(`Failed to load schedule (${res.status})`);
+        return { entry: (await res.json()) as ScheduleEntry | null };
+      },
+      [workspaceId],
+    ),
+  );
+  const active = Boolean(schedule.data?.entry?.enabled);
 
   return (
     <>
@@ -415,7 +420,7 @@ export default function SchedulePanel({ workspaceId }: Props) {
         <span>Schedule</span>
       </button>
 
-      {open && <ScheduleModal workspaceId={workspaceId} onClose={close} onStatus={setActive} />}
+      {open && <ScheduleModal key={workspaceId} workspaceId={workspaceId} schedule={schedule} onClose={close} />}
     </>
   );
 }

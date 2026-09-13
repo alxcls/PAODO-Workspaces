@@ -7,8 +7,9 @@
 // Naming policy stays with the caller — `create` persists exactly the name it is given.
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useCallback } from "react";
 import { readApiError, type MutationResult } from "@/lib/client/apiError";
+import { useAsyncResource } from "./useAsyncResource";
 
 export interface WorkspaceItem {
   id: string;
@@ -18,27 +19,21 @@ export interface WorkspaceItem {
 const JSON_HEADERS = { "Content-Type": "application/json" };
 
 export function useWorkspaces() {
-  const [workspaces, setWorkspaces] = useState<WorkspaceItem[]>([]);
   const [isCreating, setIsCreating] = useState(false);
 
-  const refresh = useCallback(async () => {
-    const res = await fetch("/api/workspaces");
-    if (res.ok) setWorkspaces((await res.json()) as WorkspaceItem[]);
-  }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-    fetch("/api/workspaces")
-      .then(async (res) => {
-        if (!res.ok) return;
-        const items = (await res.json()) as WorkspaceItem[];
-        if (!cancelled) setWorkspaces(items);
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  const {
+    data,
+    loading,
+    error,
+    reload: refresh,
+  } = useAsyncResource<WorkspaceItem[]>(
+    useCallback(async (signal: AbortSignal) => {
+      const res = await fetch("/api/workspaces", { signal });
+      if (!res.ok) throw new Error("Failed to load workspaces.");
+      return (await res.json()) as WorkspaceItem[];
+    }, []),
+  );
+  const workspaces = data ?? [];
 
   const create = useCallback(
     async (name: string): Promise<{ ok: true; workspace: WorkspaceItem } | { ok: false; error: string }> => {
@@ -82,5 +77,5 @@ export function useWorkspaces() {
     [refresh],
   );
 
-  return { workspaces, isCreating, refresh, create, rename, remove };
+  return { workspaces, loading, error, isCreating, refresh, create, rename, remove };
 }

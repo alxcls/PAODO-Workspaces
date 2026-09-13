@@ -4,6 +4,7 @@
 import { useState, useRef, useEffect, memo } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { AsyncState } from "@/components/shared/AsyncState";
 import TokenUsageLine from "@/components/usage/TokenUsageLine";
 import MentionMenu from "@/components/workspace/MentionMenu";
 import { useAgentStream, toolLabel, type Message, type PacedState } from "@/lib/client/hooks/useAgentStream";
@@ -158,12 +159,18 @@ export default function ChatPanel({
   workspaceId,
   conversationId,
   initialConversation,
+  conversationsLoading = false,
+  conversationsError = false,
+  onRetryConversations,
   onAgentTurnComplete,
   onRunStart,
 }: {
   workspaceId: string;
   conversationId: string | null;
   initialConversation?: InitialConversation | null;
+  conversationsLoading?: boolean;
+  conversationsError?: boolean;
+  onRetryConversations?: () => void;
   onAgentTurnComplete?: () => void;
   onRunStart?: () => void;
 }) {
@@ -183,6 +190,8 @@ export default function ChatPanel({
 
   const {
     messages,
+    historyLoading,
+    historyError,
     streaming,
     pendingTools,
     paced,
@@ -271,8 +280,11 @@ export default function ChatPanel({
     });
   }
 
+  const loadingMessages = conversationsLoading || historyLoading;
+  const loadingError = conversationsError || historyError;
+
   function handleSubmit() {
-    if (!draft.trim() || streaming || !conversationId) return;
+    if (!draft.trim() || streaming || loadingMessages || loadingError || !conversationId) return;
     const msg = draft.trim();
     setDraft("");
     setMention(null);
@@ -284,10 +296,13 @@ export default function ChatPanel({
   return (
     <div className="flex flex-col flex-1 min-h-0">
       <div ref={scrollRef} onScroll={onScroll} className="flex-1 overflow-auto p-[14px_16px] flex flex-col gap-2">
-        {messages.length === 0 && !streaming && (
-          <div className="text-text-3 text-ms text-center mt-6">Ask the agent anything about this workspace.</div>
-        )}
-
+        <AsyncState
+          loading={loadingMessages}
+          error={loadingError}
+          onRetry={conversationsError ? onRetryConversations : () => void loadConversation()}
+          loadingLabel="Loading messages…"
+          errorLabel="Couldn’t load the conversation."
+        />
         {messages.map((m, i) => (
           <MessageRow key={i} m={m} />
         ))}
@@ -326,7 +341,7 @@ export default function ChatPanel({
           rows={1}
           value={draft}
           placeholder={streaming ? "Agent is running…" : "Ask the agent…"}
-          disabled={streaming}
+          disabled={streaming || loadingMessages || loadingError}
           onInput={(e) => {
             const t = e.target as HTMLTextAreaElement;
             t.style.height = "auto";
@@ -381,7 +396,7 @@ export default function ChatPanel({
         ) : (
           <button
             className="w-9 h-9 rounded-lg border-0 bg-primary text-white inline-flex items-center justify-center cursor-pointer transition-[background,opacity] duration-[140ms] flex-none hover:bg-primary-2 disabled:opacity-45 disabled:cursor-not-allowed"
-            disabled={!draft.trim() || !conversationId}
+            disabled={!draft.trim() || !conversationId || loadingMessages || loadingError}
             onClick={handleSubmit}
             title="Send (Enter)"
           >

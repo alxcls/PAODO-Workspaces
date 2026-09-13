@@ -31,6 +31,9 @@ export default function ApiAccessBlock({ wsId }: { wsId: string }) {
       plaintext={credential.plaintext}
       busy={credential.busy}
       error={credential.error}
+      loading={credential.loading}
+      loadError={credential.loadError}
+      onRetry={credential.reload}
       onToggle={credential.toggle}
       onGenerate={credential.generate}
       onRotate={credential.rotate}

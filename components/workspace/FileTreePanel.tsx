@@ -1,11 +1,15 @@
 "use client";
 
-import { useRef, useState, type ChangeEvent, type CSSProperties, type DragEvent } from "react";
+import { useEffect, useRef, useState, type ChangeEvent, type CSSProperties, type DragEvent } from "react";
 import { readDroppedEntries } from "@/lib/client/dropEntries";
 import { useFileOperations } from "@/lib/client/hooks/useFileOperations";
 import { useFileTreeMove } from "@/lib/client/hooks/useFileTreeMove";
 import { useFileTreeSelection } from "@/lib/client/hooks/useFileTreeSelection";
 import { useFileUpload } from "@/lib/client/hooks/useFileUpload";
+import { useDelayedSet } from "@/lib/client/hooks/useDelayedSet";
+import { SPINNER_DELAY_MS } from "@/lib/client/hooks/useDelayed";
+import { AsyncState } from "@/components/shared/AsyncState";
+import { Spinner } from "@/components/shared/Spinner";
 import { FileTreeList } from "./FileTreeList";
 
 const UploadIcon = () => (
@@ -126,7 +130,7 @@ export default function FileTreePanel({
     refreshKey,
     apiBase: base,
   });
-  const upload = useFileUpload(base, operations.fetchTree);
+  const upload = useFileUpload(base, operations.refreshTree);
   const treeMove = useFileTreeMove({
     tree: operations.tree,
     selected: selection.selected,
@@ -141,6 +145,10 @@ export default function FileTreePanel({
   });
 
   const uploadBusy = upload.status !== null;
+
+  // Only flag a directory as loading once its fetch has run past this threshold, so quick expands
+  // populate without a spinner flash.
+  const slowLoadingDirs = useDelayedSet(operations.loadingDirs, SPINNER_DELAY_MS);
 
   // Every upload entry point flips this before kicking off the hook call, so that once the hook
   // finishes and sets a summary, showResults below picks it up on the next render.
@@ -201,6 +209,15 @@ export default function FileTreePanel({
     setExpanded((current) => ({ ...current, [path]: !current[path] }));
   };
 
+  // Load a directory's children the first time it opens, whether opened by a click or programmatically
+  // (a move force-expands its destination). loadChildren ignores paths already loaded or in flight.
+  const { loadChildren } = operations;
+  useEffect(() => {
+    for (const [path, isOpen] of Object.entries(expanded)) {
+      if (isOpen) void loadChildren(path, true);
+    }
+  }, [expanded, loadChildren, operations.tree]);
+
   return (
     <aside
       className="relative flex flex-col bg-bg-tint overflow-hidden"
@@ -243,27 +260,45 @@ export default function FileTreePanel({
         }}
         title={treeMove.draggedNodes ? "Drop on empty space to move to the root folder" : undefined}
       >
-        <FileTreeList
-          nodes={operations.tree}
-          expanded={expanded}
-          toggleExpanded={toggleExpanded}
-          selection={{
-            activePath: selectedPath,
-            selected: selection.selected,
-            select: selection.handleSelect,
-            selectRange: (path) => selection.selectRangeTo(operations.tree, expanded, path),
-            pick: onFileSelect,
-          }}
-          move={{
-            draggedNodes: treeMove.draggedNodes,
-            dropTargetPath: treeMove.dropTargetPath,
-            movingPaths: treeMove.movingPaths,
-            dragStart: treeMove.handleDragStart,
-            dragEnd: treeMove.handleDragEnd,
-            setDropTarget: treeMove.setDropTargetPath,
-            moveTo: treeMove.moveTo,
-          }}
-        />
+        {operations.refreshError && (
+          <button className="text-xs text-danger px-3 py-2" onClick={() => void operations.refreshTree()}>
+            Couldn’t refresh files — retry
+          </button>
+        )}
+        {operations.initialLoading || operations.initialError ? (
+          <AsyncState
+            loading={operations.initialLoading}
+            error={operations.initialError}
+            onRetry={() => void operations.refreshTree()}
+            loadingLabel="Loading files…"
+            errorLabel="Couldn’t load the file tree."
+          />
+        ) : (
+          <FileTreeList
+            nodes={operations.tree}
+            expanded={expanded}
+            toggleExpanded={toggleExpanded}
+            loadingDirs={slowLoadingDirs}
+            dirErrors={operations.dirErrors}
+            retryLoad={operations.loadChildren}
+            selection={{
+              activePath: selectedPath,
+              selected: selection.selected,
+              select: selection.handleSelect,
+              selectRange: (path) => selection.selectRangeTo(operations.tree, expanded, path),
+              pick: onFileSelect,
+            }}
+            move={{
+              draggedNodes: treeMove.draggedNodes,
+              dropTargetPath: treeMove.dropTargetPath,
+              movingPaths: treeMove.movingPaths,
+              dragStart: treeMove.handleDragStart,
+              dragEnd: treeMove.handleDragEnd,
+              setDropTarget: treeMove.setDropTargetPath,
+              moveTo: treeMove.moveTo,
+            }}
+          />
+        )}
         {draggingUpload && (
           <div
             className={`absolute inset-0 z-10 flex items-center justify-center pointer-events-none border-2 border-dashed ${uploadBusy ? "border-border bg-bg/80" : "border-primary bg-primary-tint/80"}`}
@@ -280,6 +315,7 @@ export default function FileTreePanel({
 
       {(selection.selected.size > 0 ||
         operations.deleteError ||
+        operations.downloadError ||
         operations.moveError ||
         treeMove.moveNote ||
         treeMove.movingPaths.size > 0) && (
@@ -290,9 +326,7 @@ export default function FileTreePanel({
               onClick={operations.handleDownload}
               disabled={operations.downloading || treeMove.movingPaths.size > 0}
             >
-              {operations.downloading && (
-                <span className="shrink-0 block w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin" />
-              )}
+              {operations.downloading && <Spinner className="w-3 h-3" />}
               {operations.downloading ? "Zipping…" : "Download .zip"}
             </button>
             <button
@@ -305,6 +339,9 @@ export default function FileTreePanel({
           </div>
           {operations.deleteError && (
             <div className="text-xs text-danger whitespace-pre-wrap mt-2 px-1">{operations.deleteError}</div>
+          )}
+          {operations.downloadError && (
+            <div className="text-xs text-danger whitespace-pre-wrap mt-2 px-1">{operations.downloadError}</div>
           )}
           {treeMove.movingPaths.size > 0 && (
             <div className="text-xs text-text-3 mt-2 px-1">

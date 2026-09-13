@@ -4,6 +4,7 @@
 import { useCallback, useState } from "react";
 import type { Node } from "@xyflow/react";
 import { useTransientMessage } from "@/lib/client/hooks/useTransientMessage";
+import { AsyncState } from "@/components/shared/AsyncState";
 import DriveForm from "./DriveForm";
 import GraphCanvas from "./GraphCanvas";
 import GraphTopBar from "./GraphTopBar";
@@ -19,6 +20,8 @@ export default function GraphEditor() {
     nodes,
     edges,
     ready,
+    loadError,
+    reload,
     saved,
     isDirty,
     pendingDriveDeletes,
@@ -73,9 +76,14 @@ export default function GraphEditor() {
           />
         )}
         {!ready && (
-          <div className="absolute inset-0 flex items-center justify-center text-text-3 text-sm">
-            Loading workspaces…
-          </div>
+          <AsyncState
+            loading={!loadError}
+            error={loadError}
+            onRetry={reload}
+            loadingLabel="Loading graph…"
+            errorLabel="Couldn’t load the graph."
+            className="absolute inset-0 text-sm"
+          />
         )}
       </div>
 

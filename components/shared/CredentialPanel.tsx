@@ -18,6 +18,7 @@
 "use client";
 
 import type { ReactNode } from "react";
+import { AsyncState } from "./AsyncState";
 import CredentialReveal from "./CredentialReveal";
 
 interface CredentialPanelProps {
@@ -32,6 +33,10 @@ interface CredentialPanelProps {
   plaintext: string | null;
   busy: boolean;
   error: string | null;
+  /** The initial GET is in flight / failed — the body becomes a spinner / retry instead of controls. */
+  loading?: boolean;
+  loadError?: boolean;
+  onRetry?: () => void;
   onToggle: () => void;
   /** Issues the channel's first credential. Offered only while it has none. */
   onGenerate: () => void;
@@ -52,6 +57,9 @@ export default function CredentialPanel({
   plaintext,
   busy,
   error,
+  loading = false,
+  loadError = false,
+  onRetry,
   onToggle,
   onGenerate,
   onRotate,
@@ -59,6 +67,19 @@ export default function CredentialPanel({
   onDismissPlaintext,
   children,
 }: CredentialPanelProps) {
+  if (loading || loadError) {
+    return (
+      <div className="flex flex-col mt-4 border border-border rounded-card p-[16px_18px] bg-bg-tint">
+        <span className="text-ms font-semibold text-text">{title}</span>
+        <AsyncState
+          loading={loading}
+          error={loadError}
+          onRetry={onRetry}
+          errorLabel={`Couldn’t load ${title.toLowerCase()}.`}
+        />
+      </div>
+    );
+  }
   return (
     <div className="flex flex-col gap-4 mt-4 border border-border rounded-card p-[16px_18px] bg-bg-tint">
       <div className="flex items-center justify-between">

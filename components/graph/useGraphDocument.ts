@@ -27,6 +27,7 @@ export function useGraphDocument({ showError }: GraphDocumentOptions) {
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [ready, setReady] = useState(false);
+  const [loadError, setLoadError] = useState(false);
   const [saved, setSaved] = useState(false);
   const [isDirty, setIsDirty] = useState(false);
   const [pendingDriveDeletes, setPendingDriveDeletes] = useState<Node[]>([]);
@@ -81,7 +82,9 @@ export function useGraphDocument({ showError }: GraphDocumentOptions) {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [deleteSelection]);
 
-  useEffect(() => {
+  const load = useCallback(() => {
+    setLoadError(false);
+    setReady(false);
     api
       .fetchGraphDocument()
       .then(({ workspaces, graph, drives, connections }) => {
@@ -92,9 +95,15 @@ export function useGraphDocument({ showError }: GraphDocumentOptions) {
       })
       .catch((error: unknown) => {
         showError(error instanceof Error ? error.message : "Failed to load the graph");
-        setReady(true);
+        setLoadError(true);
       });
   }, [setEdges, setNodes, showError]);
+
+  useEffect(() => {
+    // Kicks off the external fetch and records its pending/error state.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    load();
+  }, [load]);
 
   const onConnect = useCallback(
     (connection: Connection) => {
@@ -115,9 +124,8 @@ export function useGraphDocument({ showError }: GraphDocumentOptions) {
       .filter((edge) => !isDriveEdge(edge))
       .map((edge) => ({ id: edge.id, source: edge.source, target: edge.target }));
     const stored = await api.saveGraph(workspaceEdges, storedPositions(nodesRef.current));
-    // Both halves of the save mint their own ids, so a newly drawn edge comes back under one the
-    // canvas has not seen. Workspace edges answer in the order they were sent; drive links answer one
-    // at a time. Either way the canvas adopts what it is given, or it resends a dead id next save.
+    // Save mints new ids, so a freshly drawn edge returns under one the canvas hasn't seen; workspace
+    // edges answer in send order. The canvas adopts what it's given, or resends a dead id next save.
     const renamed = new Map<string, string>();
     workspaceEdges.forEach((sent, index) => {
       const id = stored[index]?.id;
@@ -172,6 +180,8 @@ export function useGraphDocument({ showError }: GraphDocumentOptions) {
     nodes,
     edges,
     ready,
+    loadError,
+    reload: load,
     saved,
     isDirty,
     pendingDriveDeletes,

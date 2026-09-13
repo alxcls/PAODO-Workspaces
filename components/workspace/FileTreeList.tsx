@@ -1,4 +1,5 @@
 import type { DragEvent, MouseEvent } from "react";
+import { Spinner } from "@/components/shared/Spinner";
 import { canMoveAllToDirectory } from "@/lib/client/fileMove";
 import { pathWithDescendants, sortTreeNodes } from "@/lib/client/fileTreeOrder";
 import type { DraggedTreeNode } from "@/lib/client/hooks/useFileTreeMove";
@@ -30,6 +31,10 @@ interface Props {
   parentDirectory?: string | null;
   expanded: Record<string, boolean>;
   toggleExpanded: (path: string) => void;
+  /** Directories whose children are being fetched, and those whose fetch failed (retryable). */
+  loadingDirs: Set<string>;
+  dirErrors: Set<string>;
+  retryLoad: (path: string) => void;
   selection: SelectionBindings;
   move: MoveBindings;
 }
@@ -152,6 +157,9 @@ export function FileTreeList({
   parentDirectory = null,
   expanded,
   toggleExpanded,
+  loadingDirs,
+  dirErrors,
+  retryLoad,
   selection,
   move,
 }: Props) {
@@ -208,17 +216,40 @@ export function FileTreeList({
                   <span className="flex-1 whitespace-nowrap overflow-hidden text-ellipsis">{node.name}</span>
                 </div>
               </button>
-              {isOpen && node.children && (
-                <FileTreeList
-                  nodes={node.children}
-                  depth={depth + 1}
-                  parentDirectory={node.path}
-                  expanded={expanded}
-                  toggleExpanded={toggleExpanded}
-                  selection={selection}
-                  move={move}
-                />
-              )}
+              {isOpen &&
+                (loadingDirs.has(node.path) ? (
+                  <div
+                    className="flex items-center gap-2 py-[5px] text-[12.5px] text-text-3"
+                    style={{ marginLeft: 6 + (depth + 1) * 14 + 14 }}
+                  >
+                    <Spinner className="w-3 h-3" />
+                    Loading…
+                  </div>
+                ) : dirErrors.has(node.path) ? (
+                  <button
+                    type="button"
+                    className="flex items-center py-[5px] text-[12.5px] text-danger hover:underline"
+                    style={{ marginLeft: 6 + (depth + 1) * 14 + 14 }}
+                    onClick={() => retryLoad(node.path)}
+                  >
+                    Couldn’t load — retry
+                  </button>
+                ) : (
+                  node.children && (
+                    <FileTreeList
+                      nodes={node.children}
+                      depth={depth + 1}
+                      parentDirectory={node.path}
+                      expanded={expanded}
+                      toggleExpanded={toggleExpanded}
+                      loadingDirs={loadingDirs}
+                      dirErrors={dirErrors}
+                      retryLoad={retryLoad}
+                      selection={selection}
+                      move={move}
+                    />
+                  )
+                ))}
             </div>
           );
         }

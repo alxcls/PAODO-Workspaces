@@ -1,6 +1,8 @@
-// Loads and tracks a workspace's conversations for the switcher. Picks the newest as active on
-// first load (creating one if the workspace has none), exposes create/select, and a refresh that
-// re-reads titles/order and the per-conversation `running` flag without disturbing the selection.
+/**
+ * Loads and tracks a workspace's conversations for the switcher. Picks the newest as active on
+ * first load (creating one if the workspace has none), exposes create/select, and a refresh that
+ * re-reads titles/order and the per-conversation `running` flag without disturbing the selection.
+ */
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
@@ -28,6 +30,10 @@ export interface InitialConversation {
 export function useConversations(workspaceId: string) {
   const [conversations, setConversations] = useState<ConversationMeta[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
+  const [loadNonce, setLoadNonce] = useState(0);
+  const retry = useCallback(() => setLoadNonce((n) => n + 1), []);
   const [initial, setInitial] = useState<InitialConversation | null>(null);
   // Deep-link target (?conversation=<id>), e.g. from a call_agent "View session" link in another
   // workspace. When it names a real conversation we open it instead of the newest.
@@ -50,16 +56,19 @@ export function useConversations(workspaceId: string) {
     return conversation.id;
   }, [workspaceId]);
 
-  // Initial load for the workspace: pick the newest conversation (or create the first one). One
-  // combined request (`include=active`) also brings back that conversation's transcript so the chat
-  // renders without a second round-trip.
+  /* Initial load for the workspace: pick the newest conversation (or create the first one). One
+     combined request (`include=active`) also brings back that conversation's transcript so the chat
+     renders without a second round-trip. */
   useEffect(() => {
     let cancelled = false;
     (async () => {
+      setLoading(true);
+      setLoadError(false);
       setActiveId(null); // clear any selection carried over from a previous workspace
       setInitial(null);
       const res = await fetch(`/api/workspaces/${workspaceId}/conversations?include=active`);
-      if (cancelled || !res.ok) return;
+      if (cancelled) return;
+      if (!res.ok) throw new Error("Failed to load conversations");
       const { conversations, active } = (await res.json()) as {
         conversations: ConversationMeta[];
         active: InitialConversation | null;
@@ -67,23 +76,29 @@ export function useConversations(workspaceId: string) {
       if (cancelled) return;
       setConversations(conversations);
       if (conversations.length === 0) {
-        await create();
+        if (!(await create())) throw new Error("Failed to create conversation");
         return;
       }
       setInitial(active);
       // Honor a ?conversation= deep-link when it points at a real conversation; else newest.
       const requested = requestedConvId && conversations.some((c) => c.id === requestedConvId) ? requestedConvId : null;
       setActiveId(requested ?? conversations[0].id);
-    })();
+    })()
+      .catch(() => {
+        if (!cancelled) setLoadError(true);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
     return () => {
       cancelled = true;
     };
-  }, [workspaceId, create, requestedConvId]);
+  }, [workspaceId, create, requestedConvId, loadNonce]);
 
-  // Keep the per-conversation "running" dot fresh, but only while a run is actually in flight — so an
-  // idle workspace makes zero background requests. Polling starts when something is running (a local
-  // run flips a conversation's `running` flag, or `kick()` is called when a run begins) and stops
-  // itself on the first poll that finds nothing running.
+  /* Keep the per-conversation "running" dot fresh, but only while a run is actually in flight — so an
+     idle workspace makes zero background requests. Polling starts when something is running (a local
+     run flips a conversation's `running` flag, or `kick()` is called when a run begins) and stops
+     itself on the first poll that finds nothing running. */
   const anyRunning = conversations.some((c) => c.running);
   useEffect(() => {
     if (!anyRunning) return;
@@ -93,5 +108,5 @@ export function useConversations(workspaceId: string) {
     return () => clearInterval(t);
   }, [anyRunning, refresh]);
 
-  return { conversations, activeId, setActiveId, create, refresh, initial };
+  return { conversations, activeId, setActiveId, create, refresh, initial, loading, loadError, retry };
 }

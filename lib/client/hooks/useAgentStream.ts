@@ -67,6 +67,8 @@ interface ConversationSnapshot {
 }
 
 export function useAgentStream(workspaceId: string, conversationId: string | null, { onTurnComplete }: Options = {}) {
+  const [historyLoading, setHistoryLoading] = useState(!!conversationId);
+  const [historyError, setHistoryError] = useState(false);
   const [messages, setMessages] = useState<Message[]>([]);
   const [streaming, setStreaming] = useState(false);
   // True only while backing off between reconnect attempts. Folded into the exposed `streaming` so
@@ -114,6 +116,8 @@ export function useAgentStream(workspaceId: string, conversationId: string | nul
   const hydrate = useCallback(
     (loaded: Message[]) => {
       commit({ messages: loaded });
+      setHistoryLoading(false);
+      setHistoryError(false);
     },
     [commit],
   );
@@ -397,10 +401,17 @@ export function useAgentStream(workspaceId: string, conversationId: string | nul
   // the same drop recovery as every other stream.
   const loadConversation = useCallback(async () => {
     const gen = genRef.current;
+    setHistoryLoading(true);
+    setHistoryError(false);
     const snapshot = await fetchSnapshot();
     // The viewer may have switched conversations while this was in flight; hydrating now would
     // paint the old conversation's history into the new one.
-    if (!snapshot || genRef.current !== gen) return;
+    if (genRef.current !== gen) return;
+    if (!snapshot) {
+      setHistoryLoading(false);
+      setHistoryError(true);
+      return;
+    }
     hydrate(snapshot.transcript);
     if (snapshot.running) await runWithRecovery({ conversationId }, snapshot.userInput ?? undefined);
   }, [fetchSnapshot, hydrate, runWithRecovery, conversationId]);
@@ -423,6 +434,8 @@ export function useAgentStream(workspaceId: string, conversationId: string | nul
   }, [workspaceId, conversationId]);
 
   return {
+    historyLoading,
+    historyError,
     messages,
     streaming: streaming || reconnecting,
     pendingTools,

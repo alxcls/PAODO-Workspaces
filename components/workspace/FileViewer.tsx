@@ -8,9 +8,14 @@ import dynamic from "next/dynamic";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { useFileContent } from "@/lib/client/hooks/useFileContent";
+import { Spinner } from "@/components/shared/Spinner";
+import FileViewerLoading from "./FileViewerLoading";
 
 // CodeMirror touches the DOM on import, so load it client-side only (no SSR).
-const CodeMirrorEditor = dynamic(() => import("./CodeMirrorEditor"), { ssr: false });
+const CodeMirrorEditor = dynamic(() => import("./CodeMirrorEditor"), {
+  ssr: false,
+  loading: () => <FileViewerLoading />,
+});
 
 const CloseIcon = () => (
   <svg
@@ -144,10 +149,12 @@ const FileViewer = forwardRef<FileViewerHandle, Props>(function FileViewer(
                 onClick={handleSave}
                 disabled={!isDirty || saving || deleting || moving}
               >
+                {(saving || moving) && <Spinner />}
                 {saving ? "Saving…" : moving ? "Moving…" : "Save"}
               </button>
             )}
             <button className="btn btn-sm text-danger" onClick={handleDelete} disabled={deleting || saving || moving}>
+              {deleting && <Spinner />}
               {deleting ? "Deleting…" : "Delete"}
             </button>
           </>
@@ -155,10 +162,8 @@ const FileViewer = forwardRef<FileViewerHandle, Props>(function FileViewer(
         {closeBtn}
       </div>
 
-      {loading && (
-        <div className="flex-1 grid place-items-center text-text-3 text-sm bg-bg-tint p-6 text-center">Loading…</div>
-      )}
-      {error && (
+      {loading && <FileViewerLoading />}
+      {!loading && error && (
         <div className="flex-1 grid place-items-center text-sm bg-bg-tint p-6 text-center text-danger">{error}</div>
       )}
 

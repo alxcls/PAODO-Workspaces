@@ -10,6 +10,8 @@
 // object edited through `set(key, value)`; Field/LiveToggle keep the markup declarative.
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { AsyncState } from "@/components/shared/AsyncState";
+import { useAsyncResource } from "@/lib/client/hooks/useAsyncResource";
 import { timezoneOffsetMinutes, timezoneOptionLabel } from "@/lib/client/timezoneLabel";
 // The entity itself, not a copy of it. lib/schedules/types.ts is dependency-free — no store, no
 // luxon — so this panel types its fetch result and its unit picker from the same declaration the
@@ -136,7 +138,7 @@ function Field({
   );
 }
 
-function LiveToggle({ enabled, onToggle }: { enabled: boolean; onToggle: () => void }) {
+function LiveToggle({ enabled, onToggle, disabled }: { enabled: boolean; onToggle: () => void; disabled?: boolean }) {
   return (
     <button
       type="button"
@@ -144,6 +146,7 @@ function LiveToggle({ enabled, onToggle }: { enabled: boolean; onToggle: () => v
       aria-checked={enabled}
       aria-label={enabled ? "Live — pause schedule" : "Paused — resume schedule"}
       onClick={onToggle}
+      disabled={disabled}
       className="shrink-0 flex items-center gap-2.5 h-9 px-1 transition-colors outline-none focus-visible:ring-2 focus-visible:ring-primary-soft"
     >
       <span className={`text-ms font-semibold ${enabled ? "text-primary" : "text-text-2"}`}>
@@ -181,40 +184,34 @@ function ScheduleModal({ workspaceId, onClose, onStatus }: ModalProps) {
       });
   }, []);
 
-  const [loading, setLoading] = useState(true);
+  const schedule = useAsyncResource(
+    useCallback(
+      async (signal: AbortSignal) => {
+        const res = await fetch(url, { signal });
+        if (!res.ok) throw new Error(`Failed to load schedule (${res.status})`);
+        const entry = (await res.json()) as ScheduleEntry | null;
+        return entry ? toForm(entry) : emptyForm();
+      },
+      [url],
+    ),
+  );
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [form, setForm] = useState<FormState>(emptyForm);
+  const [initialForm] = useState(emptyForm);
+  const [draft, setDraft] = useState<FormState | null>(null);
+  const form = draft ?? schedule.data ?? initialForm;
+  const unavailable = schedule.loading || schedule.error || schedule.data === null;
 
-  const set = useCallback(<K extends keyof FormState>(key: K, value: FormState[K]) => {
-    setForm((f) => ({ ...f, [key]: value }));
-  }, []);
+  const set = useCallback(
+    <K extends keyof FormState>(key: K, value: FormState[K]) => {
+      setDraft((current) => ({ ...(current ?? schedule.data ?? initialForm), [key]: value }));
+    },
+    [schedule.data, initialForm],
+  );
 
-  // Load the current schedule on open.
   useEffect(() => {
-    let alive = true;
-    (async () => {
-      setLoading(true);
-      setError(null);
-      try {
-        const res = await fetch(url);
-        if (!res.ok) throw new Error(`Failed to load schedule (${res.status})`);
-        const s = (await res.json()) as ScheduleEntry | null;
-        if (!alive) return;
-        if (s) {
-          setForm(toForm(s));
-          onStatus(s.enabled);
-        }
-      } catch (err) {
-        if (alive) setError(err instanceof Error ? err.message : "Failed to load schedule");
-      } finally {
-        if (alive) setLoading(false);
-      }
-    })();
-    return () => {
-      alive = false;
-    };
-  }, [url, onStatus]);
+    if (schedule.data) onStatus(schedule.data.enabled);
+  }, [schedule.data, onStatus]);
 
   // Dismiss on Escape.
   useEffect(() => {
@@ -226,6 +223,7 @@ function ScheduleModal({ workspaceId, onClose, onStatus }: ModalProps) {
   }, [onClose]);
 
   const save = async () => {
+    if (unavailable || saving) return;
     setSaving(true);
     setError(null);
     try {
@@ -274,12 +272,23 @@ function ScheduleModal({ workspaceId, onClose, onStatus }: ModalProps) {
               </p>
             </div>
           </div>
-          <LiveToggle enabled={form.enabled} onToggle={() => set("enabled", !form.enabled)} />
+          <LiveToggle
+            enabled={form.enabled}
+            onToggle={() => set("enabled", !form.enabled)}
+            disabled={unavailable || saving}
+          />
         </header>
 
         {/* Body */}
-        {loading ? (
-          <div className="py-20 grid place-items-center text-sm text-text-3">Loading…</div>
+        {unavailable ? (
+          <AsyncState
+            loading={schedule.loading}
+            error={schedule.error}
+            onRetry={schedule.reload}
+            loadingLabel="Loading schedule…"
+            errorLabel="Couldn’t load the schedule."
+            className="flex-1 min-h-0 justify-center p-7"
+          />
         ) : (
           <div className="flex-1 min-h-0 overflow-auto p-7 flex flex-col gap-6">
             {error && (
@@ -364,7 +373,7 @@ function ScheduleModal({ workspaceId, onClose, onStatus }: ModalProps) {
 
         {/* Footer */}
         <footer className="flex items-center gap-3 px-7 py-4 border-t border-border-soft shrink-0">
-          <button type="submit" className="btn btn-primary ml-auto" disabled={saving || loading}>
+          <button type="submit" className="btn btn-primary ml-auto" disabled={saving || unavailable}>
             {saving ? "Saving…" : "Save"}
           </button>
         </footer>
@@ -415,7 +424,7 @@ export default function SchedulePanel({ workspaceId }: Props) {
         <span>Schedule</span>
       </button>
 
-      {open && <ScheduleModal workspaceId={workspaceId} onClose={close} onStatus={setActive} />}
+      {open && <ScheduleModal key={workspaceId} workspaceId={workspaceId} onClose={close} onStatus={setActive} />}
     </>
   );
 }

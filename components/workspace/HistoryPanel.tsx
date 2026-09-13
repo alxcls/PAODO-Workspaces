@@ -7,6 +7,10 @@
 // the page refresh the file tree/viewer to reflect the reverted files.
 
 import { useState, useEffect, useRef, useCallback } from "react";
+import { LoadingState } from "@/components/shared/LoadingState";
+import { useAsyncResource } from "@/lib/client/hooks/useAsyncResource";
+import { SPINNER_DELAY_MS, useDelayed } from "@/lib/client/hooks/useDelayed";
+import { Spinner } from "@/components/shared/Spinner";
 
 interface Commit {
   sha: string;
@@ -50,31 +54,31 @@ interface Props {
   onRestored?: () => void;
 }
 
-export default function HistoryPanel({ workspaceId, refreshKey, onRestored }: Props) {
+export default function HistoryPanel(props: Props) {
+  return <WorkspaceHistory key={props.workspaceId} {...props} />;
+}
+
+function WorkspaceHistory({ workspaceId, refreshKey, onRestored }: Props) {
   const [open, setOpen] = useState(false);
-  const [commits, setCommits] = useState<Commit[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [restoring, setRestoring] = useState<string | null>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
 
-  const fetchHistory = useCallback(async () => {
-    setError(null);
-    try {
-      const res = await fetch(`/api/workspaces/${workspaceId}/history`);
-      if (!res.ok) throw new Error(`Failed to load history (${res.status})`);
-      const body = (await res.json()) as { commits: Commit[] };
-      setCommits(body.commits ?? []);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load history");
-    }
-  }, [workspaceId]);
-
-  // Refetch whenever the panel opens, and whenever a run completes while it's open.
-  useEffect(() => {
-    // fetchHistory owns the loading/error state shared with the explicit post-restore refresh.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    if (open) void fetchHistory();
-  }, [open, refreshKey, fetchHistory]);
+  const history = useAsyncResource(
+    useCallback(
+      async (signal: AbortSignal) => {
+        const res = await fetch(`/api/workspaces/${workspaceId}/history`, { signal });
+        if (!res.ok) throw new Error(`Failed to load history (${res.status})`);
+        const body = (await res.json()) as { commits: Commit[] };
+        return body.commits ?? [];
+      },
+      [workspaceId],
+    ),
+    { enabled: open, refreshKey },
+  );
+  const commits = history.data ?? [];
+  const loading = history.loading && history.data === null;
+  const showReloadSpinner = useDelayed(history.loading && history.data !== null, SPINNER_DELAY_MS);
 
   // Dismiss on outside click / Escape.
   useEffect(() => {
@@ -107,7 +111,7 @@ export default function HistoryPanel({ workspaceId, refreshKey, onRestored }: Pr
         throw new Error((body as { error?: string }).error ?? `Restore failed (${res.status})`);
       }
       onRestored?.();
-      await fetchHistory();
+      await history.reload();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Restore failed");
     } finally {
@@ -122,40 +126,57 @@ export default function HistoryPanel({ workspaceId, refreshKey, onRestored }: Pr
         title="Version history"
         aria-label="Version history"
         aria-expanded={open}
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => {
+          if (!open) setError(null);
+          setOpen((v) => !v);
+        }}
         className={`btn btn-ghost btn-sm ${open ? "bg-black/[.06]" : ""}`}
       >
-        <ClockIcon />
+        {showReloadSpinner ? <Spinner /> : <ClockIcon />}
         <span>History</span>
       </button>
 
       {open && (
         <div className="absolute right-0 top-[calc(100%+6px)] z-50 w-[200px] max-h-[280px] flex flex-col rounded-[10px] border border-border bg-bg shadow-lg overflow-hidden">
-          {error && <div className="text-xs text-danger px-3 py-2 border-b border-border">{error}</div>}
+          {history.error && (
+            <button
+              className="text-xs text-danger px-3 py-2 border-b border-border"
+              onClick={() => void history.reload()}
+            >
+              Couldn’t load history — retry
+            </button>
+          )}
+          {!loading && error && <div className="text-xs text-danger px-3 py-2 border-b border-border">{error}</div>}
 
           <div className="flex-1 overflow-auto">
-            {commits.length === 0 && !error && (
+            {loading && <LoadingState label="Loading snapshots…" className="px-2.5 py-2 text-[12.5px]" />}
+            {!loading && commits.length === 0 && !error && !history.error && (
               <div className="text-xs text-text-3 px-3 py-4 text-center">No snapshots yet.</div>
             )}
-            {commits.map((c) => {
-              const isRestoring = restoring === c.sha;
-              // The current snapshot (HEAD) is just colour-highlighted so you can see where you
-              // are; every row is clickable to jump to that snapshot.
-              return (
-                <button
-                  key={c.sha}
-                  type="button"
-                  onClick={() => restore(c.sha)}
-                  disabled={isRestoring}
-                  className={`flex items-center gap-2 w-full text-left px-2.5 py-2 text-[12.5px] border-b border-border last:border-b-0 disabled:opacity-50 ${
-                    c.current ? "bg-primary/10" : "hover:bg-black/[.03]"
-                  }`}
-                >
-                  <code className={c.current ? "text-primary" : "text-text-2"}>{c.sha.slice(0, 7)}</code>
-                  <span className="text-text-3 whitespace-nowrap">{formatTime(c.timestamp)}</span>
-                </button>
-              );
-            })}
+            {!loading &&
+              commits.map((c) => {
+                const isRestoring = restoring === c.sha;
+                // The current snapshot (HEAD) is just colour-highlighted so you can see where you
+                // are; every row is clickable to jump to that snapshot.
+                return (
+                  <button
+                    key={c.sha}
+                    type="button"
+                    onClick={() => restore(c.sha)}
+                    disabled={restoring !== null}
+                    className={`flex items-center gap-2 w-full text-left px-2.5 py-2 text-[12.5px] border-b border-border last:border-b-0 disabled:opacity-50 ${
+                      c.current ? "bg-primary/10" : "hover:bg-black/[.03]"
+                    }`}
+                  >
+                    <code className={c.current ? "text-primary" : "text-text-2"}>{c.sha.slice(0, 7)}</code>
+                    {isRestoring ? (
+                      <Spinner />
+                    ) : (
+                      <span className="text-text-3 whitespace-nowrap">{formatTime(c.timestamp)}</span>
+                    )}
+                  </button>
+                );
+              })}
           </div>
         </div>
       )}

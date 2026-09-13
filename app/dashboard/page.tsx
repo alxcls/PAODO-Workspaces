@@ -6,6 +6,7 @@ import Image from "next/image";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import TopBar from "@/components/layout/TopBar";
+import { AsyncState } from "@/components/shared/AsyncState";
 import TokenUsageLine from "@/components/usage/TokenUsageLine";
 import { useDragResize } from "@/lib/client/hooks/useDragResize";
 import { toolLabel, toolArgSummary } from "@/lib/transcript/toolDisplay";
@@ -76,7 +77,10 @@ interface ToolRef {
 // Right-side detail drawer. Turn mode (selected === null) shows the user input + a list of every
 // tool execution in the session. Clicking a tool switches to tool mode: reasoning + args + output.
 function DetailDrawer({ session, onClose, width }: { session: LightSession; onClose: () => void; width: number }) {
+  // null = loading, undefined = failed, else the loaded record. `reloadNonce` re-runs the fetch; the
+  // retry handler resets detail to null itself, so the effect never sets loading state synchronously.
   const [detail, setDetail] = useState<SessionDetailRecord | null | undefined>(null);
+  const [reloadNonce, setReloadNonce] = useState(0);
   const [selected, setSelected] = useState<ToolRef | null>(null);
 
   // The drawer is remounted per session (keyed on sessionId by the parent), so state starts
@@ -86,7 +90,12 @@ function DetailDrawer({ session, onClose, width }: { session: LightSession; onCl
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error("session not found"))))
       .then(setDetail)
       .catch(() => setDetail(undefined));
-  }, [session.sessionId]);
+  }, [session.sessionId, reloadNonce]);
+
+  const retryDetail = () => {
+    setDetail(null);
+    setReloadNonce((n) => n + 1);
+  };
 
   const turns = useMemo(() => detail?.turns ?? [], [detail]);
   const userInput = detail?.session.userInput ?? "";
@@ -115,10 +124,15 @@ function DetailDrawer({ session, onClose, width }: { session: LightSession; onCl
         </button>
       </div>
 
-      {detail === null ? (
-        <div className="flex-1 flex items-center justify-center text-text-3 text-ms">Loading…</div>
-      ) : detail === undefined ? (
-        <div className="flex-1 flex items-center justify-center text-text-3 text-ms">Session unavailable.</div>
+      {detail === null || detail === undefined ? (
+        <div className="flex-1 flex items-center justify-center">
+          <AsyncState
+            loading={detail === null}
+            error={detail === undefined}
+            onRetry={retryDetail}
+            errorLabel="Session unavailable."
+          />
+        </div>
       ) : selected && selTool ? (
         // ── tool mode ───────────────────────────────────────────────────────────────
         <div className="flex-1 overflow-auto px-5 py-4 flex flex-col gap-4">
@@ -253,6 +267,8 @@ function SystemPromptSection({ prompt }: { prompt?: string }) {
 
 export default function DashboardPage() {
   const [records, setRecords] = useState<LightTurnRecord[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
   const [openSession, setOpenSession] = useState<LightSession | null>(null);
   const [drawerWidth, setDrawerWidth] = useState(440);
 
@@ -270,9 +286,19 @@ export default function DashboardPage() {
 
   const loadUsage = useCallback(() => {
     fetch("/api/usage")
-      .then((r) => r.json())
-      .then(setRecords)
-      .catch(() => {});
+      .then((r) => {
+        if (!r.ok) throw new Error("Failed to load usage.");
+        return r.json();
+      })
+      .then((data: LightTurnRecord[]) => {
+        setRecords(data);
+        setError(false);
+        setLoading(false);
+      })
+      .catch(() => {
+        setError(true);
+        setLoading(false);
+      });
   }, []);
 
   // Load on mount, and again whenever the page is shown after being navigated away from.
@@ -327,9 +353,24 @@ export default function DashboardPage() {
         {/* Session table — each row is one "turn line" (one user message). Click to inspect. */}
         <main className="flex-1 overflow-auto">
           {sessions.length === 0 ? (
-            <div className="flex items-center justify-center h-full text-text-3 text-ms">
-              No usage data yet. Run an agent to see sessions here.
-            </div>
+            loading || error ? (
+              <div className="flex items-center justify-center h-full">
+                <AsyncState
+                  loading={loading}
+                  error={error}
+                  onRetry={() => {
+                    setLoading(true);
+                    loadUsage();
+                  }}
+                  loadingLabel="Loading usage…"
+                  errorLabel="Couldn’t load usage data."
+                />
+              </div>
+            ) : (
+              <div className="flex items-center justify-center h-full text-text-3 text-ms">
+                No usage data yet. Run an agent to see sessions here.
+              </div>
+            )
           ) : (
             <table className="w-full text-ms border-separate border-spacing-0 whitespace-nowrap">
               <colgroup>

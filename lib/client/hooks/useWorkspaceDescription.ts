@@ -1,33 +1,18 @@
-// Loads and persists a workspace's description. Reads as empty on every workspace switch (and when
-// nothing is selected) so the previous workspace's text never renders under a new heading.
-// A failed load is swallowed to empty — the editor opens blank rather than blocking the page.
+// Edits the description from the page’s shared workspace read, with optimistic save/rollback.
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useCallback } from "react";
 import { confirmedValues } from "@/lib/client/workspaceReceipt";
+import type { AsyncResource } from "./useAsyncResource";
+import type { WorkspaceDetails } from "./useWorkspaceDetails";
 
-export function useWorkspaceDescription(workspaceId: string | null) {
-  const [loaded, setLoaded] = useState<{ id: string; text: string } | null>(null);
-
-  useEffect(() => {
-    if (!workspaceId) return;
-    let cancelled = false;
-    fetch(`/api/workspaces/${workspaceId}`)
-      .then((r) => r.json())
-      .then((ws: { description?: string }) => {
-        if (!cancelled) setLoaded({ id: workspaceId, text: ws.description ?? "" });
-      })
-      .catch(() => {
-        if (!cancelled) setLoaded({ id: workspaceId, text: "" });
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [workspaceId]);
-
-  // Tagged with the workspace it was loaded for, so text from the previous selection is a derived
-  // miss rather than a reset write in the effect body (same shape as useWorkspaceMeta).
-  const description = loaded && loaded.id === workspaceId ? loaded.text : "";
+export function useWorkspaceDescription(workspaceId: string | null, resource: AsyncResource<WorkspaceDetails>) {
+  // Local edits, tagged with the workspace they belong to so a leftover override from the previous
+  // selection is a derived miss rather than a value that bleeds across a switch.
+  const [override, setOverride] = useState<{ id: string; text: string; source: WorkspaceDetails | null } | null>(null);
+  const serverText = resource.data?.description ?? "";
+  const description =
+    override && override.id === workspaceId && override.source === resource.data ? override.text : serverText;
 
   // Optimistic: the new value renders immediately and is rolled back to the prior one if the PATCH
   // fails, so a rejected save never leaves the editor showing text the server didn't keep.
@@ -35,21 +20,25 @@ export function useWorkspaceDescription(workspaceId: string | null) {
     async (next: string) => {
       if (!workspaceId) return;
       const previous = description;
-      setLoaded({ id: workspaceId, text: next.trim() });
-      const res = await fetch(`/api/workspaces/${workspaceId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ description: next }),
-      });
-      if (!res.ok) {
-        setLoaded({ id: workspaceId, text: previous });
-        return;
+      setOverride({ id: workspaceId, text: next.trim(), source: resource.data });
+      try {
+        const res = await fetch(`/api/workspaces/${workspaceId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ description: next }),
+        });
+        if (!res.ok) {
+          setOverride({ id: workspaceId, text: previous, source: resource.data });
+          return;
+        }
+        const { description: confirmed } = await confirmedValues(res);
+        setOverride({ id: workspaceId, text: confirmed ?? next.trim(), source: resource.data });
+      } catch {
+        setOverride({ id: workspaceId, text: previous, source: resource.data });
       }
-      const { description: confirmed } = await confirmedValues(res);
-      setLoaded({ id: workspaceId, text: confirmed ?? next.trim() });
     },
-    [workspaceId, description],
+    [workspaceId, description, resource.data],
   );
 
-  return { description, save };
+  return { description, loading: resource.loading, error: resource.error, reload: resource.reload, save };
 }

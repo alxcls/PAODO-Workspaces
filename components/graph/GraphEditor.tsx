@@ -4,6 +4,7 @@
 import { useCallback, useState } from "react";
 import type { Node } from "@xyflow/react";
 import { useTransientMessage } from "@/lib/client/hooks/useTransientMessage";
+import { LoadingState } from "@/components/shared/LoadingState";
 import DriveForm from "./DriveForm";
 import GraphCanvas from "./GraphCanvas";
 import GraphTopBar from "./GraphTopBar";
@@ -72,11 +73,7 @@ export default function GraphEditor() {
             onNodeDoubleClick={onNodeDoubleClick}
           />
         )}
-        {!ready && (
-          <div className="absolute inset-0 flex items-center justify-center text-text-3 text-sm">
-            Loading workspaces…
-          </div>
-        )}
+        {!ready && <LoadingState label="Loading graph…" className="absolute inset-0 text-sm" />}
       </div>
 
       {isPrompting && (

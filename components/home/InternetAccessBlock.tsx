@@ -5,7 +5,25 @@
 // visibility can share the same state and update immediately when this toggle flips.
 "use client";
 
-export default function InternetAccessBlock({ enabled, onToggle }: { enabled: boolean; onToggle: () => void }) {
+import { AsyncState } from "@/components/shared/AsyncState";
+
+interface Props {
+  enabled: boolean;
+  onToggle: () => void;
+  loading?: boolean;
+  error?: boolean;
+  onRetry?: () => void;
+}
+
+export default function InternetAccessBlock({ enabled, onToggle, loading = false, error = false, onRetry }: Props) {
+  if (loading || error) {
+    return (
+      <div className="flex flex-col mt-4 border border-border rounded-card p-[16px_18px] bg-bg-tint">
+        <span className="text-ms font-semibold text-text">Internet access</span>
+        <AsyncState loading={loading} error={error} onRetry={onRetry} errorLabel="Couldn’t load internet access." />
+      </div>
+    );
+  }
   return (
     <div className="flex flex-col gap-4 mt-4 border border-border rounded-card p-[16px_18px] bg-bg-tint">
       <div className="flex items-center justify-between">

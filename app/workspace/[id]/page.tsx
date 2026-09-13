@@ -1,17 +1,20 @@
-// Workspace page — the main three-column layout combining the file tree, file viewer, chat panel, and console.
-// Manages column/row resize state and coordinates file selection, viewer visibility, and tree refreshes across panels.
-// A single shared WebSocket (useWorkspaceSocket) routes files_changed / files_deleted events to both the
-// file tree (via treeRefreshKey) and the file viewer (via the imperative FileViewerHandle ref).
+/**
+ * Workspace page — the main three-column layout combining the file tree, file viewer, chat panel, and console.
+ * Manages column/row resize state and coordinates file selection, viewer visibility, and tree refreshes across panels.
+ * A single shared WebSocket (useWorkspaceSocket) routes files_changed / files_deleted events to both the
+ * file tree (via treeRefreshKey) and the file viewer (via the imperative FileViewerHandle ref).
+ */
 "use client";
 
 import { use, useState, useEffect, useCallback, useRef, Suspense, lazy } from "react";
 import Image from "next/image";
 import Link from "next/link";
+import FileViewerLoading from "@/components/workspace/FileViewerLoading";
 import FileTreePanel from "@/components/workspace/FileTreePanel";
 import { type FileViewerHandle } from "@/components/workspace/FileViewer";
-// FileViewer pulls in heavy, view-only deps (the CodeMirror editor with all languages,
-// react-markdown). It is only mounted once the user opens a file, so load its chunk lazily to
-// keep them out of the workspace page's initial bundle (the main first-open latency cost).
+/* FileViewer pulls in heavy, view-only deps (the CodeMirror editor with all languages,
+   react-markdown). It is only mounted once the user opens a file, so load its chunk lazily to
+   keep them out of the workspace page's initial bundle (the main first-open latency cost). */
 const FileViewer = lazy(() => import("@/components/workspace/FileViewer"));
 import ChatPanel from "@/components/workspace/ChatPanel";
 import ConversationBar from "@/components/workspace/ConversationBar";
@@ -21,7 +24,7 @@ import SchedulePanel from "@/components/workspace/SchedulePanel";
 import BackgroundTasksIndicator from "@/components/workspace/BackgroundTasksIndicator";
 import TopBar from "@/components/layout/TopBar";
 import { useWorkspaceSocket } from "@/lib/client/hooks/useWorkspaceSocket";
-import { useWorkspaceMeta } from "@/lib/client/hooks/useWorkspaceMeta";
+import { useWorkspaceDetails } from "@/lib/client/hooks/useWorkspaceDetails";
 import { useConversations } from "@/lib/client/hooks/useConversations";
 import { useDragResize } from "@/lib/client/hooks/useDragResize";
 import { remapMovedPath } from "@/lib/client/fileMove";
@@ -39,8 +42,18 @@ export default function WorkspacePage({ params }: { params: Promise<{ id: string
 function WorkspacePageInner({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   // Empty until the metadata resolves, matching the previous behaviour of defaulting to no name.
-  const workspaceName = useWorkspaceMeta(id)?.name ?? "";
-  const { conversations, activeId, setActiveId, create, refresh, initial } = useConversations(id);
+  const workspaceName = useWorkspaceDetails(id).data?.name ?? "";
+  const {
+    conversations,
+    activeId,
+    setActiveId,
+    create,
+    refresh,
+    initial,
+    loading: conversationsLoading,
+    loadError: conversationsError,
+    retry: retryConversations,
+  } = useConversations(id);
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [viewerOpen, setViewerOpen] = useState(false);
 
@@ -199,8 +212,9 @@ function WorkspacePageInner({ params }: { params: Promise<{ id: string }> }) {
             <section className="flex-1 flex flex-col min-w-0 min-h-0 bg-bg">
               <Suspense
                 fallback={
-                  <div className="flex-1 grid place-items-center text-text-3 text-sm bg-bg-tint p-6 text-center">
-                    Loading viewer…
+                  <div className="flex flex-col flex-1 min-h-0">
+                    <div className="min-h-[44px] border-b border-border bg-bg" />
+                    <FileViewerLoading />
                   </div>
                 }
               >
@@ -226,11 +240,20 @@ function WorkspacePageInner({ params }: { params: Promise<{ id: string }> }) {
           }
         >
           <div className="flex flex-col min-h-0 overflow-hidden" style={{ flex: chatRatio }}>
-            <ConversationBar conversations={conversations} activeId={activeId} onSelect={setActiveId} onNew={create} />
+            <ConversationBar
+              loading={conversationsLoading}
+              conversations={conversations}
+              activeId={activeId}
+              onSelect={setActiveId}
+              onNew={create}
+            />
             <ChatPanel
               key={activeId ?? "no-conversation"}
               workspaceId={id}
               conversationId={activeId}
+              conversationsLoading={conversationsLoading}
+              conversationsError={conversationsError}
+              onRetryConversations={retryConversations}
               initialConversation={initial}
               onRunStart={handleRunStart}
               onAgentTurnComplete={handleTurnComplete}

@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import { useState } from "react";
+import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import DescriptionBlock from "@/components/home/DescriptionBlock";
 import ApiAccessBlock from "@/components/home/ApiAccessBlock";
@@ -12,11 +12,14 @@ import McpBlock from "@/components/home/McpBlock";
 import InternetAccessBlock from "@/components/home/InternetAccessBlock";
 import SettingsModal from "@/components/settings/SettingsModal";
 import TopBar from "@/components/layout/TopBar";
+import { AsyncState } from "@/components/shared/AsyncState";
+import { Spinner } from "@/components/shared/Spinner";
 import { useWorkspaces } from "@/lib/client/hooks/useWorkspaces";
 import { useWorkspaceDescription } from "@/lib/client/hooks/useWorkspaceDescription";
 import { useWorkspaceInternetAccess } from "@/lib/client/hooks/useWorkspaceInternetAccess";
-import { useWorkspaceMeta } from "@/lib/client/hooks/useWorkspaceMeta";
+import { useWorkspaceDetails } from "@/lib/client/hooks/useWorkspaceDetails";
 import { useWorkspaceStorage } from "@/lib/client/hooks/useWorkspaceStorage";
+import { SPINNER_DELAY_MS, useDelayed } from "@/lib/client/hooks/useDelayed";
 import { formatBytes } from "@/lib/uploads/limits";
 
 function formatDate(iso: string) {
@@ -29,13 +32,36 @@ function formatDate(iso: string) {
 
 export default function HomePage() {
   const router = useRouter();
+  const [openingWorkspace, startWorkspaceNavigation] = useTransition();
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
-  const { workspaces, isCreating, create, rename, remove } = useWorkspaces();
-  const selectedDetails = useWorkspaceMeta(selectedId);
-  const selectedStorage = useWorkspaceStorage(selectedId);
-  const { description, save: saveDescription } = useWorkspaceDescription(selectedId);
-  const { enabled: internetAccess, toggle: toggleInternetAccess } = useWorkspaceInternetAccess(selectedId);
+  const {
+    workspaces,
+    loading: workspacesLoading,
+    error: workspacesError,
+    isCreating,
+    refresh: refreshWorkspaces,
+    create,
+    rename,
+    remove,
+  } = useWorkspaces();
+  const meta = useWorkspaceDetails(selectedId);
+  const storage = useWorkspaceStorage(selectedId);
+  const showMetaSpinner = useDelayed(meta.loading, SPINNER_DELAY_MS);
+  const {
+    description,
+    loading: descriptionLoading,
+    error: descriptionError,
+    reload: reloadDescription,
+    save: saveDescription,
+  } = useWorkspaceDescription(selectedId, meta);
+  const {
+    enabled: internetAccess,
+    loading: internetLoading,
+    error: internetError,
+    reload: reloadInternet,
+    toggle: toggleInternetAccess,
+  } = useWorkspaceInternetAccess(selectedId);
 
   // Form-local UI state: drafts and inline errors that live and die with the open form.
   const [showCreateForm, setShowCreateForm] = useState(false);
@@ -251,9 +277,18 @@ export default function HomePage() {
             Workspaces
           </div>
           <div className="workspace-list h-0 flex-1 min-h-0 overflow-y-scroll overscroll-contain flex flex-col gap-1 mr-[-16px] pr-2">
-            {workspaces.length === 0 && (
-              <div className="flex-none text-text-3 text-ms p-[8px_6px]">No workspaces yet</div>
-            )}
+            {workspaces.length === 0 &&
+              (workspacesLoading || workspacesError ? (
+                <AsyncState
+                  loading={workspacesLoading}
+                  error={workspacesError}
+                  onRetry={refreshWorkspaces}
+                  loadingLabel="Loading workspaces…"
+                  errorLabel="Couldn’t load workspaces."
+                />
+              ) : (
+                <div className="flex-none text-text-3 text-ms p-[8px_6px]">No workspaces yet</div>
+              ))}
             {workspaces.map((w) => (
               <button
                 key={w.id}
@@ -321,27 +356,56 @@ export default function HomePage() {
                   <h1 className="text-[34px] font-semibold tracking-[-0.02em] my-1.5 text-text">{selected.name}</h1>
                 )}
 
-                {/* Rendered only once both the date and the size are loaded, so they appear together
-                    rather than the size popping in after the date; min-height reserves the line. */}
+                {/* The whole line has its own loading / retry (metadata read); the creation date shows
+                    as soon as it lands, and the disk size — a slow walk — carries a second spinner /
+                    retry beside it rather than holding the date back. */}
                 <div className="text-text-2 text-sm min-h-5">
-                  {selectedDetails && selectedStorage && (
-                    <>
-                      Created {formatDate(selectedDetails.createdAt)}
-                      {" · "}
-                      <span
-                        title={`Files ${formatBytes(selectedStorage.breakdown.workspace)} · Deps ${formatBytes(
-                          selectedStorage.breakdown.home,
-                        )} · History ${formatBytes(selectedStorage.breakdown.versioning)}`}
-                      >
-                        {formatBytes(selectedStorage.bytes)} on disk
+                  {meta.loading ? (
+                    showMetaSpinner ? (
+                      <span className="inline-flex items-center gap-1 text-text-3 align-middle">
+                        <Spinner className="w-3 h-3" /> loading…
                       </span>
+                    ) : null
+                  ) : meta.error ? (
+                    <button className="linkbtn text-text-3" onClick={meta.reload}>
+                      details unavailable — retry
+                    </button>
+                  ) : meta.data ? (
+                    <>
+                      Created {formatDate(meta.data.createdAt)}
+                      {" · "}
+                      {storage.data ? (
+                        <span
+                          title={`Files ${formatBytes(storage.data.breakdown.workspace)} · Deps ${formatBytes(
+                            storage.data.breakdown.home,
+                          )} · History ${formatBytes(storage.data.breakdown.versioning)}`}
+                        >
+                          {formatBytes(storage.data.bytes)} on disk
+                        </span>
+                      ) : storage.error ? (
+                        <button className="linkbtn text-text-3" onClick={storage.reload}>
+                          size unavailable — retry
+                        </button>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 text-text-3 align-middle">
+                          <Spinner className="w-3 h-3" /> sizing…
+                        </span>
+                      )}
                     </>
-                  )}
+                  ) : null}
                 </div>
 
                 <div className="flex gap-2.5 mt-7 mb-2">
-                  <button className="btn btn-primary btn-lg" onClick={() => router.push(`/workspace/${selected.id}`)}>
-                    Open workspace <span className="font-semibold">→</span>
+                  <button
+                    className="btn btn-primary btn-lg disabled:opacity-100 disabled:bg-primary disabled:border-primary disabled:cursor-wait"
+                    disabled={openingWorkspace}
+                    aria-busy={openingWorkspace}
+                    onClick={() => startWorkspaceNavigation(() => router.push(`/workspace/${selected.id}`))}
+                  >
+                    Open workspace
+                    <span className="inline-flex w-3.5 h-3.5 items-center justify-center font-semibold">
+                      {openingWorkspace ? <Spinner /> : "→"}
+                    </span>
                   </button>
                   <button
                     className="btn btn-ghost btn-lg"
@@ -377,15 +441,38 @@ export default function HomePage() {
                 <div className="mt-9 mb-2 text-xs font-semibold uppercase tracking-[.08em] text-text-3">
                   Description
                 </div>
-                <DescriptionBlock key={`desc-${selected.id}`} value={description} onChange={saveDescription} />
+                {descriptionLoading || descriptionError ? (
+                  <div
+                    className="flex items-center justify-center border border-border rounded-card bg-bg-tint"
+                    style={{ height: 240 }}
+                  >
+                    <AsyncState
+                      loading={descriptionLoading}
+                      error={descriptionError}
+                      onRetry={reloadDescription}
+                      loadingLabel="Loading description…"
+                      errorLabel="Couldn’t load the description."
+                    />
+                  </div>
+                ) : (
+                  <DescriptionBlock key={`desc-${selected.id}`} value={description} onChange={saveDescription} />
+                )}
                 <ApiAccessBlock key={`api-${selected.id}`} wsId={selected.id} />
                 <McpBlock key={`mcp-${selected.id}`} wsId={selected.id} />
-                <AgentLoopBlock key={`loop-${selected.id}`} wsId={selected.id} />
-                <ModelBlock key={`model-${selected.id}`} wsId={selected.id} catalogVersion={catalogVersion} />
+                <AgentLoopBlock key={`loop-${selected.id}`} wsId={selected.id} workspace={meta} />
+                <ModelBlock
+                  key={`model-${selected.id}`}
+                  wsId={selected.id}
+                  workspace={meta}
+                  catalogVersion={catalogVersion}
+                />
                 <InternetAccessBlock
                   key={`net-${selected.id}`}
                   enabled={internetAccess}
                   onToggle={toggleInternetAccess}
+                  loading={internetLoading}
+                  error={internetError}
+                  onRetry={reloadInternet}
                 />
                 {internetAccess && <EnvVarsBlock key={`env-${selected.id}`} wsId={selected.id} />}
               </div>

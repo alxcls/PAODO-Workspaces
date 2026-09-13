@@ -3,7 +3,9 @@
 // start a new one.
 "use client";
 
+import { Spinner } from "@/components/shared/Spinner";
 import { useState, useRef, useEffect } from "react";
+import { SPINNER_DELAY_MS, useDelayed } from "@/lib/client/hooks/useDelayed";
 import type { ConversationMeta } from "@/lib/client/hooks/useConversations";
 
 const ChevronIcon = () => (
@@ -27,11 +29,13 @@ const RunningDot = () => (
 
 export default function ConversationBar({
   conversations,
+  loading = false,
   activeId,
   onSelect,
   onNew,
 }: {
   conversations: ConversationMeta[];
+  loading?: boolean;
   activeId: string | null;
   onSelect: (id: string) => void;
   onNew: () => void;
@@ -49,6 +53,7 @@ export default function ConversationBar({
   }, [open]);
 
   const active = conversations.find((c) => c.id === activeId);
+  const showSpinner = useDelayed(loading, SPINNER_DELAY_MS);
 
   return (
     <div
@@ -60,9 +65,13 @@ export default function ConversationBar({
         onClick={() => setOpen((o) => !o)}
         className="flex items-center gap-1.5 min-w-0 max-w-full text-left px-1.5 py-1 rounded-md hover:bg-bg-2 cursor-pointer text-[12.5px] text-text-2"
         title="Switch conversation"
+        disabled={loading}
       >
+        {showSpinner && <Spinner />}
         {active?.running && <RunningDot />}
-        <span className="truncate font-medium">{active?.title ?? "Conversation"}</span>
+        <span className="truncate font-medium">
+          {loading ? "Loading conversation…" : (active?.title ?? "Conversation")}
+        </span>
         <span className="text-text-3 flex-none">
           <ChevronIcon />
         </span>

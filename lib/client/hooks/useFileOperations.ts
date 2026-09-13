@@ -1,23 +1,20 @@
-// Manages the workspace file tree and bulk operations on the current selection. Fetches the tree
-// from the files route (re-fetching when refreshKey changes), and provides download (zips the
-// selected paths) and delete actions. Delete collapses the selection to root paths (skipping
-// descendants of an already-selected folder), issues the DELETEs in parallel, aggregates any
-// failures into a transient deleteError (auto-cleared after 2s), and notifies the parent of
-// deleted paths so dependent views can update. Internal tree drag-and-drop also comes through here:
-// handleMoveMany sends the whole dragged batch as one contained PATCH, reports conflicts, and
-// returns the authoritative new path of each item the server moved.
-
-import { useState, useEffect, useCallback, useRef } from "react";
+/**
+ * Manages the workspace file tree and bulk operations on the current selection. The tree loads
+ * lazily through useFileTree: root first, then directories as they expand. Refreshes retain and
+ * update loaded descendants. It also provides download (zips the selected paths) and delete actions.
+ * Delete collapses the selection to root paths (skipping descendants of an already-selected
+ * folder), issues the DELETEs in parallel, aggregates any failures into a transient deleteError
+ * (auto-cleared after 2s), and notifies the parent of deleted paths so dependent views can update.
+ * Internal tree drag-and-drop also comes through here: handleMoveMany sends the whole dragged batch
+ * as one contained PATCH, reports conflicts, and returns the authoritative new path of each item
+ * the server moved.
+ */
+import { useRef } from "react";
+import { useFileTree } from "./useFileTree";
+export type { TreeNode } from "../fileTreeResource";
 import { collapseToRoots } from "../fileMove";
 import { useDeferredPending } from "./useDeferredPending";
 import { useTransientMessage } from "./useTransientMessage";
-
-export interface TreeNode {
-  name: string;
-  type: "file" | "directory";
-  path: string;
-  children?: TreeNode[];
-}
 
 /** What the server did with one item of a move batch. */
 export interface MoveResult {
@@ -54,29 +51,12 @@ export function useFileOperations({
   apiBase,
 }: Options) {
   const base = apiBase ?? `/api/workspaces/${workspaceId}`;
-  const [tree, setTree] = useState<TreeNode[]>([]);
+  const fileTree = useFileTree(base, refreshKey);
+  const { refreshTree } = fileTree;
   const { pending: downloading, run: runDownload } = useDeferredPending();
   const [deleteError, setDeleteError] = useTransientMessage(2000);
   const [moveError, setMoveError] = useTransientMessage(3500);
   const moveInFlightRef = useRef(false);
-
-  const fetchTree = useCallback(async () => {
-    try {
-      const res = await fetch(`${base}/files`);
-      if (!res.ok) return;
-      const { tree: data } = (await res.json()) as { tree: TreeNode[] };
-      setTree(data);
-    } catch {
-      /* silent */
-    }
-  }, [base]);
-
-  useEffect(() => {
-    // fetchTree updates state only after its asynchronous request resolves.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    void fetchTree();
-  }, [fetchTree, refreshKey]);
-
   const handleDownload = () =>
     runDownload(async () => {
       const res = await fetch(`${base}/files/download`, {
@@ -128,11 +108,11 @@ export function useFileOperations({
       clearSelection();
       onDeletedPaths?.(paths);
     }
-    fetchTree();
+    refreshTree();
   };
 
   /**
-   * Move a batch of items into one directory with a single request, and refresh the tree once.
+   * Move a batch of items into one directory with a single request, and refresh the loaded tree once.
    *
    * Resolves to the per-item results the server actually performed, plus the error that stopped the
    * batch if one did — a partial move reports both. Resolves to null only when the request itself
@@ -163,7 +143,7 @@ export function useFileOperations({
         return null;
       }
       if (body.error) setMoveError(body.error);
-      await fetchTree();
+      await refreshTree();
       return { results: body.results, error: body.error ?? null };
     } catch {
       setMoveError("Move failed");
@@ -174,8 +154,7 @@ export function useFileOperations({
   };
 
   return {
-    tree,
-    fetchTree,
+    ...fileTree,
     handleDownload,
     downloading,
     handleDelete,

@@ -303,10 +303,6 @@ export default function ChatPanel({
           loadingLabel="Loading messages…"
           errorLabel="Couldn’t load the conversation."
         />
-        {messages.length === 0 && !streaming && !loadingMessages && !loadingError && (
-          <div className="text-text-3 text-ms text-center mt-6">Ask the agent anything about this workspace.</div>
-        )}
-
         {messages.map((m, i) => (
           <MessageRow key={i} m={m} />
         ))}

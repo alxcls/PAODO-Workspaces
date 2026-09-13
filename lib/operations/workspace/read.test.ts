@@ -57,7 +57,7 @@ describe("workspace record queries", () => {
       maxRunMinutes: 20,
       internetAccess: false,
       llmProvider: "deepseek",
-      llmModel: "deepseek-v4-flash",
+      llmModel: "deepseek-flash",
       llmProviderHasKey: true,
     });
     expect(result).not.toHaveProperty("dir");

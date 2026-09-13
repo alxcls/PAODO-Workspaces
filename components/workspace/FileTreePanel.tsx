@@ -315,6 +315,7 @@ export default function FileTreePanel({
 
       {(selection.selected.size > 0 ||
         operations.deleteError ||
+        operations.downloadError ||
         operations.moveError ||
         treeMove.moveNote ||
         treeMove.movingPaths.size > 0) && (
@@ -338,6 +339,9 @@ export default function FileTreePanel({
           </div>
           {operations.deleteError && (
             <div className="text-xs text-danger whitespace-pre-wrap mt-2 px-1">{operations.deleteError}</div>
+          )}
+          {operations.downloadError && (
+            <div className="text-xs text-danger whitespace-pre-wrap mt-2 px-1">{operations.downloadError}</div>
           )}
           {treeMove.movingPaths.size > 0 && (
             <div className="text-xs text-text-3 mt-2 px-1">

@@ -56,26 +56,36 @@ export function useFileOperations({
   const { pending: downloading, run: runDownload } = useDeferredPending();
   const [deleteError, setDeleteError] = useTransientMessage(2000);
   const [moveError, setMoveError] = useTransientMessage(3500);
+  const [downloadError, setDownloadError] = useTransientMessage(3500);
   const moveInFlightRef = useRef(false);
   const handleDownload = () =>
     runDownload(async () => {
-      const res = await fetch(`${base}/files/download`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ paths: Array.from(selected) }),
-      });
-      if (!res.ok) return;
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `${workspaceName}.zip`;
-      // The anchor must be in the DOM for Firefox to honor the click, and the object URL must outlive
-      // the click — modern browsers cancel the download if it's revoked synchronously, so defer it.
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 0);
+      setDownloadError(null);
+      try {
+        const res = await fetch(`${base}/files/download`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ paths: Array.from(selected) }),
+        });
+        if (!res.ok) {
+          const body = (await res.json().catch(() => ({}))) as { error?: string; message?: string };
+          setDownloadError((body.error || body.message) ?? `Download failed: ${res.status} ${res.statusText}`);
+          return;
+        }
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `${workspaceName}.zip`;
+        // The anchor must be in the DOM for Firefox to honor the click, and the object URL must outlive
+        // the click — modern browsers cancel the download if it's revoked synchronously, so defer it.
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 0);
+      } catch {
+        setDownloadError("Download failed");
+      }
     });
 
   const handleDelete = async () => {
@@ -157,6 +167,7 @@ export function useFileOperations({
     ...fileTree,
     handleDownload,
     downloading,
+    downloadError,
     handleDelete,
     deleteError,
     handleMoveMany,

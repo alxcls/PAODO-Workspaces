@@ -10,6 +10,8 @@ import { use, useState, useEffect, useCallback, useRef, Suspense, lazy } from "r
 import Image from "next/image";
 import Link from "next/link";
 import FileViewerLoading from "@/components/workspace/FileViewerLoading";
+import { AsyncState } from "@/components/shared/AsyncState";
+import { ErrorBoundary } from "@/components/shared/ErrorBoundary";
 import FileTreePanel from "@/components/workspace/FileTreePanel";
 import { type FileViewerHandle } from "@/components/workspace/FileViewer";
 /* FileViewer pulls in heavy, view-only deps (the CodeMirror editor with all languages,
@@ -210,22 +212,37 @@ function WorkspacePageInner({ params }: { params: Promise<{ id: string }> }) {
           <>
             <div className="ws-divider" onMouseDown={startLeftDrag} />
             <section className="flex-1 flex flex-col min-w-0 min-h-0 bg-bg">
-              <Suspense
+              <ErrorBoundary
                 fallback={
                   <div className="flex flex-col flex-1 min-h-0">
                     <div className="min-h-[44px] border-b border-border bg-bg" />
-                    <FileViewerLoading />
+                    <AsyncState
+                      loading={false}
+                      error
+                      onRetry={() => window.location.reload()}
+                      errorLabel="Couldn’t load the file viewer."
+                      className="flex-1 self-stretch min-h-0 w-full bg-bg-tint p-6"
+                    />
                   </div>
                 }
               >
-                <FileViewer
-                  ref={viewerRef}
-                  workspaceId={id}
-                  filePath={selectedFile}
-                  onClose={() => setViewerOpen(false)}
-                  onSelfWrite={(path) => sendMessage({ type: "self_write", path })}
-                />
-              </Suspense>
+                <Suspense
+                  fallback={
+                    <div className="flex flex-col flex-1 min-h-0">
+                      <div className="min-h-[44px] border-b border-border bg-bg" />
+                      <FileViewerLoading />
+                    </div>
+                  }
+                >
+                  <FileViewer
+                    ref={viewerRef}
+                    workspaceId={id}
+                    filePath={selectedFile}
+                    onClose={() => setViewerOpen(false)}
+                    onSelfWrite={(path) => sendMessage({ type: "self_write", path })}
+                  />
+                </Suspense>
+              </ErrorBoundary>
             </section>
           </>
         )}

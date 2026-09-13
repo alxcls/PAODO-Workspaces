@@ -2,7 +2,7 @@
 // is mapped to a ConsoleLine by the MSG_HANDLERS map (stdout/stderr/exec_done/tool_call/
 // tool_result_log) — add a key to support a new message type without touching dispatch (OCP).
 // Auto-reconnects 2s after a drop, sends a 30s keep-alive ping, and caps the buffer at MAX_LINES.
-// Returns the line buffer, connection state, and a clearLines action.
+// Returns the line buffer and connection state.
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
@@ -75,7 +75,6 @@ export function useConsoleSocket(workspaceId: string) {
         setConnected(true);
         attempt = 0;
         staleNoticeShown = false;
-        appendLine({ type: "info", text: `Connected to workspace ${workspaceId}` });
         pingInterval = setInterval(() => {
           if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: "ping" }));
         }, 30_000);
@@ -96,17 +95,10 @@ export function useConsoleSocket(workspaceId: string) {
             // the /ws session cookie does not survive a server restart — and no amount of retrying
             // fixes that. A reload re-mints it from the cached Basic credentials.
             appendLine({ type: "stderr", text: "Still disconnected — reload the page to reconnect." });
-          } else {
-            appendLine({
-              type: "info",
-              text: `WebSocket disconnected. Reconnecting in ${Math.round(delay / 1000)}s…`,
-            });
           }
           reconnectTimer = setTimeout(connect, delay);
         }
       };
-
-      socket.onerror = () => appendLine({ type: "stderr", text: "WebSocket error." });
 
       socket.onmessage = (event) => {
         try {
@@ -134,7 +126,5 @@ export function useConsoleSocket(workspaceId: string) {
     };
   }, [workspaceId, appendLine]);
 
-  const clearLines = useCallback(() => setLines([]), []);
-
-  return { lines, connected, clearLines };
+  return { lines, connected };
 }

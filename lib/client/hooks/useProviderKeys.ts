@@ -25,6 +25,7 @@ const ENDPOINT = "/api/settings/provider-keys";
 export function useProviderKeys(load: boolean) {
   const [providers, setProviders] = useState<ProviderKeyStatus[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
+  const [loading, setLoading] = useState(load);
   const [error, setError] = useState<string | null>(null);
 
   // Reloading is a token bump rather than a callable fetch, so the request lives entirely inside the
@@ -52,6 +53,8 @@ export function useProviderKeys(load: boolean) {
         setError(null);
       } catch {
         if (active) setError("Could not reach the server.");
+      } finally {
+        if (active) setLoading(false);
       }
     })();
     return () => {
@@ -108,5 +111,5 @@ export function useProviderKeys(load: boolean) {
     [refresh],
   );
 
-  return { providers, busy, error, save, remove, refresh };
+  return { providers, busy, loading, error, save, remove, refresh };
 }

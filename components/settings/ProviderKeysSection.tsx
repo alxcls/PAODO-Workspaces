@@ -22,6 +22,7 @@
 
 import { useState } from "react";
 import { useProviderKeys, type ProviderKeyStatus } from "@/lib/client/hooks/useProviderKeys";
+import { useReadyOnce } from "@/lib/client/hooks/useReadyOnce";
 
 // Provider ids are configuration keys — lowercase because .env and the API paths are. A label is
 // read by a person deciding which vendor account they are about to pay, so it spells the vendor's own
@@ -48,8 +49,9 @@ function formatSetDate(iso: string): string {
   return date.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 }
 
-export default function ProviderKeysSection({ open }: { open: boolean }) {
-  const { providers, busy, error, save, remove } = useProviderKeys(open);
+export default function ProviderKeysSection({ open, onReady }: { open: boolean; onReady?: () => void }) {
+  const { providers, busy, loading, error, save, remove } = useProviderKeys(open);
+  useReadyOnce(!loading, onReady);
   // Per provider, so typing into one block cannot be clobbered by a refresh triggered from another.
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   // Which blocks have their field open. A keyless provider is always open — entering the first key is

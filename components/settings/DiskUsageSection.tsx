@@ -7,6 +7,7 @@
 
 import { useEffect, useState } from "react";
 import { formatBytes } from "@/lib/uploads/limits";
+import { useReadyOnce } from "@/lib/client/hooks/useReadyOnce";
 
 interface DiskUsage {
   available: boolean;
@@ -15,9 +16,10 @@ interface DiskUsage {
   free?: number;
 }
 
-export default function DiskUsageSection({ open }: { open: boolean }) {
+export default function DiskUsageSection({ open, onReady }: { open: boolean; onReady?: () => void }) {
   const [usage, setUsage] = useState<DiskUsage | null>(null);
   const [error, setError] = useState<string | null>(null);
+  useReadyOnce(usage !== null || error !== null, onReady);
 
   useEffect(() => {
     if (!open) return;

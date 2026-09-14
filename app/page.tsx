@@ -10,6 +10,7 @@ import ModelBlock from "@/components/home/ModelBlock";
 import EnvVarsBlock from "@/components/home/EnvVarsBlock";
 import McpBlock from "@/components/home/McpBlock";
 import InternetAccessBlock from "@/components/home/InternetAccessBlock";
+import ConfirmDeleteModal from "@/components/home/ConfirmDeleteModal";
 import SettingsModal from "@/components/settings/SettingsModal";
 import TopBar from "@/components/layout/TopBar";
 import { AsyncState } from "@/components/shared/AsyncState";
@@ -68,6 +69,7 @@ export default function HomePage() {
   const [newName, setNewName] = useState("");
   const [createError, setCreateError] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
   const [renaming, setRenaming] = useState(false);
   const [renameDraft, setRenameDraft] = useState("");
   const [renameError, setRenameError] = useState<string | null>(null);
@@ -118,9 +120,14 @@ export default function HomePage() {
   };
 
   const handleDelete = async (id: string) => {
-    if (selectedId === id) setSelectedId(null);
-    setConfirmDeleteId(null);
-    await remove(id);
+    setDeleting(true);
+    try {
+      await remove(id);
+      if (selectedId === id) setSelectedId(null);
+    } finally {
+      setDeleting(false);
+      setConfirmDeleteId(null);
+    }
   };
 
   return (
@@ -253,10 +260,12 @@ export default function HomePage() {
               )}
               <div className="flex gap-2 items-center">
                 <button
-                  className="btn btn-primary btn-sm"
+                  className="btn btn-primary btn-sm gap-1.5"
                   disabled={!newName.trim() || isCreating}
+                  aria-busy={isCreating}
                   onClick={handleCreate}
                 >
+                  {isCreating && <Spinner className="w-3 h-3" decorative />}
                   {isCreating ? "Creating…" : "Create"}
                 </button>
                 <button
@@ -423,19 +432,12 @@ export default function HomePage() {
                 </div>
 
                 {confirmDeleteId === selected.id && (
-                  <div className="mt-2 p-[10px_14px] border border-danger bg-danger-soft rounded-card text-text flex items-center justify-between gap-3">
-                    <span>
-                      Delete <b>{selected.name}</b>? This can&apos;t be undone.
-                    </span>
-                    <div className="flex gap-2 items-center">
-                      <button className="btn btn-danger btn-sm" onClick={() => handleDelete(selected.id)}>
-                        Yes, delete
-                      </button>
-                      <button className="linkbtn" onClick={() => setConfirmDeleteId(null)}>
-                        Cancel
-                      </button>
-                    </div>
-                  </div>
+                  <ConfirmDeleteModal
+                    name={selected.name}
+                    deleting={deleting}
+                    onConfirm={() => handleDelete(selected.id)}
+                    onCancel={() => setConfirmDeleteId(null)}
+                  />
                 )}
 
                 <div className="mt-9 mb-2 text-xs font-semibold uppercase tracking-[.08em] text-text-3">

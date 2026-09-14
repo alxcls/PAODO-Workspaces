@@ -11,13 +11,15 @@
 import { useEffect, useState } from "react";
 import CredentialReveal from "@/components/shared/CredentialReveal";
 import { useCredential } from "@/lib/client/hooks/useCredential";
+import { useReadyOnce } from "@/lib/client/hooks/useReadyOnce";
 
-export default function CliAccessSection({ open }: { open: boolean }) {
+export default function CliAccessSection({ open, onReady }: { open: boolean; onReady?: () => void }) {
   const credential = useCredential<{ publicBaseUrl: string | null }>(
     "/api/settings/cli-access",
     { feature: "CLI access" },
     { load: open },
   );
+  useReadyOnce(!credential.loading, onReady);
   const [copied, setCopied] = useState(false);
 
   // The one-time plaintext must not survive the modal closing — reopening it would otherwise show a

@@ -6,10 +6,13 @@
 // section.
 "use client";
 
-import { useCallback, useEffect } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { LoadingState } from "@/components/shared/LoadingState";
 import CliAccessSection from "./CliAccessSection";
 import DiskUsageSection from "./DiskUsageSection";
 import ProviderKeysSection from "./ProviderKeysSection";
+
+const SECTION_COUNT = 3;
 
 interface SettingsModalProps {
   open: boolean;
@@ -52,18 +55,33 @@ export default function SettingsModal({ open, onClose }: SettingsModalProps) {
           </button>
         </div>
 
-        {/* A wider step than the gap inside a section, so a section reads as one thing rather than as
-            more rows in the same list. */}
-        <div className="mt-6 flex flex-col gap-8">
-          {/* `open` is passed down rather than relied on through mounting: each section loads its own
-              data, and only when the modal is actually showing. */}
-          <ProviderKeysSection open={open} />
-          <div className="border-t border-border" />
-          <CliAccessSection open={open} />
-          <div className="border-t border-border" />
-          <DiskUsageSection open={open} />
-        </div>
+        {/* Mounted only while open, so its ready-gate starts fresh on every open with no reset. */}
+        <SettingsBody />
       </div>
     </div>
+  );
+}
+
+function SettingsBody() {
+  // Count sections that have finished their first load; the body stays behind one spinner until all
+  // are ready, so the modal opens on one spinner rather than three.
+  const [readyCount, setReadyCount] = useState(0);
+  const markReady = useCallback(() => setReadyCount((n) => n + 1), []);
+  const loading = readyCount < SECTION_COUNT;
+
+  return (
+    <>
+      {loading && <LoadingState className="mt-6 py-16" />}
+
+      {/* Sections stay mounted while loading so they can fetch; the wrapper only reveals them once
+          every section reports ready. */}
+      <div className={loading ? "hidden" : "mt-6 flex flex-col gap-8"}>
+        <ProviderKeysSection open onReady={markReady} />
+        <div className="border-t border-border" />
+        <CliAccessSection open onReady={markReady} />
+        <div className="border-t border-border" />
+        <DiskUsageSection open onReady={markReady} />
+      </div>
+    </>
   );
 }

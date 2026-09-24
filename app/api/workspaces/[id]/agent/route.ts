@@ -1,11 +1,10 @@
-// Public agent endpoint authenticated via Bearer API key and protected by rate limiting.
-// Each call belongs to a persisted workspace conversation and runs through the same broker as the
-// UI chat route, so it remains visible, re-attachable, stoppable, and durable in the UI.
+// Public agent endpoint (Bearer API key, rate limited). Each call is a persisted conversation run through
+// the same broker as the UI chat, so it stays visible, re-attachable, stoppable, and durable in the UI.
 export const runtime = "nodejs";
 
 import { type NextRequest, NextResponse } from "next/server";
 import { requireWorkspace, subjectRateLimited } from "@/lib/api/guards";
-import { appErrorResponse } from "@/lib/api/errorResponse";
+import { appErrorResponse, readJsonObject } from "@/lib/api/errorResponse";
 import { guardWorkspaceApi } from "@/lib/api/workspaceApiAuth";
 import { createLogger } from "@/lib/infra/logger";
 import { apiConversationStream } from "@/lib/api/workspaceRunStream";
@@ -27,12 +26,15 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const ws = requireWorkspace(id);
   if (ws instanceof NextResponse) return ws;
 
-  const body = (await req.json()) as { message?: string; conversationId?: string };
-  if (!body.message?.trim()) return new Response("message is required", { status: 400 });
+  const parsed = await readJsonObject(req);
+  if (parsed instanceof Response) return parsed;
+  const body = parsed as { message?: unknown; conversationId?: string };
+  if (typeof body.message !== "string" || !body.message.trim()) {
+    return new Response("message is required", { status: 400 });
+  }
 
-  // API calls start independent conversations by default so an automation cannot unexpectedly
-  // append to whichever conversation a human last selected in the UI. Pass conversationId to
-  // continue a previous API/UI conversation deliberately.
+  // New conversation by default, so an automation never appends to the one a human last selected;
+  // pass conversationId to continue one deliberately.
   let receipt;
   try {
     receipt = startWorkspaceRun(ws.id, {

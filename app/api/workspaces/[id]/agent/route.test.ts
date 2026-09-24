@@ -1,8 +1,5 @@
-// The /workspaces/[id]/agent endpoint is the other Bearer-authenticated, Basic-auth-exempt
-// route. Same gate as /api/agent, but the workspace is taken from the URL id (not the body) and
-// auth is checked BEFORE the workspace is looked up. These tests pin the same scoping invariant
-// — a key valid for one workspace must not authenticate another id — plus that ordering, so a
-// future refactor can't accidentally leak workspace existence to an unauthenticated caller.
+// Same Bearer gate as /api/agent but keyed by the URL id and checked BEFORE lookup. Pins key scoping
+// plus that ordering, so an unauthenticated caller can never learn whether a workspace exists.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
@@ -58,16 +55,18 @@ vi.mock("@/lib/agent/messageSerialization", () => ({ setSystemPrompt: vi.fn() })
 
 import { POST } from "./route";
 
-function post(id: string, body: unknown, key?: string): Promise<Response> {
+function postRaw(id: string, body: string, key?: string): Promise<Response> {
   return POST(
     new Request(`http://x/api/workspaces/${id}/agent`, {
       method: "POST",
       headers: key ? { authorization: `Bearer ${key}` } : {},
-      body: JSON.stringify(body),
+      body,
     }) as never,
     { params: Promise.resolve({ id }) },
   );
 }
+
+const post = (id: string, body: unknown, key?: string) => postRaw(id, JSON.stringify(body), key);
 
 const reachedAgent = (res: Response) => res.headers.get("x-conversation-id") !== null;
 
@@ -179,6 +178,14 @@ describe("POST /api/workspaces/[id]/agent — Bearer key auth & per-workspace sc
   it("400s on a missing message", async () => {
     const res = await post("ws-a", {}, "key-a");
     expect(res.status).toBe(400);
+  });
+
+  it("400s instead of throwing on malformed JSON or a non-string message", async () => {
+    const malformed = await postRaw("ws-a", "{not json", "key-a");
+    expect(malformed.status).toBe(400);
+    expect(await malformed.json()).toMatchObject({ ok: false, code: "INVALID_REQUEST" });
+    expect((await post("ws-a", { message: 42 }, "key-a")).status).toBe(400);
+    expect(h.startRun).not.toHaveBeenCalled();
   });
 
   it("429s before auth when rate limited", async () => {

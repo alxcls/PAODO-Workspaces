@@ -1,10 +1,5 @@
-// The public agent endpoint is the one management-route exception that is NOT behind the
-// server-level HTTP Basic auth (server.ts exempts it), so its Bearer-API-key check is the only
-// thing standing between an anonymous caller and a workspace's agent. These tests pin that
-// gate — and specifically the per-workspace SCOPING invariant: a key that is valid for one
-// workspace must not authenticate a request aimed at another. validateKey is keyed by
-// workspace id, so the bug class is "auth passes as long as the key is valid for *some*
-// workspace," which would let any tenant drive any other tenant's agent.
+// This route skips server-level Basic auth, so its Bearer key is the only gate to a workspace's agent.
+// Pins per-workspace SCOPING: a key valid for one workspace must never authenticate another.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
@@ -17,11 +12,8 @@ const h = vi.hoisted(() => ({
   })),
 }));
 
-// Two workspaces, each with its own key. credentialStore.validate is the real scoping primitive
-// (tested in credentialStore.test.ts); here we fake it so the test owns the key→workspace mapping and
-// these tests assert that the ROUTE consults it with the right kind and workspace id. Asserting on
-// the kind matters: passing "platform" would validate an instance-wide token against a
-// workspace-scoped request.
+// Faked validate owns the key→workspace mapping, so tests prove the route asks with the right kind and id
+// ("platform" would accept an instance-wide token on a workspace-scoped request).
 const KEYS: Record<string, string> = { "ws-a": "key-a", "ws-b": "key-b" };
 const WORKSPACES: Record<string, { id: string; name: string }> = {
   alpha: { id: "ws-a", name: "alpha" },
@@ -51,15 +43,17 @@ vi.mock("@/lib/api/workspaceRunStream", () => ({
 import { POST } from "./route";
 import { ExecutionCapacityReachedError } from "@/lib/agent/executionCapacity";
 
-function post(body: unknown, key?: string): Promise<Response> {
+function postRaw(body: string, key?: string): Promise<Response> {
   return POST(
     new Request("http://x/api/agent", {
       method: "POST",
       headers: key ? { authorization: `Bearer ${key}` } : {},
-      body: JSON.stringify(body),
+      body,
     }) as never,
   );
 }
+
+const post = (body: unknown, key?: string) => postRaw(JSON.stringify(body), key);
 
 const reachedAgent = (res: Response) => res.headers.get("x-agent-stream") === "1";
 
@@ -123,6 +117,15 @@ describe("POST /api/agent — Bearer key auth & per-workspace scoping", () => {
   it("400s on missing workspace or message", async () => {
     expect((await post({ message: "hi" }, "key-a")).status).toBe(400);
     expect((await post({ workspace: "alpha" }, "key-a")).status).toBe(400);
+  });
+
+  it("400s instead of throwing on malformed JSON or non-string fields", async () => {
+    const malformed = await postRaw("{not json", "key-a");
+    expect(malformed.status).toBe(400);
+    expect(await malformed.json()).toMatchObject({ ok: false, code: "INVALID_REQUEST" });
+    expect((await post({ workspace: 42, message: "hi" }, "key-a")).status).toBe(400);
+    expect((await post({ workspace: "alpha", message: ["hi"] }, "key-a")).status).toBe(400);
+    expect(h.startWorkspaceRun).not.toHaveBeenCalled();
   });
 
   // Rate limiting must short-circuit before auth so a flood of bad keys can't run the auth path

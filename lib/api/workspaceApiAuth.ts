@@ -1,7 +1,5 @@
-// Bearer authentication shared by the public workspace-scoped API routes (agent run and stop), so
-// both gate identically: per-IP rate limit, workspace-scoped key validation, and a throttled 401.
-// These routes are reachable by anyone on the internet through the public Caddy gateway, so the
-// unauthorized log is throttled to bound a flood spread across many sources.
+// Bearer auth shared by the public workspace API routes: per-IP rate limit, workspace-scoped key check,
+// and a 401 whose log is throttled because anyone on the internet can reach these routes.
 import type { NextRequest } from "next/server";
 import { rateLimited } from "@/lib/api/guards";
 import { validate } from "@/lib/infra/security/credentialStore";
@@ -15,7 +13,11 @@ export type WorkspaceApiRoute = "agent" | "agent-stop";
 export function guardWorkspaceApi(req: NextRequest, id: string, route: WorkspaceApiRoute): Response | null {
   const limited = rateLimited(req, { policy: "publicAgentIp", logContext: { workspaceId: id, route } });
   if (limited) return limited;
+  return requireWorkspaceKey(req, id, route);
+}
 
+/** The key check alone, for a route that must rate-limit before it knows the workspace id. */
+export function requireWorkspaceKey(req: NextRequest, id: string, route: WorkspaceApiRoute): Response | null {
   const plain = req.headers.get("authorization")?.replace(/^Bearer /, "") ?? "";
   if (plain && validate("workspace-api", id, plain)) return null;
 

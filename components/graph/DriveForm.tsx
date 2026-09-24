@@ -3,6 +3,7 @@
 // Create-a-drive popover. Owns its own draft so the editor holds no field state, and stays open on
 // failure so the user can correct the input.
 import { useState } from "react";
+import { Spinner } from "@/components/shared/Spinner";
 
 interface DriveFormProps {
   onCreate(name: string, description: string): Promise<boolean>;
@@ -12,9 +13,20 @@ interface DriveFormProps {
 export default function DriveForm({ onCreate, onClose }: DriveFormProps) {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
+  const [creating, setCreating] = useState(false);
 
+  // Locked while a create is in flight so it can't be sent twice or closed halfway.
   const submit = async () => {
-    if (await onCreate(name, description)) onClose();
+    if (creating) return;
+    setCreating(true);
+    try {
+      if (await onCreate(name, description)) onClose();
+    } finally {
+      setCreating(false);
+    }
+  };
+  const close = () => {
+    if (!creating) onClose();
   };
 
   return (
@@ -25,10 +37,11 @@ export default function DriveForm({ onCreate, onClose }: DriveFormProps) {
         className="input"
         placeholder="Drive name (no spaces)"
         value={name}
+        readOnly={creating}
         onChange={(event) => setName(event.target.value)}
         onKeyDown={(event) => {
           if (event.key === "Enter") void submit();
-          if (event.key === "Escape") onClose();
+          if (event.key === "Escape") close();
         }}
       />
       <textarea
@@ -36,16 +49,23 @@ export default function DriveForm({ onCreate, onClose }: DriveFormProps) {
         rows={3}
         placeholder="Description (optional)"
         value={description}
+        readOnly={creating}
         onChange={(event) => setDescription(event.target.value)}
         onKeyDown={(event) => {
-          if (event.key === "Escape") onClose();
+          if (event.key === "Escape") close();
         }}
       />
       <div className="flex gap-2 items-center">
-        <button className="btn btn-primary btn-sm" onClick={() => void submit()}>
-          Create
+        <button
+          className="btn btn-primary btn-sm gap-1.5 disabled:opacity-100 disabled:bg-primary disabled:border-primary disabled:cursor-wait"
+          disabled={creating}
+          aria-busy={creating}
+          onClick={() => void submit()}
+        >
+          {creating && <Spinner className="w-3 h-3" decorative />}
+          {creating ? "Creating…" : "Create"}
         </button>
-        <button className="linkbtn" onClick={onClose}>
+        <button className="linkbtn" disabled={creating} onClick={onClose}>
           Cancel
         </button>
       </div>

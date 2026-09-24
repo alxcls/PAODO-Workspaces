@@ -74,12 +74,8 @@ export default function HomePage() {
   const [renameDraft, setRenameDraft] = useState("");
   const [renameError, setRenameError] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
-  // Bumped when Settings closes, to re-read the model catalog. Provider API keys are edited in there,
-  // and `hasKey` is what decides whether ModelBlock warns that this workspace cannot run — so adding
-  // or removing a key from the modal invalidates a catalog that was read when the page loaded.
-  // Closing is the trigger rather than each individual save: the modal covers the block, so the
-  // warning is only observable once it is shut, and one read on close costs less than tracking which
-  // section changed.
+  // Bumped when Settings closes to re-read the model catalog: provider keys edited there drive ModelBlock's
+  // "cannot run" warning, which is only visible once the modal is shut.
   const [catalogVersion, setCatalogVersion] = useState(0);
 
   const selected = workspaces.find((w) => w.id === selectedId);
@@ -94,6 +90,7 @@ export default function HomePage() {
   };
 
   const handleCreate = async () => {
+    if (isCreating) return;
     const name = newName.trim() || `workspace-${workspaces.length + 1}`;
     setCreateError(null);
     const result = await create(name);
@@ -240,13 +237,14 @@ export default function HomePage() {
                 className="input"
                 placeholder="Workspace name"
                 value={newName}
+                readOnly={isCreating}
                 onChange={(e) => {
                   setNewName(e.target.value);
                   if (createError) setCreateError(null);
                 }}
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && newName.trim()) handleCreate();
-                  if (e.key === "Escape") {
+                  if (e.key === "Escape" && !isCreating) {
                     setShowCreateForm(false);
                     setNewName("");
                     setCreateError(null);
@@ -260,7 +258,12 @@ export default function HomePage() {
               )}
               <div className="flex gap-2 items-center">
                 <button
-                  className="btn btn-primary btn-sm gap-1.5"
+                  className={
+                    "btn btn-primary btn-sm gap-1.5" +
+                    (isCreating
+                      ? " disabled:opacity-100 disabled:bg-primary disabled:border-primary disabled:cursor-wait"
+                      : "")
+                  }
                   disabled={!newName.trim() || isCreating}
                   aria-busy={isCreating}
                   onClick={handleCreate}
@@ -270,6 +273,7 @@ export default function HomePage() {
                 </button>
                 <button
                   className="linkbtn"
+                  disabled={isCreating}
                   onClick={() => {
                     setShowCreateForm(false);
                     setNewName("");

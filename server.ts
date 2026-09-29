@@ -684,6 +684,11 @@ assertGitAvailable()
     // In-memory idle timers are lost on restart. Re-arm the task-aware reaper for every container
     // that survived, so one left running through the restart still idles (and recovers task caps).
     await getContainers().resumeIdleReapers();
+    // Homes seeded by an older image get its Node now, in the background so boot never waits on it.
+    const workspaceIds = getStore()
+      .listWorkspaces()
+      .map((w) => w.id);
+    void getContainers().migrateAgentHomes(workspaceIds);
   })
   // Before the listener opens: in `iap` mode this fetches the provider's signing keys, and a failure
   // must stop the boot rather than leave every request failing closed against an empty key set.

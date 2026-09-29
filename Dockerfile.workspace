@@ -70,8 +70,8 @@ RUN userdel -r ubuntu 2>/dev/null || true && \
 # floating `22` resolves once and is then served from cache forever — two hosts built weeks apart
 # silently ship different Node. Bumping these lines is what invalidates the layer and the image hash.
 ENV NVM_DIR=/home/dev/.nvm
-ARG NVM_VERSION=v0.40.7
-ARG NODE_VERSION=22.23.2
+ARG NVM_VERSION=v0.40.8
+ARG NODE_VERSION=24.21.0
 RUN su - dev -c "curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/$NVM_VERSION/install.sh | bash" && \
     su - dev -c ". $NVM_DIR/nvm.sh && nvm install $NODE_VERSION && nvm alias default $NODE_VERSION" && \
     NVM_BIN=$(su - dev -c ". $NVM_DIR/nvm.sh && dirname \$(which node)") && \
@@ -83,7 +83,7 @@ RUN su - dev -c "curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/$NVM_VE
 # shell function: its shims directory is on PATH below, and `pyenv global` records the choice in
 # $PYENV_ROOT/version, so a runtime Python version already resolves in every later command.
 ENV PYENV_ROOT=/home/dev/.pyenv
-ARG PYENV_VERSION_TAG=v2.8.4
+ARG PYENV_VERSION_TAG=v2.8.6
 ENV PATH=$PYENV_ROOT/shims:$PYENV_ROOT/bin:$PATH
 RUN git clone --depth=1 --branch $PYENV_VERSION_TAG https://github.com/pyenv/pyenv.git $PYENV_ROOT && \
     cd $PYENV_ROOT && src/configure && make -C src && \
@@ -92,7 +92,7 @@ RUN git clone --depth=1 --branch $PYENV_VERSION_TAG https://github.com/pyenv/pye
 # Make a runtime `nvm install` actually take effect on the NEXT command, not just the one that ran
 # it. Agent commands arrive as `docker exec … /bin/bash -c`, which is neither a login nor an
 # interactive shell, so none of bash's usual startup files are read and nvm's shell function never
-# exists — leaving the /usr/local/bin symlinks above (Node 22, fixed at build time) as the only node
+# exists — leaving the /usr/local/bin symlinks above (fixed at build time) as the only node
 # on PATH. BASH_ENV is the one startup file a non-interactive bash does read, so it is where the
 # default Node version has to be selected.
 #

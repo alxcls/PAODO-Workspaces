@@ -88,3 +88,11 @@ Notes
   reaches only newly created containers, by design.
 - Verified on the production image before implementing: `cp -a` as root preserves 1000:1000 ownership
   on Linux, and the copied tree is 251MB with Node present.
+- Addendum (2026-09, Node 22 → 24): "existing workspaces are left alone" still holds for the
+  container, but no longer for the image's own runtime. A home seeded by an older image would keep
+  that image's Node forever, and a recreated container's `/usr/local/bin/node` would point into a
+  version the home never received. `lib/infra/agentHomeNode.ts` now delivers the image's Node into
+  such homes additively: copied out of the image (sandboxes are usually offline), older versions kept,
+  and nvm's default moved only while it is still the image's own choice with no agent-installed global
+  packages. It runs on each wake and in a boot sweep, recorded in the `<home>.node` marker, and never
+  recreates the container.

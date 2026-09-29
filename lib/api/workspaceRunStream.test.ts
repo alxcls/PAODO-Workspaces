@@ -32,11 +32,7 @@ async function frames(res: Response): Promise<Array<Record<string, unknown>>> {
 describe("apiConversationStream", () => {
   it("streams each token as its own frame and still emits the final aggregate response", async () => {
     replayEvents.length = 0;
-    replayEvents.push(
-      { type: "token", content: "Hel" },
-      { type: "token", content: "lo" },
-      { type: "done" },
-    );
+    replayEvents.push({ type: "token", content: "Hel" }, { type: "token", content: "lo" }, { type: "done" });
 
     const events = await frames(apiConversationStream(req() as never, "ws-a", "conv-1"));
 

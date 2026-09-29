@@ -12,10 +12,7 @@ import { WORKSPACES_ROOT } from "@/lib/infra/paths";
 export async function GET() {
   try {
     const usage = await getDiskUsage(WORKSPACES_ROOT);
-    return NextResponse.json(
-      { available: true, ...usage },
-      { headers: { "Cache-Control": "no-store" } },
-    );
+    return NextResponse.json({ available: true, ...usage }, { headers: { "Cache-Control": "no-store" } });
   } catch {
     return NextResponse.json({ available: false }, { headers: { "Cache-Control": "no-store" } });
   }

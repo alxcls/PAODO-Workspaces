@@ -104,7 +104,9 @@ describe("runUploadQueue", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    const result = await runUploadQueue([entry("big.bin"), entry("broken.txt"), entry("ok.txt")], { apiBase: "/api/x" });
+    const result = await runUploadQueue([entry("big.bin"), entry("broken.txt"), entry("ok.txt")], {
+      apiBase: "/api/x",
+    });
 
     expect(result.uploaded).toBe(1);
     expect(result.overLimit).toEqual(["big.bin"]);

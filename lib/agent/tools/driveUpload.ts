@@ -79,7 +79,12 @@ A folder is uploaded recursively, preserving its structure. If a file already ex
     let bytes = 0;
     const skipped: string[] = [];
     for (const rel of files) {
-      const put = await this.putFile(path.join(srcAbs, rel), drive_name, path.posix.join(destBase, rel), `${srcRel}/${rel}`);
+      const put = await this.putFile(
+        path.join(srcAbs, rel),
+        drive_name,
+        path.posix.join(destBase, rel),
+        `${srcRel}/${rel}`,
+      );
       if ("error" in put) {
         skipped.push(`${rel} (${compactError(put.error)})`);
         continue;

@@ -132,8 +132,7 @@ export function messagesToTranscript(
         // time (runner.ts) so it survives reload.
         if (idx !== undefined && out[idx].toolName === "call_agent") {
           const kw = tm.additional_kwargs as
-            | { calleeConversationId?: unknown; calleeWorkspaceId?: unknown; calleeWorkspaceName?: unknown }
-            | undefined;
+            { calleeConversationId?: unknown; calleeWorkspaceId?: unknown; calleeWorkspaceName?: unknown } | undefined;
           if (typeof kw?.calleeConversationId === "string" && typeof kw?.calleeWorkspaceId === "string") {
             out[idx] = {
               ...out[idx],

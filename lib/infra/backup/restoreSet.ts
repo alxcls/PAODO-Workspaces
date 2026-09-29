@@ -136,7 +136,13 @@ export async function restoreSet(setDir: string, opts: RestoreSetOptions = {}): 
   } catch (err) {
     const wrote = phase !== "read_manifest" && phase !== "verify";
     audit.error(
-      { event: "set_restore_failed", outcome: wrote ? "set_partially_restored" : "set_not_restored", setDir, phase, err },
+      {
+        event: "set_restore_failed",
+        outcome: wrote ? "set_partially_restored" : "set_not_restored",
+        setDir,
+        phase,
+        err,
+      },
       "backup set restore failed",
     );
     throw err;

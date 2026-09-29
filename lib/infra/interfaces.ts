@@ -90,9 +90,7 @@ export interface IWorkspaceVersionRestorer {
 
 /** Capabilities needed during an agent run, without administrative/versioning setup methods. */
 export interface IAgentWorkspaceVersioning
-  extends IWorkspaceSnapshotWriter,
-    IWorkspaceVersionReader,
-    IWorkspaceVersionRestorer {}
+  extends IWorkspaceSnapshotWriter, IWorkspaceVersionReader, IWorkspaceVersionRestorer {}
 
 /** Full versioning surface retained for infrastructure composition and lifecycle operations. */
 export interface IWorkspaceVersioning extends IAgentWorkspaceVersioning {

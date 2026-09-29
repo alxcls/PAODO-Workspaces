@@ -209,9 +209,7 @@ export type ClassifiedProviderCode = Rule["code"];
 
 /** A cause known locally, before any request. */
 export type LocalProviderCode =
-  | typeof PROVIDER_UNAVAILABLE_CODE
-  | typeof PROVIDER_KEY_MISSING_CODE
-  | typeof MODEL_UNAVAILABLE_CODE;
+  typeof PROVIDER_UNAVAILABLE_CODE | typeof PROVIDER_KEY_MISSING_CODE | typeof MODEL_UNAVAILABLE_CODE;
 
 export type ProviderFailureCode = ClassifiedProviderCode | LocalProviderCode;
 

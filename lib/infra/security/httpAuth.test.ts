@@ -276,9 +276,9 @@ describe("checkAuth", () => {
     expect(checkAuth("ip", req({ method: "POST", pathname: "/api/workspaces/ws1/agent/extra" }), UI, tracker)).toBe(
       "challenge",
     );
-    expect(checkAuth("ip", req({ method: "POST", pathname: "/api/workspaces/ws1/agent/stop/extra" }), UI, tracker)).toBe(
-      "challenge",
-    );
+    expect(
+      checkAuth("ip", req({ method: "POST", pathname: "/api/workspaces/ws1/agent/stop/extra" }), UI, tracker),
+    ).toBe("challenge");
   });
 
   it("exempts the Workspace MCP endpoint (own Bearer secret) for every method", () => {

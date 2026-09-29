@@ -130,7 +130,13 @@ function collectFiles(nodes: TreeNode[], out: string[]): void {
  * non-empty folder, so `moved === 0` means every file failed, and "Uploaded 0 files" would let the
  * agent record a total failure as a success.
  */
-export function formatFolderTransfer(verb: string, moved: number, bytes: number, target: string, skipped: string[]): string {
+export function formatFolderTransfer(
+  verb: string,
+  moved: number,
+  bytes: number,
+  target: string,
+  skipped: string[],
+): string {
   const skipClause = skipped.length ? `Skipped ${skipped.length}: ${skipped.join("; ")}` : "";
   if (moved === 0) {
     return `Error: nothing transferred to ${target} — all ${skipped.length} file${skipped.length === 1 ? "" : "s"} failed. ${skipClause}`;

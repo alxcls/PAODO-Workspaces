@@ -82,7 +82,10 @@ describe("drive transfer ceiling", () => {
     const workspaceDir = path.join(ROOT, "ws1");
     fs.mkdirSync(workspaceDir, { recursive: true });
 
-    const result = await new mods.DriveDownloadTool("ws1", workspaceDir).invoke({ drive_name: "data", path: "big.bin" });
+    const result = await new mods.DriveDownloadTool("ws1", workspaceDir).invoke({
+      drive_name: "data",
+      path: "big.bin",
+    });
 
     expect(result).toMatch(/^Error:/);
     expect(result).toContain("100.0MB");

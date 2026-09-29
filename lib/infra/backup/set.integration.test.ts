@@ -49,7 +49,10 @@ describe("archiveSet (real tar)", () => {
     out = path.join(root, "backups");
     fs.writeFileSync(
       path.join(root, ".workspace-graph.json"),
-      JSON.stringify({ edges: [{ id: "call_x", source: WS_ID, target: WS_ID }], positions: { [WS_ID]: { col: 0, row: 0 } } }),
+      JSON.stringify({
+        edges: [{ id: "call_x", source: WS_ID, target: WS_ID }],
+        positions: { [WS_ID]: { col: 0, row: 0 } },
+      }),
     );
     const home = path.join(root, ".homes", WS_ID);
     fs.mkdirSync(home, { recursive: true });
@@ -123,8 +126,8 @@ describe("archiveSet (real tar)", () => {
   it("refuses to run without a deployment name", async () => {
     const archiveSet = await freshArchiveSet();
     delete process.env.PAODO_DEPLOYMENT;
-    await expect(
-      archiveSet(out, { rootDir: root, image: { ref: "x", hash: "y" }, workspaces: [] }),
-    ).rejects.toThrow(/PAODO_DEPLOYMENT/);
+    await expect(archiveSet(out, { rootDir: root, image: { ref: "x", hash: "y" }, workspaces: [] })).rejects.toThrow(
+      /PAODO_DEPLOYMENT/,
+    );
   });
 });

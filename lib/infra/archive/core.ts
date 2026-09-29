@@ -173,10 +173,7 @@ export async function extractArchive(archivePath: string, into: string): Promise
 }
 
 /** Extracts an archive into a throwaway staging dir, runs `fn` over it, and always cleans it up. */
-export async function withExtractedArchive<T>(
-  archivePath: string,
-  fn: (stageDir: string) => Promise<T>,
-): Promise<T> {
+export async function withExtractedArchive<T>(archivePath: string, fn: (stageDir: string) => Promise<T>): Promise<T> {
   const stageDir = await mkdtemp(path.join(os.tmpdir(), "paodo-restore-"));
   try {
     await extractArchive(archivePath, stageDir);

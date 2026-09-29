@@ -30,7 +30,15 @@ import {
   workspaceIdFromContainerName,
   workspaceIdFromNetworkName,
 } from "./naming";
-import { workspaceHomeDir, workspaceHomeSeededMarker, workspaceHomeSubpath } from "../paths";
+import { workspaceHomeDir, workspaceHomeNodeMarker, workspaceHomeSeededMarker, workspaceHomeSubpath } from "../paths";
+import {
+  APPLY_NODE_SCRIPT,
+  INSPECT_HOME_SCRIPT,
+  imageNodeVersion,
+  parseHomeFacts,
+  planNodeUpgrade,
+  readNodeMarker,
+} from "../agentHomeNode";
 import { readAptRecipe } from "../aptRecipe";
 import { BackgroundTaskManager, type BackgroundTask } from "./backgroundTaskManager";
 import { ProxyNetworkManager } from "./proxyNetworkManager";
@@ -71,6 +79,7 @@ function dockerCleanupFailure(stage: string, result: { code: number; stderr: str
 }
 
 const CONTAINER_IMAGE = process.env.CONTAINER_IMAGE ?? "paodo-workspace";
+const WORKSPACE_DOCKERFILE = "Dockerfile.workspace";
 const CONTAINER_MEMORY = capacityProfile.workspaceMemoryLimit;
 const CONTAINER_CPUS = capacityProfile.workspaceCpus;
 // Max processes+threads in the container's pid cgroup. Docker's default is unlimited, which lets a
@@ -112,6 +121,8 @@ function workspacesVolume(): string {
 // container. SEED_TARGET is where the same directory is attached while it is being filled.
 const AGENT_HOME = "/home/dev";
 const SEED_TARGET = "/seed";
+// A home whose Node upgrade failed is left alone this long; ensure() runs on every command.
+const NODE_UPGRADE_RETRY_MS = 60 * 60 * 1000;
 
 /** Workspace policy and credential material needed by the Docker lifecycle. The concrete
  * workspace/secret stores are wired only by defaultContainerManager.ts. */
@@ -175,6 +186,10 @@ export class ContainerManager implements IContainerManager {
   // First time each managed network was seen empty by the sweep, so it is only reclaimed once it has
   // stayed empty across the grace window rather than the instant a workspace idles.
   private emptyNetworkSince = new Map<string, number>();
+  // Homes on the image's Node, upgrades in flight (ensure + boot sweep race), failures backing off.
+  private nodeCurrent = new Set<string>();
+  private nodeUpgrades = new Map<string, Promise<void>>();
+  private nodeRetryAt = new Map<string, number>();
 
   // Creates the workspace's isolated network, or recreates it if its --internal flag doesn't match
   // the workspace's current internetAccess setting. Docker can't flip --internal on an existing
@@ -310,8 +325,9 @@ export class ContainerManager implements IContainerManager {
 
   // Docker 25+ volume-subpath mounting, always: the daemon resolves paths on the HOST, so a plain
   // bind of this container's /var/lib/paodo/data/<id> would hit nothing and mount an empty directory.
-  private buildMountArg(subpath: string, target: string): string[] {
-    return ["--mount", `type=volume,source=${workspacesVolume()},target=${target},volume-subpath=${subpath}`];
+  private buildMountArg(subpath: string, target: string, readOnly = false): string[] {
+    const mount = `type=volume,source=${workspacesVolume()},target=${target},volume-subpath=${subpath}`;
+    return ["--mount", readOnly ? `${mount},readonly` : mount];
   }
 
   // Both durable mounts: the workspace tree the user sees, and the agent's home. Everything the
@@ -365,10 +381,128 @@ export class ContainerManager implements IContainerManager {
     );
     if (r.code !== 0) throw new Error(`agent home seed failed: ${r.stderr || `exit ${r.code}`}`);
     await writeFile(marker, "");
+    // A fresh seed already carries the image's Node, so record it and the upgrade below never runs.
+    const node = await imageNodeVersion(WORKSPACE_DOCKERFILE);
+    if (node) await writeFile(workspaceHomeNodeMarker(workspaceId), `${node}\n`);
     log.info(
       { event: "workspace_agent_home_seeded", outcome: "agent_home_ready", workspaceId },
       "agent home seeded from image",
     );
+  }
+
+  /**
+   * Deliver the image's Node into a home seeded by an older image — and again whenever a later image
+   * bumps NODE_VERSION. Sandboxes are usually offline, so it is copied out of the image rather than
+   * `nvm install`ed, by confined containers only. Best-effort: on failure the workspace keeps its
+   * previous Node and is retried after NODE_UPGRADE_RETRY_MS or on restart. Never touches its container.
+   */
+  private upgradeAgentHomeNode(workspaceId: string): Promise<void> {
+    if (this.nodeCurrent.has(workspaceId)) return Promise.resolve();
+    if ((this.nodeRetryAt.get(workspaceId) ?? 0) > Date.now()) return Promise.resolve();
+    const inflight = this.nodeUpgrades.get(workspaceId);
+    if (inflight) return inflight;
+    const p = this.runNodeUpgrade(workspaceId).finally(() => this.nodeUpgrades.delete(workspaceId));
+    this.nodeUpgrades.set(workspaceId, p);
+    return p;
+  }
+
+  private async runNodeUpgrade(workspaceId: string): Promise<void> {
+    const target = await imageNodeVersion(WORKSPACE_DOCKERFILE);
+    if (!target) return;
+    const nodeMarker = workspaceHomeNodeMarker(workspaceId);
+    try {
+      const marker = await readNodeMarker(nodeMarker);
+      if (marker === target) {
+        this.nodeCurrent.add(workspaceId);
+        return;
+      }
+      // Not seeded yet: the seed itself brings the image's Node and records the marker.
+      const seeded = await access(workspaceHomeSeededMarker(workspaceId)).then(
+        () => true,
+        () => false,
+      );
+      if (!seeded) return;
+
+      const inspect = await this.runConfinedInHome(workspaceId, INSPECT_HOME_SCRIPT, [], { readOnly: true });
+      if (inspect.code !== 0)
+        throw new Error(`agent home inspection failed: ${inspect.stderr || `exit ${inspect.code}`}`);
+      const plan = planNodeUpgrade(parseHomeFacts(inspect.stdout), target);
+      if (plan.action === "skip") {
+        this.nodeCurrent.add(workspaceId);
+        log.warn(
+          {
+            event: "workspace_node_upgrade_skipped",
+            outcome: "workspace_kept_previous_node",
+            workspaceId,
+            reason: plan.reason,
+          },
+          "agent home has no nvm — left as is",
+        );
+        return;
+      }
+      if (plan.copy || plan.move) {
+        const flags = [target, plan.copy ? "1" : "0", plan.move ? "1" : "0"];
+        const r = await this.runConfinedInHome(workspaceId, APPLY_NODE_SCRIPT, flags, { readOnly: false });
+        if (r.code !== 0) throw new Error(`node delivery failed: ${r.stderr || `exit ${r.code}`}`);
+      }
+      await writeFile(nodeMarker, `${target}\n`);
+      this.nodeCurrent.add(workspaceId);
+      const left = plan.globalsLeftBehind;
+      log.info(
+        {
+          event: "workspace_node_upgraded",
+          outcome: "workspace_default_node_is_image_node",
+          workspaceId,
+          from: plan.previousDefault,
+          to: target,
+          ...(left.length ? { globalsLeftBehind: left } : {}),
+        },
+        left.length
+          ? "agent home moved to the image's Node; its global packages stay on the previous version"
+          : "agent home moved to the image's Node",
+      );
+    } catch (err) {
+      this.nodeRetryAt.set(workspaceId, Date.now() + NODE_UPGRADE_RETRY_MS);
+      log.warn(
+        { event: "workspace_node_upgrade_failed", outcome: "workspace_kept_previous_node", err, workspaceId },
+        "could not deliver the image's Node into the agent home — retrying in an hour or on restart",
+      );
+    }
+  }
+
+  // A throwaway container that reaches nothing but this one home: no network, no privileges, and no
+  // writable path except the home itself, so a symlink the agent planted there cannot lead anywhere.
+  private runConfinedInHome(workspaceId: string, script: string, args: string[], opts: { readOnly: boolean }) {
+    return this.docker.cmd(
+      "run",
+      "--rm",
+      "-u",
+      "1000:1000",
+      "--network",
+      "none",
+      "--read-only",
+      "--cap-drop",
+      "ALL",
+      "--security-opt",
+      "no-new-privileges:true",
+      "--pids-limit",
+      "64",
+      ...this.buildMountArg(workspaceHomeSubpath(workspaceId), SEED_TARGET, opts.readOnly),
+      CONTAINER_IMAGE,
+      "sh",
+      "-c",
+      script,
+      "sh",
+      ...args,
+    );
+  }
+
+  /** Boot-time sweep: bring every workspace's home onto the image's Node, one at a time. */
+  async migrateAgentHomes(workspaceIds: string[]): Promise<void> {
+    for (const id of workspaceIds) {
+      if (this.removingWorkspaces.has(id)) continue;
+      await this.upgradeAgentHomeNode(id);
+    }
   }
 
   /**
@@ -565,7 +699,7 @@ export class ContainerManager implements IContainerManager {
       // Only the create path uses this — it is recorded as a label on the new container. Computed
       // here rather than before the branches above so a reused container never pays to read and
       // hash the Dockerfile on every single command.
-      const hash = await this.imageManager.getCurrentHash("Dockerfile.workspace");
+      const hash = await this.imageManager.getCurrentHash(WORKSPACE_DOCKERFILE);
 
       // Build the credential-proxy routing + CA-trust env. Secrets are NOT here — they are injected
       // per exec (see execEnvironment), because this container is never recreated and Docker cannot
@@ -705,6 +839,7 @@ export class ContainerManager implements IContainerManager {
 
     const p = (async () => {
       await this._ensureContainer(workspaceId, workspaceDir);
+      await this.upgradeAgentHomeNode(workspaceId);
       // Enforce the egress invariant on every wake: the credproxy sidecar must be attached to this
       // workspace's network. Self-heals a dropped attachment and fails loudly if it can't, rather
       // than letting the agent black-hole on cryptic "could not resolve proxy" DNS errors. Skipped
@@ -1317,7 +1452,7 @@ export class ContainerManager implements IContainerManager {
       exitAfterLogs(1);
     }
     try {
-      await this.imageManager.ensureImage(CONTAINER_IMAGE, "Dockerfile.workspace");
+      await this.imageManager.ensureImage(CONTAINER_IMAGE, WORKSPACE_DOCKERFILE);
     } catch (err) {
       log.fatal(
         {

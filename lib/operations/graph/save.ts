@@ -56,10 +56,7 @@ function checkedEdge(value: unknown, index: number, exists: (workspaceId: string
  * Replace the stored graph with the document sent. Every edge is checked before any is written, so a
  * document with one dangling end leaves the stored graph exactly as it was rather than losing an edge.
  */
-export function saveWorkspaceGraph(
-  input: SaveWorkspaceGraphInput,
-  deps: GraphDocumentDeps = defaultDeps(),
-): GraphFile {
+export function saveWorkspaceGraph(input: SaveWorkspaceGraphInput, deps: GraphDocumentDeps = defaultDeps()): GraphFile {
   const submitted = input.edges ?? [];
   if (!Array.isArray(submitted)) {
     throw new AppError("INVALID_REQUEST", "edges must be an array", { field: "edges" });

@@ -20,7 +20,13 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
     return NextResponse.json(usage, { headers: { "Cache-Control": "no-store" } });
   } catch (err) {
     log.error(
-      { event: "workspace_storage_failed", outcome: "usage_not_returned", code: "INTERNAL_ERROR", err, workspaceId: id },
+      {
+        event: "workspace_storage_failed",
+        outcome: "usage_not_returned",
+        code: "INTERNAL_ERROR",
+        err,
+        workspaceId: id,
+      },
       "failed to measure workspace storage",
     );
     return errorResponse("INTERNAL_ERROR", "failed to measure workspace storage", { request: req });

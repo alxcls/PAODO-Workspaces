@@ -14,7 +14,7 @@ import { createReadStream, createWriteStream } from "fs";
 import path from "path";
 import { Readable } from "stream";
 import { pipeline } from "stream/promises";
-import tar from "tar-stream";
+import tar, { type ExtractEvents } from "tar-stream";
 import { AppError } from "@/lib/errors/appError";
 import { readTransferEntries } from "@/lib/files/entries";
 import { openFileLimiter, type Semaphore } from "@/lib/files/fdLimit";
@@ -202,7 +202,10 @@ function ignoredTransferPath(relPath: string, isDirectory: boolean): boolean {
   return !isDirectory && ignoreRuleFor(segments[segments.length - 1], false) !== undefined;
 }
 
-async function drain(stream: NodeJS.ReadableStream): Promise<void> {
+// One archive entry's body: a streamx Readable, not a node:stream one (tar-stream ships its own types).
+type TarEntryStream = ExtractEvents["entry"][1];
+
+async function drain(stream: TarEntryStream): Promise<void> {
   stream.resume();
   await new Promise<void>((resolve, reject) => {
     stream.once("end", resolve);

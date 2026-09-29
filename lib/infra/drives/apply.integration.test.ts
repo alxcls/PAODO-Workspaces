@@ -22,8 +22,14 @@ async function freshModules() {
 
 function seedDrives(root: string, id: string, file: { name: string; body: string }): void {
   fs.mkdirSync(root, { recursive: true });
-  fs.writeFileSync(path.join(root, ".drives.json"), JSON.stringify([{ id, name: id, createdAt: "2026-01-01T00:00:00.000Z" }]));
-  fs.writeFileSync(path.join(root, ".drive-connections.json"), JSON.stringify([{ id: `link_${id}`, driveId: id, workspaceId: "ws-a" }]));
+  fs.writeFileSync(
+    path.join(root, ".drives.json"),
+    JSON.stringify([{ id, name: id, createdAt: "2026-01-01T00:00:00.000Z" }]),
+  );
+  fs.writeFileSync(
+    path.join(root, ".drive-connections.json"),
+    JSON.stringify([{ id: `link_${id}`, driveId: id, workspaceId: "ws-a" }]),
+  );
   const contentDir = path.join(root, ".drives", id);
   fs.mkdirSync(contentDir, { recursive: true });
   fs.writeFileSync(path.join(contentDir, file.name), file.body);

@@ -64,7 +64,10 @@ describe("drive_upload folder", () => {
     write(workspaceDir, "proj/a.json", '{"a":1}');
     write(workspaceDir, "proj/sub/b.json", '{"b":2}');
 
-    const result = await new mods.DriveUploadTool("ws1", workspaceDir).invoke({ source_path: "proj", drive_name: "data" });
+    const result = await new mods.DriveUploadTool("ws1", workspaceDir).invoke({
+      source_path: "proj",
+      drive_name: "data",
+    });
 
     expect(result).toContain("Uploaded 2 files");
     expect(fs.readFileSync(path.join(dir, "proj/a.json"), "utf-8")).toBe('{"a":1}');
@@ -91,7 +94,10 @@ describe("drive_upload folder", () => {
     write(workspaceDir, "proj/keep.json", "1");
     write(workspaceDir, "proj/node_modules/dep/index.js", "junk");
 
-    const result = await new mods.DriveUploadTool("ws1", workspaceDir).invoke({ source_path: "proj", drive_name: "data" });
+    const result = await new mods.DriveUploadTool("ws1", workspaceDir).invoke({
+      source_path: "proj",
+      drive_name: "data",
+    });
 
     expect(result).toContain("Uploaded 1 file ");
     expect(fs.existsSync(path.join(dir, "proj/node_modules"))).toBe(false);
@@ -102,7 +108,10 @@ describe("drive_upload folder", () => {
     const workspaceDir = seedWorkspace();
     fs.mkdirSync(path.join(workspaceDir, "empty"), { recursive: true });
 
-    const result = await new mods.DriveUploadTool("ws1", workspaceDir).invoke({ source_path: "empty", drive_name: "data" });
+    const result = await new mods.DriveUploadTool("ws1", workspaceDir).invoke({
+      source_path: "empty",
+      drive_name: "data",
+    });
 
     expect(result).toMatch(/holds no files to upload/);
   });

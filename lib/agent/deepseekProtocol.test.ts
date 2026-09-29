@@ -141,10 +141,12 @@ describe("deepseek reasoning replay", () => {
     const { gateway, seen } = gatewayWithCapturedRequest();
 
     await gateway.invoke(thinkingTurn("call_a", "Thought from an earlier call."), CALL);
-    await gateway.bindTools([]).invoke(
-      [new AIMessage({ content: "Looking.", tool_calls: [{ id: "call_a", name: "file_read", args: {} }] })],
-      CALL,
-    );
+    await gateway
+      .bindTools([])
+      .invoke(
+        [new AIMessage({ content: "Looking.", tool_calls: [{ id: "call_a", name: "file_read", args: {} }] })],
+        CALL,
+      );
 
     const sent = JSON.parse(seen.body ?? "{}").messages ?? [];
     expect(assistantWithTools(sent)).not.toHaveProperty("reasoning_content");

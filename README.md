@@ -57,17 +57,20 @@ _Demo video of PAODO in action_ :
 
 ## Quick start
 
-**Requirements:** Node.js 22.x, [Docker](https://docs.docker.com/get-docker/) (running), and an API key for at least one supported AI model provider.
+**Requirements:** [Docker](https://docs.docker.com/get-docker/) (running), Node.js 24 LTS (22+ works; `nvm use` picks it up from `.nvmrc`), and an API key for at least one supported AI model provider.
 
 ```bash
 git clone https://github.com/alxcls/PAODO-Workspaces.git
 cd PAODO-Workspaces
-npm install
+npm install                   # host tooling only: tests, lint, editor
 cp .env.example .env          # set USERNAME and PASSWORD
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) and add your provider API key under the gear icon → **Settings → Provider API keys**.
+`npm run dev` runs the whole stack in Docker, with its own Node 24, so the app itself does not depend on your
+local Node. The first run takes about two minutes while it builds the images; later runs start in seconds.
+
+Open [http://localhost:3000](http://localhost:3000), sign in with the `USERNAME` and `PASSWORD` from `.env`, and add your provider API key under the gear icon → **Settings → Provider API keys**.
 
 For VPS deployment, see the [deploy guide](deploy/README.md).
 

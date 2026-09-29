@@ -44,7 +44,20 @@ function seedFilesystem(): void {
   fs.mkdirSync(path.dirname(gitDir), { recursive: true });
   git(["--git-dir", gitDir, "init", "-q"]);
   git(["--git-dir", gitDir, "--work-tree", wsDir, "add", "--all"]);
-  git(["--git-dir", gitDir, "--work-tree", wsDir, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "init"]);
+  git([
+    "--git-dir",
+    gitDir,
+    "--work-tree",
+    wsDir,
+    "-c",
+    "user.name=t",
+    "-c",
+    "user.email=t@t",
+    "commit",
+    "-q",
+    "-m",
+    "init",
+  ]);
 
   const home = path.join(root, ".homes", WS_ID);
   fs.mkdirSync(home, { recursive: true });
@@ -52,12 +65,24 @@ function seedFilesystem(): void {
 
   fs.writeFileSync(
     path.join(root, ".workspace-graph.json"),
-    JSON.stringify({ edges: [{ id: "call_x", source: WS_ID, target: WS_ID }], positions: { [WS_ID]: { col: 1, row: 2 } } }),
+    JSON.stringify({
+      edges: [{ id: "call_x", source: WS_ID, target: WS_ID }],
+      positions: { [WS_ID]: { col: 1, row: 2 } },
+    }),
   );
   fs.writeFileSync(
     path.join(root, ".workspaces.json"),
     JSON.stringify(
-      [{ id: WS_ID, name: WS_NAME, createdAt: "2026-02-03T04:05:06.000Z", maxIterations: 20, maxRunMinutes: 30, internetAccess: false }],
+      [
+        {
+          id: WS_ID,
+          name: WS_NAME,
+          createdAt: "2026-02-03T04:05:06.000Z",
+          maxIterations: 20,
+          maxRunMinutes: 30,
+          internetAccess: false,
+        },
+      ],
       null,
       2,
     ),
@@ -90,7 +115,16 @@ async function freshModules() {
 
 function wipeLiveState(invalidate: () => void): void {
   invalidate();
-  for (const rel of [WS_ID, ".versioning", ".homes", ".workspace-graph.json", ".workspaces.json", ".drives.json", ".drive-connections.json", ".drives"]) {
+  for (const rel of [
+    WS_ID,
+    ".versioning",
+    ".homes",
+    ".workspace-graph.json",
+    ".workspaces.json",
+    ".drives.json",
+    ".drive-connections.json",
+    ".drives",
+  ]) {
     fs.rmSync(path.join(root, rel), { recursive: true, force: true });
   }
   for (const sfx of ["", "-wal", "-shm"]) fs.rmSync(path.join(root, `.paodo.db${sfx}`), { force: true });
@@ -119,7 +153,11 @@ describe("restoreSet (real tar/git/sqlite)", () => {
          VALUES (?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(WS_ID, "conv-1", "Hello", "t", "t", "t", "[]");
-    const { setDir } = await archiveSet(out, { rootDir: root, image: { ref: "img", hash: "h" }, workspaces: [makeWorkspace()] });
+    const { setDir } = await archiveSet(out, {
+      rootDir: root,
+      image: { ref: "img", hash: "h" },
+      workspaces: [makeWorkspace()],
+    });
     return { setDir, restoreSet, database };
   }
 
@@ -149,8 +187,7 @@ describe("restoreSet (real tar/git/sqlite)", () => {
     expect(fs.readFileSync(path.join(root, ".drives", "drive-1", "shared.txt"), "utf-8")).toBe("drive payload\n");
 
     const row = database.appDataDb().prepare("SELECT title FROM conversations WHERE workspace_id = ?").get(WS_ID) as
-      | { title: string }
-      | undefined;
+      { title: string } | undefined;
     expect(row?.title).toBe("Hello");
   });
 

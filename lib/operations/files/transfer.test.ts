@@ -35,20 +35,20 @@ async function archive(entries: Array<{ name: string; type: "file" | "directory"
   const pack = tar.pack();
   for (const entry of entries) {
     await new Promise<void>((resolve, reject) => {
-      pack.entry(
-        {
-          name: entry.name,
-          type: entry.type,
-          ...(entry.type === "file" ? { size: entry.body?.length ?? 0 } : {}),
-          ...(entry.type === "symlink" ? { linkname: "../../outside" } : {}),
-        },
-        entry.body,
-        (err) => (err ? reject(err) : resolve()),
-      );
+      const header = {
+        name: entry.name,
+        type: entry.type,
+        ...(entry.type === "file" ? { size: entry.body?.length ?? 0 } : {}),
+        ...(entry.type === "symlink" ? { linkname: "../../outside" } : {}),
+      };
+      const done = (err?: Error | null) => (err ? reject(err) : resolve());
+      if (entry.body) pack.entry(header, entry.body, done);
+      else pack.entry(header, done);
     });
   }
   pack.finalize();
-  return pack;
+  // putTransfer takes a node:stream Readable, as the request body is; tar-stream's pack is streamx.
+  return Readable.from(pack);
 }
 
 describe("tar transfers", () => {

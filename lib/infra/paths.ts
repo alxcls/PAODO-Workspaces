@@ -33,6 +33,10 @@ export const workspaceHomeDir = (workspaceId: string, root: string = WORKSPACES_
 export const workspaceHomeSeededMarker = (workspaceId: string, root: string = WORKSPACES_ROOT): string =>
   `${workspaceHomeDir(workspaceId, root)}.seeded`;
 
+/** The image Node version last delivered into the home — see agentHomeNode.ts. Sibling, like the seed receipt. */
+export const workspaceHomeNodeMarker = (workspaceId: string, root: string = WORKSPACES_ROOT): string =>
+  `${workspaceHomeDir(workspaceId, root)}.node`;
+
 /**
  * System packages this workspace installed, replayed into a rebuilt container. A sibling of the
  * home for the same reason as the marker: durable, but not writable by the agent it describes.
@@ -55,4 +59,5 @@ export const workspaceArtifactPaths = (workspaceId: string, root: string = WORKS
   workspaceVersioningDir(workspaceId, root),
   workspaceAptRecipeFile(workspaceId, root),
   workspaceHomeSeededMarker(workspaceId, root),
+  workspaceHomeNodeMarker(workspaceId, root),
 ];

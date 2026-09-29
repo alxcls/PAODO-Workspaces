@@ -32,9 +32,7 @@ describe("getWorkspaceDiskUsage", () => {
     expect(usage.breakdown.workspace).toBeGreaterThanOrEqual(500);
     expect(usage.breakdown.home).toBeGreaterThanOrEqual(4000);
     expect(usage.breakdown.versioning).toBeGreaterThanOrEqual(1000);
-    expect(usage.bytes).toBe(
-      usage.breakdown.workspace + usage.breakdown.home + usage.breakdown.versioning,
-    );
+    expect(usage.bytes).toBe(usage.breakdown.workspace + usage.breakdown.home + usage.breakdown.versioning);
   });
 
   it("counts absent directories as 0 instead of failing", async () => {

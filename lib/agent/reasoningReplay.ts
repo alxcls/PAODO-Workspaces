@@ -17,10 +17,7 @@ const REPLAY_REASONING_KEY = "replayReasoning";
  * messageSerialization.ts and is ignored by every provider adapter that has not opted in — the same
  * seam executionTurnId already rides on. A turn that produced no reasoning stores nothing.
  */
-export function withReplayMetadata(
-  metadata: Record<string, unknown>,
-  reasoning: string,
-): Record<string, unknown> {
+export function withReplayMetadata(metadata: Record<string, unknown>, reasoning: string): Record<string, unknown> {
   return reasoning ? { ...metadata, [REPLAY_REASONING_KEY]: reasoning } : metadata;
 }
 

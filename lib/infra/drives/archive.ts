@@ -90,7 +90,13 @@ export async function archiveDrives(dest: string, opts: DrivesArchiveOptions = {
     const bytes = await writeArchive(stageDir, [...DRIVES_MEMBER_ORDER], target, { gzip: true });
 
     audit.info(
-      { event: "drives_archived", deployment: source.deployment, path: target, bytes, members: [...DRIVES_MEMBER_ORDER] },
+      {
+        event: "drives_archived",
+        deployment: source.deployment,
+        path: target,
+        bytes,
+        members: [...DRIVES_MEMBER_ORDER],
+      },
       "drives archived",
     );
     return { path: target, bytes, manifest };

@@ -59,8 +59,14 @@ export function workspaceConnectionCounts(
     // Already distinct and already narrowed to drives that exist — the store owns that rule because
     // the agent's own name resolution is built on the same call.
     drives: deps.drivesForWorkspace(workspaceId).length,
-    callers: ends((edge) => edge.target === workspaceId, (edge) => edge.source),
-    callees: ends((edge) => edge.source === workspaceId, (edge) => edge.target),
+    callers: ends(
+      (edge) => edge.target === workspaceId,
+      (edge) => edge.source,
+    ),
+    callees: ends(
+      (edge) => edge.source === workspaceId,
+      (edge) => edge.target,
+    ),
   };
 }
 

@@ -40,7 +40,14 @@ async function restoreVersioning(git: IGitClient, gitDir: string, workspaceDir: 
   if (init.code !== 0) throw new Error(`git init failed: ${init.stderr || init.stdout}`);
   const fetch = await git.run(["--git-dir", gitDir, "fetch", bundle, "+refs/*:refs/*"]);
   if (fetch.code !== 0) throw new Error(`git fetch from bundle failed: ${fetch.stderr || fetch.stdout}`);
-  const branch = await git.run(["--git-dir", gitDir, "for-each-ref", "--count=1", "--format=%(refname)", "refs/heads/"]);
+  const branch = await git.run([
+    "--git-dir",
+    gitDir,
+    "for-each-ref",
+    "--count=1",
+    "--format=%(refname)",
+    "refs/heads/",
+  ]);
   const ref = branch.stdout.trim();
   if (!ref) throw new Error("restored bundle has no branch to check out");
   const head = await git.run(["--git-dir", gitDir, "symbolic-ref", "HEAD", ref]);

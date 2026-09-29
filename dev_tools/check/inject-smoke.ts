@@ -52,6 +52,7 @@ const fakeContainers: IContainerManager = {
   applyInternetAccess: async () => {},
   reattachProxyNetworks: async () => {},
   resumeIdleReapers: async () => {},
+  migrateAgentHomes: async () => {},
   sweepManagedNetworks: async () => {},
   noteRunStart: () => {},
   noteRunEnd: () => {},

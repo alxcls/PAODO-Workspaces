@@ -94,8 +94,8 @@ export function ensureCA(dataDir: string, options: EnsureCAOptions = {}): void {
   cert.publicKey = caKeyPair.publicKey;
   cert.serialNumber = "01";
   cert.validity.notBefore = new Date();
-  cert.validity.notAfter = new Date();
-  cert.validity.notAfter.setFullYear(cert.validity.notBefore.getFullYear() + 10);
+  // RFC 5280 4.1.2.5: 9999-12-31T23:59:59Z means the certificate has no expiration date.
+  cert.validity.notAfter = new Date("9999-12-31T23:59:59Z");
   const attrs = [
     { name: "commonName", value: "PAODO Workspace Proxy CA" },
     { name: "organizationName", value: "PAODO" },

@@ -217,6 +217,52 @@ gateway up — the safe failure, but a quiet one, so success is worth proving ra
 Schema migrations run automatically at startup and cannot be reversed: once they
 apply, the previous release refuses to start against the migrated database.
 
+### Upgrading across a runtime change
+
+A release that moves a base image or a runtime (for example Node 22 → 24) uses the same commands, with a
+safety net around them. Work on one box at a time.
+
+1. **Back up and record where you are.**
+
+   ```bash
+   bash scripts/backup-offsite.sh            # if restic is set up (see doc/backup-restic.md)
+   # otherwise: an in-container set, copied out to the host
+   docker compose exec app npm run backup -- /tmp/pre-upgrade
+   docker cp "$(docker compose ps -q app)":/tmp/pre-upgrade ~/pre-upgrade
+   git rev-parse HEAD > ~/pre-upgrade.sha
+   ```
+
+2. **Pull and rebuild both images** with the `up --build -d` command above. On the first boot the app
+   also rebuilds the workspace image when `Dockerfile.workspace` changed, which takes a few minutes.
+
+3. **Watch the boot.** `docker compose logs -f app credproxy` should show `workspace_image_ready`,
+   `server_ready` and `credential_proxy_listening`. Workspace containers keep running throughout — an
+   app upgrade never recreates them.
+
+4. **Check the workspaces moved.** When the workspace image ships a new Node, a background sweep copies
+   it into every existing agent home and logs one line per workspace:
+   - `workspace_node_upgraded`: the home's default Node is now the image's.
+   - `workspace_node_default_kept`: the new Node was delivered, but the agent had chosen its own default
+     or installed global packages on the old one, so its default was left alone (`reason`, `globals`).
+     The agent can switch with `nvm alias default <version>`, offline, whenever it is ready.
+   - `workspace_node_upgrade_failed`: nothing changed; it retries on the workspace's next use.
+
+   Check one directly — through `bash -c`, as the agent runs commands:
+
+   ```bash
+   docker exec ws_<id> bash -c 'node -v'
+   ```
+
+   A plain `docker exec ws_<id> node -v` on a container created before the upgrade still reports the old
+   version: it resolves the old image's `/usr/local/bin/node` symlink, which the agent's shell does not use.
+
+5. **Smoke test.** `curl -fsS http://127.0.0.1:3000/api/status`, sign in, and send one agent message in
+   a workspace that uses a secret.
+
+6. **Roll back** if needed: `git checkout "$(cat ~/pre-upgrade.sha)"` and the same `up --build -d`. The
+   Node delivered into agent homes is harmless to an older release, which ignores it. Restore the backup
+   set (doc/backup-restic.md) only if the release you are leaving ran a schema migration or data is in doubt.
+
 ## Logs
 
 Containers emit line-delimited JSON to stdout. Docker stores and rotates those

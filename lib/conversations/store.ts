@@ -29,7 +29,7 @@ interface WorkspaceConversations {
   messages: Map<string, BaseMessage[]>; // convId -> live history (lazy)
 }
 
-// Singleton shared across the custom server and the webpack-bundled API routes (same rationale as
+// Singleton shared across the custom server and the Next-bundled API routes (same rationale as
 // wsHub/workspaceStore): without it each module instance would keep a divergent view.
 const g = global as typeof global & { _conversations?: Map<string, WorkspaceConversations> };
 if (!g._conversations) g._conversations = new Map();

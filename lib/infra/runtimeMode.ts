@@ -6,7 +6,7 @@
  * server.ts refuses to start without one. Only the source of the code differs, bind-mounted here
  * and prebuilt there, which is what NODE_ENV selects.
  *
- * Imports nothing on purpose. This module is pulled into the webpack bundle through
+ * Imports nothing on purpose. This module is pulled into the Next bundle through
  * instrumentation.node.ts and into the esbuild bundle through proxyEntry.ts, and both reject
  * constructs the other accepts — a dependency-free module cannot break either one.
  */

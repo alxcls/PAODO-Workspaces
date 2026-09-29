@@ -32,7 +32,7 @@ export interface CatalogEntry {
 }
 
 // Held on the Node global, not in a module-level binding. The custom server (server.ts, where the
-// refresher runs) and the webpack-bundled API routes (where appendUsage actually prices a turn) load
+// refresher runs) and the Next-bundled API routes (where appendUsage actually prices a turn) load
 // this module into SEPARATE scopes — see globalSingleton. A plain `let` would let the refresher
 // update its own copy while every recorded cost kept using the boot-time seed.
 type Holder = { entries: Record<string, CatalogEntry> };

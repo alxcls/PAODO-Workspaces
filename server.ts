@@ -214,7 +214,7 @@ httpServer.on("error", (err) => {
 });
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-const app = next({ dev: runtimeMode.hotReload, httpServer, port, webpack: true } as any);
+const app = next({ dev: runtimeMode.hotReload, httpServer, port } as any);
 const handle = app.getRequestHandler();
 
 httpServer.on("request", (req, res) => {

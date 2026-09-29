@@ -247,10 +247,6 @@ safety net around them. Work on one box at a time.
 5. **Smoke test.** `curl -fsS http://127.0.0.1:3000/api/status`, sign in, and send one agent message in
    a workspace that uses a secret.
 
-6. **Roll back** if needed: `git checkout "$(cat ~/pre-upgrade.sha)"` and the same `up --build -d`. Restore
-   the backup set (doc/backup-restic.md) only if the release you are leaving ran a schema migration or data
-   is in doubt.
-
 ## Logs
 
 Containers emit line-delimited JSON to stdout. Docker stores and rotates those

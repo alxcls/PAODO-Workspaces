@@ -387,7 +387,7 @@ export class WorkspaceStore implements IWorkspaceStore {
 
 // ---- Default production singleton ----
 // Shared across the custom server and Next.js API route module instances (same pattern as wsHub.ts).
-// Without this, server.ts and the webpack-bundled API routes each get their own Map, so a workspace
+// Without this, server.ts and the Next-bundled API routes each get their own Map, so a workspace
 // created via the API is invisible to the WS handler until the server restarts.
 const g = global as typeof global & { _workspaces?: Map<string, Workspace> };
 const freshMap = !g._workspaces;

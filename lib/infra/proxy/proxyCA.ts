@@ -45,7 +45,9 @@ function getProxyHmacKey(): Buffer | null {
 let domainKeyPrivatePem = "";
 let domainKeyPublic: forge.pki.rsa.PublicKey | null = null;
 
-const domainCertCache = new Map<string, { cert: string; key: string }>();
+const domainCertCache = new Map<string, { cert: string; key: string; notAfter: number }>();
+// Re-sign a cached domain cert this long before it expires, so a long-running proxy never serves an expired one.
+const DOMAIN_CERT_RENEW_BEFORE_MS = 30 * 24 * 60 * 60 * 1000;
 
 export interface EnsureCAOptions {
   /** Refuse to replace existing unreadable/partial trust material. Production uses this because
@@ -160,7 +162,9 @@ export function verifyProxySecret(wsId: string, presented: string | undefined): 
 
 export function signDomainCert(domain: string): { cert: string; key: string } {
   const cached = domainCertCache.get(domain);
-  if (cached) return cached;
+  if (cached && cached.notAfter - Date.now() > DOMAIN_CERT_RENEW_BEFORE_MS) {
+    return { cert: cached.cert, key: cached.key };
+  }
   if (!caKey || !caCert || !domainKeyPublic) throw new Error("proxy CA not initialized — call ensureCA() first");
 
   // Reuse the shared domain key — no RSA key generation here, just cert signing (~10ms).
@@ -179,7 +183,7 @@ export function signDomainCert(domain: string): { cert: string; key: string } {
   cert.sign(caKey, forge.md.sha256.create());
 
   const result = { cert: forge.pki.certificateToPem(cert), key: domainKeyPrivatePem };
-  domainCertCache.set(domain, result);
+  domainCertCache.set(domain, { ...result, notAfter: cert.validity.notAfter.getTime() });
   log.debug({ domain }, "signed domain cert");
   return result;
 }

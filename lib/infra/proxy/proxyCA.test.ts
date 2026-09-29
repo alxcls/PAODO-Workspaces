@@ -2,11 +2,12 @@
 // proxy. These pin that a container gets a stable, workspace-specific secret and that verification
 // rejects anything but the exact value derived from that workspace's id.
 
-import { describe, it, expect, beforeAll } from "vitest";
+import { describe, it, expect, beforeAll, afterEach, vi } from "vitest";
+import forge from "node-forge";
 import { mkdirSync, mkdtempSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import path from "path";
-import { ensureCA, deriveProxySecret, verifyProxySecret } from "./proxyCA";
+import { ensureCA, deriveProxySecret, verifyProxySecret, signDomainCert } from "./proxyCA";
 
 // ensureCA generates the host-only HMAC key into <dataDir>/.proxy-ca. Point it at a throwaway dir so
 // the test never touches the real data/ tree.
@@ -69,5 +70,30 @@ describe("strict existing proxy material", () => {
     mkdirSync(dir, { recursive: true });
     writeFileSync(path.join(dir, "proxy-hmac.key"), "short");
     expect(() => ensureCA(root, { strictExisting: true })).toThrow(/HMAC key is corrupt/);
+  });
+});
+
+describe("domain cert renewal", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const notAfter = (pem: string) => forge.pki.certificateFromPem(pem).validity.notAfter.getTime();
+  const DAY = 24 * 60 * 60 * 1000;
+
+  it("reuses the cached cert while it is far from expiry", () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const first = signDomainCert("reuse.example.com").cert;
+    vi.setSystemTime(Date.now() + 300 * DAY);
+    expect(signDomainCert("reuse.example.com").cert).toBe(first);
+  });
+
+  it("re-signs the cert before it expires on a long-running proxy", () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const first = signDomainCert("renew.example.com").cert;
+    vi.setSystemTime(notAfter(first) - 10 * DAY);
+    const renewed = signDomainCert("renew.example.com").cert;
+    expect(renewed).not.toBe(first);
+    expect(notAfter(renewed)).toBeGreaterThan(Date.now() + 300 * DAY);
   });
 });

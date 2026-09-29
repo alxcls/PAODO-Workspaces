@@ -240,11 +240,12 @@ safety net around them. Work on one box at a time.
    app upgrade never recreates them.
 
 4. **Check the workspaces moved.** When the workspace image ships a new Node, a background sweep copies
-   it into every existing agent home and logs one line per workspace:
-   - `workspace_node_upgraded`: the home's default Node is now the image's.
-   - `workspace_node_default_kept`: the new Node was delivered, but the agent had chosen its own default
-     or installed global packages on the old one, so its default was left alone (`reason`, `globals`).
-     The agent can switch with `nvm alias default <version>`, offline, whenever it is ready.
+   it into every existing agent home, makes it the default — even where the agent had pinned its own
+   version — and logs one line per workspace:
+   - `workspace_node_upgraded`: the default is now the image's Node. `from` is the default it replaced;
+     `globalsLeftBehind` lists global packages the agent installed on that old version, which the new
+     default no longer sees. Those workspaces are the ones whose scripts may need attention: the agent
+     can reinstall the tools, or switch back offline with `nvm alias default <from>`.
    - `workspace_node_upgrade_failed`: nothing changed; it retries an hour later, or at the next restart.
 
    This is also how a later Node upgrade reaches existing workspaces: bump `ARG NODE_VERSION` in

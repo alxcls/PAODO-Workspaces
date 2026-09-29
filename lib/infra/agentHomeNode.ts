@@ -2,9 +2,6 @@
 // file inside a home (the agent can plant symlinks there): both scripts run confined to that home.
 import { readFile } from "fs/promises";
 
-// Defaults the image set before homes recorded a `.node` marker: `nvm alias default 22` (2026-08-25),
-// then the exact pin (2026-08-26). Durable homes did not exist before that.
-const LEGACY_IMAGE_DEFAULTS = ["22", "22.23.2"];
 // nvm installs these with every Node version; any other global package was added by the agent.
 const BUNDLED_GLOBALS = new Set(["npm", "corepack"]);
 const EXACT_VERSION = /^\d+\.\d+\.\d+$/;
@@ -64,9 +61,12 @@ export type NodeUpgradePlan =
   | {
       action: "deliver";
       copy: boolean;
-      previous: string | null;
-      default: "move" | "current" | "custom" | "global_packages";
-      globals: string[];
+      /** False only when the default already resolves to the target. */
+      move: boolean;
+      /** The raw alias it replaces, so even a pin nvm resolves loosely ("lts/*") shows in the log. */
+      previousDefault: string | null;
+      /** Global packages the agent installed on the old default; they stay with that version. */
+      globalsLeftBehind: string[];
     };
 
 async function readTrimmed(p: string): Promise<string | null> {
@@ -122,20 +122,19 @@ function resolveAlias(alias: string, installed: string[]): string | null {
 }
 
 /**
- * Decide what bringing this home onto `target` involves. `marker` is the version the image last
- * delivered here. The default only moves while it still names what the image itself chose, and while
- * that Node carries no global packages the agent installed.
+ * Decide what bringing this home onto `target` involves. Every default moves to the image's Node,
+ * whatever the agent chose: older versions stay installed, so an agent can switch back offline.
  */
-export function planNodeUpgrade(facts: HomeFacts, marker: string | null, target: string): NodeUpgradePlan {
+export function planNodeUpgrade(facts: HomeFacts, target: string): NodeUpgradePlan {
   if (!facts.nvm) return { action: "skip", reason: "no_nvm" };
-  const copy = !facts.installed.includes(target);
-  const imageDefaults = marker ? [marker] : LEGACY_IMAGE_DEFAULTS;
   const previous = facts.alias ? resolveAlias(facts.alias, facts.installed) : null;
-
-  if (previous === target) return { action: "deliver", copy, previous, default: "current", globals: [] };
-  if (facts.alias && !imageDefaults.includes(facts.alias.replace(/^v/, ""))) {
-    return { action: "deliver", copy, previous, default: "custom", globals: [] };
-  }
-  const globals = previous ? (facts.globals[previous] ?? []).filter((n) => !BUNDLED_GLOBALS.has(n)).sort() : [];
-  return { action: "deliver", copy, previous, default: globals.length ? "global_packages" : "move", globals };
+  const move = previous !== target;
+  const globals = move && previous ? (facts.globals[previous] ?? []).filter((n) => !BUNDLED_GLOBALS.has(n)) : [];
+  return {
+    action: "deliver",
+    copy: !facts.installed.includes(target),
+    move,
+    previousDefault: facts.alias,
+    globalsLeftBehind: globals.sort(),
+  };
 }

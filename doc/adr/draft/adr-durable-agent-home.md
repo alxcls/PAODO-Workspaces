@@ -93,8 +93,9 @@ Notes
   that image's Node forever, and a recreated container's `/usr/local/bin/node` would point into a
   version the home never received. `lib/infra/agentHomeNode.ts` now delivers the image's Node into
   such homes additively: copied out of the image (sandboxes are usually offline), older versions kept,
-  and nvm's default moved only while it is still the image's own choice with no agent-installed global
-  packages. It runs on each wake and in a boot sweep, recorded in the `<home>.node` marker, and never
+  and nvm's default always moved to it — including an agent's own pin, a deliberate operator choice to
+  keep every workspace current; the log names the replaced default and any global packages left on it,
+  and `nvm alias default <old>` switches back offline. It runs on each wake and in a boot sweep, recorded in the `<home>.node` marker, and never
   recreates the container. The app never reads or writes inside a home — the agent owns it and can plant
   symlinks — so inspection and delivery run in throwaway containers that mount only that home, as uid
   1000, read-only root, no network, no capabilities: a planted symlink can only reach that container's

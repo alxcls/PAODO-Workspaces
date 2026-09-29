@@ -1,5 +1,5 @@
-// A home's default Node may only move while it is still the image's own choice, so the agent's
-// deliberate pins and global tools survive an image upgrade. The scripts run for real, under sh.
+// Every home moves to the image's Node; the old default and any globals left on it are reported.
+// The scripts run for real, under sh.
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { execFileSync } from "child_process";
 import { access, mkdtemp, mkdir, readFile, readdir, rm, writeFile } from "fs/promises";
@@ -122,59 +122,62 @@ describe("APPLY_NODE_SCRIPT", () => {
 
 describe("planNodeUpgrade", () => {
   it("skips a home whose nvm is gone", () => {
-    expect(planNodeUpgrade(facts({ nvm: false }), null, TARGET)).toEqual({ action: "skip", reason: "no_nvm" });
+    expect(planNodeUpgrade(facts({ nvm: false }), TARGET)).toEqual({ action: "skip", reason: "no_nvm" });
   });
 
-  it("moves a legacy home still on the image's exact default", () => {
+  it("moves a legacy home still on the image's default", () => {
     const home = facts({ alias: "22.23.2", installed: ["22.23.2"], globals: { "22.23.2": ["npm", "corepack"] } });
-    expect(planNodeUpgrade(home, null, TARGET)).toEqual({
+    expect(planNodeUpgrade(home, TARGET)).toEqual({
       action: "deliver",
       copy: true,
-      previous: "22.23.2",
-      default: "move",
-      globals: [],
+      move: true,
+      previousDefault: "22.23.2",
+      globalsLeftBehind: [],
     });
   });
 
-  it("resolves the major-only legacy default to its highest install", () => {
-    const home = facts({ alias: "22", installed: ["22.9.0", "22.18.0"] });
-    expect(planNodeUpgrade(home, null, TARGET)).toMatchObject({ previous: "22.18.0", default: "move" });
-  });
-
-  it("keeps a default the agent chose", () => {
+  it("moves a default the agent chose, and says what it replaced", () => {
     const home = facts({ alias: "20.19.0", installed: ["20.19.0", "22.23.2"] });
-    expect(planNodeUpgrade(home, null, TARGET)).toMatchObject({ copy: true, default: "custom" });
+    expect(planNodeUpgrade(home, TARGET)).toMatchObject({ move: true, previousDefault: "20.19.0" });
   });
 
-  it("keeps the default when the agent installed global packages on it", () => {
+  it("moves even with agent-installed globals, naming the ones left on the old version", () => {
     const home = facts({
-      alias: "22.23.2",
-      installed: ["22.23.2"],
-      globals: { "22.23.2": ["npm", "typescript", "@scope/cli"] },
+      alias: "22",
+      installed: ["22.9.0", "22.23.2"],
+      globals: { "22.23.2": ["npm", "typescript", "@scope/cli"], "22.9.0": ["eslint"] },
     });
-    expect(planNodeUpgrade(home, null, TARGET)).toMatchObject({
-      default: "global_packages",
-      globals: ["@scope/cli", "typescript"],
+    expect(planNodeUpgrade(home, TARGET)).toMatchObject({
+      move: true,
+      globalsLeftBehind: ["@scope/cli", "typescript"],
     });
   });
 
-  it("skips the copy when the target is already installed and default", () => {
-    const home = facts({ alias: TARGET, installed: ["22.23.2", TARGET] });
-    expect(planNodeUpgrade(home, null, TARGET)).toMatchObject({ copy: false, default: "current" });
+  it("moves an alias nvm resolves loosely, keeping it verbatim for the log", () => {
+    expect(planNodeUpgrade(facts({ alias: "lts/*", installed: ["22.23.2"] }), TARGET)).toMatchObject({
+      move: true,
+      previousDefault: "lts/*",
+      globalsLeftBehind: [],
+    });
   });
 
-  it("follows the marker on a later image bump, not the legacy list", () => {
-    const home = facts({ alias: TARGET, installed: [TARGET] });
-    expect(planNodeUpgrade(home, TARGET, "26.4.0")).toMatchObject({ copy: true, previous: TARGET, default: "move" });
-    expect(planNodeUpgrade(facts({ alias: "22.23.2", installed: ["22.23.2"] }), TARGET, "26.4.0")).toMatchObject({
-      default: "custom",
+  it("does nothing to a home already installed and defaulted on the target", () => {
+    const home = facts({ alias: TARGET, installed: ["22.23.2", TARGET], globals: { [TARGET]: ["typescript"] } });
+    expect(planNodeUpgrade(home, TARGET)).toMatchObject({ copy: false, move: false, globalsLeftBehind: [] });
+  });
+
+  it("applies the same rule to a later image bump", () => {
+    expect(planNodeUpgrade(facts({ alias: TARGET, installed: [TARGET] }), "26.4.0")).toMatchObject({
+      copy: true,
+      move: true,
+      previousDefault: TARGET,
     });
   });
 
   it("moves a home with no default alias at all", () => {
-    expect(planNodeUpgrade(facts({ installed: ["22.23.2"] }), null, TARGET)).toMatchObject({
-      previous: null,
-      default: "move",
+    expect(planNodeUpgrade(facts({ installed: ["22.23.2"] }), TARGET)).toMatchObject({
+      move: true,
+      previousDefault: null,
     });
   });
 });

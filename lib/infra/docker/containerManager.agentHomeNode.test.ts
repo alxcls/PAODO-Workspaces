@@ -105,6 +105,19 @@ describe("agent home Node upgrade", () => {
     expect(await readFile(`${home("ws1")}.node`, "utf-8")).toBe(`${TARGET}\n`);
   });
 
+  it("moves a default the agent pinned itself, even with global tools on it", async () => {
+    const ContainerManager = await loadManager();
+    await seededHome("ws1");
+    const pinned =
+      "nvm\nalias 20.19.0\nversion 20.19.0\nversion 22.23.2\nglobal 20.19.0 npm\nglobal 20.19.0 typescript";
+    const { docker, calls } = makeDocker({ inspectStdout: pinned });
+
+    await new ContainerManager(docker).ensure("ws1", "/w");
+
+    expect(applyFlags(applyRuns(calls)[0])).toEqual([TARGET, "1", "1"]);
+    expect(await readFile(`${home("ws1")}.node`, "utf-8")).toBe(`${TARGET}\n`);
+  });
+
   // The regression this design exists to prevent: an agent pointing parts of its own home elsewhere.
   it("never writes into the home or through the agent's symlinks from the app process", async () => {
     const ContainerManager = await loadManager();

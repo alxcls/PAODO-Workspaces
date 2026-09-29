@@ -426,7 +426,7 @@ export class ContainerManager implements IContainerManager {
       const inspect = await this.runConfinedInHome(workspaceId, INSPECT_HOME_SCRIPT, [], { readOnly: true });
       if (inspect.code !== 0)
         throw new Error(`agent home inspection failed: ${inspect.stderr || `exit ${inspect.code}`}`);
-      const plan = planNodeUpgrade(parseHomeFacts(inspect.stdout), marker, target);
+      const plan = planNodeUpgrade(parseHomeFacts(inspect.stdout), target);
       if (plan.action === "skip") {
         this.nodeCurrent.add(workspaceId);
         log.warn(
@@ -440,26 +440,26 @@ export class ContainerManager implements IContainerManager {
         );
         return;
       }
-      const move = plan.default === "move";
-      if (plan.copy || move) {
-        const flags = [target, plan.copy ? "1" : "0", move ? "1" : "0"];
+      if (plan.copy || plan.move) {
+        const flags = [target, plan.copy ? "1" : "0", plan.move ? "1" : "0"];
         const r = await this.runConfinedInHome(workspaceId, APPLY_NODE_SCRIPT, flags, { readOnly: false });
         if (r.code !== 0) throw new Error(`node delivery failed: ${r.stderr || `exit ${r.code}`}`);
       }
       await writeFile(nodeMarker, `${target}\n`);
       this.nodeCurrent.add(workspaceId);
-      const moved = move || plan.default === "current";
+      const left = plan.globalsLeftBehind;
       log.info(
         {
-          event: moved ? "workspace_node_upgraded" : "workspace_node_default_kept",
-          outcome: moved ? "workspace_default_node_is_image_node" : "workspace_default_node_unchanged",
+          event: "workspace_node_upgraded",
+          outcome: "workspace_default_node_is_image_node",
           workspaceId,
-          from: plan.previous,
+          from: plan.previousDefault,
           to: target,
-          reason: plan.default,
-          ...(plan.globals.length ? { globals: plan.globals } : {}),
+          ...(left.length ? { globalsLeftBehind: left } : {}),
         },
-        moved ? "agent home moved to the image's Node" : "image Node delivered; the agent's own default was kept",
+        left.length
+          ? "agent home moved to the image's Node; its global packages stay on the previous version"
+          : "agent home moved to the image's Node",
       );
     } catch (err) {
       this.nodeRetryAt.set(workspaceId, Date.now() + NODE_UPGRADE_RETRY_MS);

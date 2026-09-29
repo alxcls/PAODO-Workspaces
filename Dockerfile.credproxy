@@ -3,7 +3,7 @@
 # application routes, or provider-vault code.
 FROM node:24-trixie-slim AS builder
 WORKDIR /src
-RUN npm install -g npm@11.19.0
+RUN npm install -g npm@11.20.0
 COPY credproxy/package*.json ./
 RUN npm ci
 COPY proxyEntry.ts ./

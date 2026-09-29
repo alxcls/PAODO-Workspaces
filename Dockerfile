@@ -3,11 +3,11 @@
 # build tools remain available as a fallback for unsupported architectures.
 FROM node:24-trixie-slim AS builder
 WORKDIR /app
-# Pin npm to match the version used locally to generate package-lock.json. The image's bundled
-# npm drifts from the maintainer's local npm, and different npm majors lay out nested optional deps
-# (e.g. Tailwind's oxide-wasm @emnapi packages) differently — so an npm-11 lock fails `npm ci` under
-# npm 10 with "EUSAGE ... Missing from lock file".
-RUN npm install -g npm@11.19.0
+# Pin npm to the exact version package-lock.json is generated with: regenerate it with
+# `npx npm@11.20.0 install`, not whatever npm happens to be local. The image's bundled npm drifts, and
+# npm majors lay out nested optional deps (e.g. Tailwind's oxide-wasm @emnapi packages) differently —
+# an npm-11 lock fails `npm ci` under npm 10 with "EUSAGE ... Missing from lock file".
+RUN npm install -g npm@11.20.0
 RUN apt-get update && \
     apt-get install -y --no-install-recommends python3 make g++ && \
     rm -rf /var/lib/apt/lists/*
@@ -47,7 +47,7 @@ CMD ["npx", "tsx", "server.ts"]
 # Stage 3: development runner. Carries no source — docker-compose.dev.yml mounts the working tree
 # over /app — and keeps dev dependencies installed because nothing is prebuilt here.
 FROM runtime-base AS dev
-RUN npm install -g npm@11.19.0
+RUN npm install -g npm@11.20.0
 # The same native-build fallback the builder carries, for the same unsupported-architecture case.
 RUN apt-get update && \
     apt-get install -y --no-install-recommends python3 make g++ && \

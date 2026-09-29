@@ -69,8 +69,7 @@ RUN userdel -r ubuntu 2>/dev/null || true && \
 # Every version here is exact on purpose. Docker keys a RUN layer on the command string, so a
 # floating `22` resolves once and is then served from cache forever — two hosts built weeks apart
 # silently ship different Node. Bumping these lines is what invalidates the layer and the image hash.
-# Bumping NODE_VERSION also delivers it into existing workspaces' homes on the next boot — see
-# lib/infra/agentHomeNode.ts; no code change is needed for a future Node upgrade.
+# A NODE_VERSION bump reaches new workspaces only; an existing home keeps its Node until its agent changes it.
 ENV NVM_DIR=/home/dev/.nvm
 ARG NVM_VERSION=v0.40.8
 ARG NODE_VERSION=24.21.0

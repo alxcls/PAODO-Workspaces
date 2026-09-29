@@ -36,9 +36,6 @@ async function loadManager(volume: string) {
   return (await import("./containerManager")).ContainerManager;
 }
 
-// The seed is the one throwaway run that copies the image's whole home in.
-const isSeed = (args: string[]) => args[0] === "run" && args.includes("/home/dev/.");
-
 // Nothing exists yet, so ensure() takes the full create path: seed first, then the container.
 function makeDocker(opts: { failSeed?: boolean } = {}) {
   const calls: string[][] = [];
@@ -47,7 +44,7 @@ function makeDocker(opts: { failSeed?: boolean } = {}) {
       calls.push(args);
       if (args[0] === "inspect") return { stdout: "", stderr: "no such object", code: 1 };
       if (args[0] === "network" && args[1] === "inspect") return { stdout: "", stderr: "no such network", code: 1 };
-      if (opts.failSeed && isSeed(args)) {
+      if (opts.failSeed && args[0] === "run" && !args.includes("--name")) {
         return { stdout: "", stderr: "no space left on device", code: 1 };
       }
       return OK;
@@ -58,7 +55,7 @@ function makeDocker(opts: { failSeed?: boolean } = {}) {
   return { docker, calls };
 }
 
-const seedRun = (calls: string[][]) => calls.find(isSeed);
+const seedRun = (calls: string[][]) => calls.find((c) => c[0] === "run" && !c.includes("--name"));
 const containerRun = (calls: string[][]) => calls.find((c) => c[0] === "run" && c.includes("--name"));
 
 describe("agent home — the durable mount", () => {

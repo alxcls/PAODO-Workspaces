@@ -239,34 +239,17 @@ safety net around them. Work on one box at a time.
    `server_ready` and `credential_proxy_listening`. Workspace containers keep running throughout — an
    app upgrade never recreates them.
 
-4. **Check the workspaces moved.** When the workspace image ships a new Node, a background sweep copies
-   it into every existing agent home, makes it the default — even where the agent had pinned its own
-   version — and logs one line per workspace:
-   - `workspace_node_upgraded`: the default is now the image's Node. `from` is the default it replaced;
-     `globalsLeftBehind` lists global packages the agent installed on that old version, which the new
-     default no longer sees. Those workspaces are the ones whose scripts may need attention: the agent
-     can reinstall the tools, or switch back offline with `nvm alias default <from>`.
-   - `workspace_node_upgrade_failed`: nothing changed; it retries an hour later, or at the next restart.
-
-   This is also how a later Node upgrade reaches existing workspaces: bump `ARG NODE_VERSION` in
-   `Dockerfile.workspace` and deploy. Each delivered version adds about 200 MB per workspace, and
-   older versions are kept.
-
-   Check one directly — through `bash -c`, as the agent runs commands:
-
-   ```bash
-   docker exec ws_<id> bash -c 'node -v'
-   ```
-
-   A plain `docker exec ws_<id> node -v` on a container created before the upgrade still reports the old
-   version: it resolves the old image's `/usr/local/bin/node` symlink, which the agent's shell does not use.
+4. **Existing workspaces are not touched.** A new workspace image (for example a bumped
+   `ARG NODE_VERSION` in `Dockerfile.workspace`) reaches newly created workspaces only. Every existing
+   workspace keeps the Node, and everything else, in its home. Upgrading it is the client's call,
+   through its agent: `nvm install <version> && nvm alias default <version>`, with internet access on.
 
 5. **Smoke test.** `curl -fsS http://127.0.0.1:3000/api/status`, sign in, and send one agent message in
    a workspace that uses a secret.
 
-6. **Roll back** if needed: `git checkout "$(cat ~/pre-upgrade.sha)"` and the same `up --build -d`. The
-   Node delivered into agent homes is harmless to an older release, which ignores it. Restore the backup
-   set (doc/backup-restic.md) only if the release you are leaving ran a schema migration or data is in doubt.
+6. **Roll back** if needed: `git checkout "$(cat ~/pre-upgrade.sha)"` and the same `up --build -d`. Restore
+   the backup set (doc/backup-restic.md) only if the release you are leaving ran a schema migration or data
+   is in doubt.
 
 ## Logs
 

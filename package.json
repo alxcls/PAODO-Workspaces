@@ -83,14 +83,14 @@
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@types/ws": "^8.18.2",
-    "@vitest/coverage-v8": "^4.1.9",
+    "@vitest/coverage-v8": "^5.0.2",
     "eslint": "^9.39.5",
     "eslint-config-next": "^16.3.7",
     "prettier": "3.6.2",
     "tailwindcss": "^4.3.1",
     "ts-morph": "^25.0.1",
     "typescript": "^5.9.3",
-    "vitest": "^4.1.8"
+    "vitest": "^5.0.2"
   },
   "allowScripts": {
     "esbuild": true,

@@ -245,7 +245,11 @@ safety net around them. Work on one box at a time.
    - `workspace_node_default_kept`: the new Node was delivered, but the agent had chosen its own default
      or installed global packages on the old one, so its default was left alone (`reason`, `globals`).
      The agent can switch with `nvm alias default <version>`, offline, whenever it is ready.
-   - `workspace_node_upgrade_failed`: nothing changed; it retries on the workspace's next use.
+   - `workspace_node_upgrade_failed`: nothing changed; it retries an hour later, or at the next restart.
+
+   This is also how a later Node upgrade reaches existing workspaces: bump `ARG NODE_VERSION` in
+   `Dockerfile.workspace` and deploy. Each delivered version adds about 200 MB per workspace, and
+   older versions are kept.
 
    Check one directly — through `bash -c`, as the agent runs commands:
 

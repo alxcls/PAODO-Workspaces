@@ -1,17 +1,66 @@
-// Brings a durable agent home seeded by an older workspace image onto the image's current Node.
-// Pure filesystem decisions; ContainerManager performs the one step that needs the image (the copy).
-import { access, mkdir, readFile, readdir, rename, writeFile } from "fs/promises";
-import path from "path";
+// Brings agent homes seeded by an older workspace image onto its current Node. The app never opens a
+// file inside a home (the agent can plant symlinks there): both scripts run confined to that home.
+import { readFile } from "fs/promises";
 
 // Defaults the image set before homes recorded a `.node` marker: `nvm alias default 22` (2026-08-25),
 // then the exact pin (2026-08-26). Durable homes did not exist before that.
 const LEGACY_IMAGE_DEFAULTS = ["22", "22.23.2"];
 // nvm installs these with every Node version; any other global package was added by the agent.
 const BUNDLED_GLOBALS = new Set(["npm", "corepack"]);
+const EXACT_VERSION = /^\d+\.\d+\.\d+$/;
+
+/** Reports what the home holds, one fact per line. SEED is overridable only so tests can run it. */
+export const INSPECT_HOME_SCRIPT = `
+H=\${SEED:-/seed}/.nvm
+[ -s "$H/nvm.sh" ] && echo nvm
+[ -f "$H/alias/default" ] && printf 'alias %s\\n' "$(head -n 1 "$H/alias/default")"
+for d in "$H"/versions/node/v*; do
+  [ -d "$d" ] || continue
+  v=\${d##*/v}
+  if [ -x "$d/bin/node" ]; then echo "version $v"; else echo "broken $v"; fi
+  for m in "$d"/lib/node_modules/* "$d"/lib/node_modules/@*/*; do
+    [ -e "$m" ] || continue
+    n=\${m#"$d"/lib/node_modules/}
+    case $n in @*/*) ;; @*) continue ;; esac
+    echo "global $v $n"
+  done
+done
+exit 0
+`;
+
+/**
+ * $1 version, $2 copy it from the image (1/0), $3 make it nvm's default (1/0). Each step is staged
+ * and renamed into place, so a concurrent shell never sees a half-copied Node or half-written alias.
+ */
+export const APPLY_NODE_SCRIPT = `
+set -eu
+V=$1
+N=\${SEED:-/seed}/.nvm/versions/node
+if [ "$2" = 1 ]; then
+  mkdir -p "$N"
+  rm -rf "$N/.v$V.tmp"
+  cp -a "\${SRC:-/home/dev/.nvm/versions/node}/v$V" "$N/.v$V.tmp"
+  rm -rf "$N/v$V"
+  mv "$N/.v$V.tmp" "$N/v$V"
+fi
+if [ "$3" = 1 ]; then
+  A=\${SEED:-/seed}/.nvm/alias
+  mkdir -p "$A"
+  printf '%s\\n' "$V" > "$A/.default.tmp"
+  mv -f "$A/.default.tmp" "$A/default"
+fi
+`;
+
+export interface HomeFacts {
+  nvm: boolean;
+  alias: string | null;
+  /** Versions whose `bin/node` is executable; a half-present one counts as absent. */
+  installed: string[];
+  globals: Record<string, string[]>;
+}
 
 export type NodeUpgradePlan =
-  | { action: "none" }
-  | { action: "skip"; reason: "not_seeded" | "no_nvm" }
+  | { action: "skip"; reason: "no_nvm" }
   | {
       action: "deliver";
       copy: boolean;
@@ -19,18 +68,6 @@ export type NodeUpgradePlan =
       default: "move" | "current" | "custom" | "global_packages";
       globals: string[];
     };
-
-export interface AgentHomePaths {
-  homeDir: string;
-  seededMarker: string;
-  nodeMarker: string;
-}
-
-const exists = (p: string) =>
-  access(p).then(
-    () => true,
-    () => false,
-  );
 
 async function readTrimmed(p: string): Promise<string | null> {
   try {
@@ -46,8 +83,24 @@ export async function imageNodeVersion(dockerfilePath: string): Promise<string |
   return content?.match(/^ARG NODE_VERSION=(\d+\.\d+\.\d+)$/m)?.[1] ?? null;
 }
 
-const nodeVersionsDir = (homeDir: string) => path.join(homeDir, ".nvm", "versions", "node");
-export const nodeVersionDir = (homeDir: string, version: string) => path.join(nodeVersionsDir(homeDir), `v${version}`);
+/** The version recorded in the `.node` marker — a sibling of the home, never agent-writable. */
+export const readNodeMarker = (markerPath: string): Promise<string | null> => readTrimmed(markerPath);
+
+// The output is agent-influenced (file names), so anything unexpected is dropped rather than trusted;
+// at worst an agent misleads the decision about its own home, which the confined apply step bounds.
+export function parseHomeFacts(stdout: string): HomeFacts {
+  const facts: HomeFacts = { nvm: false, alias: null, installed: [], globals: {} };
+  for (const line of stdout.split("\n")) {
+    const [kind, first, ...rest] = line.split(" ");
+    if (kind === "nvm" && first === undefined) facts.nvm = true;
+    else if (kind === "alias" && first) facts.alias = [first, ...rest].join(" ").trim();
+    else if (kind === "version" && EXACT_VERSION.test(first ?? "")) facts.installed.push(first);
+    else if (kind === "global" && EXACT_VERSION.test(first ?? "") && rest.length) {
+      (facts.globals[first] ??= []).push(rest.join(" "));
+    }
+  }
+  return facts;
+}
 
 const byVersion = (a: string, b: string) => {
   const pa = a.split(".").map(Number);
@@ -58,7 +111,7 @@ const byVersion = (a: string, b: string) => {
 /** The installed version an nvm alias resolves to, the way nvm does for exact and major-only aliases. */
 function resolveAlias(alias: string, installed: string[]): string | null {
   const wanted = alias.replace(/^v/, "");
-  if (/^\d+\.\d+\.\d+$/.test(wanted)) return installed.includes(wanted) ? wanted : null;
+  if (EXACT_VERSION.test(wanted)) return installed.includes(wanted) ? wanted : null;
   if (!/^\d+$/.test(wanted)) return null;
   return (
     installed
@@ -68,49 +121,21 @@ function resolveAlias(alias: string, installed: string[]): string | null {
   );
 }
 
-async function agentGlobals(homeDir: string, version: string): Promise<string[]> {
-  const modules = path.join(nodeVersionDir(homeDir, version), "lib", "node_modules");
-  const entries = await readdir(modules).catch(() => [] as string[]);
-  const names: string[] = [];
-  for (const entry of entries.filter((e) => !e.startsWith("."))) {
-    if (!entry.startsWith("@")) names.push(entry);
-    else
-      for (const scoped of await readdir(path.join(modules, entry)).catch(() => [] as string[]))
-        names.push(`${entry}/${scoped}`);
-  }
-  return names.filter((n) => !BUNDLED_GLOBALS.has(n)).sort();
-}
-
 /**
- * Decide what bringing this home onto `target` involves. The default only moves while it still names
- * what the image itself chose, and while that Node carries no global packages the agent installed.
+ * Decide what bringing this home onto `target` involves. `marker` is the version the image last
+ * delivered here. The default only moves while it still names what the image itself chose, and while
+ * that Node carries no global packages the agent installed.
  */
-export async function planNodeUpgrade(paths: AgentHomePaths, target: string): Promise<NodeUpgradePlan> {
-  const marker = await readTrimmed(paths.nodeMarker);
-  if (marker === target) return { action: "none" };
-  if (!(await exists(paths.seededMarker))) return { action: "skip", reason: "not_seeded" };
-  if (!(await exists(path.join(paths.homeDir, ".nvm", "nvm.sh")))) return { action: "skip", reason: "no_nvm" };
-
-  const installed = (await readdir(nodeVersionsDir(paths.homeDir)).catch(() => [] as string[]))
-    .filter((d) => /^v\d+\.\d+\.\d+$/.test(d))
-    .map((d) => d.slice(1));
-  const copy = !(await exists(path.join(nodeVersionDir(paths.homeDir, target), "bin", "node")));
-  const alias = await readTrimmed(path.join(paths.homeDir, ".nvm", "alias", "default"));
+export function planNodeUpgrade(facts: HomeFacts, marker: string | null, target: string): NodeUpgradePlan {
+  if (!facts.nvm) return { action: "skip", reason: "no_nvm" };
+  const copy = !facts.installed.includes(target);
   const imageDefaults = marker ? [marker] : LEGACY_IMAGE_DEFAULTS;
-  const previous = alias ? resolveAlias(alias, installed) : null;
+  const previous = facts.alias ? resolveAlias(facts.alias, facts.installed) : null;
 
   if (previous === target) return { action: "deliver", copy, previous, default: "current", globals: [] };
-  if (alias && !imageDefaults.includes(alias.replace(/^v/, ""))) {
+  if (facts.alias && !imageDefaults.includes(facts.alias.replace(/^v/, ""))) {
     return { action: "deliver", copy, previous, default: "custom", globals: [] };
   }
-  const globals = previous ? await agentGlobals(paths.homeDir, previous) : [];
+  const globals = previous ? (facts.globals[previous] ?? []).filter((n) => !BUNDLED_GLOBALS.has(n)).sort() : [];
   return { action: "deliver", copy, previous, default: globals.length ? "global_packages" : "move", globals };
-}
-
-/** Point nvm's default at `version`, atomically so a concurrent shell never reads a half-written alias. */
-export async function setDefaultAlias(homeDir: string, version: string): Promise<void> {
-  const alias = path.join(homeDir, ".nvm", "alias", "default");
-  await mkdir(path.dirname(alias), { recursive: true });
-  await writeFile(`${alias}.tmp`, `${version}\n`);
-  await rename(`${alias}.tmp`, alias);
 }

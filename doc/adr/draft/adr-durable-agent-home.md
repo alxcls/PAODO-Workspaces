@@ -95,4 +95,8 @@ Notes
   such homes additively: copied out of the image (sandboxes are usually offline), older versions kept,
   and nvm's default moved only while it is still the image's own choice with no agent-installed global
   packages. It runs on each wake and in a boot sweep, recorded in the `<home>.node` marker, and never
-  recreates the container.
+  recreates the container. The app never reads or writes inside a home — the agent owns it and can plant
+  symlinks — so inspection and delivery run in throwaway containers that mount only that home, as uid
+  1000, read-only root, no network, no capabilities: a planted symlink can only reach that container's
+  own disposable filesystem. The same path handles every later `NODE_VERSION` bump; each delivered
+  version costs ~200MB per workspace, and older versions are kept until a cleanup policy exists.

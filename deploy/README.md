@@ -217,36 +217,6 @@ gateway up — the safe failure, but a quiet one, so success is worth proving ra
 Schema migrations run automatically at startup and cannot be reversed: once they
 apply, the previous release refuses to start against the migrated database.
 
-### Upgrading across a runtime change
-
-A release that moves a base image or a runtime (for example Node 22 → 24) uses the same commands, with a
-safety net around them. Work on one box at a time.
-
-1. **Back up and record where you are.**
-
-   ```bash
-   bash scripts/backup-offsite.sh            # if restic is set up (see doc/backup-restic.md)
-   # otherwise: an in-container set, copied out to the host
-   docker compose exec app npm run backup -- /tmp/pre-upgrade
-   docker cp "$(docker compose ps -q app)":/tmp/pre-upgrade ~/pre-upgrade
-   git rev-parse HEAD > ~/pre-upgrade.sha
-   ```
-
-2. **Pull and rebuild both images** with the `up --build -d` command above. On the first boot the app
-   also rebuilds the workspace image when `Dockerfile.workspace` changed, which takes a few minutes.
-
-3. **Watch the boot.** `docker compose logs -f app credproxy` should show `workspace_image_ready`,
-   `server_ready` and `credential_proxy_listening`. Workspace containers keep running throughout — an
-   app upgrade never recreates them.
-
-4. **Existing workspaces are not touched.** A new workspace image (for example a bumped
-   `ARG NODE_VERSION` in `Dockerfile.workspace`) reaches newly created workspaces only. Every existing
-   workspace keeps the Node, and everything else, in its home. Upgrading it is the client's call,
-   through its agent: `nvm install <version> && nvm alias default <version>`, with internet access on.
-
-5. **Smoke test.** `curl -fsS http://127.0.0.1:3000/api/status`, sign in, and send one agent message in
-   a workspace that uses a secret.
-
 ## Logs
 
 Containers emit line-delimited JSON to stdout. Docker stores and rotates those

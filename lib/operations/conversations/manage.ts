@@ -69,7 +69,7 @@ function detail(
   const messages = running
     ? deps.conversations.getPersistedMessages(workspaceId, conversationId)
     : deps.conversations.getMessages(workspaceId, conversationId);
-  if (!messages) throw new ConversationNotFoundError();
+  if (!messages) throw new ConversationNotFoundError(conversationId);
   return {
     meta,
     running,
@@ -121,7 +121,7 @@ export function getWorkspaceConversation(
   const deps = dependencies(suppliedDeps);
   if (!deps.workspaces.getWorkspace(workspaceId)) return null;
   const meta = deps.conversations.getMeta(workspaceId, conversationId);
-  if (!meta) throw new ConversationNotFoundError();
+  if (!meta) throw new ConversationNotFoundError(conversationId);
   return detail(workspaceId, conversationId, meta, deps);
 }
 
@@ -154,7 +154,7 @@ export function prepareWorkspaceChat(
   if (!deps.workspaces.getWorkspace(workspaceId)) return null;
 
   const conversationId = input.conversationId ?? deps.conversations.getActiveId(workspaceId);
-  if (!deps.conversations.getMessages(workspaceId, conversationId)) throw new ConversationNotFoundError();
+  if (!deps.conversations.getMessages(workspaceId, conversationId)) throw new ConversationNotFoundError(conversationId);
 
   const prompt = input.message?.trim();
   if (!prompt) return { workspaceId, conversationId, started: null };

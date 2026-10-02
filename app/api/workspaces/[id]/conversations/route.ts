@@ -13,13 +13,13 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   const result = listWorkspaceConversations(id, {
     includeActive: req.nextUrl.searchParams.get("include") === "active",
   });
-  if (!result) return notFound(req);
+  if (!result) return notFound(req, `workspace ${id}`);
   return Response.json(result);
 }
 
 export async function POST(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const result = createWorkspaceConversation(id);
-  if (!result) return notFound(_req);
+  if (!result) return notFound(_req, `workspace ${id}`);
   return Response.json({ conversation: result.conversation }, { status: 201 });
 }

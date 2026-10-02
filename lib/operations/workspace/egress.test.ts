@@ -134,8 +134,8 @@ describe("setting workspace egress", () => {
 
 describe("egress input validation", () => {
   it("rejects a non-boolean and names the field", () => {
-    expect(() => validateInternetAccess("true")).toThrow("internetAccess must be a boolean");
-    expect(() => validateInternetAccess(1)).toThrow("internetAccess must be a boolean");
+    expect(() => validateInternetAccess("true")).toThrow("internetAccess must be true or false");
+    expect(() => validateInternetAccess(1)).toThrow("internetAccess must be true or false");
   });
 
   it("returns the boolean it accepted", () => {

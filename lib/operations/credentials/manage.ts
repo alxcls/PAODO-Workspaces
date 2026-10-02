@@ -121,7 +121,7 @@ export function setCredentialEnabled(
   store: CredentialLifecycleStore = defaultStore(),
 ): void {
   if (typeof value !== "boolean") {
-    throw new AppError("INVALID_REQUEST", "enabled must be a boolean", { field: "enabled" });
+    throw new AppError("INVALID_REQUEST", "enabled must be true or false", { field: "enabled" });
   }
   store.setEnabled(kind, subject, value);
 }

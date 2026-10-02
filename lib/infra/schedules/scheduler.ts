@@ -1,53 +1,37 @@
-// In-process scheduler that fires workspace agent runs on their configured recurrence.
-//
-// A single tick loop (started once from server.ts) scans the schedule store and fires any schedule
-// whose next-run instant has arrived. Each fire starts a fresh conversation and drives the agent
-// through the run broker exactly like a user message would — the run is detached from any request,
-// so no browser need be attached.
-//
-// Design notes:
-//   - Reentrancy is tracked here (an in-memory set of in-flight workspace ids), NOT by the broker:
-//     every fire uses a fresh conversation id, so the broker's own already-running guard (keyed on
-//     workspace+conversation) can never catch a still-running prior run.
-//   - No missed-run catch-up: on boot every schedule's nextRunAt is recomputed to the first
-//     occurrence strictly after now, so slots that elapsed while the server was offline are skipped.
+// In-process tick loop (started from server.ts) firing each due schedule as a fresh, request-detached
+// conversation. No missed-run catch-up: boot recomputes every nextRunAt to the first slot after now.
 import { getStore } from "../services";
 import { createLogger } from "../logger";
 import { globalSingleton } from "../globalSingleton";
 import * as broker from "../../agent/runBroker";
+import { ExecutionCapacityReachedError } from "../../agent/executionCapacity";
 import { startWorkspaceRun } from "@/lib/operations/agent/run";
 import { listAll, getSchedule, setNextRunAt, recordRun } from "./scheduleStore";
-import { computeNextRun } from "@/lib/schedules/nextRun";
-import type { RunStatus, ScheduleEntry } from "@/lib/schedules/types";
+import { nextRunIso, endBound } from "@/lib/schedules/nextRun";
+import type { LastRun, RunStatus, ScheduleEntry } from "@/lib/schedules/types";
 import { AppError } from "@/lib/errors/appError";
 
 const log = createLogger("scheduler");
 
 const DEFAULT_TICK_MS = 30_000;
-const SNIPPET_MAX = 280;
+const ERROR_MAX = 280;
 
 type SchedulerState = { timer: NodeJS.Timeout | null };
 const state = globalSingleton<SchedulerState>("schedulerState", () => ({ timer: null }));
-// Workspace ids with a scheduled run currently in flight — guards against overlapping fires.
+// Workspace ids with a run in flight. Tracked here, not by the broker: every fire uses a fresh
+// conversation id, so the broker's per-conversation guard would never see the previous run.
 const inflight = globalSingleton<Set<string>>("schedulerInflight", () => new Set());
+// A completed run must not fire again merely because its outcome could not reach disk.
+const pendingOutcomes = globalSingleton<Map<string, LastRun>>("schedulerPendingOutcomes", () => new Map());
 
-/** Next-run ISO string for a schedule, or null if it is disabled or has passed its end bound. */
-function nextRunIso(entry: ScheduleEntry, from: Date): string | null {
-  if (!entry.enabled) return null;
-  const next = computeNextRun(entry, from);
-  return next ? next.toISOString() : null;
-}
-
-// scheduleStore owns the detailed persistence error record. Scheduler recovery paths use this
-// wrapper so a failed status write cannot escape into the broker subscriber or produce a second,
-// less-specific scheduler error for the same failure.
-function recordRunSafely(
-  workspaceId: string,
-  outcome: { at: string; status: RunStatus; snippet: string; nextRunAt: string | null },
-): void {
+// scheduleStore already logs a failed write with full context, so this keeps it from escaping into
+// the broker subscriber or being logged a second, vaguer time.
+function recordRunSafely(workspaceId: string, run: LastRun, nextRunAt: string | null): void {
   try {
-    recordRun(workspaceId, outcome);
+    recordRun(workspaceId, run, nextRunAt);
+    pendingOutcomes.delete(workspaceId);
   } catch {
+    pendingOutcomes.set(workspaceId, run);
     // Already logged as schedule_store_save_failed with workspace, schedule and operation context.
   }
 }
@@ -101,17 +85,23 @@ function fire(entry: ScheduleEntry, now: Date): void {
       "schedule fire failed to start",
     );
     inflight.delete(entry.workspaceId);
-    recordRunSafely(entry.workspaceId, {
-      at: now.toISOString(),
-      status: "error",
-      snippet: (err instanceof AppError ? err.message : String(err)).slice(0, SNIPPET_MAX),
-      nextRunAt: nextRunIso(entry, new Date()),
-    });
+    // A capacity refusal has already written itself into the conversation it names.
+    const refusedIn = err instanceof ExecutionCapacityReachedError ? err.conversationId : undefined;
+    recordRunSafely(
+      entry.workspaceId,
+      {
+        at: now.toISOString(),
+        status: "error",
+        ...(refusedIn ? { conversationId: refusedIn } : {}),
+        error: (err instanceof AppError ? err.message : String(err)).slice(0, ERROR_MAX),
+      },
+      nextRunIso(entry, new Date()),
+    );
     return;
   }
 
   // Capture the run outcome for the "last run" status, then advance the next-run pointer.
-  let response = "";
+  let error: string | undefined;
   let errored = false;
   let settled = false;
   const finish = () => {
@@ -119,25 +109,35 @@ function fire(entry: ScheduleEntry, now: Date): void {
     settled = true;
     inflight.delete(entry.workspaceId);
     const status: RunStatus = errored ? "error" : "ok";
-    const snippet = (response.trim() || (errored ? "run failed" : "")).slice(0, SNIPPET_MAX);
     // Recompute from the latest stored schedule in case it was edited mid-run.
     const latest = getSchedule(entry.workspaceId) ?? entry;
-    recordRunSafely(entry.workspaceId, {
-      at: new Date().toISOString(),
-      status,
-      snippet,
-      nextRunAt: nextRunIso(latest, new Date()),
-    });
+    recordRunSafely(
+      entry.workspaceId,
+      {
+        at: new Date().toISOString(),
+        status,
+        conversationId,
+        ...(errored ? { error: (error || "run failed").slice(0, ERROR_MAX) } : {}),
+      },
+      nextRunIso(latest, new Date()),
+    );
     sub?.unsubscribe();
   };
 
   const sub = broker.subscribe(ws.id, conversationId, (event) => {
-    if (event.type === "token") response += event.content;
-    else if (event.type === "error") {
+    if (event.type === "error") {
       errored = true;
-      if (!response) response = event.message;
+      error ??= event.message;
     } else if (event.type === "done") finish();
   });
+
+  // subscribe returns buffered events separately; an immediate failure may already be there.
+  for (const event of sub?.replay ?? []) {
+    if (event.type === "error") {
+      errored = true;
+      error ??= event.message;
+    }
+  }
 
   // The run may have already finished between startRun and subscribe (e.g. an immediate error).
   if (!sub || sub.status === "done") finish();
@@ -156,13 +156,27 @@ function tick(): void {
     return;
   }
 
+  const workspaceIds = new Set(entries.map((entry) => entry.workspaceId));
+  for (const id of pendingOutcomes.keys()) if (!workspaceIds.has(id)) pendingOutcomes.delete(id);
+
   // Isolate every entry: one malformed schedule must not abort later due schedules or escape the
   // interval callback and trigger the process-level uncaughtException handler.
   for (const entry of entries) {
     try {
+      const pending = pendingOutcomes.get(entry.workspaceId);
+      if (pending) {
+        recordRunSafely(entry.workspaceId, pending, nextRunIso(entry, now));
+        continue;
+      }
       if (!entry.enabled || !entry.nextRunAt) continue;
       if (inflight.has(entry.workspaceId)) continue;
-      if (new Date(entry.nextRunAt).getTime() > now.getTime()) continue;
+      const due = new Date(entry.nextRunAt).getTime();
+      if (!Number.isFinite(due) || due > now.getTime()) continue;
+      const end = endBound(entry);
+      if (end && now.getTime() >= end.toMillis()) {
+        setNextRunAt(entry.workspaceId, null);
+        continue;
+      }
       fire(entry, now);
     } catch (err) {
       log.error(

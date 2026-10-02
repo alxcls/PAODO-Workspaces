@@ -1,16 +1,5 @@
-// The public gateway and the application must allow exactly the same set of method/path pairs.
-//
-// The app default-denies on its own, so a gateway that is WIDER than the policy is only redundant.
-// A gateway that is NARROWER is a silent outage: deploy/caddy/Caddyfile was written against
-// an older, three-rule policy and kept answering a plain-text 404 for GET /api/models, POST/PATCH/
-// DELETE on workspaces and both credential channels — six of the nine CLI commands — long after the
-// app had authorized them. Nothing failed loudly, because a 404 from the edge is indistinguishable
-// from a route that does not exist.
-//
-// So this compares the two allowlists directly rather than trusting a comment to keep them in step.
-// The Caddyfile patterns are read out of the deployed file and evaluated here; they use only
-// constructs whose meaning is identical in RE2 and JS (anchors, character classes, non-capturing
-// alternation), so running them through the JS engine is faithful.
+// The Caddyfile and the app must allow exactly the same method/path pairs: a narrower gateway is a silent
+// edge 404 (it once hid six CLI commands). Its patterns use only RE2/JS-identical syntax, so JS runs them.
 import { describe, expect, it } from "vitest";
 import fs from "fs";
 import path from "path";
@@ -52,9 +41,8 @@ const METHODS = ["GET", "POST", "PATCH", "PUT", "DELETE", "HEAD", "OPTIONS"];
 
 const ID = "b6b8b4f1-0000-4000-8000-000000000000";
 
-// Every /api route the app actually serves, plus near-miss shapes that a sloppy regex would let
-// through: a collection verb aimed at a member, a member verb aimed at the collection, an id
-// containing a slash, and a trailing segment after an allowed leaf.
+// Every /api route the app serves, plus near-misses a sloppy regex would pass: collection verb on a member,
+// member verb on the collection, an id containing a slash, a trailing segment after an allowed leaf.
 const PATHS = [
   "/",
   "/api",
@@ -159,8 +147,10 @@ describe("public gateway allowlist", () => {
       `GET /api/workspaces/${ID}/files`,
       `GET /api/workspaces/${ID}/files/content`,
       `GET /api/workspaces/${ID}/files/transfer`,
+      `GET /api/workspaces/${ID}/schedule`,
       `PATCH /api/drives/${ID}`,
       `PATCH /api/workspaces/${ID}`,
+      `PATCH /api/workspaces/${ID}/schedule`,
       "POST /api/drive-connections",
       "POST /api/drives",
       "POST /api/workspace-graph/edges",
@@ -169,14 +159,14 @@ describe("public gateway allowlist", () => {
       `POST /api/workspaces/${ID}/mcp-config`,
       `PUT /api/drives/${ID}/files/transfer`,
       `PUT /api/workspaces/${ID}/files/transfer`,
+      `PUT /api/workspaces/${ID}/schedule`,
     ]);
   });
 
   it("strips and re-sets the forwarding headers on every proxied route", () => {
     const source = fs.readFileSync(CADDYFILE, "utf-8");
-    // Each upstream snippet must inherit the hygiene rather than restate it: a block that omits it
-    // trusts a client-supplied CF-Connecting-IP, letting a caller pick their own brute-force bucket
-    // and forge the address in the audit trail.
+    // Each upstream snippet must inherit the hygiene: one that omits it trusts a client-supplied
+    // CF-Connecting-IP, letting a caller pick their brute-force bucket and forge the audit-trail address.
     const proxies = source.match(/reverse_proxy\s+\S+\s*\{[\s\S]*?\n\t\}/g) ?? [];
     expect(proxies.length).toBeGreaterThanOrEqual(3);
     for (const proxy of proxies) expect(proxy).toContain("import forwardedHeaders");

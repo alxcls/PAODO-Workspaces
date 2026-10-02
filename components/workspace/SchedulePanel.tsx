@@ -1,37 +1,22 @@
 "use client";
 
-// Schedule button for the TopBar's right slot (sibling of HistoryPanel). The calendar icon opens an
-// overlay modal to configure this workspace's single recurring agent run: a prompt fired "every N
-// minutes/hours/days/weeks" in a chosen IANA timezone, bounded by a start and optional end time.
-// Backed by GET/PUT /api/workspaces/:id/schedule.
-//
-// Structure: SchedulePanel is just the trigger button + open state. ScheduleModal owns all of the
-// data/loading/saving logic and renders while mounted (i.e. only while open). Form state is a single
-// object edited through `set(key, value)`; Field/LiveToggle keep the markup declarative.
+// TopBar button opening this workspace's single scheduled run. SchedulePanel owns the button and the
+// shared read (useWorkspaceSchedule); ScheduleModal owns the form while open.
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { AsyncState } from "@/components/shared/AsyncState";
-import { useAsyncResource, type AsyncResource } from "@/lib/client/hooks/useAsyncResource";
-import { timezoneOffsetMinutes, timezoneOptionLabel } from "@/lib/client/timezoneLabel";
-// The entity itself, not a copy of it. lib/schedules/types.ts is dependency-free — no store, no
-// luxon — so this panel types its fetch result and its unit picker from the same declaration the
-// validator and the scheduler use. The previous local duplicate could disagree with the server
-// silently; adding an interval unit now cannot leave this picker behind.
-import { INTERVAL_UNITS, type IntervalUnit, type ScheduleEntry } from "@/lib/schedules/types";
+import { useNow } from "@/lib/client/hooks/useNow";
+import { useWorkspaceSchedule, type WorkspaceSchedule } from "@/lib/client/hooks/useWorkspaceSchedule";
+import { timezoneOffsetLabel, timezoneOffsetMinutes, timezoneOptionLabel } from "@/lib/client/timezoneLabel";
+// The server's own entity and recurrence math, so the form and the preview cannot drift from them.
+import { toForm, toPayload, scheduleChanges, type FormState } from "@/lib/client/scheduleForm";
+import { computeNextRun } from "@/lib/schedules/nextRun";
+import { INTERVAL_UNITS, MAX_INTERVAL_VALUE, type IntervalUnit } from "@/lib/schedules/types";
 
-interface FormState {
-  prompt: string;
-  intervalValue: string;
-  intervalUnit: IntervalUnit;
-  startAt: string;
-  endAt: string;
-  timezone: string;
-  enabled: boolean;
-}
+/** How often an open modal re-reads the schedule and moves its next-run preview forward. */
+const REFRESH_MS = 30_000;
 
-// ---------------------------------------------------------------------------
-// Pure helpers
-// ---------------------------------------------------------------------------
+// --- Pure helpers ------------------------------------------------------------
 
 const browserTz = (): string => {
   try {
@@ -44,7 +29,7 @@ const browserTz = (): string => {
 const allTimezones = (): string[] => {
   try {
     const fn = (Intl as unknown as { supportedValuesOf?: (k: string) => string[] }).supportedValuesOf;
-    if (typeof fn === "function") return fn("timeZone");
+    if (typeof fn === "function") return [...new Set(["UTC", browserTz(), ...fn("timeZone")])];
   } catch {
     /* fall through */
   }
@@ -67,36 +52,34 @@ const emptyForm = (): FormState => ({
   enabled: false,
 });
 
-const endAtForInput = (endAt: string | undefined): string => {
-  if (!endAt) return "";
-  // Older schedules stored a date-only inclusive bound. Give those a useful value in the new
-  // date-time control instead of rendering it blank; 23:59 retains the former end-of-day intent.
-  return endAt.length <= 10 ? `${endAt}T23:59` : endAt.slice(0, 16);
-};
+/** The next run the form would get if saved now — the scheduler's own calculation, or null if none. */
+function previewNextRun(f: FormState, now: Date): Date | null {
+  const { endAt, ...recurrence } = toPayload(f);
+  if (!recurrence.enabled || !Number.isSafeInteger(recurrence.intervalValue)) return null;
+  const next = computeNextRun({ ...recurrence, endAt: endAt ?? undefined }, now);
+  return next && !Number.isNaN(next.getTime()) ? next : null;
+}
 
-const toForm = (s: ScheduleEntry): FormState => ({
-  prompt: s.prompt,
-  intervalValue: String(s.intervalValue),
-  intervalUnit: s.intervalUnit,
-  startAt: s.startAt.slice(0, 16),
-  endAt: endAtForInput(s.endAt),
-  timezone: s.timezone,
-  enabled: s.enabled,
-});
+/** A run time on the schedule's own clock, like the Start and End fields, with that instant's offset so a DST shift shows. */
+function formatRunTime(at: string | Date, timeZone: string): string {
+  const date = new Date(at);
+  const options: Intl.DateTimeFormatOptions = {
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+  };
+  try {
+    const offset = timezoneOffsetLabel(timeZone, date);
+    const time = new Intl.DateTimeFormat(undefined, { ...options, timeZone }).format(date);
+    return offset ? `${time} (${offset})` : time;
+  } catch {
+    return new Intl.DateTimeFormat(undefined, options).format(date);
+  }
+}
 
-const toPayload = (f: FormState) => ({
-  prompt: f.prompt,
-  intervalValue: parseInt(f.intervalValue, 10),
-  intervalUnit: f.intervalUnit,
-  startAt: f.startAt,
-  endAt: f.endAt || null,
-  timezone: f.timezone,
-  enabled: f.enabled,
-});
-
-// ---------------------------------------------------------------------------
-// Presentational pieces
-// ---------------------------------------------------------------------------
+// --- Presentational pieces ---------------------------------------------------
 
 const CalendarIcon = () => (
   <svg
@@ -128,7 +111,7 @@ function Field({
   children: React.ReactNode;
 }) {
   return (
-    <label className={`flex flex-col gap-1.5 min-w-0 ${grow ? "flex-1 min-h-0" : ""}`}>
+    <label className={`flex flex-col gap-1.5 min-w-0 ${grow ? "flex-1 min-h-[200px] shrink-0" : ""}`}>
       <span className="flex items-baseline justify-between gap-2">
         <span className="text-xs font-semibold uppercase tracking-wide text-text-2">{label}</span>
         {hint && <span className="text-2xs text-text-3 normal-case tracking-normal">{hint}</span>}
@@ -138,19 +121,19 @@ function Field({
   );
 }
 
-function LiveToggle({ enabled, onToggle, disabled }: { enabled: boolean; onToggle: () => void; disabled?: boolean }) {
+function EnabledToggle({ enabled, onToggle, busy }: { enabled: boolean; onToggle: () => void; busy?: boolean }) {
   return (
     <button
       type="button"
       role="switch"
       aria-checked={enabled}
-      aria-label={enabled ? "Live — pause schedule" : "Paused — resume schedule"}
+      aria-label={enabled ? "Enabled — disable schedule" : "Disabled — enable schedule"}
       onClick={onToggle}
-      disabled={disabled}
+      disabled={busy}
       className="shrink-0 flex items-center gap-2.5 h-9 px-1 transition-colors outline-none focus-visible:ring-2 focus-visible:ring-primary-soft"
     >
       <span className={`text-ms font-semibold ${enabled ? "text-primary" : "text-text-2"}`}>
-        {enabled ? "Live" : "Paused"}
+        {enabled ? "Enabled" : "Disabled"}
       </span>
       <span className={`relative w-9 h-5 rounded-full transition-colors ${enabled ? "bg-primary" : "bg-border"}`}>
         <span
@@ -161,25 +144,46 @@ function LiveToggle({ enabled, onToggle, disabled }: { enabled: boolean; onToggl
   );
 }
 
-// ---------------------------------------------------------------------------
-// Modal
-// ---------------------------------------------------------------------------
-
-/** `entry` is wrapped so a loaded "no schedule" (null) reads apart from a read still in flight. */
-interface ScheduleData {
-  entry: ScheduleEntry | null;
+function StatusMark({ ok }: { ok: boolean }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width="14"
+      height="14"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      role="img"
+      aria-label={ok ? "Succeeded" : "Failed"}
+      className={ok ? "text-primary" : "text-danger"}
+    >
+      {ok ? <polyline points="5 12 10 17 19 7" /> : <path d="M6 6l12 12M18 6L6 18" />}
+    </svg>
+  );
 }
 
+function RunTime({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="flex items-center gap-1.5 text-ms text-text tabular-nums">
+      <span>{label} :</span>
+      <span className="flex items-center gap-1.5">{children}</span>
+    </div>
+  );
+}
+
+// --- Modal -------------------------------------------------------------------
+
 interface ModalProps {
-  workspaceId: string;
-  schedule: AsyncResource<ScheduleData>;
+  schedule: WorkspaceSchedule;
   onClose: () => void;
 }
 
-function ScheduleModal({ workspaceId, schedule, onClose }: ModalProps) {
-  const url = `/api/workspaces/${workspaceId}/schedule`;
+function ScheduleModal({ schedule, onClose }: ModalProps) {
+  const storedTimezone = schedule.data?.entry?.timezone;
   const timezoneOptions = useMemo(() => {
-    return allTimezones()
+    return [...new Set([...allTimezones(), ...(storedTimezone ? [storedTimezone] : [])])]
       .map((tz) => ({ value: tz, label: timezoneOptionLabel(tz), offset: timezoneOffsetMinutes(tz) }))
       .sort((a, b) => {
         const ao = a.offset ?? Number.POSITIVE_INFINITY;
@@ -187,7 +191,7 @@ function ScheduleModal({ workspaceId, schedule, onClose }: ModalProps) {
         if (ao !== bo) return ao - bo;
         return a.value.localeCompare(b.value);
       });
-  }, []);
+  }, [storedTimezone]);
 
   // Seeded from the panel's own read, so a modal opened after the button already knows its state
   // renders the form at once with no loading pass. `null` means that read is still in flight.
@@ -198,42 +202,33 @@ function ScheduleModal({ workspaceId, schedule, onClose }: ModalProps) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [initialForm] = useState(emptyForm);
-  const [draft, setDraft] = useState<FormState | null>(null);
-  const form = draft ?? loaded ?? initialForm;
-  const unavailable = schedule.loading || schedule.error || schedule.data === null;
+  const [draft, setDraft] = useState<Partial<FormState>>({});
+  const form = { ...(loaded ?? initialForm), ...draft };
+  const dirty = Object.keys(draft).length > 0;
+  // Only a first read blocks the form; a refresh keeps showing the last data while it runs.
+  const unavailable = schedule.data === null;
+  const lastRun = schedule.data?.entry?.lastRun;
+  const now = useNow(REFRESH_MS);
+  const nextRun = previewNextRun(form, now);
 
-  const set = useCallback(
-    <K extends keyof FormState>(key: K, value: FormState[K]) => {
-      setDraft((current) => ({ ...(current ?? loaded ?? initialForm), [key]: value }));
-    },
-    [loaded, initialForm],
-  );
+  const set = useCallback(<K extends keyof FormState>(key: K, value: FormState[K]) => {
+    setDraft((current) => ({ ...current, [key]: value }));
+  }, []);
 
-  // Dismiss on Escape.
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !saving) onClose();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  }, [onClose, saving]);
 
   const save = async () => {
     if (unavailable || saving) return;
     setSaving(true);
     setError(null);
     try {
-      const res = await fetch(url, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(toPayload(form)),
-      });
-      if (!res.ok) {
-        const body = (await res.json().catch(() => ({}))) as { error?: string };
-        throw new Error(body.error ?? `Save failed (${res.status})`);
-      }
-      // Re-read so the button colour and the next open reflect what was just saved.
-      void schedule.reload();
+      await schedule.save(scheduleChanges(form, draft, Boolean(schedule.data?.entry)));
       onClose();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Save failed");
@@ -244,11 +239,14 @@ function ScheduleModal({ workspaceId, schedule, onClose }: ModalProps) {
   return (
     <div
       className="fixed inset-0 bg-[rgba(15,10,30,0.55)] flex items-center justify-center z-[1000] p-4 sm:p-6"
-      onMouseDown={(e) => {
-        if (e.target === e.currentTarget) onClose();
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget && !saving) onClose();
       }}
     >
       <form
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="schedule-title"
         onSubmit={(e) => {
           e.preventDefault();
           void save();
@@ -262,17 +260,19 @@ function ScheduleModal({ workspaceId, schedule, onClose }: ModalProps) {
               <CalendarIcon />
             </span>
             <div className="min-w-0">
-              <h2 className="font-semibold text-lg leading-tight text-text m-0">Scheduled run</h2>
+              <h2 id="schedule-title" className="font-semibold text-lg leading-tight text-text m-0">
+                Scheduled run
+              </h2>
               <p className="text-ms text-text-2 m-0 mt-0.5 truncate">
                 Send a prompt to this workspace&apos;s agent on a repeating schedule.
               </p>
             </div>
           </div>
-          {/* Rendered only once the schedule has loaded: seeded from emptyForm it would paint Paused
+          {/* Rendered only once the schedule has loaded: seeded from emptyForm it would paint Disabled
               and then animate to the loaded state on every open. Mounting it in its final state skips
               that slide (CSS transitions don't fire on the first render). */}
           {!unavailable && (
-            <LiveToggle enabled={form.enabled} onToggle={() => set("enabled", !form.enabled)} disabled={saving} />
+            <EnabledToggle enabled={form.enabled} onToggle={() => set("enabled", !form.enabled)} busy={saving} />
           )}
         </header>
 
@@ -288,7 +288,7 @@ function ScheduleModal({ workspaceId, schedule, onClose }: ModalProps) {
             className="flex-1 min-h-0 justify-center p-7"
           />
         ) : (
-          <div className="flex-1 min-h-0 overflow-auto p-7 flex flex-col gap-6">
+          <div className="flex-1 min-h-0 overflow-auto px-7 pt-7 pb-6 flex flex-col gap-6">
             {error && (
               <div className="text-ms text-danger bg-danger-soft border border-danger/20 rounded-md px-3 py-2">
                 {error}
@@ -306,7 +306,7 @@ function ScheduleModal({ workspaceId, schedule, onClose }: ModalProps) {
             </Field>
 
             {/* Parameters — grouped schedule controls */}
-            <div className="rounded-xl border border-border-soft bg-bg-tint p-5">
+            <div className="shrink-0 rounded-xl border border-border-soft bg-bg-tint p-5">
               <div className="text-xs font-semibold uppercase tracking-wide text-text-2 mb-4">Parameters</div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-5 gap-y-4">
                 <Field label="Repeat every">
@@ -314,6 +314,8 @@ function ScheduleModal({ workspaceId, schedule, onClose }: ModalProps) {
                     <input
                       type="number"
                       min={1}
+                      max={MAX_INTERVAL_VALUE}
+                      step={1}
                       className="input input-sm basis-[84px] grow-0 shrink-0 text-center"
                       value={form.intervalValue}
                       onChange={(e) => set("intervalValue", e.target.value)}
@@ -350,7 +352,7 @@ function ScheduleModal({ workspaceId, schedule, onClose }: ModalProps) {
                   <input
                     type="datetime-local"
                     className="input input-sm"
-                    value={form.startAt}
+                    value={form.startAt.slice(0, 16)}
                     onChange={(e) => set("startAt", e.target.value)}
                   />
                 </Field>
@@ -358,13 +360,35 @@ function ScheduleModal({ workspaceId, schedule, onClose }: ModalProps) {
                 <Field label="End" hint="optional">
                   <input
                     type="datetime-local"
-                    min={form.startAt}
+                    min={form.startAt.slice(0, 16)}
                     className="input input-sm"
-                    value={form.endAt}
+                    value={form.endAt.slice(0, 16)}
                     onChange={(e) => set("endAt", e.target.value)}
                   />
                 </Field>
               </div>
+            </div>
+
+            <div className="shrink-0 flex flex-wrap items-center gap-x-10 gap-y-2 px-1">
+              <RunTime label="Last run">
+                {lastRun ? (
+                  <>
+                    {formatRunTime(lastRun.at, form.timezone)}
+                    <StatusMark ok={lastRun.status === "ok"} />
+                  </>
+                ) : (
+                  "—"
+                )}
+              </RunTime>
+              <RunTime label="Next run">
+                {dirty || !schedule.data?.entry
+                  ? nextRun
+                    ? formatRunTime(nextRun, form.timezone)
+                    : "—"
+                  : schedule.data.entry.nextRunAt
+                    ? formatRunTime(schedule.data.entry.nextRunAt, form.timezone)
+                    : "—"}
+              </RunTime>
             </div>
           </div>
         )}
@@ -380,9 +404,7 @@ function ScheduleModal({ workspaceId, schedule, onClose }: ModalProps) {
   );
 }
 
-// ---------------------------------------------------------------------------
-// Trigger
-// ---------------------------------------------------------------------------
+// --- Trigger -----------------------------------------------------------------
 
 interface Props {
   workspaceId: string;
@@ -392,18 +414,9 @@ export default function SchedulePanel({ workspaceId }: Props) {
   const [open, setOpen] = useState(false);
   const close = useCallback(() => setOpen(false), []);
 
-  // One shared read drives both the button colour (purple whenever a schedule is live) and the modal,
-  // so opening it after the page has settled shows the form at once instead of a second load.
-  const schedule = useAsyncResource<ScheduleData>(
-    useCallback(
-      async (signal: AbortSignal) => {
-        const res = await fetch(`/api/workspaces/${workspaceId}/schedule`, { signal });
-        if (!res.ok) throw new Error(`Failed to load schedule (${res.status})`);
-        return { entry: (await res.json()) as ScheduleEntry | null };
-      },
-      [workspaceId],
-    ),
-  );
+  // One shared read drives the button colour and the modal, so an open shows the form at once.
+  // Polled only while the modal is open, where a finished run or a CLI edit should appear.
+  const schedule = useWorkspaceSchedule(workspaceId, { pollMs: open ? REFRESH_MS : undefined });
   const active = Boolean(schedule.data?.entry?.enabled);
 
   return (
@@ -420,7 +433,7 @@ export default function SchedulePanel({ workspaceId }: Props) {
         <span>Schedule</span>
       </button>
 
-      {open && <ScheduleModal key={workspaceId} workspaceId={workspaceId} schedule={schedule} onClose={close} />}
+      {open && <ScheduleModal key={workspaceId} schedule={schedule} onClose={close} />}
     </>
   );
 }

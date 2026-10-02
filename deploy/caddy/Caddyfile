@@ -39,7 +39,7 @@
 # source of truth, while a prose count drifts whenever one capability adds another method/path pair.
 (cliUpstream) {
 	request_body {
-		max_size 64KB
+		max_size 128KB
 	}
 	reverse_proxy app:{$APP_PORT} {
 		import forwardedHeaders
@@ -83,7 +83,7 @@
 }
 
 # File bodies can be arbitrarily large in aggregate (the per-file limit is enforced while parsing)
-# and both directions stream. Do not apply cliUpstream's 64KB cap or 30-second response deadline.
+# and both directions stream. Do not apply cliUpstream's 128KB cap or 30-second response deadline.
 (fileTransferUpstream) {
 	reverse_proxy app:{$APP_PORT} {
 		import forwardedHeaders
@@ -131,6 +131,7 @@
 		#   GET    /api/models
 		#   GET    /api/workspaces
 		#   GET    /api/workspaces/{id}
+		#   GET    /api/workspaces/{id}/schedule
 		#   GET    /api/drives
 		#   GET    /api/drives/{id}
 		#   GET    /api/drive-connections
@@ -141,7 +142,7 @@
 		# replaces the document whole and would take the editor's layout with it.
 		@cliRead {
 			method GET
-			path_regexp cliRead ^/api/(status|models|workspaces(?:/[^/]+)?|drives(?:/[^/]+)?|drive-connections|workspace-graph)$
+			path_regexp cliRead ^/api/(status|models|workspaces(?:/[^/]+(?:/schedule)?)?|drives(?:/[^/]+)?|drive-connections|workspace-graph)$
 		}
 
 		# POST /api/workspaces and /api/drives create; POST on a workspace is NOT
@@ -163,10 +164,18 @@
 		}
 
 		#   PATCH  /api/workspaces/{id}
+		#   PATCH  /api/workspaces/{id}/schedule
 		#   PATCH  /api/drives/{id}
 		@cliUpdate {
 			method PATCH
-			path_regexp cliUpdate ^/api/(?:workspaces|drives)/[^/]+$
+			path_regexp cliUpdate ^/api/(?:workspaces/[^/]+(?:/schedule)?|drives/[^/]+)$
+		}
+
+		# The workspace's one scheduled job: replace or atomically update named fields.
+		#   PUT    /api/workspaces/{id}/schedule
+		@cliScheduleReplace {
+			method PUT
+			path_regexp cliScheduleReplace ^/api/workspaces/[^/]+/schedule$
 		}
 
 		# The mirror image of POST: DELETE on a workspace is allowed, DELETE on the
@@ -238,6 +247,10 @@
 		}
 
 		handle @cliUpdate {
+			import cliUpstream
+		}
+
+		handle @cliScheduleReplace {
 			import cliUpstream
 		}
 

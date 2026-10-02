@@ -1,6 +1,5 @@
-// The schedule store is a JSON-backed, one-per-workspace registry. What matters: read/write round-trips,
-// recordRun updates the run-status fields + next-run pointer atomically, and everything survives a
-// reload from disk (a fresh module instance reads the persisted file).
+// The JSON-backed, one-per-workspace registry: round-trips, recordRun's single outcome + pointer write,
+// the legacy-record upgrade, and survival across a reload from disk (a fresh module instance).
 import { describe, it, expect, beforeEach, afterAll, vi } from "vitest";
 import fs from "fs";
 import os from "os";
@@ -69,19 +68,47 @@ describe("scheduleStore", () => {
     expect(store.listAll()).toHaveLength(1);
   });
 
-  it("recordRun updates status, snippet, timestamps and next-run atomically", () => {
+  it("recordRun stores the outcome and advances the next-run pointer in one write", () => {
     store.setSchedule(entry(store));
-    store.recordRun("w1", {
-      at: "2026-07-13T09:00:05.000Z",
+    const run = { at: "2026-07-13T09:00:05.000Z", status: "ok" as const, conversationId: "conv-1" };
+    store.recordRun("w1", run, "2026-07-14T09:00:00.000Z");
+    expect(store.getSchedule("w1")).toMatchObject({ lastRun: run, nextRunAt: "2026-07-14T09:00:00.000Z" });
+  });
+
+  it("recordRun replaces the previous outcome whole, so a success drops an earlier error", () => {
+    store.setSchedule(entry(store));
+    store.recordRun("w1", { at: "2026-07-13T09:00:05.000Z", status: "error", error: "boom" }, null);
+    store.recordRun("w1", { at: "2026-07-14T09:00:05.000Z", status: "ok", conversationId: "conv-2" }, null);
+    expect(store.getSchedule("w1")?.lastRun).toEqual({
+      at: "2026-07-14T09:00:05.000Z",
       status: "ok",
-      snippet: "done",
-      nextRunAt: "2026-07-14T09:00:00.000Z",
+      conversationId: "conv-2",
     });
-    const s = store.getSchedule("w1");
-    expect(s?.lastRunStatus).toBe("ok");
-    expect(s?.lastRunSnippet).toBe("done");
-    expect(s?.lastRunAt).toBe("2026-07-13T09:00:05.000Z");
-    expect(s?.nextRunAt).toBe("2026-07-14T09:00:00.000Z");
+  });
+
+  it("upgrades a record written with flat last-run fields, dropping the retired snippet", async () => {
+    const legacy = {
+      ...entry(store),
+      lastRunAt: "2026-07-13T09:00:05.000Z",
+      lastRunStatus: "error",
+      lastRunSnippet: "boom",
+    };
+    fs.writeFileSync(FILE, JSON.stringify({ w1: legacy }));
+    clearSingletons();
+    vi.resetModules();
+    const reloaded = await import("./scheduleStore");
+
+    const s = reloaded.getSchedule("w1");
+    expect(s?.lastRun).toEqual({ at: "2026-07-13T09:00:05.000Z", status: "error" });
+    for (const retired of ["lastRunAt", "lastRunStatus", "lastRunSnippet"]) expect(s).not.toHaveProperty(retired);
+  });
+
+  it("leaves a never-run legacy record without a last run", async () => {
+    fs.writeFileSync(FILE, JSON.stringify({ w1: entry(store) }));
+    clearSingletons();
+    vi.resetModules();
+    const reloaded = await import("./scheduleStore");
+    expect(reloaded.getSchedule("w1")).not.toHaveProperty("lastRun");
   });
 
   it("setNextRunAt advances the pointer", () => {
@@ -147,5 +174,23 @@ describe("scheduleStore", () => {
     vi.resetModules();
     const reloaded = await import("./scheduleStore");
     expect(reloaded.getSchedule("w1")?.prompt).toBe("persist me");
+  });
+});
+
+describe("failed persistence", () => {
+  it("does not publish a failed configuration, pointer, outcome, or deletion", () => {
+    store.setSchedule(entry(store));
+    const before = store.getSchedule("w1");
+    // A directory at the temporary filename reliably refuses writes on every platform.
+    fs.mkdirSync(FILE + ".tmp");
+    expect(() => store.setSchedule(entry(store, { prompt: "not saved" }))).toThrow();
+    expect(store.getSchedule("w1")).toEqual(before);
+    expect(() => store.setNextRunAt("w1", null)).toThrow();
+    expect(store.getSchedule("w1")).toEqual(before);
+    expect(() => store.recordRun("w1", { at: "2026-07-13T09:00Z", status: "error" }, null)).toThrow();
+    expect(store.getSchedule("w1")).toEqual(before);
+    expect(() => store.clearSchedule("w1")).toThrow();
+    expect(store.getSchedule("w1")).toEqual(before);
+    expect(JSON.parse(fs.readFileSync(FILE, "utf8"))["w1"]).toEqual(before);
   });
 });

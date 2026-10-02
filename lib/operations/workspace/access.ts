@@ -45,7 +45,7 @@ function defaultChannelCredentials(): ChannelCredentials {
 }
 
 export function validateChannelEnabled(field: string, value: unknown): boolean {
-  if (typeof value !== "boolean") throw new WorkspaceUpdateError(`${field} must be a boolean`);
+  if (typeof value !== "boolean") throw new WorkspaceUpdateError(`${field} must be true or false`);
   return value;
 }
 

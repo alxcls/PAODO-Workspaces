@@ -14,7 +14,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
   const param = workspaceIdParam((await params).id, req);
   if (param instanceof NextResponse) return param;
   const id = param;
-  if (!getWorkspace(id)) return notFound(req);
+  if (!getWorkspace(id)) return notFound(req, `workspace ${id}`);
   try {
     const usage = await getWorkspaceDiskUsage(id);
     return NextResponse.json(usage, { headers: { "Cache-Control": "no-store" } });

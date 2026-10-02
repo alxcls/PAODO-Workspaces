@@ -45,7 +45,7 @@ describe("connecting a drive to a workspace", () => {
     const connect = vi.fn(() => connection);
 
     expect(() => connectDriveToWorkspace({ driveId: "gone", workspaceId: "ws-1" }, deps({ connect }))).toThrowError(
-      expect.objectContaining({ code: "NOT_FOUND", message: "drive not found" }),
+      expect.objectContaining({ code: "NOT_FOUND", message: "drive gone not found" }),
     );
     expect(connect).not.toHaveBeenCalled();
   });
@@ -54,7 +54,7 @@ describe("connecting a drive to a workspace", () => {
     const connect = vi.fn(() => connection);
 
     expect(() => connectDriveToWorkspace({ driveId: "drive-1", workspaceId: "gone" }, deps({ connect }))).toThrowError(
-      expect.objectContaining({ code: "NOT_FOUND", message: "workspace not found" }),
+      expect.objectContaining({ code: "NOT_FOUND", message: "workspace gone not found" }),
     );
     expect(connect).not.toHaveBeenCalled();
   });

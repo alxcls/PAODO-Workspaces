@@ -49,7 +49,7 @@ export function startWorkspaceRun(
   const conversationId =
     input.conversation.mode === "create" ? conversationStore.createConversation(ws.id).id : input.conversation.id;
   const messages = conversationStore.getMessages(ws.id, conversationId);
-  if (!messages) throw new ConversationNotFoundError();
+  if (!messages) throw new ConversationNotFoundError(conversationId);
 
   (deps.refreshPrompt ?? refreshWorkspaceSystemPrompt)(ws, messages);
   const { alreadyRunning, capacityReached } = (deps.broker ?? broker).startRun({

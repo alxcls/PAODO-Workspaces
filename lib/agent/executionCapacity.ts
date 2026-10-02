@@ -68,9 +68,20 @@ export function executionCapacityMessage(snapshot: ExecutionCapacitySnapshot): s
   );
 }
 
+/** What the refused caller was about to run; exposed in `details` and, where callers need it, typed. */
+export interface ExecutionCapacityContext {
+  workspaceId?: string;
+  conversationId?: string;
+  origin?: string;
+}
+
 export class ExecutionCapacityReachedError extends AppError {
-  constructor(snapshot: ExecutionCapacitySnapshot, details: Record<string, unknown> = {}) {
-    super("CAPACITY_REACHED", executionCapacityMessage(snapshot), { ...snapshot, ...details });
+  /** The conversation the refused run targeted, so a caller can point at it without parsing `details`. */
+  readonly conversationId: string | undefined;
+
+  constructor(snapshot: ExecutionCapacitySnapshot, context: ExecutionCapacityContext = {}) {
+    super("CAPACITY_REACHED", executionCapacityMessage(snapshot), { ...snapshot, ...context });
     this.name = "ExecutionCapacityReachedError";
+    this.conversationId = context.conversationId;
   }
 }

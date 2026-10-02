@@ -71,10 +71,10 @@ export function connectDriveToWorkspace(
   const targetHandle = optionalHandle(input.targetHandle, "targetHandle");
 
   if (!deps.driveExists(driveId)) {
-    throw new AppError("NOT_FOUND", "drive not found", { field: "driveId" });
+    throw new AppError("NOT_FOUND", `drive ${driveId} not found`, { field: "driveId" });
   }
   if (!deps.workspaceExists(workspaceId)) {
-    throw new AppError("NOT_FOUND", "workspace not found", { field: "workspaceId" });
+    throw new AppError("NOT_FOUND", `workspace ${workspaceId} not found`, { field: "workspaceId" });
   }
 
   return deps.connect(driveId, workspaceId, { sourceHandle, targetHandle });

@@ -111,7 +111,7 @@ describe("POST /api/workspaces/[id]/agent — Bearer key auth & per-workspace sc
     const res = await post("ws-a", { message: "again", conversationId: "conv-gone" }, "key-a");
 
     expect(res.status).toBe(404);
-    expect(await res.json()).toEqual({ ok: false, code: "NOT_FOUND", error: "Conversation not found" });
+    expect(await res.json()).toEqual({ ok: false, code: "NOT_FOUND", error: "conversation conv-gone not found" });
     expect(h.startRun).not.toHaveBeenCalled();
   });
 

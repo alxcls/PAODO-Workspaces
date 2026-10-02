@@ -1,8 +1,5 @@
-// The scheduler's contract: a due, enabled schedule fires exactly one run through the broker; while
-// that run is in flight a second tick does NOT re-fire (reentrancy is tracked here, not by the
-// broker, because every fire uses a fresh conversation id); and when the run completes the outcome
-// is recorded and nextRunAt advances to a future instant. Broker/agent/services deps are mocked so
-// the test exercises the wiring without a live LLM or Docker.
+// A due, enabled schedule fires one run through the broker, never re-fires while it is in flight, and
+// on completion records the outcome and advances nextRunAt. Broker/agent/services deps are mocked.
 import { describe, it, expect, beforeEach, afterAll, vi } from "vitest";
 import fs from "fs";
 import os from "os";
@@ -16,6 +13,7 @@ const h = vi.hoisted(() => ({
   createConversation: vi.fn(),
   subCb: null as null | ((e: { type: string; content?: string; message?: string }) => void),
   unsubscribe: vi.fn(),
+  replay: [] as Array<{ type: "error"; message: string }>,
   subStatus: "running" as "running" | "done",
   alreadyRunning: false,
   workspaceLookups: 0,
@@ -45,7 +43,7 @@ vi.mock("../../agent/runBroker", () => ({
   },
   subscribe: (_w: string, _c: string, cb: (e: { type: string }) => void) => {
     h.subCb = cb;
-    return { replay: [], userInput: "", status: h.subStatus, unsubscribe: h.unsubscribe };
+    return { replay: h.replay, userInput: "", status: h.subStatus, unsubscribe: h.unsubscribe };
   },
 }));
 vi.mock("@/lib/conversations/store", () => ({
@@ -100,6 +98,7 @@ beforeEach(async () => {
   h.unsubscribe.mockClear();
   h.subCb = null;
   h.subStatus = "running";
+  h.replay = [];
   h.alreadyRunning = false;
   h.workspaceLookups = 0;
   h.workspaceDisappears = false;
@@ -137,8 +136,7 @@ describe("scheduler tick", () => {
     h.subCb?.({ type: "done" });
 
     const s = store.getSchedule("w1");
-    expect(s?.lastRunStatus).toBe("ok");
-    expect(s?.lastRunSnippet).toBe("all done");
+    expect(s?.lastRun).toEqual({ at: expect.any(String), status: "ok", conversationId: "conv-1" });
     expect(new Date(s!.nextRunAt!).getTime()).toBeGreaterThan(Date.now());
 
     // In-flight cleared and nextRunAt now future -> next tick does not fire.
@@ -151,8 +149,11 @@ describe("scheduler tick", () => {
     scheduler._tick();
     h.subCb?.({ type: "error", message: "boom" });
     h.subCb?.({ type: "done" });
-    expect(store.getSchedule("w1")?.lastRunStatus).toBe("error");
-    expect(store.getSchedule("w1")?.lastRunSnippet).toBe("boom");
+    expect(store.getSchedule("w1")?.lastRun).toMatchObject({
+      status: "error",
+      error: "boom",
+      conversationId: "conv-1",
+    });
   });
 
   it("records a capacity refusal and leaves the explanation in the scheduled conversation", () => {
@@ -161,9 +162,10 @@ describe("scheduler tick", () => {
 
     scheduler._tick();
 
-    const saved = store.getSchedule("w1");
-    expect(saved?.lastRunStatus).toBe("error");
-    expect(saved?.lastRunSnippet).toContain("Execution capacity reached: 10/10 agent runs are active");
+    const lastRun = store.getSchedule("w1")?.lastRun;
+    expect(lastRun?.status).toBe("error");
+    expect(lastRun?.error).toContain("Execution capacity reached: 10/10 agent runs are active");
+    expect(lastRun?.conversationId).toBe("conv-1");
     expect(h.persist).toHaveBeenCalledWith("w1", "conv-1");
     expect(h.messages.at(-1)?.content).toContain("Execution capacity reached");
     expect(h.subCb).toBeNull();
@@ -206,7 +208,7 @@ describe("scheduler tick", () => {
 
     expect(h.startRun).toHaveBeenCalledOnce();
     expect(h.subCb).toBeNull();
-    expect(store.getSchedule("w1")?.lastRunStatus).toBeUndefined();
+    expect(store.getSchedule("w1")?.lastRun).toBeUndefined();
 
     // A later due fire can proceed because the skip removed the scheduler's in-flight guard.
     h.alreadyRunning = false;
@@ -227,4 +229,37 @@ describe("scheduler tick", () => {
     scheduler._tick();
     expect(h.startRun).toHaveBeenCalledOnce();
   });
+});
+
+describe("dispatch boundaries", () => {
+  it("does not dispatch a due occurrence after its end bound", () => {
+    seed({ endAt: "2020-01-02T00:00" });
+    scheduler._tick();
+    expect(h.startRun).not.toHaveBeenCalled();
+    expect(store.getSchedule("w1")?.nextRunAt).toBeNull();
+  });
+
+  it("records an error already buffered when subscribing", () => {
+    seed();
+    h.subStatus = "done";
+    h.replay = [{ type: "error", message: "immediate failure" }];
+    scheduler._tick();
+    expect(store.getSchedule("w1")?.lastRun).toMatchObject({ status: "error", error: "immediate failure" });
+  });
+});
+
+it("retries persistence without re-running the agent after a failed outcome write", () => {
+  seed();
+  scheduler._tick();
+  const temporaryFile = path.join(ROOT, ".cron-schedules.json.tmp");
+  fs.mkdirSync(temporaryFile);
+  h.subCb?.({ type: "done" });
+  scheduler._tick();
+  expect(h.startRun).toHaveBeenCalledTimes(1);
+  expect(store.getSchedule("w1")?.lastRun).toBeUndefined();
+  fs.rmdirSync(temporaryFile);
+  scheduler._tick();
+  expect(store.getSchedule("w1")?.lastRun?.status).toBe("ok");
+  scheduler._tick();
+  expect(h.startRun).toHaveBeenCalledTimes(1);
 });

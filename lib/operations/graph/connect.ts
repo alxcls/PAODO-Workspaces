@@ -46,10 +46,10 @@ export function connectWorkspaces(input: ConnectWorkspacesInput, deps: Workspace
     throw new AppError("INVALID_REQUEST", "a workspace cannot call itself", { field: "target" });
   }
   if (!deps.workspaceExists(source)) {
-    throw new AppError("NOT_FOUND", "caller workspace not found", { field: "source" });
+    throw new AppError("NOT_FOUND", `caller workspace ${source} not found`, { field: "source" });
   }
   if (!deps.workspaceExists(target)) {
-    throw new AppError("NOT_FOUND", "callee workspace not found", { field: "target" });
+    throw new AppError("NOT_FOUND", `callee workspace ${target} not found`, { field: "target" });
   }
 
   return deps.connect(source, target);

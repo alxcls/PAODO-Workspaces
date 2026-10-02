@@ -20,7 +20,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
   try {
     const connectionOrigin = publicBaseUrl() ?? new URL(req.url).origin;
     const workspace = await getWorkspaceOverview(id, connectionOrigin);
-    if (!workspace) return notFound(req);
+    if (!workspace) return notFound(req, `workspace ${id}`);
     return NextResponse.json(workspace, { headers: { "Cache-Control": "no-store" } });
   } catch (err) {
     const expected = appErrorResponse(err, req);
@@ -139,7 +139,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
           }
         : {}),
     });
-    if (!result) return notFound(req);
+    if (!result) return notFound(req, `workspace ${id}`);
     // A mutation returns only its receipt. GET is the sole workspace representation, so adding a
     // projection there (skills, secrets, access state) can never make PATCH partial or expensive.
     return receiptResponse(result);
@@ -166,7 +166,7 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
   const id = param;
   try {
     const result = await deleteWorkspace(id, workspaceDeleteDeps());
-    if (!result) return notFound(req);
+    if (!result) return notFound(req, `workspace ${id}`);
     // `ok` alongside `deleted`, so this receipt branches the same way every other mutation's does. A
     // failure is `{ ok: false, code, error }`; a success that carried only `deleted: true` was one a
     // caller had to already know the shape of to read at all.

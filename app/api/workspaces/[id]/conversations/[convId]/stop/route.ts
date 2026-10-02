@@ -7,6 +7,6 @@ import { stopWorkspaceConversation } from "@/lib/operations/conversations/manage
 export async function POST(_req: NextRequest, { params }: { params: Promise<{ id: string; convId: string }> }) {
   const { id, convId } = await params;
   const result = stopWorkspaceConversation(id, convId);
-  if (!result) return notFound(_req);
+  if (!result) return notFound(_req, `workspace ${id}`);
   return Response.json({ stopped: result.stopped });
 }

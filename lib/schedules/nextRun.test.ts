@@ -1,9 +1,8 @@
-// computeNextRun is the recurrence engine: it must anchor to startAt, advance in wall-clock time
-// within the schedule's zone (so day/week intervals survive DST), honour an end bound, and
-// fast-forward past a long-elapsed anchor without drift.
+// computeNextRun must anchor to startAt, advance in wall-clock time in the zone (surviving DST), honour
+// an end bound, and fast-forward past a long-elapsed anchor without drift.
 import { describe, it, expect } from "vitest";
 import { DateTime } from "luxon";
-import { computeNextRun, isValidTimezone } from "./nextRun";
+import { computeNextRun, endBound, isValidTimezone, nextRunIso, onScheduleClock } from "./nextRun";
 import type { ScheduleEntry, IntervalUnit } from "./types";
 
 function entry(over: Partial<ScheduleEntry> = {}): ScheduleEntry {
@@ -79,17 +78,17 @@ describe("computeNextRun", () => {
     expect(next!.toISOString()).toBe("2026-07-14T00:00:00.000Z");
   });
 
-  it("returns null once past the end bound (date-only end is inclusive of that day)", () => {
+  it("returns null once past the end bound", () => {
     const e = entry({
       startAt: "2026-07-13T09:00",
       intervalUnit: "day",
       intervalValue: 1,
-      endAt: "2026-07-15",
+      endAt: "2026-07-16T00:00",
       timezone: "UTC",
     });
     // After the end date entirely -> expired.
     expect(computeNextRun(e, iso("2026-07-16T00:00:00Z"))).toBeNull();
-    // On the 14th the schedule is still live.
+    // On the 14th the schedule still fires.
     expect(computeNextRun(e, iso("2026-07-13T12:00:00Z"))).not.toBeNull();
   });
 
@@ -117,10 +116,83 @@ describe("computeNextRun", () => {
   });
 });
 
+describe("endBound", () => {
+  it("reads a date-time end exactly, in the zone", () => {
+    expect(endBound({ endAt: "2026-10-05T18:00", timezone: "Europe/Paris" })?.toISO()).toBe(
+      "2026-10-05T18:00:00.000+02:00",
+    );
+  });
+
+  it("is null without a readable end", () => {
+    expect(endBound({ timezone: "UTC" })).toBeNull();
+    expect(endBound({ endAt: "2026-10-05 18:00", timezone: "UTC" })).toBeNull();
+  });
+});
+
 describe("isValidTimezone", () => {
-  it("accepts real IANA zones and rejects junk", () => {
-    expect(isValidTimezone("Europe/Brussels")).toBe(true);
-    expect(isValidTimezone("UTC")).toBe(true);
-    expect(isValidTimezone("Mars/Phobos")).toBe(false);
+  it.each(["Europe/Brussels", "UTC", "Asia/Kolkata", "Europe/Kyiv", "America/Argentina/Buenos_Aires", "America/Port-au-Prince"])(
+    "accepts the standard name %s",
+    (tz) => expect(isValidTimezone(tz)).toBe(true),
+  );
+
+  it.each(["Mars/Phobos", "+02:00", "GMT+2", "CET", "europe/paris", "Europe/paris", "utc", ""])(
+    "refuses %s, which is not a standard name",
+    (tz) => expect(isValidTimezone(tz)).toBe(false),
+  );
+});
+
+describe("nextRunIso", () => {
+  // Paris skips 02:00–03:00 on 2026-03-29: a 02:30 start fires at 03:30, which `…01:30Z` hid.
+  it("writes the next run on the schedule's clock, so a DST shift shows beside startAt", () => {
+    const paris = entry({ startAt: "2026-03-29T02:30", timezone: "Europe/Paris" });
+    expect(nextRunIso(paris, iso("2026-03-28T12:00Z"))).toBe("2026-03-29T03:30+02:00");
+    expect(nextRunIso(entry(), iso("2026-07-12T00:00Z"))).toBe("2026-07-13T09:00Z");
+  });
+
+  it("is null when the schedule is disabled", () => {
+    expect(nextRunIso(entry({ enabled: false }), iso("2026-07-12T00:00Z"))).toBeNull();
+  });
+});
+
+describe("onScheduleClock", () => {
+  it("writes a UTC instant on the schedule's clock with its offset, without milliseconds", () => {
+    expect(onScheduleClock("2026-10-02T17:09:11.850Z", "Europe/Paris")).toBe("2026-10-02T19:09:11+02:00");
+    expect(onScheduleClock("2026-12-02T17:09:11.850Z", "Europe/Paris")).toBe("2026-12-02T18:09:11+01:00");
+  });
+
+  it("keeps seconds only when they are not zero", () => {
+    expect(onScheduleClock(iso("2026-10-02T07:00:00.000Z"), "Europe/Paris")).toBe("2026-10-02T09:00+02:00");
+  });
+
+  it("re-expresses an instant already carrying an offset without moving it", () => {
+    expect(onScheduleClock("2026-10-02T19:09+02:00", "Asia/Tokyo")).toBe("2026-10-03T02:09+09:00");
+  });
+
+  it("is null for an unreadable instant", () => {
+    expect(onScheduleClock("not a date", "Europe/Paris")).toBeNull();
+  });
+});
+
+describe("recurrence safety", () => {
+  it.each([1e300, 1e9, 1e12, Infinity, NaN, 0, -1, 1.5])(
+    "rejects unsafe interval %s without searching",
+    (intervalValue) => {
+      expect(computeNextRun(entry({ intervalValue }), iso("2026-07-14T00:00Z"))).toBeNull();
+    },
+  );
+
+  it("returns to the original wall clock after a spring DST gap", () => {
+    const e = entry({ startAt: "2026-03-27T02:30", timezone: "Europe/Paris" });
+    expect(computeNextRun(e, iso("2026-03-29T02:00Z"))?.toISOString()).toBe("2026-03-30T00:30:00.000Z");
+  });
+
+  it("keeps the original clock after the autumn offset change", () => {
+    const e = entry({ startAt: "2026-10-23T02:30", timezone: "Europe/Paris" });
+    expect(computeNextRun(e, iso("2026-10-25T03:00Z"))?.toISOString()).toBe("2026-10-26T01:30:00.000Z");
+  });
+
+  it("rejects an invalid comparison date and corrupt interval unit", () => {
+    expect(computeNextRun(entry(), new Date(NaN))).toBeNull();
+    expect(computeNextRun(entry({ intervalUnit: "bad" as IntervalUnit }), iso("2026-07-14T00:00Z"))).toBeNull();
   });
 });

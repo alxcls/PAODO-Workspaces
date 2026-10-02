@@ -27,7 +27,7 @@ describe("connecting one workspace to another", () => {
     const connect = vi.fn(() => edge);
 
     expect(() => connectWorkspaces({ source: "gone", target: "ws-2" }, deps({ connect }))).toThrowError(
-      expect.objectContaining({ code: "NOT_FOUND", message: "caller workspace not found" }),
+      expect.objectContaining({ code: "NOT_FOUND", message: "caller workspace gone not found" }),
     );
     expect(connect).not.toHaveBeenCalled();
   });
@@ -36,7 +36,7 @@ describe("connecting one workspace to another", () => {
     const connect = vi.fn(() => edge);
 
     expect(() => connectWorkspaces({ source: "ws-1", target: "gone" }, deps({ connect }))).toThrowError(
-      expect.objectContaining({ code: "NOT_FOUND", message: "callee workspace not found" }),
+      expect.objectContaining({ code: "NOT_FOUND", message: "callee workspace gone not found" }),
     );
     expect(connect).not.toHaveBeenCalled();
   });

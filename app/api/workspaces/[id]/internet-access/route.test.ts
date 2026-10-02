@@ -60,7 +60,7 @@ describe("PATCH /api/workspaces/[id]/internet-access", () => {
     expect(await res.json()).toMatchObject({
       ok: false,
       code: "WORKSPACE_UPDATE_INVALID",
-      error: "internetAccess must be a boolean",
+      error: "internetAccess must be true or false",
     });
     expect(h.setWorkspaceInternetAccess).not.toHaveBeenCalled();
   });

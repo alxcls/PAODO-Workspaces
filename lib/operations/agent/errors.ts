@@ -10,8 +10,8 @@ export class RunInputInvalidError extends AppError {
 
 /** The requested conversation does not exist in the workspace. */
 export class ConversationNotFoundError extends AppError {
-  constructor(message = "Conversation not found", details?: ErrorDetails) {
-    super("NOT_FOUND", message, details);
+  constructor(conversationId: string, details?: ErrorDetails) {
+    super("NOT_FOUND", `conversation ${conversationId} not found`, details);
     this.name = "ConversationNotFoundError";
   }
 }

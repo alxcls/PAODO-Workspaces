@@ -36,7 +36,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   try {
     const result = await updateWorkspace(id, { internetAccess: validateInternetAccess(body.enabled) });
     // Past the guard above, a missing workspace means it was deleted mid-request.
-    if (!result) return notFound(req);
+    if (!result) return notFound(req, `workspace ${id}`);
     return receiptResponse(result);
   } catch (err) {
     const expected = appErrorResponse(err, req);

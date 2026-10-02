@@ -1,15 +1,5 @@
-// Routes the one instance-wide CLI key may call. A route is UI-only unless its exact method/path is
-// listed here.
-//
-// PATCH on a workspace cannot obtain a credential. Issuing a key requires POST on the channel's own
-// route. DELETE on a workspace is irreversible and takes its directory with it.
-// /api/settings/cli-access is deliberately absent: it mints and rotates the very token used to
-// authenticate here, so a leaked key must not be able to renew itself.
-// /api/settings/provider-keys is absent for the neighbouring reason: PUT and DELETE there decide
-// which account the deployment's model spend is billed to, so a leaked key must not be able to
-// redirect it or destroy the working one. Its GET is absent too — not because status is sensitive,
-// but because that response carries each key's masked last characters, which the plain `hasKey` flag
-// on /api/models below deliberately does not.
+// Routes the one instance-wide CLI key may call; any method/path not listed is UI-only. Absent on purpose:
+// settings/cli-access (a leaked key must not renew itself) and settings/provider-keys (see /api/models).
 
 /**
  * A rule for a route under one workspace: `/api/workspaces/<id>/<suffix>`, or the workspace itself
@@ -37,17 +27,15 @@ const RULES: ReadonlyArray<{
   pathname: RegExp;
 }> = [
   { method: "GET", pathname: /^\/api\/status$/ },
-  // The provider/model/effort catalog. Read-only and workspace-independent, and the counterpart to the
-  // coherence rules on workspace PATCH: a caller that must send a model the provider actually serves
-  // needs somewhere to read the valid combinations rather than discovering them through rejections.
-  // Now lists every provider this deployment offers, keyed or not, and reports which can authenticate
-  // as a `hasKey` boolean — so a caller can tell "this model is not served" from "nobody has paid for
-  // this provider yet" without either being discovered through a failed run.
+  // The model catalog, so workspace PATCH callers read valid combinations instead of learning by rejection.
+  // Its `hasKey` flag replaces provider-keys, whose GET leaks masked key hints and whose writes move billing.
   { method: "GET", pathname: /^\/api\/models$/ },
   { method: "GET", pathname: /^\/api\/workspaces$/ },
   { method: "POST", pathname: /^\/api\/workspaces$/ },
   workspaceRule("GET"),
+  // PATCH cannot obtain a credential: issuing a key is POST on the channel's own route below.
   workspaceRule("PATCH"),
+  // Irreversible: deleting a workspace takes its directory with it.
   workspaceRule("DELETE"),
   workspaceRule("POST", "api-key"),
   workspaceRule("DELETE", "api-key"),
@@ -58,6 +46,10 @@ const RULES: ReadonlyArray<{
   workspaceRule("DELETE", "files/content"),
   workspaceRule("GET", "files/transfer"),
   workspaceRule("PUT", "files/transfer"),
+  // The one scheduled job: read, replace, or update named fields. There is no DELETE — pausing is `enabled: false`.
+  workspaceRule("GET", "schedule"),
+  workspaceRule("PUT", "schedule"),
+  workspaceRule("PATCH", "schedule"),
   /**
    * Drive metadata, then a drive's files — the same five methods a workspace's files get above, and
    * for the same commands. Neither collection gets the browser's upload/download transports or the

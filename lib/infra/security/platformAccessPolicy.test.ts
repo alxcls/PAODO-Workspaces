@@ -40,11 +40,8 @@ describe("platform access policy", () => {
     expect(isPlatformRouteAllowed("POST", "/api/settings/cli-access")).toBe(false);
   });
 
-  // The line drawn for BYOK: the CLI may learn that a provider cannot authenticate — that is the
-  // `hasKey` flag on GET /api/models, allowed above — but nothing about the key itself, and it may
-  // never change one. A leaked automation token must not be able to redirect the deployment's model
-  // spend to another account, delete the working keys, or read back the masked hint these routes
-  // carry. Asserted per method so widening the policy has to be a deliberate edit here.
+  // BYOK: the CLI may learn a provider cannot authenticate (`hasKey` on /api/models) but never read or
+  // change a key, so a leaked token cannot redirect spend or delete keys. Per method, so widening is deliberate.
   it("denies provider API key administration entirely, including reads", () => {
     for (const method of ["GET", "POST", "PUT", "PATCH", "DELETE"]) {
       expect(isPlatformRouteAllowed(method, "/api/settings/provider-keys")).toBe(false);
@@ -67,6 +64,15 @@ describe("platform access policy", () => {
     expect(isPlatformRouteAllowed("POST", "/api/workspaces/ws-1/files/download")).toBe(false);
     expect(isPlatformRouteAllowed("PUT", "/api/workspaces/ws-1/files/content")).toBe(false);
     expect(isPlatformRouteAllowed("PATCH", "/api/workspaces/ws-1/files/content")).toBe(false);
+  });
+
+  it("grants reading and replacing the scheduled job, and nothing else on it", () => {
+    expect(isPlatformRouteAllowed("GET", "/api/workspaces/ws-1/schedule")).toBe(true);
+    expect(isPlatformRouteAllowed("PUT", "/api/workspaces/ws-1/schedule")).toBe(true);
+    expect(isPlatformRouteAllowed("PATCH", "/api/workspaces/ws-1/schedule")).toBe(true);
+    for (const method of ["POST", "DELETE"]) {
+      expect(isPlatformRouteAllowed(method, "/api/workspaces/ws-1/schedule")).toBe(false);
+    }
   });
 
   it("allows drive metadata", () => {
@@ -116,9 +122,8 @@ describe("platform access policy", () => {
     }
   });
 
-  // The write that replaces the graph document, refused per method because it is the one that carries
-  // the editor's node positions: a caller with no canvas to send would erase a layout to add an edge.
-  // POST/DELETE on /edges above is what it may do instead.
+  // Replacing the graph document carries the editor's node positions, so a caller with no canvas would
+  // erase a layout to add an edge. Refused per method; POST/DELETE on /edges above is the alternative.
   it("does not grant replacing the graph document", () => {
     for (const method of ["POST", "PUT", "PATCH", "DELETE"]) {
       expect(isPlatformRouteAllowed(method, "/api/workspace-graph")).toBe(false);

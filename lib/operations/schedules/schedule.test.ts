@@ -91,6 +91,13 @@ describe("schedule validation", () => {
     expect(validateSchedule({ ...VALID, endAt: "   " })).not.toHaveProperty("endAt");
   });
 
+  it("accepts a prompt up to 20,000 characters and names the limit beyond it", () => {
+    expect(validateSchedule({ ...VALID, prompt: "x".repeat(20_000) }).prompt).toHaveLength(20_000);
+    expect(() => validateSchedule({ ...VALID, prompt: "x".repeat(20_001) })).toThrow(
+      "prompt must be at most 20,000 characters (got 20,001)",
+    );
+  });
+
   // A disabled schedule is a draft: it never fires, so an empty prompt is allowed and only becomes
   // required once the schedule is enabled.
   it("requires a prompt only when the schedule is enabled", () => {

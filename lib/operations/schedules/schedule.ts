@@ -10,6 +10,7 @@ import {
   INTERVAL_UNITS,
   MIN_INTERVAL_VALUE,
   MAX_INTERVAL_VALUE,
+  MAX_PROMPT_LENGTH,
   type IntervalUnit,
   type ScheduleEntry,
 } from "@/lib/schedules/types";
@@ -122,6 +123,10 @@ export function validateSchedule(input: ScheduleInput, now: Date = new Date()): 
   // An enabled schedule must have a prompt to fire; a disabled one may be saved as a draft without one.
   const prompt = text(input.prompt ?? "", "prompt")?.trim();
   if (enabled && prompt === "") reject("prompt", "prompt is required");
+  else if (prompt && prompt.length > MAX_PROMPT_LENGTH) {
+    const count = (n: number) => n.toLocaleString("en-US");
+    reject("prompt", `prompt must be at most ${count(MAX_PROMPT_LENGTH)} characters (got ${count(prompt.length)})`);
+  }
 
   const intervalValue = input.intervalValue;
   if (missing(intervalValue)) reject("intervalValue", "intervalValue is required");

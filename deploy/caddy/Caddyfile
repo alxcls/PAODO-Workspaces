@@ -39,7 +39,7 @@
 # source of truth, while a prose count drifts whenever one capability adds another method/path pair.
 (cliUpstream) {
 	request_body {
-		max_size 64KB
+		max_size 128KB
 	}
 	reverse_proxy app:{$APP_PORT} {
 		import forwardedHeaders
@@ -83,7 +83,7 @@
 }
 
 # File bodies can be arbitrarily large in aggregate (the per-file limit is enforced while parsing)
-# and both directions stream. Do not apply cliUpstream's 64KB cap or 30-second response deadline.
+# and both directions stream. Do not apply cliUpstream's 128KB cap or 30-second response deadline.
 (fileTransferUpstream) {
 	reverse_proxy app:{$APP_PORT} {
 		import forwardedHeaders

@@ -11,6 +11,8 @@ export type RunStatus = "ok" | "error";
 export const MIN_INTERVAL_VALUE = 1;
 /** Bounded in every unit, including disabled drafts. */
 export const MAX_INTERVAL_VALUE = 10_000;
+/** Longest prompt a schedule may send; kept under the gateway's 128KB body cap for any text. */
+export const MAX_PROMPT_LENGTH = 20_000;
 
 /** One run's outcome. The next run replaces it whole, so its fields never describe two runs. */
 export interface LastRun {

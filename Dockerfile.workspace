@@ -95,6 +95,9 @@ RUN git clone --depth=1 --branch $PYENV_VERSION_TAG https://github.com/pyenv/pye
     cd $PYENV_ROOT && src/configure && make -C src && \
     chown -R dev:dev $PYENV_ROOT
 
+# The egress relay the app starts on every container start (lib/infra/docker/proxyRelay.ts).
+RUN apt-get update && apt-get install -y --no-install-recommends tinyproxy-bin && rm -rf /var/lib/apt/lists/*
+
 # Make a runtime `nvm install` actually take effect on the NEXT command, not just the one that ran
 # it. Agent commands arrive as `docker exec … /bin/bash -c`, which is neither a login nor an
 # interactive shell, so none of bash's usual startup files are read and nvm's shell function never

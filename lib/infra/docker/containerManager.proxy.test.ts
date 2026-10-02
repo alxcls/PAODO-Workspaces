@@ -20,6 +20,7 @@ const workspaceDeps: ContainerWorkspaceDependencies = {
   runEnvironment: () => ({ envArgs: [], hasProxyCA: false }),
   execEnvironment: () => ({}),
   installProxyCA: async () => {},
+  ensureProxyRelay: async () => false,
 };
 
 // Programmable docker mock. `attached` seeds whether `network inspect` reports the sidecar as an

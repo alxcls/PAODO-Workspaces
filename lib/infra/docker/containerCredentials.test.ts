@@ -1,19 +1,5 @@
-// The workspace container's env, split by what can change during the container's life:
-//   - buildRunEnv  → proxy routing + CA trust, frozen at `docker run`
-//   - buildExecEnv → secret tokens, supplied fresh on every `docker exec`
-// The split exists because a workspace container is created once and kept indefinitely (its
-// writable layer is the workspace's real content), and Docker cannot amend a container's env after
-// creation — so secrets baked in at run time would be frozen at whatever the workspace had on its
-// very first command.
-//
-// Security-critical invariants pinned here:
-//   - real secret values NEVER appear (only proxyToken() placeholders)
-//   - secrets NEVER appear in the run env, so they cannot be frozen into a long-lived container
-//   - with no proxy CA present, NO proxy/CA env is emitted (fail safe — a token in the env with no
-//     proxy to swap it is useless, but we must never wire trust to a CA that isn't there)
-//   - the github-scoped secret is aliased to GH_TOKEN exactly once
-// installProxyCA is a no-op without a CA and never throws on exec failure.
-
+// Pins the env invariants: only token placeholders, no secrets or proxy credentials frozen into the
+// run env, no proxy/CA wiring without a CA, and a single GH_TOKEN alias.
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { DockerResult, IDockerClient } from "./dockerClient";
 
@@ -123,7 +109,7 @@ describe("buildRunEnv — carries no secrets", () => {
   it("omits secret tokens entirely, so nothing secret is frozen into a long-lived container", () => {
     existsSync.mockReturnValue(true);
     listSecretMeta.mockReturnValue([meta("OPENAI_API_KEY"), meta("MY_GH", ["github.com"])]);
-    const { envArgs } = buildRunEnv("ws1");
+    const { envArgs } = buildRunEnv();
     expect(envValue(envArgs, "OPENAI_API_KEY")).toBeUndefined();
     expect(envValue(envArgs, "MY_GH")).toBeUndefined();
     expect(envValue(envArgs, "GH_TOKEN")).toBeUndefined();
@@ -133,37 +119,43 @@ describe("buildRunEnv — carries no secrets", () => {
   it("is identical regardless of the workspace's secrets, so it never needs to be refreshed", () => {
     existsSync.mockReturnValue(true);
     listSecretMeta.mockReturnValue([]);
-    const before = buildRunEnv("ws1").envArgs;
+    const before = buildRunEnv().envArgs;
     listSecretMeta.mockReturnValue([meta("ADDED_LATER", ["github.com"])]);
-    expect(buildRunEnv("ws1").envArgs).toEqual(before);
+    expect(buildRunEnv().envArgs).toEqual(before);
   });
 });
 
 describe("buildRunEnv — proxy wiring gated on the CA", () => {
   it("without a proxy CA: hasProxyCA=false and NO proxy/CA env is emitted", () => {
     existsSync.mockReturnValue(false);
-    const { envArgs, hasProxyCA: ready } = buildRunEnv("ws1");
+    const { envArgs, hasProxyCA: ready } = buildRunEnv();
     expect(ready).toBe(false);
     expect(envValue(envArgs, "HTTP_PROXY")).toBeUndefined();
     expect(envValue(envArgs, "NODE_EXTRA_CA_CERTS")).toBeUndefined();
     expect(envArgs).not.toContain("--add-host=host.docker.internal:host-gateway");
   });
 
-  it("with a proxy CA: hasProxyCA=true and the proxy URL carries the workspace's derived secret", () => {
+  it("with a proxy CA: routes every proxy var through the in-container relay", () => {
     existsSync.mockReturnValue(true);
-    const { envArgs, hasProxyCA: ready } = buildRunEnv("ws1");
+    const { envArgs, hasProxyCA: ready } = buildRunEnv();
     expect(ready).toBe(true);
-    // The sidecar's network alias, and auth carrying id:derived-secret.
-    expect(envValue(envArgs, "HTTP_PROXY")).toBe("http://ws1:derived-ws1@credproxy:9998");
-    expect(envValue(envArgs, "http_proxy")).toBe(envValue(envArgs, "HTTP_PROXY"));
-    expect(envValue(envArgs, "HTTPS_PROXY")).toBe(envValue(envArgs, "HTTP_PROXY"));
+    for (const v of ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"]) {
+      expect(envValue(envArgs, v)).toBe("http://127.0.0.1:3128");
+    }
     // A workspace gets one route out, the sidecar. The host gateway is not among them.
     expect(envArgs).not.toContain("--add-host=host.docker.internal:host-gateway");
   });
 
+  // Tokens are derived from the workspace id alone, so a leaked identity would let another workspace
+  // use this one's secrets. Only the relay's root-written config holds it.
+  it("carries no proxy credentials for the agent to read", () => {
+    existsSync.mockReturnValue(true);
+    expect(buildRunEnv().envArgs.join(" ")).not.toContain("derived-");
+  });
+
   it("exempts ONLY loopback from the proxy (own-server curls bypass it; real hosts still proxied)", () => {
     existsSync.mockReturnValue(true);
-    const { envArgs } = buildRunEnv("ws1");
+    const { envArgs } = buildRunEnv();
     const loopbacks = "localhost,127.0.0.1,0.0.0.0,::1";
     // Both cases set, matching the http_proxy/HTTP_PROXY pattern (tools vary on which they honor).
     expect(envValue(envArgs, "no_proxy")).toBe(loopbacks);
@@ -177,7 +169,7 @@ describe("buildRunEnv — proxy wiring gated on the CA", () => {
 
   it("with a proxy CA: points the replacement-style trust vars at the combined bundle", () => {
     existsSync.mockReturnValue(true);
-    const { envArgs } = buildRunEnv("ws1");
+    const { envArgs } = buildRunEnv();
     expect(envValue(envArgs, "NODE_EXTRA_CA_CERTS")).toBe("/etc/proxy-ca.crt");
     for (const v of ["REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE", "SSL_CERT_FILE", "GIT_SSL_CAINFO"]) {
       expect(envValue(envArgs, v)).toBe("/etc/proxy-ca-bundle.crt");
@@ -207,6 +199,28 @@ describe("buildExecEnv — internetAccess off", () => {
     listSecretMeta.mockReturnValue([meta("VERCEL_TOKEN")]);
     expect(buildExecEnv("ws1", false)).toEqual({ ...PROXY });
     expect(buildExecEnv("ws1", true)).toEqual({ ...PROXY, VERCEL_TOKEN: "__pxy_ws1_VERCEL_TOKEN__" });
+  });
+});
+
+// Containers created before the relay keep a credentialed proxy URL in their frozen run env.
+describe("buildExecEnv — egress relay", () => {
+  const RELAY = {
+    HTTP_PROXY: "http://127.0.0.1:3128",
+    HTTPS_PROXY: "http://127.0.0.1:3128",
+    http_proxy: "http://127.0.0.1:3128",
+    https_proxy: "http://127.0.0.1:3128",
+  };
+
+  it("routes the command through the relay once it is up", () => {
+    expect(buildExecEnv("ws1", true, true)).toEqual({ ...PROXY, ...RELAY });
+  });
+
+  it("leaves the container's own proxy settings alone while the relay is not up", () => {
+    expect(buildExecEnv("ws1", true, false)).toEqual({ ...PROXY });
+  });
+
+  it("still routes through the relay with internet off, which then answers that it has no route", () => {
+    expect(buildExecEnv("ws1", false, true)).toEqual({ ...PROXY, ...RELAY });
   });
 });
 

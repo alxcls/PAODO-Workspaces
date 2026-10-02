@@ -27,6 +27,7 @@ const workspaceDeps: ContainerWorkspaceDependencies = {
   runEnvironment: () => ({ envArgs: ["-e", "HTTP_PROXY=http://proxy"], hasProxyCA: false }),
   execEnvironment: () => SECRET_ENV,
   installProxyCA: async () => {},
+  ensureProxyRelay: async () => false,
 };
 
 /**

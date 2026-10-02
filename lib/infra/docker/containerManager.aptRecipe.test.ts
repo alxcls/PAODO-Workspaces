@@ -88,6 +88,7 @@ const deps = (internetAccess: boolean) => ({
   runEnvironment: () => ({ envArgs: [], hasProxyCA: false }),
   execEnvironment: () => ({}),
   installProxyCA: async () => {},
+  ensureProxyRelay: async () => true,
 });
 
 const aptInstall = (execs: string[][]) => execs.find((c) => c[0] === "apt-get" && c[1] === "install");
@@ -129,6 +130,25 @@ describe("apt recipe — replaying it into a rebuilt container", () => {
     if (aptUpdate(execs)) order.push("apt");
 
     expect(order).toEqual(["ca", "apt"]);
+  });
+
+  // A new container's only route out is the relay, so apt would fail without it.
+  it("runs after the egress relay is up", async () => {
+    const ContainerManager = await loadManager();
+    await writeRecipe("ws1", ["ffmpeg"]);
+    const { docker, execs } = makeDocker();
+    const order: string[] = [];
+
+    await new ContainerManager(docker, {
+      ...deps(true),
+      ensureProxyRelay: async () => {
+        order.push("relay");
+        return true;
+      },
+    }).ensure("ws1", "/w");
+    if (aptUpdate(execs)) order.push("apt");
+
+    expect(order).toEqual(["relay", "apt"]);
   });
 
   it("touches apt at all only when there is something to reinstall", async () => {

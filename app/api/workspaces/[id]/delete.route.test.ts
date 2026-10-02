@@ -149,7 +149,7 @@ describe("DELETE /api/workspaces/[id]", () => {
     const res = await DELETE(request(), ctx());
 
     expect(res.status).toBe(404);
-    expect(await res.json()).toEqual({ ok: false, code: "NOT_FOUND", error: "not found" });
+    expect(await res.json()).toEqual({ ok: false, code: "NOT_FOUND", error: `workspace ${WORKSPACE_ID} not found` });
     // Cleanup still runs to sweep whatever an interrupted prior deletion left behind — only the
     // response is driven by the missing registry entry, not the presence/absence of cleanup.
     expect(h.calls).toContain("directory");

@@ -73,11 +73,11 @@ export function channelSetEnabled(field: WorkspaceAccessField) {
   ): Promise<Response> => {
     // Both channels are per-workspace, so a null subject is an instance-wide credential wired to the
     // wrong handler. Refusing here keeps that a 404 rather than an update against an unnamed record.
-    if (!subject) return notFound(request);
+    if (!subject) return notFound(request, "workspace");
     const input: UpdateWorkspaceInput =
       field === "workspaceApiAccess" ? { workspaceApiAccess: enabled } : { workspaceMcpAccess: enabled };
     const result = await updateWorkspace(subject, input);
-    if (!result) return notFound(request);
+    if (!result) return notFound(request, `workspace ${subject}`);
     return receiptResponse(result);
   };
 }

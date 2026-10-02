@@ -35,7 +35,7 @@ function defaultEgressServices(): EgressServices {
 }
 
 export function validateInternetAccess(value: unknown): boolean {
-  if (typeof value !== "boolean") throw new WorkspaceUpdateError("internetAccess must be a boolean");
+  if (typeof value !== "boolean") throw new WorkspaceUpdateError("internetAccess must be true or false");
   return value;
 }
 

@@ -65,8 +65,8 @@ function defaultDeps(): DriveDeps {
   };
 }
 
-function notFound(): AppError {
-  return new AppError("NOT_FOUND", "drive not found", { field: "driveId" });
+function notFound(driveId: string): AppError {
+  return new AppError("NOT_FOUND", `drive ${driveId} not found`, { field: "driveId" });
 }
 
 /** An optional string field: absent means unchanged, and a non-string is the caller's to fix. */
@@ -85,7 +85,7 @@ export function listDrives(deps: DriveDeps = defaultDeps()): Drive[] {
 export function getDrive(driveIdValue: unknown, deps: DriveDeps = defaultDeps()): Drive {
   const driveId = requireNonEmptyString(driveIdValue, "driveId");
   const drive = deps.get(driveId);
-  if (!drive) throw notFound();
+  if (!drive) throw notFound(driveId);
   return drive;
 }
 
@@ -138,7 +138,7 @@ export function updateDrive(
     ...(input.description === undefined ? {} : { description: requireString(input.description, "description") }),
   };
   const drive = deps.update(driveId, patch);
-  if (!drive) throw notFound();
+  if (!drive) throw notFound(driveId);
   return {
     ok: true,
     driveId,
@@ -158,6 +158,6 @@ export function updateDrive(
  */
 export async function deleteDrive(driveIdValue: unknown, deps: DriveDeps = defaultDeps()): Promise<DeleteDriveResult> {
   const driveId = requireNonEmptyString(driveIdValue, "driveId");
-  if (!(await deps.remove(driveId))) throw notFound();
+  if (!(await deps.remove(driveId))) throw notFound(driveId);
   return { deleted: true };
 }

@@ -89,7 +89,7 @@ async function readEnabled(request: Request): Promise<boolean | Response> {
   if (body instanceof Response) return body;
   const enabled = body.enabled;
   if (typeof enabled !== "boolean") {
-    return errorResponse("INVALID_REQUEST", "enabled must be a boolean", {
+    return errorResponse("INVALID_REQUEST", "enabled must be true or false", {
       request,
       details: { field: "enabled" },
     });

@@ -19,7 +19,7 @@ function deps(overrides: Partial<DriveDeps> = {}): DriveDeps {
   };
 }
 
-const notFound = expect.objectContaining({ code: "NOT_FOUND", message: "drive not found" });
+const notFound = expect.objectContaining({ code: "NOT_FOUND", message: "drive gone not found" });
 
 describe("reading drives", () => {
   it("relays the registry", () => {

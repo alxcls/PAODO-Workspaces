@@ -37,7 +37,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const result = await updateWorkspace(id, {
       secret: { name: body.name ?? "", value: body.value ?? "", domains: body.domains ?? [] },
     });
-    if (!result) return notFound(req);
+    if (!result) return notFound(req, `workspace ${id}`);
     return NextResponse.json(result.values.secret, { headers: NO_STORE });
   } catch (err) {
     const expected = appErrorResponse(err, req);

@@ -44,10 +44,10 @@ function checkedEdge(value: unknown, index: number, exists: (workspaceId: string
     throw new AppError("INVALID_REQUEST", "a workspace cannot call itself", { field: at("target") });
   }
   if (!exists(source)) {
-    throw new AppError("NOT_FOUND", "caller workspace not found", { field: at("source") });
+    throw new AppError("NOT_FOUND", `caller workspace ${source} not found`, { field: at("source") });
   }
   if (!exists(target)) {
-    throw new AppError("NOT_FOUND", "callee workspace not found", { field: at("target") });
+    throw new AppError("NOT_FOUND", `callee workspace ${target} not found`, { field: at("target") });
   }
   return { ...value, id: typeof value.id === "string" ? value.id : "", source, target };
 }

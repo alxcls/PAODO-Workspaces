@@ -17,6 +17,6 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   if (!body.conversationId?.trim()) return new Response("conversationId is required", { status: 400 });
 
   const result = stopWorkspaceConversation(id, body.conversationId);
-  if (!result) return notFound(req);
+  if (!result) return notFound(req, `workspace ${id}`);
   return Response.json({ stopped: result.stopped, conversationId: result.conversationId });
 }

@@ -12,7 +12,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
   const { id, convId } = await params;
   try {
     const result = getWorkspaceConversation(id, convId);
-    if (!result) return notFound(_req);
+    if (!result) return notFound(_req, `workspace ${id}`);
     return Response.json(result);
   } catch (err) {
     if (err instanceof ConversationNotFoundError) {

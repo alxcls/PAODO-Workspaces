@@ -62,8 +62,8 @@ describe("saving the whole graph document", () => {
 
 describe("edges naming a workspace that does not exist", () => {
   it.each([
-    ["an unknown caller", { source: "gone", target: "ws-2" }, "caller workspace not found", "edges[0].source"],
-    ["an unknown callee", { source: "ws-1", target: "gone" }, "callee workspace not found", "edges[0].target"],
+    ["an unknown caller", { source: "gone", target: "ws-2" }, "caller workspace gone not found", "edges[0].source"],
+    ["an unknown callee", { source: "ws-1", target: "gone" }, "callee workspace gone not found", "edges[0].target"],
   ])("refuses %s and names the end", (_case, edge, message, field) => {
     const save = vi.fn(() => stored);
 

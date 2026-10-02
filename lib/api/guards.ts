@@ -24,9 +24,9 @@ import { createAuditLogger } from "@/lib/infra/logger";
 import { throttleLog } from "@/lib/infra/logThrottle";
 import { errorResponse } from "@/lib/api/errorResponse";
 
-/** The one and only "not found" body every route returns for a missing resource. */
-export function notFound(request?: Request): NextResponse {
-  return errorResponse("NOT_FOUND", "not found", { request });
+/** The NOT_FOUND body, naming what is missing (`workspace <id>`), so a nested path says which part failed. */
+export function notFound(request: Request | undefined, what: string): NextResponse {
+  return errorResponse("NOT_FOUND", `${what} not found`, { request });
 }
 
 const CANONICAL_WORKSPACE_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -49,17 +49,17 @@ export function workspaceIdParam(id: string, request?: Request): string | NextRe
 export function requireWorkspaceId(id: string, request?: Request): Workspace | NextResponse {
   const canonical = workspaceIdParam(id, request);
   if (canonical instanceof NextResponse) return canonical;
-  return getStore().getWorkspace(canonical) ?? notFound(request);
+  return getStore().getWorkspace(canonical) ?? notFound(request, `workspace ${canonical}`);
 }
 
 /** Resolve a workspace by id, or a standard 404 Response to short-circuit the handler. */
 export function requireWorkspace(id: string, request?: Request): Workspace | NextResponse {
-  return getStore().getWorkspace(id) ?? notFound(request);
+  return getStore().getWorkspace(id) ?? notFound(request, `workspace ${id}`);
 }
 
 /** Resolve a drive by id, or a standard 404 Response to short-circuit the handler. */
 export function requireDrive(id: string, request?: Request): Drive | NextResponse {
-  return getDrive(id) ?? notFound(request);
+  return getDrive(id) ?? notFound(request, `drive ${id}`);
 }
 
 const audit = createAuditLogger("api");

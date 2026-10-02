@@ -56,7 +56,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     // Forwarded as sent. Every value's type is checked by the validator that owns its rules, so one
     // layer states each rule once and every trigger gets the same rejection.
     const entry = setWorkspaceSchedule(id, parsed as ScheduleInput);
-    if (!entry) return notFound(req);
+    if (!entry) return notFound(req, `workspace ${id}`);
     return NextResponse.json(entry);
   } catch (err) {
     const expected = appErrorResponse(err, req);

@@ -106,6 +106,7 @@ describe.skipIf(!existsSync(executable))("CLI schedule workflow over HTTP", () =
     );
     expect(draft.code).toBe(0);
     expect(h.entry).toMatchObject({ enabled: false, prompt: "Summarize changes = daily" });
+    expect((await schedule("get", id)).stdout).toMatch(/createdAt : "[\d-]+T[\d:]+[+-]\d\d:\d\d"/);
     expect((await schedule("set", id, "enabled=true")).code).toBe(0);
     expect(h.entry?.nextRunAt).toBe("2099-01-01T09:00+01:00");
     const historyId = h.entry?.id;

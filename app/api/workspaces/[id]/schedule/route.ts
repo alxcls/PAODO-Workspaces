@@ -1,5 +1,5 @@
-// REST endpoint for a workspace's single agent schedule: GET returns it (or null), PUT creates/replaces it.
-// HTTP translation only — every rule and message, unknown fields included, is lib/operations/schedules/schedule.ts.
+// REST endpoint for a workspace's single agent schedule: GET returns it (or null), PUT replaces, PATCH merges.
+// HTTP translation only — every rule, message and response shape is lib/operations/schedules/schedule.ts.
 export const runtime = "nodejs";
 
 import { NextResponse, type NextRequest } from "next/server";
@@ -10,6 +10,7 @@ import {
   getWorkspaceSchedule,
   setWorkspaceSchedule,
   patchWorkspaceSchedule,
+  presentSchedule,
   type ScheduleInput,
 } from "@/lib/operations/schedules/schedule";
 
@@ -21,7 +22,8 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   // are both answers, and only the route can tell them apart in its response.
   const ws = requireWorkspace(id, req);
   if (ws instanceof NextResponse) return ws;
-  return NextResponse.json(getWorkspaceSchedule(id));
+  const entry = getWorkspaceSchedule(id);
+  return NextResponse.json(entry && presentSchedule(entry));
 }
 
 type Context = { params: Promise<{ id: string }> };
@@ -47,7 +49,7 @@ async function save(req: NextRequest, { params }: Context, operation: typeof set
     // one rejection lists all a caller has to fix.
     const entry = operation(id, parsed as ScheduleInput);
     if (!entry) return notFound(req, `workspace ${id}`);
-    return NextResponse.json(entry);
+    return NextResponse.json(presentSchedule(entry));
   } catch (err) {
     const expected = appErrorResponse(err, req);
     if (expected) return expected;

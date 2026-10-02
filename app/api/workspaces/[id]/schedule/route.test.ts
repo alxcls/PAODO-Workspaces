@@ -11,7 +11,7 @@ vi.mock("@/lib/infra/schedules/scheduleStore", () => ({
     h.entry = entry;
   },
 }));
-import { PATCH, PUT } from "./route";
+import { GET, PATCH, PUT } from "./route";
 
 const id = "11111111-1111-4111-8111-111111111111";
 const ctx = () => ({ params: Promise.resolve({ id }) });
@@ -51,5 +51,17 @@ describe("schedule HTTP updates", () => {
     expect(response.status).toBe(400);
     expect(await response.json()).toMatchObject({ code: "SCHEDULE_INVALID" });
     expect(h.entry).toBe(before);
+  });
+
+  it("answers on the schedule's clock with only its own fields, leaving storage as written", async () => {
+    await PUT(request({ ...config, timezone: "Europe/Paris" }, "PUT"), ctx());
+    h.entry = { ...h.entry!, lastRunError: "stray" } as ScheduleEntry;
+    const read = new Request(`http://localhost/api/workspaces/${id}/schedule`) as never;
+    const shown = await (await GET(read, ctx())).json();
+    expect(shown.createdAt).toMatch(/^\d{4}-\d\d-\d\dT\d\d:\d\d(:\d\d)?[+-]\d\d:\d\d$/);
+    expect(shown).not.toHaveProperty("lastRunError");
+    expect(h.entry?.createdAt).toMatch(/Z$/);
+    const patched = await (await PATCH(request({ prompt: "edited" }), ctx())).json();
+    expect(patched.createdAt).toBe(shown.createdAt);
   });
 });

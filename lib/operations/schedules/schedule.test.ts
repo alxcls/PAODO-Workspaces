@@ -1,7 +1,13 @@
 // The schedule contract: every rejection message (the CLI's only documentation of accepted values) and
 // the identity rule — a replace keeps the id, the creation time and the last run.
 import { describe, expect, it } from "vitest";
-import { setWorkspaceSchedule, patchWorkspaceSchedule, validateSchedule, type ScheduleInput } from "./schedule";
+import {
+  setWorkspaceSchedule,
+  patchWorkspaceSchedule,
+  presentSchedule,
+  validateSchedule,
+  type ScheduleInput,
+} from "./schedule";
 import { AppError } from "@/lib/errors/appError";
 import type { ScheduleEntry } from "@/lib/schedules/types";
 import type { Workspace } from "@/lib/workspace/types";
@@ -335,6 +341,52 @@ describe("safe schedule updates", () => {
       "unknown field bogus",
     );
     expect(schedules.writes).toHaveLength(2);
+  });
+});
+
+describe("presenting a schedule", () => {
+  const paris: ScheduleEntry = {
+    ...stored,
+    timezone: "Europe/Paris",
+    endAt: "2026-07-31",
+    lastRun: { at: "2026-07-12T09:00:11.850Z", status: "error", conversationId: "conv-1", error: "no key" },
+  };
+
+  it("shows every recorded time on the schedule's clock and settings as stored", () => {
+    expect(presentSchedule(paris)).toEqual({
+      id: "existing-id",
+      workspaceId: "ws-1",
+      prompt: "the old prompt",
+      intervalValue: 2,
+      intervalUnit: "hour",
+      startAt: "2026-07-01T09:00",
+      endAt: "2026-07-31",
+      timezone: "Europe/Paris",
+      enabled: true,
+      createdAt: "2026-07-01T02:00+02:00",
+      nextRunAt: "2026-07-13T11:00+02:00",
+      lastRun: { at: "2026-07-12T11:00:11+02:00", status: "error", conversationId: "conv-1", error: "no key" },
+    });
+  });
+
+  it("drops keys the entity does not have, at the top level and in the last run", () => {
+    const record = {
+      ...paris,
+      lastRunConversationId: "old-conv",
+      lastRunError: "old error",
+      lastRun: { ...paris.lastRun, snippet: "retired" },
+    } as ScheduleEntry;
+    const shown = presentSchedule(record);
+    expect(shown).not.toHaveProperty("lastRunConversationId");
+    expect(shown).not.toHaveProperty("lastRunError");
+    expect(shown.lastRun).not.toHaveProperty("snippet");
+  });
+
+  it("leaves a disabled, never-run schedule without a next or last run", () => {
+    const shown = presentSchedule({ ...stored, enabled: false, nextRunAt: null, lastRun: undefined });
+    expect(shown.nextRunAt).toBeNull();
+    expect(shown).not.toHaveProperty("lastRun");
+    expect(shown).not.toHaveProperty("endAt");
   });
 });
 

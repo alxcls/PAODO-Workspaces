@@ -2,7 +2,7 @@
 // an end bound, and fast-forward past a long-elapsed anchor without drift.
 import { describe, it, expect } from "vitest";
 import { DateTime } from "luxon";
-import { computeNextRun, endBound, isValidTimezone, nextRunIso } from "./nextRun";
+import { computeNextRun, endBound, isValidTimezone, nextRunIso, onScheduleClock } from "./nextRun";
 import type { ScheduleEntry, IntervalUnit } from "./types";
 
 function entry(over: Partial<ScheduleEntry> = {}): ScheduleEntry {
@@ -149,6 +149,25 @@ describe("nextRunIso", () => {
 
   it("is null when the schedule is disabled", () => {
     expect(nextRunIso(entry({ enabled: false }), iso("2026-07-12T00:00Z"))).toBeNull();
+  });
+});
+
+describe("onScheduleClock", () => {
+  it("writes a UTC instant on the schedule's clock with its offset, without milliseconds", () => {
+    expect(onScheduleClock("2026-10-02T17:09:11.850Z", "Europe/Paris")).toBe("2026-10-02T19:09:11+02:00");
+    expect(onScheduleClock("2026-12-02T17:09:11.850Z", "Europe/Paris")).toBe("2026-12-02T18:09:11+01:00");
+  });
+
+  it("keeps seconds only when they are not zero", () => {
+    expect(onScheduleClock(iso("2026-10-02T07:00:00.000Z"), "Europe/Paris")).toBe("2026-10-02T09:00+02:00");
+  });
+
+  it("re-expresses an instant already carrying an offset without moving it", () => {
+    expect(onScheduleClock("2026-10-02T19:09+02:00", "Asia/Tokyo")).toBe("2026-10-03T02:09+09:00");
+  });
+
+  it("is null for an unreadable instant", () => {
+    expect(onScheduleClock("not a date", "Europe/Paris")).toBeNull();
   });
 });
 

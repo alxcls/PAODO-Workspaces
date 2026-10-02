@@ -5,7 +5,7 @@ import { DateTime } from "luxon";
 import type { IWorkspaceStore } from "@/lib/infra/interfaces";
 import { getStore } from "@/lib/infra/services";
 import * as scheduleStore from "@/lib/infra/schedules/scheduleStore";
-import { computeNextRun, endBound, isValidTimezone, nextRunIso } from "@/lib/schedules/nextRun";
+import { computeNextRun, endBound, isValidTimezone, nextRunIso, onScheduleClock } from "@/lib/schedules/nextRun";
 import {
   INTERVAL_UNITS,
   MIN_INTERVAL_VALUE,
@@ -194,6 +194,38 @@ export function validateSchedule(input: ScheduleInput, now: Date = new Date()): 
 
 function invalid(issues: ScheduleIssue[]): ScheduleInvalidError {
   return new ScheduleInvalidError(issues.map((issue) => issue.error).join("; "), { issues });
+}
+
+/**
+ * A schedule as callers see it: only the entity's own fields, whatever else the stored record holds,
+ * and every recorded time on the schedule's clock beside startAt. Storage keeps its own instants.
+ */
+export function presentSchedule(entry: ScheduleEntry): ScheduleEntry {
+  const clock = (instant: string) => onScheduleClock(instant, entry.timezone) ?? instant;
+  const { lastRun } = entry;
+  return {
+    id: entry.id,
+    workspaceId: entry.workspaceId,
+    prompt: entry.prompt,
+    intervalValue: entry.intervalValue,
+    intervalUnit: entry.intervalUnit,
+    startAt: entry.startAt,
+    ...(entry.endAt ? { endAt: entry.endAt } : {}),
+    timezone: entry.timezone,
+    enabled: entry.enabled,
+    createdAt: clock(entry.createdAt),
+    nextRunAt: entry.nextRunAt && clock(entry.nextRunAt),
+    ...(lastRun
+      ? {
+          lastRun: {
+            at: clock(lastRun.at),
+            status: lastRun.status,
+            ...(lastRun.conversationId ? { conversationId: lastRun.conversationId } : {}),
+            ...(lastRun.error ? { error: lastRun.error } : {}),
+          },
+        }
+      : {}),
+  };
 }
 
 /** A workspace's schedule, or null when it has none. */

@@ -94,13 +94,19 @@ export function endBound(entry: Pick<ScheduleEntry, "endAt" | "timezone">): Date
   return entry.endAt.length <= 10 ? raw.endOf("day") : raw;
 }
 
-/** The stored `nextRunAt`: on the schedule's clock (`2026-03-29T03:30+02:00`, not `…01:30Z`) so a DST shift reads beside startAt. */
+/**
+ * An instant on the schedule's clock (`2026-03-29T03:30+02:00`, not `…01:30Z`), so it reads beside
+ * startAt. The one format every recorded schedule time is shown in; null when it cannot be read.
+ */
+export function onScheduleClock(instant: string | Date, timezone: string): string | null {
+  const parsed = typeof instant === "string" ? DateTime.fromISO(instant) : DateTime.fromJSDate(instant);
+  return parsed.setZone(timezone).startOf("second").toISO({ suppressMilliseconds: true, suppressSeconds: true });
+}
+
+/** The stored `nextRunAt`, on the schedule's clock so a DST shift reads beside startAt. */
 export function nextRunIso(entry: Recurrence & Pick<ScheduleEntry, "enabled">, after: Date): string | null {
   const next = entry.enabled ? computeNextRun(entry, after) : null;
-  return (
-    next &&
-    DateTime.fromJSDate(next, { zone: entry.timezone }).toISO({ suppressMilliseconds: true, suppressSeconds: true })
-  );
+  return next && onScheduleClock(next, entry.timezone);
 }
 
 /** True when the schedule's IANA timezone is recognised by the runtime. */

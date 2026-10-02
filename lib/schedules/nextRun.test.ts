@@ -132,11 +132,15 @@ describe("endBound", () => {
 });
 
 describe("isValidTimezone", () => {
-  it("accepts real IANA zones and rejects junk", () => {
-    expect(isValidTimezone("Europe/Brussels")).toBe(true);
-    expect(isValidTimezone("UTC")).toBe(true);
-    expect(isValidTimezone("Mars/Phobos")).toBe(false);
-  });
+  it.each(["Europe/Brussels", "UTC", "Asia/Kolkata", "Europe/Kyiv", "America/Argentina/Buenos_Aires", "America/Port-au-Prince"])(
+    "accepts the standard name %s",
+    (tz) => expect(isValidTimezone(tz)).toBe(true),
+  );
+
+  it.each(["Mars/Phobos", "+02:00", "GMT+2", "CET", "europe/paris", "Europe/paris", "utc", ""])(
+    "refuses %s, which is not a standard name",
+    (tz) => expect(isValidTimezone(tz)).toBe(false),
+  );
 });
 
 describe("nextRunIso", () => {

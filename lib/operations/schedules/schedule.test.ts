@@ -108,7 +108,7 @@ describe("schedule validation", () => {
       "intervalUnit must be one of minute, hour, day, week",
     );
     expect(() => validateSchedule({ ...VALID, timezone: "Mars/Phobos" })).toThrow(
-      "timezone must be a valid IANA timezone",
+      "timezone must be a standard timezone name, e.g. Europe/Paris",
     );
     expect(() => validateSchedule({ ...VALID, startAt: "not-a-date" })).toThrow("startAt must be a valid date-time");
     // Date.parse reads a space separator, the scheduler does not: such a start would never fire.
@@ -179,7 +179,7 @@ describe("schedule validation", () => {
     expect(message).toBe(
       "unknown field enabld, accepted: prompt, intervalValue, intervalUnit, startAt, endAt, timezone, enabled; " +
         "intervalValue must be an integer >= 1 and <= 10000; intervalUnit must be one of minute, hour, day, week; " +
-        "timezone must be a valid IANA timezone",
+        "timezone must be a standard timezone name, e.g. Europe/Paris",
     );
     expect(details).toEqual({
       issues: [
@@ -190,7 +190,7 @@ describe("schedule validation", () => {
           error: "intervalUnit must be one of minute, hour, day, week",
           acceptedValues: ["minute", "hour", "day", "week"],
         },
-        { field: "timezone", error: "timezone must be a valid IANA timezone" },
+        { field: "timezone", error: "timezone must be a standard timezone name, e.g. Europe/Paris" },
       ],
     });
   });

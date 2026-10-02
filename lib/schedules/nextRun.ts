@@ -109,7 +109,10 @@ export function nextRunIso(entry: Recurrence & Pick<ScheduleEntry, "enabled">, a
   return next && onScheduleClock(next, entry.timezone);
 }
 
-/** True when the schedule's IANA timezone is recognised by the runtime. */
+/** The standard spelling: `UTC` or a capitalized Area/Location name — never an offset or abbreviation. */
+const STANDARD_TIMEZONE = /^(?:UTC|[A-Z][A-Za-z_]*(?:\/[A-Z0-9][A-Za-z0-9_+-]*)+)$/;
+
+/** True when the timezone is written in the standard spelling and the runtime recognises it. */
 export function isValidTimezone(tz: string): boolean {
-  return DateTime.local().setZone(tz).isValid;
+  return STANDARD_TIMEZONE.test(tz) && DateTime.local().setZone(tz).isValid;
 }

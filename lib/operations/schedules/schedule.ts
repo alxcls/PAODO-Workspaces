@@ -138,7 +138,7 @@ export function validateSchedule(input: ScheduleInput, now: Date = new Date()): 
   const timezone = text(input.timezone ?? "", "timezone");
   if (timezone !== undefined) {
     if (missing(timezone)) reject("timezone", "timezone is required");
-    else if (!isValidTimezone(timezone)) reject("timezone", "timezone must be a valid IANA timezone");
+    else if (!isValidTimezone(timezone)) reject("timezone", "timezone must be a standard timezone name, e.g. Europe/Paris");
   }
   // Dates are read as the scheduler reads them; UTC stands in for a refused zone so they still get checked.
   const zone = timezone && isValidTimezone(timezone) ? timezone : "UTC";

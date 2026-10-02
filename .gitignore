@@ -86,3 +86,6 @@ CLAUDE.md
 
 # Local operator tool for provisioning S3 buckets — touches live infra, stays local
 /scripts/commission-s3-bucket.ts
+
+# local-only jev skill (uses JEV_KEY, do not commit)
+/.claude/skills/jev/

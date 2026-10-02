@@ -1,14 +1,9 @@
-// DockerClient._spawn is the chokepoint every non-streaming tool funnels through — file_read,
-// glob, list_directory, file_edit, file_write, apt_install, web_fetch and the rest. Its capture used
-// to be an unbounded `stdout += d.toString()` in a stream handler, which is the same defect that made
-// execCommand able to take the process down, but shared by nine tools instead of one.
-//
-// A throw in these handlers does not reject the promise this class returns: Node calls them directly,
-// so it lands on server.ts's uncaughtException guard and exits. The ceiling is what keeps that
-// unreachable, so what these tests pin is that it holds and that it is reported honestly.
+// DockerClient is the chokepoint for every non-streaming tool and every root exec. Pins that capture
+// stays bounded (a throw in its handlers would exit the server) and that root execs get a fixed env.
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
+import type { IDockerClient } from "./dockerClient";
 
 const spawn = vi.hoisted(() => vi.fn());
 vi.mock("child_process", () => ({ spawn }));
@@ -78,5 +73,72 @@ describe("DockerClient output capture", () => {
 
     // Pre-existing behaviour worth keeping: spawn can throw synchronously during Next compilation.
     await expect(new DockerClient().exec("ws_1", ["ls"])).resolves.toMatchObject({ code: 1, stderr: "EBADF" });
+  });
+});
+
+const ROOT_PATH = "/usr/sbin:/usr/bin:/sbin:/bin";
+const PROXY_VARS = ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy", "NO_PROXY", "no_proxy"];
+
+function runExec(...args: Parameters<IDockerClient["exec"]>) {
+  const proc = fakeProc();
+  spawn.mockReturnValue(proc);
+  const p = new DockerClient().exec(...args);
+  proc.emit("close", 0);
+  return p;
+}
+
+// The spawned argv, split at the container name into docker's own flags and what runs inside.
+function spawned() {
+  const args: string[] = spawn.mock.calls[0][1];
+  const at = args.indexOf("ws_1");
+  const flags = args.slice(0, at);
+  const env = flags.filter((_, i) => flags[i - 1] === "-e");
+  return { flags, env, cwd: flags[flags.indexOf("-w") + 1], inside: args.slice(at + 1) };
+}
+
+describe("DockerClient root execs", () => {
+  it("runs the command through the env wrapper with its argv unchanged", async () => {
+    await runExec("ws_1", ["apt-get", "install", "-y", "jq"], { asRoot: true });
+    const { flags, inside } = spawned();
+    expect(flags).toEqual(expect.arrayContaining(["-u", "0"]));
+    expect(inside.slice(0, 2)).toEqual(["/bin/sh", "-c"]);
+    expect(inside.slice(-4)).toEqual(["apt-get", "install", "-y", "jq"]);
+  });
+
+  it("pins PATH, HOME and DEBIAN_FRONTEND, and runs from / rather than the agent's workspace", async () => {
+    await runExec("ws_1", ["true"], { asRoot: true });
+    const { env, cwd } = spawned();
+    expect(env).toEqual(expect.arrayContaining([`PATH=${ROOT_PATH}`, "HOME=/root", "DEBIAN_FRONTEND=noninteractive"]));
+    expect(cwd).toBe("/");
+  });
+
+  it("lets a caller add vars but never override the fixed ones", async () => {
+    await runExec("ws_1", ["true"], {
+      asRoot: true,
+      env: { PATH: "/home/dev/.pyenv/bin", http_proxy: "http://u:s@x" },
+    });
+    const { env } = spawned();
+    expect(env.filter((e) => e.startsWith("PATH="))).toEqual([`PATH=${ROOT_PATH}`]);
+    expect(env).toContain("http_proxy=http://u:s@x");
+  });
+
+  it("keeps only the fixed vars, the caller's and the egress route", async () => {
+    await runExec("ws_1", ["true"], { asRoot: true, env: { MY_VAR: "1" } });
+    const keep = spawned().inside[4].split(" ");
+    expect(new Set(keep)).toEqual(new Set(["MY_VAR", "PATH", "HOME", "DEBIAN_FRONTEND", ...PROXY_VARS]));
+  });
+
+  it("never puts an env value in the argv, which the agent can read from /proc", async () => {
+    await runExec("ws_1", ["true"], { asRoot: true, env: { http_proxy: "http://u:SECRET@x" } });
+    expect(spawned().inside.join(" ")).not.toContain("SECRET");
+  });
+
+  it("leaves a non-root exec in the container's own env and workspace", async () => {
+    await runExec("ws_1", ["ls"], { env: { A: "1" } });
+    const { flags, env, cwd, inside } = spawned();
+    expect(flags).not.toContain("-u");
+    expect(env).toEqual(["A=1"]);
+    expect(cwd).toBe("/workspace");
+    expect(inside).toEqual(["ls"]);
   });
 });

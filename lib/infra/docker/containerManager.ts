@@ -911,19 +911,14 @@ export class ContainerManager implements IContainerManager {
     });
   }
 
-  // Runs a command inside the workspace container AS ROOT (-u 0). This is the single sanctioned root
-  // exec path for agent-facing functionality — used only by the `apt_install` tool to install system
-  // packages. cmdArgs are passed as argv (no shell), so callers must still validate untrusted input.
-  // The regular agent shell (exec / execute_command) never runs as root.
+  // The only agent-facing root exec, for the `apt_install` tool. cmdArgs go as argv (no shell), so
+  // callers must still validate untrusted input; the agent's own shell never runs as root.
   async execAsRoot(workspaceId: string, workspaceDir: string, cmdArgs: string[]) {
     await this.ensure(workspaceId, workspaceDir);
     return this.docker.exec(containerName(workspaceId), cmdArgs, {
       asRoot: true,
       trimStdout: true,
-      // Deliberately no secret env. apt still reaches the credential proxy, because the proxy URL
-      // and CA-trust vars are container-level (buildRunEnv) and every exec inherits them; the
-      // per-command env carries only the workspace's secret tokens, which apt has no use for. This
-      // is the one exec that runs as root, so it gets the least it can work with.
+      // No secret env: apt needs only the egress route, which DockerClient keeps for root execs.
     });
   }
 

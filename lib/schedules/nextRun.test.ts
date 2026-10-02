@@ -78,12 +78,12 @@ describe("computeNextRun", () => {
     expect(next!.toISOString()).toBe("2026-07-14T00:00:00.000Z");
   });
 
-  it("returns null once past the end bound (date-only end is inclusive of that day)", () => {
+  it("returns null once past the end bound", () => {
     const e = entry({
       startAt: "2026-07-13T09:00",
       intervalUnit: "day",
       intervalValue: 1,
-      endAt: "2026-07-15",
+      endAt: "2026-07-16T00:00",
       timezone: "UTC",
     });
     // After the end date entirely -> expired.
@@ -117,9 +117,7 @@ describe("computeNextRun", () => {
 });
 
 describe("endBound", () => {
-  // The save check reads the bound through this too, so a same-day date-only end is accepted there.
-  it("ends a date-only bound at the close of that day in the zone, and a date-time exactly", () => {
-    expect(endBound({ endAt: "2026-10-05", timezone: "Europe/Paris" })?.toISO()).toBe("2026-10-05T23:59:59.999+02:00");
+  it("reads a date-time end exactly, in the zone", () => {
     expect(endBound({ endAt: "2026-10-05T18:00", timezone: "Europe/Paris" })?.toISO()).toBe(
       "2026-10-05T18:00:00.000+02:00",
     );

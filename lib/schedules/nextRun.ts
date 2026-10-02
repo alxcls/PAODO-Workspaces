@@ -83,15 +83,11 @@ export function computeNextRun(entry: Recurrence, after: Date): Date | null {
   return dt.toJSDate();
 }
 
-/**
- * The instant no run may reach, or null when there is no (readable) end. A date-only end
- * ("2026-08-13") is inclusive of that whole day in the schedule's zone.
- */
+/** The instant no run may reach, or null when there is no (readable) end. */
 export function endBound(entry: Pick<ScheduleEntry, "endAt" | "timezone">): DateTime | null {
   if (!entry.endAt) return null;
-  const raw = DateTime.fromISO(entry.endAt, { zone: entry.timezone });
-  if (!raw.isValid) return null;
-  return entry.endAt.length <= 10 ? raw.endOf("day") : raw;
+  const end = DateTime.fromISO(entry.endAt, { zone: entry.timezone });
+  return end.isValid ? end : null;
 }
 
 /**

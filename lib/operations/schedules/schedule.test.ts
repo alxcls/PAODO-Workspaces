@@ -72,12 +72,12 @@ const stored: ScheduleEntry = {
 
 describe("schedule validation", () => {
   it("canonicalizes the values it accepts", () => {
-    expect(validateSchedule({ ...VALID, prompt: "  padded  ", endAt: "2026-08-01", enabled: true }, NOW)).toEqual({
+    expect(validateSchedule({ ...VALID, prompt: "  padded  ", endAt: "2026-08-01T00:00", enabled: true }, NOW)).toEqual({
       prompt: "padded",
       intervalValue: 1,
       intervalUnit: "day",
       startAt: "2026-07-13T09:00",
-      endAt: "2026-08-01",
+      endAt: "2026-08-01T00:00",
       timezone: "UTC",
       enabled: true,
     });
@@ -116,7 +116,7 @@ describe("schedule validation", () => {
       "startAt must be a valid date-time, e.g. 2026-10-02T09:00",
     );
     expect(() => validateSchedule({ ...VALID, endAt: "not-a-date" })).toThrow("endAt must be a valid date");
-    expect(() => validateSchedule({ ...VALID, endAt: "2026-07-01" })).toThrow("endAt must be after startAt");
+    expect(() => validateSchedule({ ...VALID, endAt: "2026-07-01T09:00" })).toThrow("endAt must be after startAt");
     expect(() => validateSchedule({ ...VALID, enabled: "TRUE" as never })).toThrow("enabled must be true or false");
   });
 
@@ -138,9 +138,15 @@ describe("schedule validation", () => {
     ]);
   });
 
-  // The scheduler counts a date-only end as that whole day, so the save check must too.
-  it("accepts a date-only end on the start's own day", () => {
-    expect(validateSchedule({ ...VALID, endAt: "2026-07-13" }).endAt).toBe("2026-07-13");
+  // A date alone would leave the hour to be invented, so the refusal names the value to send instead.
+  it("refuses a date without a time, for the start and the end", () => {
+    expect(() => validateSchedule({ ...VALID, startAt: "2026-07-13" })).toThrow(
+      "startAt needs a time, e.g. 2026-10-02T09:00",
+    );
+    expect(() => validateSchedule({ ...VALID, endAt: "2026-07-31" })).toThrow(
+      "endAt needs a time; to include all of 2026-07-31, write endAt=2026-08-01T00:00",
+    );
+    expect(() => validateSchedule({ ...VALID, endAt: "2026-W31-5" })).toThrow("to include all of 2026-07-31");
   });
 
   it("refuses an enabled schedule with no run left before its end, and saves it disabled", () => {
@@ -207,10 +213,10 @@ describe("schedule validation", () => {
     expect(fieldsOf({ ...VALID, timezone: 5 as never })).toEqual(["timezone"]);
     expect(fieldsOf({ ...VALID, prompt: "", enabled: "true" as never })).toEqual(["enabled"]);
     // endAt is only compared against a startAt that is itself valid.
-    expect(fieldsOf({ ...VALID, startAt: "not-a-date", endAt: "2026-07-01" })).toEqual(["startAt"]);
+    expect(fieldsOf({ ...VALID, startAt: "not-a-date", endAt: "2026-07-01T09:00" })).toEqual(["startAt"]);
   });
 
-  it("refuses a Z or offset that would override the timezone, keeping a bare end date", () => {
+  it("refuses a Z or offset that would override the timezone", () => {
     for (const startAt of [
       "2026-07-13T09:00Z",
       "2026-07-13T09:00:00.000z",
@@ -224,7 +230,6 @@ describe("schedule validation", () => {
     expect(() => validateSchedule({ ...VALID, endAt: "2026-08-01T18:00Z" })).toThrow(
       "endAt must be a time on the timezone's clock, without Z or an offset, e.g. 2026-10-31T18:00",
     );
-    expect(validateSchedule({ ...VALID, endAt: "2026-08-01" }).endAt).toBe("2026-08-01");
     expect(validateSchedule({ ...VALID, endAt: "2026-08-01T18:00" }).endAt).toBe("2026-08-01T18:00");
   });
 
@@ -335,7 +340,7 @@ describe("safe schedule updates", () => {
 
   it("creates through PATCH, clears an end bound, and rejects unknown fields without writing", () => {
     const schedules = fakeSchedules();
-    patchWorkspaceSchedule("ws-1", { ...VALID, endAt: "2026-08-01" }, deps(schedules));
+    patchWorkspaceSchedule("ws-1", { ...VALID, endAt: "2026-08-01T00:00" }, deps(schedules));
     expect(patchWorkspaceSchedule("ws-1", { endAt: null }, deps(schedules))).not.toHaveProperty("endAt");
     expect(() => patchWorkspaceSchedule("ws-1", { bogus: true } as ScheduleInput, deps(schedules))).toThrow(
       "unknown field bogus",
@@ -348,7 +353,7 @@ describe("presenting a schedule", () => {
   const paris: ScheduleEntry = {
     ...stored,
     timezone: "Europe/Paris",
-    endAt: "2026-07-31",
+    endAt: "2026-07-31T18:00",
     lastRun: { at: "2026-07-12T09:00:11.850Z", status: "error", conversationId: "conv-1", error: "no key" },
   };
 
@@ -360,7 +365,7 @@ describe("presenting a schedule", () => {
       intervalValue: 2,
       intervalUnit: "hour",
       startAt: "2026-07-01T09:00",
-      endAt: "2026-07-31",
+      endAt: "2026-07-31T18:00",
       timezone: "Europe/Paris",
       enabled: true,
       createdAt: "2026-07-01T02:00+02:00",

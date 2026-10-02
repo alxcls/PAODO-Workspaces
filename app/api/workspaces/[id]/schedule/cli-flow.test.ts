@@ -110,8 +110,8 @@ describe.skipIf(!existsSync(executable))("CLI schedule workflow over HTTP", () =
     expect((await schedule("set", id, "enabled=true")).code).toBe(0);
     expect(h.entry?.nextRunAt).toBe("2099-01-01T09:00+01:00");
     const historyId = h.entry?.id;
-    expect((await schedule("set", id, "endAt=2099-01-31")).code).toBe(0);
-    expect(h.entry?.endAt).toBe("2099-01-31");
+    expect((await schedule("set", id, "endAt=2099-02-01T00:00")).code).toBe(0);
+    expect(h.entry?.endAt).toBe("2099-02-01T00:00");
     expect((await schedule("set", id, "endAt=")).code).toBe(0);
     expect(h.entry?.endAt).toBeUndefined();
     expect((await schedule("set", id, "enabled=false")).code).toBe(0);

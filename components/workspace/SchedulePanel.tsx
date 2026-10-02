@@ -362,7 +362,7 @@ function ScheduleModal({ schedule, onClose }: ModalProps) {
                     type="datetime-local"
                     min={form.startAt.slice(0, 16)}
                     className="input input-sm"
-                    value={form.endAt.length === 10 ? `${form.endAt}T23:59` : form.endAt.slice(0, 16)}
+                    value={form.endAt.slice(0, 16)}
                     onChange={(e) => set("endAt", e.target.value)}
                   />
                 </Field>

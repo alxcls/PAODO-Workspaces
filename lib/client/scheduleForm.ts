@@ -15,7 +15,7 @@ export const toForm = (s: ScheduleEntry): FormState => ({
   prompt: s.prompt,
   intervalValue: String(s.intervalValue),
   intervalUnit: s.intervalUnit,
-  startAt: s.startAt.length <= 10 ? `${s.startAt}T00:00` : s.startAt,
+  startAt: s.startAt,
   endAt: s.endAt ?? "",
   timezone: s.timezone,
   enabled: s.enabled,

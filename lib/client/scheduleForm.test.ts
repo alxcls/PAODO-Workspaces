@@ -12,12 +12,12 @@ const stored: ScheduleEntry = {
   intervalUnit: "day",
   timezone: "UTC",
   startAt: "2026-10-02T09:00:30.123",
-  endAt: "2026-10-31",
+  endAt: "2026-10-31T18:00",
   enabled: false,
 };
 
 describe("schedule form round trips", () => {
-  it("retains date-only ends and sub-minute precision", () => {
+  it("retains stored values verbatim, including sub-minute precision", () => {
     expect(toForm(stored)).toMatchObject({ startAt: stored.startAt, endAt: stored.endAt });
     expect(scheduleChanges(toForm(stored), {}, true)).toEqual({});
   });

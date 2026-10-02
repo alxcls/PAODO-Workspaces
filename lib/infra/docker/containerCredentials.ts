@@ -65,7 +65,11 @@ export interface CredentialEnv {
  */
 export function buildExecEnv(workspaceId: string, internetAccess: boolean): Record<string, string> {
   const secrets = internetAccess ? listSecretMeta(workspaceId) : [];
-  const env: Record<string, string> = {};
+  // Node's built-in fetch/http(s) ignore HTTP(S)_PROXY unless this is set, so without it a Node
+  // process would skip the credential proxy entirely. Injected here (not just baked into the image)
+  // so containers created before this change pick it up on their next exec — run-env is frozen at
+  // creation and can never be amended. A reserved name, so no secret can shadow it.
+  const env: Record<string, string> = { NODE_USE_ENV_PROXY: "1" };
   for (const s of secrets) {
     // Never let a secret shadow the container's own wiring. validateSecret rejects these names when
     // a secret is stored, but that gate only covers what is written after the rule existed — a

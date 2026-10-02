@@ -48,7 +48,7 @@ function makeDocker(status: "running" | "stopped") {
         if (args.includes("{{range .Containers}}{{.Name}} {{end}}")) {
           return { stdout: `${SIDECAR} `, stderr: "", code: 0 };
         }
-        return { stdout: "false", stderr: "", code: 0 }; // exists, not --internal → matches "on"
+        return { stdout: "true", stderr: "", code: 0 }; // exists and --internal → the healthy steady state
       }
       return OK;
     },
@@ -138,22 +138,23 @@ describe("a wake reconciles the network the container is on", () => {
     expect(issued(repair, "run")).toHaveLength(0);
   });
 
-  it("rebuilds a network whose egress flag disagrees with the workspace's setting", async () => {
-    // Network is --internal; workspaceDeps says this workspace has internet access. A rolled-back
-    // toggle leaves exactly this disagreement, and only a stop/start used to resolve it.
-    const { docker, calls } = makeNetworkDocker({ internal: true });
+  it("migrates a legacy non-internal network to --internal on the next wake", async () => {
+    // A network created before every-network-is-internal is a plain bridge with a direct route out.
+    // The next wake rebuilds it as --internal — without stopping, removing or recreating the container.
+    const { docker, calls } = makeNetworkDocker({ internal: false });
     await new ContainerManager(docker, workspaceDeps).ensure("ws1", "/w");
 
     const create = calls.find((c) => c[0] === "network" && c[1] === "create")!;
-    expect(create).not.toContain("--internal");
+    expect(create).toContain("--internal");
+    expect(networkVerbs(calls)).toContain("rm");
     expect(networkVerbs(calls)).toContain("connect");
     expect(issued(calls, "stop")).toHaveLength(0);
     expect(issued(calls, "rm")).toHaveLength(0);
     expect(issued(calls, "run")).toHaveLength(0);
   });
 
-  it("leaves a healthy network alone", async () => {
-    const { docker, calls } = makeNetworkDocker({ internal: false });
+  it("leaves a healthy --internal network alone", async () => {
+    const { docker, calls } = makeNetworkDocker({ internal: true });
     await new ContainerManager(docker, workspaceDeps).ensure("ws1", "/w");
 
     // Reconciling costs an inspect and an idempotent connect — it must never churn the network of a
@@ -250,41 +251,82 @@ describe("secrets reach the container per command, not at creation", () => {
   });
 });
 
-describe("applyInternetAccess rebuilds the network around a live container", () => {
-  it("swaps the network without stopping, removing or recreating the container", async () => {
-    const { docker, calls } = makeDocker("running");
+// The network is always --internal now, so switching internet access on a live container no longer
+// rebuilds the network — it attaches the credproxy sidecar (on) or detaches it (off). The container
+// is never touched. This mock models an already-internal network plus the sidecar's attachment, so a
+// detach that is observed (or not) can be asserted.
+function makeToggleDocker(opts: { sidecarAttached: boolean; detachSticks?: boolean }) {
+  const detachSticks = opts.detachSticks ?? true;
+  let attached = opts.sidecarAttached;
+  const calls: string[][] = [];
+  const docker: IDockerClient = {
+    cmd: async (...args: string[]): Promise<DockerResult> => {
+      calls.push(args);
+      if (args[0] === "inspect") {
+        return args.includes("{{.State.Status}}") ? { stdout: "running", stderr: "", code: 0 } : OK;
+      }
+      if (args[0] !== "network") return OK;
+      switch (args[1]) {
+        case "inspect":
+          return args.includes("{{range .Containers}}{{.Name}} {{end}}")
+            ? { stdout: attached ? `${SIDECAR} ` : "", stderr: "", code: 0 }
+            : { stdout: "true", stderr: "", code: 0 }; // already --internal
+        case "connect":
+          if (args.includes(SIDECAR)) attached = true;
+          return OK;
+        case "disconnect":
+          if (args.includes(SIDECAR) && detachSticks) attached = false;
+          return OK;
+        default:
+          return OK;
+      }
+    },
+    build: async () => {},
+    exec: async () => OK,
+  };
+  return { docker, calls };
+}
+
+describe("applyInternetAccess toggles the credproxy sidecar around a live container", () => {
+  it("turning access off detaches the sidecar without stopping, removing or recreating the container", async () => {
+    const { docker, calls } = makeToggleDocker({ sidecarAttached: true });
     await new ContainerManager(docker, workspaceDeps).applyInternetAccess("ws1", false);
 
-    // The container is untouched — this is the whole point.
+    // The container is untouched, and so is the (already --internal) network itself.
     expect(issued(calls, "stop")).toHaveLength(0);
     expect(issued(calls, "rm")).toHaveLength(0);
     expect(issued(calls, "run")).toHaveLength(0);
+    expect(networkVerbs(calls)).not.toContain("rm");
+    expect(networkVerbs(calls)).not.toContain("create");
 
-    // The network is rebuilt with the new policy and the container rejoined.
-    const netCalls = calls.filter((c) => c[0] === "network").map((c) => c.slice(0, 2).join(" "));
-    expect(netCalls).toContain("network rm");
-    expect(netCalls).toContain("network create");
-    expect(netCalls).toContain("network connect");
-
-    const create = calls.find((c) => c[0] === "network" && c[1] === "create")!;
-    expect(create).toContain("--internal");
+    // The sidecar is force-disconnected — detaching it is what cuts egress.
+    const detach = calls.find((c) => c[0] === "network" && c[1] === "disconnect" && c.includes(SIDECAR));
+    expect(detach).toBeDefined();
   });
 
-  it("creates a routable network when switching access back on", async () => {
-    const { docker, calls } = makeDocker("running");
-    // Seed reports a non-internal network, so turning access ON is already consistent and the
-    // network is left alone — but the container must never be disturbed either way.
+  it("turning access on attaches the sidecar without touching the container", async () => {
+    const { docker, calls } = makeToggleDocker({ sidecarAttached: false });
     await new ContainerManager(docker, workspaceDeps).applyInternetAccess("ws1", true);
 
     expect(issued(calls, "stop")).toHaveLength(0);
     expect(issued(calls, "rm")).toHaveLength(0);
     expect(issued(calls, "run")).toHaveLength(0);
+    expect(networkVerbs(calls)).not.toContain("rm");
+    expect(networkVerbs(calls)).not.toContain("create");
+
+    const attach = calls.find((c) => c[0] === "network" && c[1] === "connect" && c.includes(SIDECAR));
+    expect(attach).toBeDefined();
+  });
+
+  it("throws when the sidecar can't be detached, so turning off fails closed and the caller can roll back", async () => {
+    const { docker } = makeToggleDocker({ sidecarAttached: true, detachSticks: false });
+    await expect(new ContainerManager(docker, workspaceDeps).applyInternetAccess("ws1", false)).rejects.toThrow(
+      /still attached/,
+    );
   });
 
   // Only a running container has live networking to correct. For the other two states the setting
-  // is already persisted and the next bring-up builds the network with the right flag — creating
-  // one here would leave a network nothing is attached to, lingering until the workspace is next
-  // woken, and Docker's address pool is finite.
+  // is already persisted and the next bring-up builds the network and attaches the sidecar as needed.
   it.each([
     ["never been started", "no such object"],
     ["stopped", "exited"],

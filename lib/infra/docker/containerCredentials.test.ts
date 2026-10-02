@@ -61,24 +61,39 @@ function envValue(args: string[], name: string): string | undefined {
   return undefined;
 }
 
+// Every exec env carries NODE_USE_ENV_PROXY=1 so Node's fetch/http(s) route through the credential
+// proxy instead of silently bypassing it. It is not a secret and is always present.
+const PROXY = { NODE_USE_ENV_PROXY: "1" } as const;
+
+describe("buildExecEnv — Node proxy wiring", () => {
+  it("always sets NODE_USE_ENV_PROXY=1, even with no secrets", () => {
+    expect(buildExecEnv("ws1", true)).toEqual({ ...PROXY });
+  });
+
+  it("still sets it when internet access is off", () => {
+    expect(buildExecEnv("ws1", false)).toEqual({ ...PROXY });
+  });
+});
+
 describe("buildExecEnv — secret tokens", () => {
   it("emits one NAME=token entry per secret, never the real value", () => {
     listSecretMeta.mockReturnValue([meta("OPENAI_API_KEY"), meta("STRIPE_KEY")]);
     expect(buildExecEnv("ws1", true)).toEqual({
+      ...PROXY,
       OPENAI_API_KEY: "__pxy_ws1_OPENAI_API_KEY__",
       STRIPE_KEY: "__pxy_ws1_STRIPE_KEY__",
     });
   });
 
-  it("emits nothing when the workspace has no secrets", () => {
-    expect(buildExecEnv("ws1", true)).toEqual({});
+  it("emits only the Node proxy wiring when the workspace has no secrets", () => {
+    expect(buildExecEnv("ws1", true)).toEqual({ ...PROXY });
   });
 
   it("reflects a newly added secret immediately — this is what replaces recreating the container", () => {
     listSecretMeta.mockReturnValue([]);
-    expect(buildExecEnv("ws1", true)).toEqual({});
+    expect(buildExecEnv("ws1", true)).toEqual({ ...PROXY });
     listSecretMeta.mockReturnValue([meta("NEW_TOKEN")]);
-    expect(buildExecEnv("ws1", true)).toEqual({ NEW_TOKEN: "__pxy_ws1_NEW_TOKEN__" });
+    expect(buildExecEnv("ws1", true)).toEqual({ ...PROXY, NEW_TOKEN: "__pxy_ws1_NEW_TOKEN__" });
   });
 });
 
@@ -94,7 +109,7 @@ describe("buildExecEnv — GH_TOKEN aliasing", () => {
   it("keeps a single GH_TOKEN entry when the secret is already named GH_TOKEN", () => {
     listSecretMeta.mockReturnValue([meta("GH_TOKEN", ["github.com"])]);
     selectGithubTokenSecret.mockReturnValue("GH_TOKEN");
-    expect(buildExecEnv("ws1", true)).toEqual({ GH_TOKEN: "__pxy_ws1_GH_TOKEN__" });
+    expect(buildExecEnv("ws1", true)).toEqual({ ...PROXY, GH_TOKEN: "__pxy_ws1_GH_TOKEN__" });
   });
 
   it("emits no GH_TOKEN when no secret is github-scoped", () => {
@@ -175,7 +190,7 @@ describe("buildRunEnv — proxy wiring gated on the CA", () => {
 describe("buildExecEnv — internetAccess off", () => {
   it("emits no secret token env, even with secrets configured", () => {
     listSecretMeta.mockReturnValue([meta("VERCEL_TOKEN"), meta("MY_GH", ["github.com"])]);
-    expect(buildExecEnv("ws1", false)).toEqual({});
+    expect(buildExecEnv("ws1", false)).toEqual({ ...PROXY });
   });
 
   it("never calls listSecretMeta — an off workspace's secrets aren't even read", () => {
@@ -190,8 +205,8 @@ describe("buildExecEnv — internetAccess off", () => {
 
   it("restores the tokens when internet comes back, with no container involvement", () => {
     listSecretMeta.mockReturnValue([meta("VERCEL_TOKEN")]);
-    expect(buildExecEnv("ws1", false)).toEqual({});
-    expect(buildExecEnv("ws1", true)).toEqual({ VERCEL_TOKEN: "__pxy_ws1_VERCEL_TOKEN__" });
+    expect(buildExecEnv("ws1", false)).toEqual({ ...PROXY });
+    expect(buildExecEnv("ws1", true)).toEqual({ ...PROXY, VERCEL_TOKEN: "__pxy_ws1_VERCEL_TOKEN__" });
   });
 });
 
@@ -206,12 +221,18 @@ describe("buildExecEnv — internetAccess off", () => {
 describe("buildExecEnv — names the container itself uses", () => {
   it("refuses to inject a secret that would shadow the container's wiring", () => {
     listSecretMeta.mockReturnValue([meta("HTTPS_PROXY"), meta("SSL_CERT_FILE"), meta("VERCEL_TOKEN")]);
-    expect(buildExecEnv("ws1", true)).toEqual({ VERCEL_TOKEN: "__pxy_ws1_VERCEL_TOKEN__" });
+    expect(buildExecEnv("ws1", true)).toEqual({ ...PROXY, VERCEL_TOKEN: "__pxy_ws1_VERCEL_TOKEN__" });
+  });
+
+  it("refuses a secret that would shadow NODE_USE_ENV_PROXY — a secret can't disarm the Node proxy wiring", () => {
+    listSecretMeta.mockReturnValue([meta("NODE_USE_ENV_PROXY"), meta("VERCEL_TOKEN")]);
+    expect(buildExecEnv("ws1", true)).toEqual({ ...PROXY, VERCEL_TOKEN: "__pxy_ws1_VERCEL_TOKEN__" });
   });
 
   it("still injects everything else, so one bad name cannot disarm a workspace's other secrets", () => {
     listSecretMeta.mockReturnValue([meta("PATH"), meta("OPENAI_API_KEY"), meta("STRIPE_KEY")]);
     expect(buildExecEnv("ws1", true)).toEqual({
+      ...PROXY,
       OPENAI_API_KEY: "__pxy_ws1_OPENAI_API_KEY__",
       STRIPE_KEY: "__pxy_ws1_STRIPE_KEY__",
     });
@@ -222,7 +243,7 @@ describe("buildExecEnv — names the container itself uses", () => {
   it("does not treat GH_TOKEN as reserved", () => {
     listSecretMeta.mockReturnValue([meta("GH_TOKEN", ["github.com"])]);
     selectGithubTokenSecret.mockReturnValue("GH_TOKEN");
-    expect(buildExecEnv("ws1", true)).toEqual({ GH_TOKEN: "__pxy_ws1_GH_TOKEN__" });
+    expect(buildExecEnv("ws1", true)).toEqual({ ...PROXY, GH_TOKEN: "__pxy_ws1_GH_TOKEN__" });
   });
 });
 

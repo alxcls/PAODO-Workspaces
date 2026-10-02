@@ -4,6 +4,11 @@ ENV DEBIAN_FRONTEND=noninteractive
 ENV PIP_BREAK_SYSTEM_PACKAGES=1
 ENV PIP_ROOT_USER_ACTION=ignore
 
+# Node's built-in fetch/http(s) ignore HTTP(S)_PROXY unless this is set. The workspace network is
+# --internal (the proxy is the only egress), so without this a Node process has no route out at all.
+# Also injected per-exec (containerCredentials.ts) so pre-existing containers pick it up too.
+ENV NODE_USE_ENV_PROXY=1
+
 RUN apt-get update && apt-get install -y \
     bash curl wget git jq build-essential \
     libssl-dev zlib1g-dev libbz2-dev libreadline-dev libsqlite3-dev \

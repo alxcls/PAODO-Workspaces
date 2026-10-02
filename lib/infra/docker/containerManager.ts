@@ -176,18 +176,20 @@ export class ContainerManager implements IContainerManager {
   // stayed empty across the grace window rather than the instant a workspace idles.
   private emptyNetworkSince = new Map<string, number>();
 
-  // Creates the workspace's isolated network, or recreates it if its --internal flag doesn't match
-  // the workspace's current internetAccess setting. Docker can't flip --internal on an existing
-  // network, so a mismatch (e.g. a network that survived an unclean exit before a toggle, or one
-  // created under the old policy) is deleted and recreated rather than left stale — leaving it stale
-  // would silently keep an "off" workspace on a network with a real route out, or vice versa.
-  private async ensureNetwork(workspaceId: string, internetAccess: boolean): Promise<void> {
+  // Creates the workspace's isolated network, always --internal, or recreates it if an existing one
+  // isn't. Every workspace network is --internal regardless of internet access: the network itself
+  // never has a route out, so the credproxy sidecar is the ONLY egress path, and internet access is
+  // controlled purely by whether that sidecar is attached (see reconcileNetwork). This closes the
+  // gap where an internet-on network was an ordinary bridge with a direct route out, bypassing the
+  // proxy's SSRF guard, internet-access policy and audit log. Docker can't flip --internal on an
+  // existing network, so a non-internal one (survived from the old policy, or an unclean exit) is
+  // deleted and recreated — this doubles as the one-time migration for pre-existing workspaces.
+  private async ensureNetwork(workspaceId: string): Promise<void> {
     const name = networkName(workspaceId);
     const inspect = await this.docker.cmd("network", "inspect", name, "--format", "{{.Internal}}");
     if (inspect.code === 0) {
-      const isInternal = inspect.stdout.trim() === "true";
-      if (isInternal === !internetAccess) return;
-      log.debug({ workspaceId, isInternal, internetAccess }, "network internet-access flag mismatch — recreating");
+      if (inspect.stdout.trim() === "true") return;
+      log.debug({ workspaceId }, "network is not --internal — recreating as internal");
       // A container (or the credproxy sidecar) that reached this state without going through our own
       // stop() (unclean exit, manual `docker stop`, daemon restart) can still hold an endpoint on
       // this network even while stopped — network rm fails with "has active endpoints" until every
@@ -196,21 +198,20 @@ export class ContainerManager implements IContainerManager {
       await this.docker.cmd("network", "disconnect", "-f", name, containerName(workspaceId));
       await this.proxy.detach(workspaceId);
       const rm = await this.docker.cmd("network", "rm", name);
-      if (rm.code !== 0) throw new Error(`docker network rm failed while recreating with new policy: ${rm.stderr}`);
+      if (rm.code !== 0) throw new Error(`docker network rm failed while recreating as internal: ${rm.stderr}`);
     }
-    const args = [
+    const r = await this.docker.cmd(
       "network",
       "create",
       "--driver",
       "bridge",
+      "--internal",
       "--label",
       "com.paodo.managed=workspace",
       "--label",
       `com.paodo.workspace-id=${workspaceId}`,
-    ];
-    if (!internetAccess) args.push("--internal");
-    args.push(name);
-    const r = await this.docker.cmd(...args);
+      name,
+    );
     if (r.code !== 0) throw new Error(`docker network create failed: ${r.stderr}`);
   }
 
@@ -222,20 +223,22 @@ export class ContainerManager implements IContainerManager {
   //     else would ever rejoin it — the workspace would be silently offline until it idled out.
   //   - a rolled-back toggle can leave the network's --internal flag disagreeing with the policy
   //     the registry ended up persisting.
-  // ensureNetwork already no-ops when the flag matches, so the healthy case costs one inspect.
+  // ensureNetwork already no-ops when the network is already --internal, so the healthy case costs
+  // one inspect. Internet access is now decided here, by the sidecar's attachment alone: the network
+  // is always --internal, so attaching the proxy is what opens egress and detaching it is what cuts it.
   private async reconcileNetwork(workspaceId: string, internetAccess: boolean): Promise<void> {
-    await this.ensureNetwork(workspaceId, internetAccess);
+    await this.ensureNetwork(workspaceId);
     const connect = await this.docker.cmd("network", "connect", networkName(workspaceId), containerName(workspaceId));
     // Already attached is success, not failure — this runs on every wake, so a healthy container is
     // the common case, not a fresh attachment.
     if (connect.code !== 0 && !/already (exists|connected)/i.test(connect.stderr)) {
       throw new Error(`docker network connect failed: ${connect.stderr}`);
     }
-    // A redeploy can recreate the credproxy sidecar and drop its attachment to a still-running
-    // workspace's network, black-holing egress. Reattach idempotently — but only when this
-    // workspace should have egress at all; an off workspace's network was never internet-reachable
-    // in the first place, so there is nothing to reattach.
+    // On: attach the sidecar (idempotent) — a redeploy can recreate it and drop its attachment to a
+    // still-running workspace, which this reattaches. Off: detach it and CONFIRM it is gone, so a
+    // workspace the UI shows as off can never be left with a live route out through a stale sidecar.
     if (internetAccess) await this.proxy.attach(workspaceId);
+    else await this.proxy.ensureDetached(workspaceId);
   }
 
   // A run has begun for this workspace: keep the container warm for its whole duration. Cancels any
@@ -557,7 +560,7 @@ export class ContainerManager implements IContainerManager {
       // missing — first run for this workspace, so create and start
       log.debug({ workspaceId }, "creating container");
       stage = "ensure_network";
-      await this.ensureNetwork(workspaceId, internetAccess);
+      await this.ensureNetwork(workspaceId);
       // Before the container exists, so its /home/dev mount has the image's runtimes to start from.
       stage = "seed_agent_home";
       await this.seedAgentHome(workspaceId);
@@ -1044,13 +1047,14 @@ export class ContainerManager implements IContainerManager {
   /**
    * Apply a workspace's internet-access setting to its live network, leaving the container alone.
    *
-   * Docker cannot flip `--internal` on an existing network, so the network itself is rebuilt — but
-   * `network disconnect` / `network connect` both work on a RUNNING container, so the container
-   * keeps its identity and, crucially, everything the agent installed in it. Connections open at
-   * the moment egress is switched off are dropped along with the interface, which is the intent.
+   * The network is always --internal, so the toggle no longer rebuilds it: reconcileNetwork attaches
+   * the credproxy sidecar (on) or detaches it (off). Both act on a RUNNING container, so it keeps its
+   * identity and everything the agent installed. Turning egress off drops open connections with the
+   * sidecar's interface, which is the intent.
    *
-   * Confirmable by design: throws if the new network could not be put in place, so the caller can
-   * roll the persisted setting back rather than reporting a boundary it never actually applied.
+   * Confirmable by design: ensureDetached throws if the sidecar is still attached afterwards, and
+   * attach failures surface too, so the caller can roll the persisted setting back rather than
+   * reporting a boundary it never actually applied.
    */
   async applyInternetAccess(workspaceId: string, enabled: boolean): Promise<void> {
     // Wait out any in-flight ensure()/stop() before claiming the slot, so this can't interleave

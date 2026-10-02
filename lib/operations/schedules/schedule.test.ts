@@ -1,10 +1,7 @@
-// The schedule contract, tested where it now lives rather than through HTTP. Two things matter here
-// and neither was reachable before: every rejection message (the CLI and any script read these as
-// their only documentation of the accepted values), and the identity rule — a replace keeps the
-// schedule's id, its creation time and its run history, because editing a prompt does not make it a
-// different schedule.
+// The schedule contract: every rejection message (the CLI's only documentation of accepted values) and
+// the identity rule — a replace keeps the id, the creation time and the last run.
 import { describe, expect, it } from "vitest";
-import { setWorkspaceSchedule, validateSchedule, type ScheduleInput } from "./schedule";
+import { setWorkspaceSchedule, patchWorkspaceSchedule, validateSchedule, type ScheduleInput } from "./schedule";
 import { AppError } from "@/lib/errors/appError";
 import type { ScheduleEntry } from "@/lib/schedules/types";
 import type { Workspace } from "@/lib/workspace/types";
@@ -64,14 +61,12 @@ const stored: ScheduleEntry = {
   enabled: true,
   createdAt: "2026-07-01T00:00:00.000Z",
   nextRunAt: "2026-07-13T09:00:00.000Z",
-  lastRunAt: "2026-07-12T09:00:00.000Z",
-  lastRunStatus: "ok",
-  lastRunSnippet: "done",
+  lastRun: { at: "2026-07-12T09:00:00.000Z", status: "ok", conversationId: "conv-1" },
 };
 
 describe("schedule validation", () => {
   it("canonicalizes the values it accepts", () => {
-    expect(validateSchedule({ ...VALID, prompt: "  padded  ", endAt: "2026-08-01", enabled: true })).toEqual({
+    expect(validateSchedule({ ...VALID, prompt: "  padded  ", endAt: "2026-08-01", enabled: true }, NOW)).toEqual({
       prompt: "padded",
       intervalValue: 1,
       intervalUnit: "day",
@@ -82,7 +77,7 @@ describe("schedule validation", () => {
     });
   });
 
-  // A schedule must never start firing from an omitted field, so an absent enable means paused.
+  // A schedule must never start firing from an omitted field, so an absent `enabled` means disabled.
   it("defaults enabled to false and treats a blank or null end bound as absent", () => {
     expect(validateSchedule(VALID).enabled).toBe(false);
     expect(validateSchedule({ ...VALID, enabled: true }).enabled).toBe(true);
@@ -90,8 +85,8 @@ describe("schedule validation", () => {
     expect(validateSchedule({ ...VALID, endAt: "   " })).not.toHaveProperty("endAt");
   });
 
-  // A paused schedule is a draft: it never fires, so an empty prompt is allowed and only becomes
-  // required when the schedule is set live.
+  // A disabled schedule is a draft: it never fires, so an empty prompt is allowed and only becomes
+  // required once the schedule is enabled.
   it("requires a prompt only when the schedule is enabled", () => {
     expect(validateSchedule({ ...VALID, prompt: "  ", enabled: false }).prompt).toBe("");
     expect(() => validateSchedule({ ...VALID, prompt: "  ", enabled: true })).toThrow("prompt is required");
@@ -110,13 +105,126 @@ describe("schedule validation", () => {
       "timezone must be a valid IANA timezone",
     );
     expect(() => validateSchedule({ ...VALID, startAt: "not-a-date" })).toThrow("startAt must be a valid date-time");
+    // Date.parse reads a space separator, the scheduler does not: such a start would never fire.
+    expect(() => validateSchedule({ ...VALID, startAt: "2026-07-13 09:00" })).toThrow(
+      "startAt must be a valid date-time, e.g. 2026-10-02T09:00",
+    );
     expect(() => validateSchedule({ ...VALID, endAt: "not-a-date" })).toThrow("endAt must be a valid date");
     expect(() => validateSchedule({ ...VALID, endAt: "2026-07-01" })).toThrow("endAt must be after startAt");
+    expect(() => validateSchedule({ ...VALID, enabled: "TRUE" as never })).toThrow("enabled must be true or false");
+  });
+
+  it("names a missing field as required, whether absent, null or blank", () => {
+    for (const field of ["intervalValue", "intervalUnit", "startAt", "timezone"] as const) {
+      for (const value of [undefined, null, "  "]) {
+        expect(() => validateSchedule({ ...VALID, [field]: value } as ScheduleInput)).toThrow(`${field} is required`);
+      }
+    }
+    // A required unit still lists the units, so the one rejection is enough to fill it in.
+    let error: unknown;
+    try {
+      validateSchedule({ ...VALID, intervalUnit: undefined });
+    } catch (caught) {
+      error = caught;
+    }
+    expect((error as AppError).details?.issues).toEqual([
+      { field: "intervalUnit", error: "intervalUnit is required", acceptedValues: ["minute", "hour", "day", "week"] },
+    ]);
+  });
+
+  // The scheduler counts a date-only end as that whole day, so the save check must too.
+  it("accepts a date-only end on the start's own day", () => {
+    expect(validateSchedule({ ...VALID, endAt: "2026-07-13" }).endAt).toBe("2026-07-13");
+  });
+
+  it("refuses an enabled schedule with no run left before its end, and saves it disabled", () => {
+    const ended = { ...VALID, startAt: "2026-07-01T09:00", endAt: "2026-07-05T09:00" };
+    expect(() => validateSchedule({ ...ended, enabled: true }, NOW)).toThrow("endAt leaves no run after now");
+    expect(validateSchedule({ ...ended, enabled: false }, NOW).enabled).toBe(false);
+    // Not yet past, but the next weekly slot (07-13 09:00) falls after it.
+    const weekly = {
+      ...VALID,
+      startAt: "2026-07-06T09:00",
+      intervalUnit: "week",
+      endAt: "2026-07-13T08:30",
+      enabled: true,
+    };
+    expect(() => validateSchedule(weekly, NOW)).toThrow("endAt leaves no run after now");
+  });
+
+  // Stopping at the first bad field cost a caller one round trip per mistake to find the rest.
+  it("reports every bad field in one rejection", () => {
+    const input = {
+      ...VALID,
+      intervalValue: 0,
+      intervalUnit: "month",
+      timezone: "Mars/Base",
+      enabld: true,
+    } as ScheduleInput;
+    let error: unknown;
+    try {
+      validateSchedule(input);
+    } catch (caught) {
+      error = caught;
+    }
+    expect(error).toBeInstanceOf(AppError);
+    const { message, code, details } = error as AppError;
+    expect(code).toBe("SCHEDULE_INVALID");
+    expect(message).toBe(
+      "unknown field enabld, accepted: prompt, intervalValue, intervalUnit, startAt, endAt, timezone, enabled; " +
+        "intervalValue must be an integer >= 1 and <= 10000; intervalUnit must be one of minute, hour, day, week; " +
+        "timezone must be a valid IANA timezone",
+    );
+    expect(details).toEqual({
+      issues: [
+        { field: "enabld", error: expect.stringContaining("unknown field enabld") },
+        { field: "intervalValue", error: "intervalValue must be an integer >= 1 and <= 10000" },
+        {
+          field: "intervalUnit",
+          error: "intervalUnit must be one of minute, hour, day, week",
+          acceptedValues: ["minute", "hour", "day", "week"],
+        },
+        { field: "timezone", error: "timezone must be a valid IANA timezone" },
+      ],
+    });
+  });
+
+  it("names a field once, and skips the rules a refused field would have gated", () => {
+    const fieldsOf = (input: ScheduleInput) => {
+      try {
+        validateSchedule(input);
+      } catch (error) {
+        return ((error as AppError).details?.issues as { field: string }[]).map((issue) => issue.field);
+      }
+    };
+    // A non-string timezone is not also "an invalid IANA timezone"; an invalid enabled does not require a prompt.
+    expect(fieldsOf({ ...VALID, timezone: 5 as never })).toEqual(["timezone"]);
+    expect(fieldsOf({ ...VALID, prompt: "", enabled: "true" as never })).toEqual(["enabled"]);
+    // endAt is only compared against a startAt that is itself valid.
+    expect(fieldsOf({ ...VALID, startAt: "not-a-date", endAt: "2026-07-01" })).toEqual(["startAt"]);
+  });
+
+  it("refuses a Z or offset that would override the timezone, keeping a bare end date", () => {
+    for (const startAt of [
+      "2026-07-13T09:00Z",
+      "2026-07-13T09:00:00.000z",
+      "2026-07-13T09:00+05:00",
+      "2026-07-13T09:00-0500",
+    ]) {
+      expect(() => validateSchedule({ ...VALID, startAt })).toThrow(
+        "startAt must be a time on the timezone's clock, without Z or an offset, e.g. 2026-10-02T09:00",
+      );
+    }
+    expect(() => validateSchedule({ ...VALID, endAt: "2026-08-01T18:00Z" })).toThrow(
+      "endAt must be a time on the timezone's clock, without Z or an offset, e.g. 2026-10-31T18:00",
+    );
+    expect(validateSchedule({ ...VALID, endAt: "2026-08-01" }).endAt).toBe("2026-08-01");
+    expect(validateSchedule({ ...VALID, endAt: "2026-08-01T18:00" }).endAt).toBe("2026-08-01T18:00");
   });
 
   it("rejects a request that omits a required field rather than inventing a default", () => {
     for (const field of ["prompt", "intervalValue", "intervalUnit", "startAt", "timezone"] as const) {
-      // enabled: true so the prompt rule is in force — a paused schedule accepts an omitted prompt.
+      // enabled: true so the prompt rule is in force — a disabled schedule accepts an omitted prompt.
       const partial: ScheduleInput = { ...VALID, enabled: true };
       delete partial[field];
       expect(() => validateSchedule(partial)).toThrow(AppError);
@@ -127,7 +235,7 @@ describe("schedule validation", () => {
    * The declared input types bind in-process callers; a JSON body only claims to match them. Without
    * these guards `prompt: 5` reached `.trim()` as a number and left this layer as a TypeError — an
    * opaque 500 rather than the named rejection every other bad value gets — and `enabled: "false"`
-   * was truthy, so it stored a paused schedule as live and put a non-boolean in the file besides.
+   * was truthy, so it stored a disabled schedule as enabled and put a non-boolean in the file besides.
    */
   it("refuses a wrong-typed value instead of coercing or crashing on it", () => {
     const cases: ScheduleInput[] = [
@@ -154,7 +262,7 @@ describe("setting a workspace schedule", () => {
       prompt: "summarize yesterday's commits",
       createdAt: NOW.toISOString(),
       // The start anchor itself, since it is still in the future at NOW.
-      nextRunAt: "2026-07-13T09:00:00.000Z",
+      nextRunAt: "2026-07-13T09:00Z",
     });
     expect(schedules.writes).toHaveLength(1);
   });
@@ -167,16 +275,14 @@ describe("setting a workspace schedule", () => {
     expect(entry).toMatchObject({
       id: "existing-id",
       createdAt: "2026-07-01T00:00:00.000Z",
-      lastRunAt: "2026-07-12T09:00:00.000Z",
-      lastRunStatus: "ok",
-      lastRunSnippet: "done",
+      lastRun: { at: "2026-07-12T09:00:00.000Z", status: "ok", conversationId: "conv-1" },
       // Recomputed from the new configuration, not carried over.
       prompt: "a new prompt",
       intervalUnit: "day",
     });
   });
 
-  // The pointer is what the tick loop reads, so leaving one set would fire a schedule just paused.
+  // The pointer is what the tick loop reads, so leaving one set would fire a schedule just disabled.
   it("clears the next-run pointer when the schedule is disabled", () => {
     const schedules = fakeSchedules(stored);
     expect(setWorkspaceSchedule("ws-1", { ...VALID, enabled: false }, deps(schedules))?.nextRunAt).toBeNull();
@@ -198,4 +304,51 @@ describe("setting a workspace schedule", () => {
     expect(schedules.writes).toEqual([]);
     expect(schedules.getSchedule()).toEqual(stored);
   });
+
+  it("judges whether a run is left against the injected clock", () => {
+    const schedules = fakeSchedules();
+    const input = { ...VALID, startAt: "2026-07-01T09:00", endAt: "2026-07-05T09:00", enabled: true };
+    expect(() => setWorkspaceSchedule("ws-1", input, deps(schedules))).toThrow("endAt leaves no run after now");
+    expect(schedules.writes).toEqual([]);
+  });
+});
+
+describe("safe schedule updates", () => {
+  it.each([1e300, 1e9, 1e12, 10001])("refuses an oversized interval %s even in a disabled draft", (intervalValue) => {
+    for (const enabled of [false, true]) {
+      expect(() => validateSchedule({ ...VALID, intervalValue, enabled }, NOW)).toThrow("<= 10000");
+    }
+  });
+
+  it("keeps independent partial edits and server-owned history", () => {
+    const schedules = fakeSchedules(stored);
+    patchWorkspaceSchedule("ws-1", { prompt: "edited in UI" }, deps(schedules));
+    const result = patchWorkspaceSchedule("ws-1", { intervalValue: 5 }, deps(schedules));
+    expect(result).toMatchObject({ prompt: "edited in UI", intervalValue: 5, id: stored.id, lastRun: stored.lastRun });
+  });
+
+  it("creates through PATCH, clears an end bound, and rejects unknown fields without writing", () => {
+    const schedules = fakeSchedules();
+    patchWorkspaceSchedule("ws-1", { ...VALID, endAt: "2026-08-01" }, deps(schedules));
+    expect(patchWorkspaceSchedule("ws-1", { endAt: null }, deps(schedules))).not.toHaveProperty("endAt");
+    expect(() => patchWorkspaceSchedule("ws-1", { bogus: true } as ScheduleInput, deps(schedules))).toThrow(
+      "unknown field bogus",
+    );
+    expect(schedules.writes).toHaveLength(2);
+  });
+});
+
+it("refuses an enabled schedule whose next occurrence overflows the date range", () => {
+  expect(() =>
+    validateSchedule(
+      {
+        ...VALID,
+        startAt: "+275760-09-12T00:00",
+        intervalValue: 10000,
+        intervalUnit: "week",
+        enabled: true,
+      },
+      new Date(8640000000000000),
+    ),
+  ).toThrow("no representable future run");
 });

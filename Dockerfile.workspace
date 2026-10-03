@@ -46,12 +46,8 @@ RUN git config --system credential.https://github.com.helper \
 RUN git config --system user.name "PAODO Agent" && \
     git config --system user.email "agent@paodo.local"
 
-# Force git to send proxy Basic auth preemptively. git defaults to http.proxyAuthMethod "anyauth",
-# which withholds Proxy-Authorization on the CONNECT until the proxy issues a 407. The credential
-# proxy never challenges (missing auth just tunnels), so an anyauth git never identifies its
-# workspace, gets no injection rules, and its HTTPS is tunneled untouched — the opaque token then
-# reaches github.com and is rejected ("Invalid username or token"). "basic" makes git send the
-# credentials up front like curl does, so the proxy can MITM and substitute. Image-wide constant.
+# git's default proxy auth (anyauth) waits for a challenge, but the credential proxy refuses with a
+# bare 407; send Basic up front. Redundant behind the egress relay, kept for containers without one.
 RUN git config --system http.proxyAuthMethod basic
 
 # Single non-root runtime identity: `dev` at UID 1000 — the SAME uid as the app server's `node`

@@ -4,6 +4,11 @@ ENV DEBIAN_FRONTEND=noninteractive
 ENV PIP_BREAK_SYSTEM_PACKAGES=1
 ENV PIP_ROOT_USER_ACTION=ignore
 
+# Node's built-in fetch/http(s) ignore HTTP(S)_PROXY unless this is set. The workspace network is
+# --internal (the proxy is the only egress), so without this a Node process has no route out at all.
+# Also injected per-exec (containerCredentials.ts) so pre-existing containers pick it up too.
+ENV NODE_USE_ENV_PROXY=1
+
 RUN apt-get update && apt-get install -y \
     bash curl wget git jq build-essential \
     libssl-dev zlib1g-dev libbz2-dev libreadline-dev libsqlite3-dev \
@@ -41,12 +46,8 @@ RUN git config --system credential.https://github.com.helper \
 RUN git config --system user.name "PAODO Agent" && \
     git config --system user.email "agent@paodo.local"
 
-# Force git to send proxy Basic auth preemptively. git defaults to http.proxyAuthMethod "anyauth",
-# which withholds Proxy-Authorization on the CONNECT until the proxy issues a 407. The credential
-# proxy never challenges (missing auth just tunnels), so an anyauth git never identifies its
-# workspace, gets no injection rules, and its HTTPS is tunneled untouched — the opaque token then
-# reaches github.com and is rejected ("Invalid username or token"). "basic" makes git send the
-# credentials up front like curl does, so the proxy can MITM and substitute. Image-wide constant.
+# git's default proxy auth (anyauth) waits for a challenge, but the credential proxy refuses with a
+# bare 407; send Basic up front. Redundant behind the egress relay, kept for containers without one.
 RUN git config --system http.proxyAuthMethod basic
 
 # Single non-root runtime identity: `dev` at UID 1000 — the SAME uid as the app server's `node`
@@ -89,6 +90,9 @@ ENV PATH=$PYENV_ROOT/shims:$PYENV_ROOT/bin:$PATH
 RUN git clone --depth=1 --branch $PYENV_VERSION_TAG https://github.com/pyenv/pyenv.git $PYENV_ROOT && \
     cd $PYENV_ROOT && src/configure && make -C src && \
     chown -R dev:dev $PYENV_ROOT
+
+# The egress relay the app starts on every container start (lib/infra/docker/proxyRelay.ts).
+RUN apt-get update && apt-get install -y --no-install-recommends tinyproxy-bin && rm -rf /var/lib/apt/lists/*
 
 # Make a runtime `nvm install` actually take effect on the NEXT command, not just the one that ran
 # it. Agent commands arrive as `docker exec … /bin/bash -c`, which is neither a login nor an

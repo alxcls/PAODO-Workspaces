@@ -118,6 +118,8 @@ export const RESERVED_SECRET_NAMES: ReadonlySet<string> = new Set([
   "LD_LIBRARY_PATH",
   "NVM_DIR",
   "PYENV_ROOT",
+  // Routes Node's fetch/http(s) through the credential proxy (buildExecEnv).
+  "NODE_USE_ENV_PROXY",
 ]);
 
 export function setSecret(wsId: string, name: string, value: string, domains: string[]): void {

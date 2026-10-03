@@ -141,6 +141,10 @@ export const EXEC_KILL_GRACE_MS = 2_000;
  */
 export const APT_REPLAY_TIMEOUT_MS = 5 * 60_000;
 
+/** How long installing the egress relay into an older container may hold up its wake before the
+ * container carries on with its own proxy settings. One tiny package; only a stall reaches this. */
+export const PROXY_RELAY_INSTALL_TIMEOUT_MS = 2 * 60_000;
+
 // ---------------------------------------------------------------------------
 // File reads — lib/agent/tools/fileRead.ts, lib/agent/tools/driveRead.ts
 // ---------------------------------------------------------------------------

@@ -80,6 +80,20 @@ export class ProxyNetworkManager {
     if (r.code !== 0) log.debug({ workspaceId, stderr: r.stderr }, "detach credential proxy (may not be attached)");
   }
 
+  // Detach the sidecar and CONFIRM it is gone — the egress half of switching internet off. Unlike
+  // detach(), a sidecar that is still an endpoint afterwards throws, so the caller can roll the
+  // persisted setting back rather than reporting a cut it never applied. A workspace left with the
+  // sidecar attached would keep a live route out while the UI says off — the one drift that fails open.
+  async ensureDetached(workspaceId: string): Promise<void> {
+    await this.detach(workspaceId);
+    if (await this.isAttached(workspaceId)) {
+      throw new Error(
+        `workspace egress proxy (${CREDENTIAL_PROXY_ALIAS}) is still attached to ${networkName(workspaceId)} ` +
+          `after detach — internet access could not be disabled`,
+      );
+    }
+  }
+
   // On boot, reconnect the sidecar to every running workspace network that should have one. A
   // redeploy recreates the sidecar (and the app), dropping its attachments while workspace
   // containers keep running; without this their egress would black-hole until they are recreated.

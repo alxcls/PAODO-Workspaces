@@ -13,6 +13,19 @@ export type DockerResult = {
 
 export type DockerStdin = string | Uint8Array;
 
+// Root execs get a fixed env, never the container's: its PATH reaches agent-writable dirs, and so
+// could any var added later. Values travel by -e only, since /proc/<pid>/cmdline is world-readable.
+const ROOT_ENV = { PATH: "/usr/sbin:/usr/bin:/sbin:/bin", HOME: "/root", DEBIAN_FRONTEND: "noninteractive" };
+// The egress route, set by the app at docker run: apt has no other way off the workspace network.
+const ROOT_INHERITED = ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy", "NO_PROXY", "no_proxy"];
+// Unsets every variable not named in $1, then runs the command.
+const ROOT_WRAPPER = [
+  "for v in $(awk 'BEGIN { for (k in ENVIRON) print k }'); do",
+  '  case " $1 " in *" $v "*) ;; *) unset "$v" ;; esac',
+  "done",
+  'shift; exec "$@"',
+].join("\n");
+
 export interface IDockerClient {
   cmd(...args: string[]): Promise<DockerResult>;
   exec(
@@ -37,9 +50,8 @@ export class DockerClient implements IDockerClient {
   // trimStdout=false preserves exact content (trailing newlines matter for file reads).
   private _spawn(args: string[], opts: { stdin?: DockerStdin; trimStdout?: boolean } = {}): Promise<DockerResult> {
     return new Promise((resolve) => {
-      // Bounded, and bounded in ONE shared place rather than per spawner: these handlers are invoked
-      // directly by Node, so a throw in one does not reach the promise this returns — it reaches the
-      // uncaughtException guard in server.ts, which exits. See lib/infra/spawnCapture.ts.
+      // Bounded in one shared place: Node calls these handlers directly, so a throw would reach
+      // server.ts's uncaughtException guard and exit rather than this promise. See spawnCapture.ts.
       const captured = new SpawnCapture();
       let proc: ReturnType<typeof spawn>;
       try {
@@ -75,8 +87,8 @@ export class DockerClient implements IDockerClient {
 
   /**
    * docker exec inside a running container.
-   * - asRoot=true  → adds -u 0
-   * - cwd          → -w flag (default /workspace)
+   * - asRoot=true  → -u 0, in a fixed allowlisted env (ROOT_ENV, ROOT_INHERITED and `env`), cwd /
+   * - cwd          → -w flag (default /workspace, or / as root)
    * - trimStdout   → default false so file reads preserve trailing newlines;
    *                  pass true for commands where stdout is a short scalar (e.g. apt-get).
    * - env          → -e pairs; this is how workspace secrets reach the container, since the
@@ -93,10 +105,17 @@ export class DockerClient implements IDockerClient {
       env?: Record<string, string>;
     } = {},
   ): Promise<DockerResult> {
-    const { stdin, asRoot = false, cwd = "/workspace", trimStdout = false, env } = opts;
+    const { stdin, asRoot = false, cwd, trimStdout = false, env } = opts;
     const args = ["exec", "-i"];
-    if (asRoot) args.push("-u", "0");
-    args.push(...envArgs(env), "-w", cwd, containerName, ...cmdArgs);
+    if (asRoot) {
+      // A caller can add vars but never override the fixed ones.
+      const rootEnv = { ...env, ...ROOT_ENV };
+      const keep = [...Object.keys(rootEnv), ...ROOT_INHERITED].join(" ");
+      args.push("-u", "0", ...envArgs(rootEnv), "-w", cwd ?? "/", containerName);
+      args.push("/bin/sh", "-c", ROOT_WRAPPER, "root-exec", keep, ...cmdArgs);
+    } else {
+      args.push(...envArgs(env), "-w", cwd ?? "/workspace", containerName, ...cmdArgs);
+    }
     return this._spawn(args, { stdin, trimStdout });
   }
 

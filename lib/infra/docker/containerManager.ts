@@ -128,8 +128,15 @@ export interface ContainerWorkspaceDependencies {
    * cannot amend a container's env after creation, and this container is never recreated — so
    * baking secrets in would freeze them at whatever the workspace had on its first ever command.
    */
-  execEnvironment(workspaceId: string, internetAccess: boolean): Record<string, string>;
+  execEnvironment(workspaceId: string, internetAccess: boolean, relayReady: boolean): Record<string, string>;
   installProxyCA(docker: IDockerClient, containerName: string, workspaceId: string): Promise<void>;
+  /** Starts the in-container egress relay (see proxyRelay.ts); true once it listens. Never rejects. */
+  ensureProxyRelay(
+    docker: IDockerClient,
+    containerName: string,
+    workspaceId: string,
+    canInstall: boolean,
+  ): Promise<boolean>;
 }
 
 // Safe standalone default for isolated unit tests and explicit custom composition. Production
@@ -139,6 +146,7 @@ const isolatedWorkspaceDependencies: ContainerWorkspaceDependencies = {
   runEnvironment: () => ({ envArgs: [], hasProxyCA: false }),
   execEnvironment: () => ({}),
   installProxyCA: async () => {},
+  ensureProxyRelay: async () => false,
 };
 
 export class ContainerManager implements IContainerManager {
@@ -175,19 +183,24 @@ export class ContainerManager implements IContainerManager {
   // First time each managed network was seen empty by the sweep, so it is only reclaimed once it has
   // stayed empty across the grace window rather than the instant a workspace idles.
   private emptyNetworkSince = new Map<string, number>();
+  // Whether the egress relay came up since the container last started. Absent means not checked yet,
+  // as for a running container first seen after an app restart.
+  private relayReady = new Map<string, boolean>();
 
-  // Creates the workspace's isolated network, or recreates it if its --internal flag doesn't match
-  // the workspace's current internetAccess setting. Docker can't flip --internal on an existing
-  // network, so a mismatch (e.g. a network that survived an unclean exit before a toggle, or one
-  // created under the old policy) is deleted and recreated rather than left stale — leaving it stale
-  // would silently keep an "off" workspace on a network with a real route out, or vice versa.
-  private async ensureNetwork(workspaceId: string, internetAccess: boolean): Promise<void> {
+  // Creates the workspace's isolated network, always --internal, or recreates it if an existing one
+  // isn't. Every workspace network is --internal regardless of internet access: the network itself
+  // never has a route out, so the credproxy sidecar is the ONLY egress path, and internet access is
+  // controlled purely by whether that sidecar is attached (see reconcileNetwork). This closes the
+  // gap where an internet-on network was an ordinary bridge with a direct route out, bypassing the
+  // proxy's SSRF guard, internet-access policy and audit log. Docker can't flip --internal on an
+  // existing network, so a non-internal one (survived from the old policy, or an unclean exit) is
+  // deleted and recreated — this doubles as the one-time migration for pre-existing workspaces.
+  private async ensureNetwork(workspaceId: string): Promise<void> {
     const name = networkName(workspaceId);
     const inspect = await this.docker.cmd("network", "inspect", name, "--format", "{{.Internal}}");
     if (inspect.code === 0) {
-      const isInternal = inspect.stdout.trim() === "true";
-      if (isInternal === !internetAccess) return;
-      log.debug({ workspaceId, isInternal, internetAccess }, "network internet-access flag mismatch — recreating");
+      if (inspect.stdout.trim() === "true") return;
+      log.debug({ workspaceId }, "network is not --internal — recreating as internal");
       // A container (or the credproxy sidecar) that reached this state without going through our own
       // stop() (unclean exit, manual `docker stop`, daemon restart) can still hold an endpoint on
       // this network even while stopped — network rm fails with "has active endpoints" until every
@@ -196,21 +209,20 @@ export class ContainerManager implements IContainerManager {
       await this.docker.cmd("network", "disconnect", "-f", name, containerName(workspaceId));
       await this.proxy.detach(workspaceId);
       const rm = await this.docker.cmd("network", "rm", name);
-      if (rm.code !== 0) throw new Error(`docker network rm failed while recreating with new policy: ${rm.stderr}`);
+      if (rm.code !== 0) throw new Error(`docker network rm failed while recreating as internal: ${rm.stderr}`);
     }
-    const args = [
+    const r = await this.docker.cmd(
       "network",
       "create",
       "--driver",
       "bridge",
+      "--internal",
       "--label",
       "com.paodo.managed=workspace",
       "--label",
       `com.paodo.workspace-id=${workspaceId}`,
-    ];
-    if (!internetAccess) args.push("--internal");
-    args.push(name);
-    const r = await this.docker.cmd(...args);
+      name,
+    );
     if (r.code !== 0) throw new Error(`docker network create failed: ${r.stderr}`);
   }
 
@@ -222,20 +234,22 @@ export class ContainerManager implements IContainerManager {
   //     else would ever rejoin it — the workspace would be silently offline until it idled out.
   //   - a rolled-back toggle can leave the network's --internal flag disagreeing with the policy
   //     the registry ended up persisting.
-  // ensureNetwork already no-ops when the flag matches, so the healthy case costs one inspect.
+  // ensureNetwork already no-ops when the network is already --internal, so the healthy case costs
+  // one inspect. Internet access is now decided here, by the sidecar's attachment alone: the network
+  // is always --internal, so attaching the proxy is what opens egress and detaching it is what cuts it.
   private async reconcileNetwork(workspaceId: string, internetAccess: boolean): Promise<void> {
-    await this.ensureNetwork(workspaceId, internetAccess);
+    await this.ensureNetwork(workspaceId);
     const connect = await this.docker.cmd("network", "connect", networkName(workspaceId), containerName(workspaceId));
     // Already attached is success, not failure — this runs on every wake, so a healthy container is
     // the common case, not a fresh attachment.
     if (connect.code !== 0 && !/already (exists|connected)/i.test(connect.stderr)) {
       throw new Error(`docker network connect failed: ${connect.stderr}`);
     }
-    // A redeploy can recreate the credproxy sidecar and drop its attachment to a still-running
-    // workspace's network, black-holing egress. Reattach idempotently — but only when this
-    // workspace should have egress at all; an off workspace's network was never internet-reachable
-    // in the first place, so there is nothing to reattach.
+    // On: attach the sidecar (idempotent) — a redeploy can recreate it and drop its attachment to a
+    // still-running workspace, which this reattaches. Off: detach it and CONFIRM it is gone, so a
+    // workspace the UI shows as off can never be left with a live route out through a stale sidecar.
     if (internetAccess) await this.proxy.attach(workspaceId);
+    else await this.proxy.ensureDetached(workspaceId);
   }
 
   // A run has begun for this workspace: keep the container warm for its whole duration. Cancels any
@@ -294,11 +308,18 @@ export class ContainerManager implements IContainerManager {
     this.idleTimers.set(workspaceId, t);
   }
 
-  // Secret env for a single command. Recomputed per exec rather than cached, so adding or revoking
-  // a secret takes effect on the very next command with no container churn. Cheap: the secret store
-  // is in memory and the tokens are derived, so this never touches disk.
+  // Env for a single command, recomputed per exec so a secret change reaches the very next command.
+  // Cheap: the secret store is in memory and the tokens are derived.
   private execEnv(workspaceId: string): Record<string, string> {
-    return this.workspaceDeps.execEnvironment(workspaceId, this.workspaceDeps.internetAccessFor(workspaceId));
+    const internetAccess = this.workspaceDeps.internetAccessFor(workspaceId);
+    return this.workspaceDeps.execEnvironment(workspaceId, internetAccess, this.relayReady.get(workspaceId) === true);
+  }
+
+  // Once per container start: the relay dies with the container and nothing inside restarts it.
+  private async startProxyRelay(workspaceId: string, internetAccess: boolean): Promise<void> {
+    const name = containerName(workspaceId);
+    const ready = await this.workspaceDeps.ensureProxyRelay(this.docker, name, workspaceId, internetAccess);
+    this.relayReady.set(workspaceId, ready);
   }
 
   private async getContainerStatus(workspaceId: string): Promise<"running" | "stopped" | "missing"> {
@@ -520,10 +541,8 @@ export class ContainerManager implements IContainerManager {
 
   private async _ensureContainer(workspaceId: string, workspaceDir: string): Promise<void> {
     let stage = "inspect_container";
-    // Fails closed (no internet) if the workspace record can't be found at all — only a record
-    // that exists but predates this field defaults to true (see workspaceStore.ts hydration).
-    // Read once so the network-create and proxy-attach decisions below can't disagree with each
-    // other partway through this method.
+    // Read once so the network and proxy decisions below can't disagree. Fails closed (no internet)
+    // when the workspace record is missing; one predating the field defaults to true.
     const internetAccess = this.workspaceDeps.internetAccessFor(workspaceId);
     try {
       const status = await this.getContainerStatus(workspaceId);
@@ -531,19 +550,21 @@ export class ContainerManager implements IContainerManager {
       // An existing container is ALWAYS reused as-is — drift from the image is intended, not stale.
       // Its state is recoverable anyway: /home/dev is durable, and apt packages replay from the recipe.
       if (status === "running") {
-        // Reattaching to a still-running container (e.g. after an app restart wiped our
-        // in-memory task map). Rebuild it from the container's pidfiles so a survivor
-        // background process is surfaced and stoppable rather than colliding invisibly.
+        // An app restart wiped the in-memory task map: rebuild it from pidfiles so a surviving
+        // background process stays visible and stoppable.
         stage = "rehydrate_background_tasks";
         await this.background.rehydrate(workspaceId);
         stage = "reconcile_network";
         await this.reconcileNetwork(workspaceId, internetAccess);
+        if (!this.relayReady.has(workspaceId)) {
+          stage = "start_proxy_relay";
+          await this.startProxyRelay(workspaceId, internetAccess);
+        }
         return;
       }
 
       if (status === "stopped") {
-        // Restart in place. `docker start` preserves the writable layer, so everything installed
-        // in a previous session is still there — only `docker rm` would lose it.
+        // Restart in place: `docker start` keeps the writable layer, so earlier installs survive.
         log.debug({ workspaceId }, "starting stopped container");
         stage = "reconcile_network";
         await this.reconcileNetwork(workspaceId, internetAccess);
@@ -551,31 +572,26 @@ export class ContainerManager implements IContainerManager {
         const r = await this.docker.cmd("start", containerName(workspaceId));
         if (r.code !== 0) throw new Error(`docker start failed: ${r.stderr}`);
         await this.sweepExecPidFiles(workspaceId);
+        stage = "start_proxy_relay";
+        await this.startProxyRelay(workspaceId, internetAccess);
         return;
       }
 
       // missing — first run for this workspace, so create and start
       log.debug({ workspaceId }, "creating container");
       stage = "ensure_network";
-      await this.ensureNetwork(workspaceId, internetAccess);
+      await this.ensureNetwork(workspaceId);
       // Before the container exists, so its /home/dev mount has the image's runtimes to start from.
       stage = "seed_agent_home";
       await this.seedAgentHome(workspaceId);
       stage = "hash_workspace_image";
-      // Only the create path uses this — it is recorded as a label on the new container. Computed
-      // here rather than before the branches above so a reused container never pays to read and
-      // hash the Dockerfile on every single command.
+      // Create path only (it labels the new container), so a reused container never hashes the Dockerfile.
       const hash = await this.imageManager.getCurrentHash("Dockerfile.workspace");
 
-      // Build the credential-proxy routing + CA-trust env. Secrets are NOT here — they are injected
-      // per exec (see execEnvironment), because this container is never recreated and Docker cannot
-      // amend a container's env after creation. See containerCredentials.ts.
+      // Proxy routing + CA trust only: secrets go per exec, since this container's env is frozen.
       stage = "build_credential_environment";
       const { envArgs: runEnvArgs, hasProxyCA } = this.workspaceDeps.runEnvironment(workspaceId);
-      // Attach the sidecar to this workspace's network so the proxy alias resolves inside the
-      // container. Only when this workspace actually has a proxy CA (attach() itself no-ops in
-      // local dev — no sidecar, proxy is in-process) AND internet access is on — an off workspace's
-      // network has no route out at all, so there is nothing for the sidecar to usefully reach here.
+      // The sidecar makes the proxy alias resolve inside the container; an off workspace gets no route out.
       if (hasProxyCA && internetAccess) {
         stage = "attach_credential_proxy";
         await this.proxy.attach(workspaceId);
@@ -585,9 +601,7 @@ export class ContainerManager implements IContainerManager {
       const r = await this.docker.cmd(
         "run",
         "-d",
-        // --init runs tini as PID 1 so it reaps orphaned/killed processes. Without it, the keep-alive
-        // `sleep infinity` is PID 1 and never wait()s on reparented children, so every command we
-        // group-kill (execStreaming) would linger as a zombie and slowly exhaust the PID table.
+        // tini as PID 1 reaps orphans; `sleep infinity` would leave every group-killed command a zombie.
         "--init",
         "--name",
         containerName(workspaceId),
@@ -597,15 +611,11 @@ export class ContainerManager implements IContainerManager {
         `--cpus=${CONTAINER_CPUS}`,
         `--pids-limit=${CONTAINER_PIDS}`,
         ...this.buildVolumeArgs(workspaceId, workspaceDir),
-        // Recorded for diagnostics only — which base image this container was born from. Nothing
-        // acts on it: a newer image never triggers a rebuild, because that would discard everything
-        // the agent has installed since. New images apply to newly created workspaces.
+        // Diagnostics only: a newer image never triggers a rebuild, which would discard the agent's installs.
         ...(hash ? ["--label", `${HASH_LABEL}=${hash}`] : []),
         ...runEnvArgs,
-        // Drop all Linux capabilities, then add back only the minimal set dpkg/apt and the chown sweep
-        // need when run as root via `docker exec -u 0` (apt_install tool, ownership sweep). The agent's
-        // shell is non-root with no setuid path, so it cannot use these caps — they are reachable only
-        // by the app-initiated root execs. Combined with no-new-privileges this blocks setuid escalation.
+        // Only the caps the app's root execs need (apt, chown sweep, relay start); the non-root agent
+        // can't use them, and no-new-privileges blocks setuid escalation.
         "--cap-drop",
         "ALL",
         "--cap-add",
@@ -639,10 +649,8 @@ export class ContainerManager implements IContainerManager {
         "workspace container created with capacity guardrails",
       );
 
-      // One-time ownership sweep: legacy workspaces created when the agent ran as root hold root-owned
-      // files the uid-1000 agent/app can no longer manage. Chown the tree to 1000:1000 so both can.
-      // Runs as root (-u 0) for this single bootstrap command only. Idempotent and cheap on
-      // already-1000-owned trees.
+      // Legacy workspaces from when the agent ran as root hold root-owned files; hand the tree back to
+      // uid 1000 so the agent and app can manage it. Idempotent and cheap.
       stage = "repair_workspace_ownership";
       const chown = await this.docker.exec(containerName(workspaceId), ["chown", "-R", "1000:1000", "/workspace"], {
         asRoot: true,
@@ -660,13 +668,15 @@ export class ContainerManager implements IContainerManager {
         );
       }
 
-      // Install the proxy CA and build the combined trust bundle inside the fresh container (no-op
-      // when the proxy isn't set up). See containerCredentials.installProxyCA.
+      // Proxy CA + combined trust bundle (no-op when the proxy isn't set up).
       stage = "install_proxy_ca";
       await this.workspaceDeps.installProxyCA(this.docker, containerName(workspaceId), workspaceId);
 
-      // After the CA, not before: apt reaches the repos through the credential proxy, and the
-      // GitHub CLI source the image adds is HTTPS, so an untrusted CA fails the refresh outright.
+      // The relay is this container's only route out, so it must be up before apt needs it.
+      stage = "start_proxy_relay";
+      await this.startProxyRelay(workspaceId, internetAccess);
+
+      // After the CA too: the image's GitHub CLI apt source is HTTPS, so an untrusted CA fails the refresh.
       stage = "replay_apt_recipe";
       await this.replayAptRecipe(workspaceId, internetAccess);
     } catch (err) {
@@ -901,19 +911,14 @@ export class ContainerManager implements IContainerManager {
     });
   }
 
-  // Runs a command inside the workspace container AS ROOT (-u 0). This is the single sanctioned root
-  // exec path for agent-facing functionality — used only by the `apt_install` tool to install system
-  // packages. cmdArgs are passed as argv (no shell), so callers must still validate untrusted input.
-  // The regular agent shell (exec / execute_command) never runs as root.
+  // The only agent-facing root exec, for the `apt_install` tool. cmdArgs go as argv (no shell), so
+  // callers must still validate untrusted input; the agent's own shell never runs as root.
   async execAsRoot(workspaceId: string, workspaceDir: string, cmdArgs: string[]) {
     await this.ensure(workspaceId, workspaceDir);
     return this.docker.exec(containerName(workspaceId), cmdArgs, {
       asRoot: true,
       trimStdout: true,
-      // Deliberately no secret env. apt still reaches the credential proxy, because the proxy URL
-      // and CA-trust vars are container-level (buildRunEnv) and every exec inherits them; the
-      // per-command env carries only the workspace's secret tokens, which apt has no use for. This
-      // is the one exec that runs as root, so it gets the least it can work with.
+      // No secret env: apt needs only the egress route, which DockerClient keeps for root execs.
     });
   }
 
@@ -1044,13 +1049,14 @@ export class ContainerManager implements IContainerManager {
   /**
    * Apply a workspace's internet-access setting to its live network, leaving the container alone.
    *
-   * Docker cannot flip `--internal` on an existing network, so the network itself is rebuilt — but
-   * `network disconnect` / `network connect` both work on a RUNNING container, so the container
-   * keeps its identity and, crucially, everything the agent installed in it. Connections open at
-   * the moment egress is switched off are dropped along with the interface, which is the intent.
+   * The network is always --internal, so the toggle no longer rebuilds it: reconcileNetwork attaches
+   * the credproxy sidecar (on) or detaches it (off). Both act on a RUNNING container, so it keeps its
+   * identity and everything the agent installed. Turning egress off drops open connections with the
+   * sidecar's interface, which is the intent.
    *
-   * Confirmable by design: throws if the new network could not be put in place, so the caller can
-   * roll the persisted setting back rather than reporting a boundary it never actually applied.
+   * Confirmable by design: ensureDetached throws if the sidecar is still attached afterwards, and
+   * attach failures surface too, so the caller can roll the persisted setting back rather than
+   * reporting a boundary it never actually applied.
    */
   async applyInternetAccess(workspaceId: string, enabled: boolean): Promise<void> {
     // Wait out any in-flight ensure()/stop() before claiming the slot, so this can't interleave
@@ -1193,10 +1199,8 @@ export class ContainerManager implements IContainerManager {
         "workspace container stopped",
       );
     }
-    // Wait out anything already in flight (an ensure() or another stop()) before claiming the slot
-    // for our own teardown, so a concurrent ensure() (e.g. an agent tool call racing the
-    // internet-access toggle route) can't interleave with this — reattaching the sidecar right as
-    // we're trying to tear the network down, or vice versa. See ensure() above for the matching half.
+    // Wait out any in-flight ensure()/stop() before claiming the slot, so a concurrent ensure() can't
+    // reattach the sidecar while this tears the network down. See ensure() for the matching half.
     for (;;) {
       const inflight = this.startLocks.get(workspaceId);
       if (!inflight) break;
@@ -1209,8 +1213,9 @@ export class ContainerManager implements IContainerManager {
         clearTimeout(t);
         this.idleTimers.delete(workspaceId);
       }
-      // Background processes die with the container (tini reaps the tree) — just drop the bookkeeping.
+      // Background processes and the relay die with the container — just drop the bookkeeping.
       this.background.clear(workspaceId);
+      this.relayReady.delete(workspaceId);
       const r = await this.docker.cmd("stop", containerName(workspaceId));
       // A workspace that never ran has no container and is already stopped; any other non-zero result
       // is a teardown Docker could not confirm — surface it after the network cleanup below.
@@ -1234,10 +1239,8 @@ export class ContainerManager implements IContainerManager {
   }
 
   async remove(workspaceId: string): Promise<void> {
-    // Mark first so no new ensure() can claim the slot while we wait for an existing start/stop to
-    // finish. The marker deliberately survives a cleanup failure: deletion has already removed other
-    // workspace-owned state, so reviving the container would race the retry and restore only part of
-    // a workspace the user asked to remove.
+    // Mark first so no new ensure() claims the slot meanwhile. Kept even if cleanup fails: reviving the
+    // container would restore only part of a workspace whose other state deletion already removed.
     this.removingWorkspaces.add(workspaceId);
     for (;;) {
       const inflight = this.startLocks.get(workspaceId);
@@ -1252,9 +1255,9 @@ export class ContainerManager implements IContainerManager {
         this.idleTimers.delete(workspaceId);
       }
       this.background.clear(workspaceId);
-      // Attempt every teardown step even if one fails, but ignore a non-zero result ONLY when Docker
-      // explicitly says the resource is absent. Treating daemon/permission/conflict failures as "may
-      // not exist" lets workspace deletion remove the registry while a live container survives it.
+      this.relayReady.delete(workspaceId);
+      // Attempt every step, excusing a failure ONLY when Docker says the resource is absent — anything
+      // else could let deletion drop the registry while a live container survives it.
       const failures: string[] = [];
       const stop = await this.docker.cmd("stop", containerName(workspaceId));
       if (stop.code !== 0 && !isMissingContainer(stop.stderr)) {

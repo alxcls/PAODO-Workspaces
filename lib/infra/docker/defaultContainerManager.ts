@@ -1,9 +1,10 @@
 // Production composition for ContainerManager. This is the only module that binds Docker lifecycle
 // policy to the concrete workspace registry and credential store.
 import { defaultWorkspaceStore } from "@/lib/infra/workspace/registry";
-import { buildExecEnv, buildRunEnv, installProxyCA } from "./containerCredentials";
+import { buildExecEnv, buildRunEnv, hasProxyCA, installProxyCA } from "./containerCredentials";
 import { ContainerManager, type ContainerWorkspaceDependencies } from "./containerManager";
 import { DockerClient } from "./dockerClient";
+import { ensureProxyRelay } from "./proxyRelay";
 
 const workspaceDeps: ContainerWorkspaceDependencies = {
   internetAccessFor(workspaceId) {
@@ -13,6 +14,9 @@ const workspaceDeps: ContainerWorkspaceDependencies = {
   runEnvironment: buildRunEnv,
   execEnvironment: buildExecEnv,
   installProxyCA,
+  async ensureProxyRelay(docker, containerName, workspaceId, canInstall) {
+    return hasProxyCA() && ensureProxyRelay(docker, containerName, workspaceId, canInstall);
+  },
 };
 
 // Module-level state is intentional: Next.js hot reload does not re-import this server-only

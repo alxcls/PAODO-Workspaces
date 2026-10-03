@@ -47,6 +47,24 @@ describe("ProxyNetworkManager.detach", () => {
   });
 });
 
+describe("ProxyNetworkManager.ensureDetached", () => {
+  it("detaches and resolves when the sidecar is confirmed gone", async () => {
+    // inspect reports the sidecar absent after the disconnect — the cut is confirmed.
+    const { docker, calls } = makeDocker((args) =>
+      args[1] === "inspect" ? { stdout: "", stderr: "", code: 0 } : undefined,
+    );
+    await expect(new ProxyNetworkManager(docker).ensureDetached("ws1")).resolves.toBeUndefined();
+    expect(calls).toContainEqual(["network", "disconnect", "-f", "wsnet_ws1", SIDECAR]);
+  });
+
+  it("throws when the sidecar is still attached after the detach — off must never fail open", async () => {
+    const { docker } = makeDocker((args) =>
+      args[1] === "inspect" ? { stdout: `${SIDECAR} `, stderr: "", code: 0 } : undefined,
+    );
+    await expect(new ProxyNetworkManager(docker).ensureDetached("ws1")).rejects.toThrow(/still attached/);
+  });
+});
+
 describe("ProxyNetworkManager.verify", () => {
   it("no-ops when the sidecar is already attached", async () => {
     const { docker, calls } = makeDocker((args) =>

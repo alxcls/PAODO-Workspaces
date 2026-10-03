@@ -51,51 +51,36 @@ function makeDocker(opts: { inspectCode?: number; internal?: boolean } = {}) {
   return { docker, calls };
 }
 
-function ensureNetwork(mgr: ContainerManager, workspaceId: string, internetAccess: boolean): Promise<void> {
-  return (mgr as unknown as { ensureNetwork(id: string, internetAccess: boolean): Promise<void> }).ensureNetwork(
-    workspaceId,
-    internetAccess,
-  );
+function ensureNetwork(mgr: ContainerManager, workspaceId: string): Promise<void> {
+  return (mgr as unknown as { ensureNetwork(id: string): Promise<void> }).ensureNetwork(workspaceId);
 }
 
 describe("ContainerManager.ensureNetwork — creation", () => {
-  it("creates a plain bridge network when internet access is on", async () => {
+  it("always creates an --internal network, so the proxy sidecar is the only egress", async () => {
     const { docker, calls } = makeDocker({ inspectCode: 1 });
-    await ensureNetwork(new ContainerManager(docker), "ws1", true);
-    const create = calls.find((c) => c[0] === "network" && c[1] === "create")!;
-    expect(create).toBeDefined();
-    expect(create).not.toContain("--internal");
-    expect(create).toContain("com.paodo.managed=workspace");
-    expect(create).toContain("com.paodo.workspace-id=ws1");
-  });
-
-  it("creates an --internal network when internet access is off", async () => {
-    const { docker, calls } = makeDocker({ inspectCode: 1 });
-    await ensureNetwork(new ContainerManager(docker), "ws1", false);
+    await ensureNetwork(new ContainerManager(docker), "ws1");
     const create = calls.find((c) => c[0] === "network" && c[1] === "create")!;
     expect(create).toBeDefined();
     expect(create).toContain("--internal");
+    expect(create).toContain("com.paodo.managed=workspace");
+    expect(create).toContain("com.paodo.workspace-id=ws1");
   });
 });
 
-describe("ContainerManager.ensureNetwork — existing network, flag matches", () => {
-  it("no-ops when an on-policy workspace's network is already non-internal", async () => {
-    const { docker, calls } = makeDocker({ inspectCode: 0, internal: false });
-    await ensureNetwork(new ContainerManager(docker), "ws1", true);
-    expect(calls.some((c) => c[0] === "network" && (c[1] === "create" || c[1] === "rm"))).toBe(false);
-  });
-
-  it("no-ops when an off-policy workspace's network is already --internal", async () => {
+describe("ContainerManager.ensureNetwork — existing network already internal", () => {
+  it("no-ops when the network is already --internal", async () => {
     const { docker, calls } = makeDocker({ inspectCode: 0, internal: true });
-    await ensureNetwork(new ContainerManager(docker), "ws1", false);
+    await ensureNetwork(new ContainerManager(docker), "ws1");
     expect(calls.some((c) => c[0] === "network" && (c[1] === "create" || c[1] === "rm"))).toBe(false);
   });
 });
 
-describe("ContainerManager.ensureNetwork — existing network, flag mismatch", () => {
-  it("recreates a non-internal network as --internal when policy flipped to off", async () => {
+describe("ContainerManager.ensureNetwork — recreating a non-internal network (migration)", () => {
+  it("recreates a non-internal network as --internal", async () => {
+    // A network from before every-network-is-internal (an internet-on workspace was a plain bridge
+    // with a direct route out). ensureNetwork rebuilds it as internal — this is the one-time migration.
     const { docker, calls } = makeDocker({ inspectCode: 0, internal: false });
-    await ensureNetwork(new ContainerManager(docker), "ws1", false);
+    await ensureNetwork(new ContainerManager(docker), "ws1");
     const rm = calls.find((c) => c[0] === "network" && c[1] === "rm");
     const create = calls.find((c) => c[0] === "network" && c[1] === "create");
     expect(rm).toBeDefined();
@@ -105,20 +90,12 @@ describe("ContainerManager.ensureNetwork — existing network, flag mismatch", (
     expect(calls.indexOf(rm!)).toBeLessThan(calls.indexOf(create!));
   });
 
-  it("recreates an --internal network as non-internal when policy flipped to on", async () => {
-    const { docker, calls } = makeDocker({ inspectCode: 0, internal: true });
-    await ensureNetwork(new ContainerManager(docker), "ws1", true);
-    const create = calls.find((c) => c[0] === "network" && c[1] === "create")!;
-    expect(create).toBeDefined();
-    expect(create).not.toContain("--internal");
-  });
-
   it("force-disconnects the workspace container and the proxy sidecar before removing the network", async () => {
     // A container/sidecar that reached this state without a clean stop() can still hold an endpoint,
     // which would make `network rm` fail with "has active endpoints" — the recreate path must clear
     // both before attempting rm.
     const { docker, calls } = makeDocker({ inspectCode: 0, internal: false });
-    await ensureNetwork(new ContainerManager(docker), "ws1", false);
+    await ensureNetwork(new ContainerManager(docker), "ws1");
     const disconnect = calls.find((c) => c[0] === "network" && c[1] === "disconnect" && c.includes("-f"));
     expect(disconnect).toBeDefined();
     expect(disconnect).toContain("ws_ws1");
@@ -133,7 +110,7 @@ describe("ContainerManager.ensureNetwork — existing network, flag mismatch", (
       if (args[0] === "network" && args[1] === "rm") return { stdout: "", stderr: "boom", code: 1 };
       return originalCmd(...args);
     };
-    await expect(ensureNetwork(new ContainerManager(docker), "ws1", false)).rejects.toThrow(/network rm failed/);
+    await expect(ensureNetwork(new ContainerManager(docker), "ws1")).rejects.toThrow(/network rm failed/);
   });
 });
 

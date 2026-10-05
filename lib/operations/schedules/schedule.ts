@@ -76,14 +76,14 @@ export interface ScheduleIssue {
   acceptedValues?: string[];
 }
 
-/** A Z or ±hh:mm after the time. computeNextRun would honour it over `timezone`, firing at another hour. */
-const UTC_OFFSET = /T.*(?:Z|[+-]\d{2}(?::?\d{2})?)$/i;
+/** The one accepted spelling: the timezone's clock to the minute, no seconds, Z or offset. */
+const LOCAL_DATE_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/;
 
-/** A time after the date (`T09:00`). A date alone would leave the hour to be invented. */
-const HAS_TIME = /T\d{2}:\d{2}/;
+/** A date with no time, answered with the endAt that would cover that whole day. */
+const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
 
-function offsetMessage(field: "startAt" | "endAt", example: string): string {
-  return `${field} must be a time on the timezone's clock, without Z or an offset, e.g. ${example}`;
+function formatMessage(field: "startAt" | "endAt", example: string): string {
+  return `${field} must be YYYY-MM-DDTHH:mm on the timezone's clock, no seconds, Z or offset, e.g. ${example}`;
 }
 
 /**
@@ -155,10 +155,9 @@ export function validateSchedule(input: ScheduleInput, now: Date = new Date()): 
   let validStart: string | undefined;
   if (startAt !== undefined) {
     if (missing(startAt)) reject("startAt", "startAt is required");
-    else if (UTC_OFFSET.test(startAt)) reject("startAt", offsetMessage("startAt", "2026-10-02T09:00"));
+    else if (!LOCAL_DATE_TIME.test(startAt)) reject("startAt", formatMessage("startAt", "2026-10-02T09:00"));
     else if (!DateTime.fromISO(startAt, { zone }).isValid)
       reject("startAt", "startAt must be a valid date-time, e.g. 2026-10-02T09:00");
-    else if (!HAS_TIME.test(startAt)) reject("startAt", "startAt needs a time, e.g. 2026-10-02T09:00");
     else validStart = startAt;
   }
 
@@ -167,14 +166,17 @@ export function validateSchedule(input: ScheduleInput, now: Date = new Date()): 
   const endAt =
     input.endAt === undefined || input.endAt === null ? undefined : text(input.endAt, "endAt")?.trim() || undefined;
   if (endAt) {
-    const end = endBound({ endAt, timezone: zone });
-    if (UTC_OFFSET.test(endAt)) reject("endAt", offsetMessage("endAt", "2026-10-31T18:00"));
-    else if (!end) reject("endAt", "endAt must be a valid date-time, e.g. 2026-10-31T18:00");
-    else if (!HAS_TIME.test(endAt)) {
-      const next = end.plus({ days: 1 }).toFormat("yyyy-MM-dd'T'HH:mm");
-      reject("endAt", `endAt needs a time; to include all of ${end.toISODate()}, write endAt=${next}`);
-    } else if (validStart && end <= DateTime.fromISO(validStart, { zone }))
-      reject("endAt", "endAt must be after startAt");
+    const dateOnly = DATE_ONLY.test(endAt);
+    if (!dateOnly && !LOCAL_DATE_TIME.test(endAt)) reject("endAt", formatMessage("endAt", "2026-10-31T18:00"));
+    else {
+      const end = endBound({ endAt, timezone: zone });
+      if (!end) reject("endAt", "endAt must be a valid date-time, e.g. 2026-10-31T18:00");
+      else if (dateOnly) {
+        const next = end.plus({ days: 1 }).toFormat("yyyy-MM-dd'T'HH:mm");
+        reject("endAt", `endAt needs a time; to include all of ${end.toISODate()}, write endAt=${next}`);
+      } else if (validStart && end <= DateTime.fromISO(validStart, { zone }))
+        reject("endAt", "endAt must be after startAt");
+    }
   }
 
   if (issues.length > 0) throw invalid(issues);

@@ -270,9 +270,8 @@ describe("usageStore", () => {
     const store = await freshEmptyStore();
     startTestSession(store, { id: "caller", workspaceId: "w-caller", userInput: "call the callee" });
     startTestSession(store, { id: "callee", workspaceId: "w-callee", userInput: "do the work" });
-    // Freeze the clock so every turn gets an identical millisecond timestamp — the case fast or
-    // zero-token turns hit in production. Order must come from the recording sequence, not the
-    // timestamp or the random UUID tiebreaker.
+    // Every turn gets the same millisecond, as fast or zero-token turns do in production; order must come from
+    // the recording sequence, not the timestamp or the random UUID tiebreaker.
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-07-24T00:00:00.000Z"));
     try {

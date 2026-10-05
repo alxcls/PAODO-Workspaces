@@ -1,10 +1,5 @@
-// The SQLite boundary for model turns. Run-wide data lives in sessions; a turn contains only one
-// model call's output, accounting, and ordered tool-call JSON.
-//
-// The read SQL deliberately stays in ./queries.ts: each SELECT is shaped by the response it serves
-// (light list vs. full session drawer vs. session totals), so there is no shared statement to
-// extract. What IS shared, and lives here, is the translation every reader needs identically —
-// null↔undefined, JSON↔object, and validating a stored status string back into the union.
+// The SQLite boundary for model turns (one model call each; run-wide data lives in sessions): the null↔undefined,
+// JSON and status translation every reader shares. The SELECTs stay in ./queries.ts, each shaped by its response.
 import type Database from "better-sqlite3";
 import { DEFAULT_CURRENCY, type Currency } from "../models/currency";
 import type { RunErrorRecord, ToolStatus, TurnRecord } from "./types";

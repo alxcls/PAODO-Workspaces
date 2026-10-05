@@ -1,6 +1,5 @@
-// The pricing module is a thin lookup over the vendored catalog. What matters: rates resolve for
-// known models (both bare and provider-prefixed ids), cost math doesn't double-charge cached input,
-// and unknown models yield undefined (so the UI shows "—" not a fake $0).
+// Rates resolve for bare and provider-prefixed ids, cached input is never double-charged, and an unknown model
+// yields undefined so the UI shows "—", not a fake $0.
 import { describe, it, expect } from "vitest";
 import { getRate, computeCost } from "./pricing";
 
@@ -78,9 +77,8 @@ describe("modelPricing", () => {
 
   it("does not double-charge Anthropic cache-creation tokens folded into input_tokens", () => {
     const rate = getRate("claude-opus-4-8")!;
-    // Providers report input_tokens as the total: here 1000 = 600 base + 300 cache_read + 100
-    // cache_creation. Only the 600 base should pay the plain input rate; the other buckets pay their
-    // own rates. Without subtracting cache-creation, the 100 creation tokens would be billed twice.
+    // input_tokens is the total: 1000 = 600 base + 300 cache_read + 100 cache_creation. Only the base pays the
+    // plain input rate; without subtracting cache-creation, those 100 tokens would be billed twice.
     const tokens = {
       inputTokensTotal: 1000,
       inputTokensCacheRead: 300,

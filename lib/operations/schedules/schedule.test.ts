@@ -47,6 +47,11 @@ function fakeSchedules(initial: ScheduleEntry | null = null) {
   };
 }
 
+const START_FORMAT =
+  "startAt must be YYYY-MM-DDTHH:mm on the timezone's clock, no seconds, Z or offset, e.g. 2026-10-02T09:00";
+const END_FORMAT =
+  "endAt must be YYYY-MM-DDTHH:mm on the timezone's clock, no seconds, Z or offset, e.g. 2026-10-31T18:00";
+
 // One hour before the start anchor, so the first occurrence is the anchor itself.
 const NOW = new Date("2026-07-13T08:00:00Z");
 const deps = (schedules: ReturnType<typeof fakeSchedules>) => ({
@@ -117,12 +122,16 @@ describe("schedule validation", () => {
     expect(() => validateSchedule({ ...VALID, timezone: "Mars/Phobos" })).toThrow(
       "timezone must be a standard timezone name, e.g. Europe/Paris",
     );
-    expect(() => validateSchedule({ ...VALID, startAt: "not-a-date" })).toThrow("startAt must be a valid date-time");
+    expect(() => validateSchedule({ ...VALID, startAt: "not-a-date" })).toThrow(START_FORMAT);
     // Date.parse reads a space separator, the scheduler does not: such a start would never fire.
-    expect(() => validateSchedule({ ...VALID, startAt: "2026-07-13 09:00" })).toThrow(
+    expect(() => validateSchedule({ ...VALID, startAt: "2026-07-13 09:00" })).toThrow(START_FORMAT);
+    expect(() => validateSchedule({ ...VALID, startAt: "2026-02-30T09:00" })).toThrow(
       "startAt must be a valid date-time, e.g. 2026-10-02T09:00",
     );
-    expect(() => validateSchedule({ ...VALID, endAt: "not-a-date" })).toThrow("endAt must be a valid date");
+    expect(() => validateSchedule({ ...VALID, endAt: "not-a-date" })).toThrow(END_FORMAT);
+    expect(() => validateSchedule({ ...VALID, endAt: "2026-02-30T09:00" })).toThrow(
+      "endAt must be a valid date-time, e.g. 2026-10-31T18:00",
+    );
     expect(() => validateSchedule({ ...VALID, endAt: "2026-07-01T09:00" })).toThrow("endAt must be after startAt");
     expect(() => validateSchedule({ ...VALID, enabled: "TRUE" as never })).toThrow("enabled must be true or false");
   });
@@ -147,13 +156,11 @@ describe("schedule validation", () => {
 
   // A date alone would leave the hour to be invented, so the refusal names the value to send instead.
   it("refuses a date without a time, for the start and the end", () => {
-    expect(() => validateSchedule({ ...VALID, startAt: "2026-07-13" })).toThrow(
-      "startAt needs a time, e.g. 2026-10-02T09:00",
-    );
+    expect(() => validateSchedule({ ...VALID, startAt: "2026-07-13" })).toThrow(START_FORMAT);
     expect(() => validateSchedule({ ...VALID, endAt: "2026-07-31" })).toThrow(
       "endAt needs a time; to include all of 2026-07-31, write endAt=2026-08-01T00:00",
     );
-    expect(() => validateSchedule({ ...VALID, endAt: "2026-W31-5" })).toThrow("to include all of 2026-07-31");
+    expect(() => validateSchedule({ ...VALID, endAt: "2026-W31-5" })).toThrow(END_FORMAT);
   });
 
   it("refuses an enabled schedule with no run left before its end, and saves it disabled", () => {
@@ -223,21 +230,26 @@ describe("schedule validation", () => {
     expect(fieldsOf({ ...VALID, startAt: "not-a-date", endAt: "2026-07-01T09:00" })).toEqual(["startAt"]);
   });
 
-  it("refuses a Z or offset that would override the timezone", () => {
+  it("accepts only YYYY-MM-DDTHH:mm, refusing a Z, an offset or any other spelling", () => {
     for (const startAt of [
       "2026-07-13T09:00Z",
       "2026-07-13T09:00:00.000z",
       "2026-07-13T09:00+05:00",
       "2026-07-13T09:00-0500",
+      "2026-07-13t09:00",
+      "2026-07-13T09:00:30",
+      "2026-07-13T09:00:00.000",
     ]) {
-      expect(() => validateSchedule({ ...VALID, startAt })).toThrow(
-        "startAt must be a time on the timezone's clock, without Z or an offset, e.g. 2026-10-02T09:00",
-      );
+      expect(() => validateSchedule({ ...VALID, startAt })).toThrow(START_FORMAT);
     }
-    expect(() => validateSchedule({ ...VALID, endAt: "2026-08-01T18:00Z" })).toThrow(
-      "endAt must be a time on the timezone's clock, without Z or an offset, e.g. 2026-10-31T18:00",
-    );
+    expect(() => validateSchedule({ ...VALID, endAt: "2026-08-01T18:00Z" })).toThrow(END_FORMAT);
     expect(validateSchedule({ ...VALID, endAt: "2026-08-01T18:00" }).endAt).toBe("2026-08-01T18:00");
+  });
+
+  // The old offset regex took ~20 s on this input, blocking the whole server; the timeout catches a return.
+  it("refuses an oversized date at once", () => {
+    const huge = "T".repeat(200_000);
+    expect(() => validateSchedule({ ...VALID, startAt: huge, endAt: huge })).toThrow(`${START_FORMAT}; ${END_FORMAT}`);
   });
 
   it("rejects a request that omits a required field rather than inventing a default", () => {
@@ -407,7 +419,7 @@ it("refuses an enabled schedule whose next occurrence overflows the date range",
     validateSchedule(
       {
         ...VALID,
-        startAt: "+275760-09-12T00:00",
+        startAt: "9999-12-31T23:59",
         intervalValue: 10000,
         intervalUnit: "week",
         enabled: true,

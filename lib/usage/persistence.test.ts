@@ -1,10 +1,5 @@
-// Round-trip tests for the usage store: ./record.ts writes, ./rows.ts maps, ./queries.ts reads.
-// Deliberately one file rather than record.test.ts + queries.test.ts — every assertion here is
-// write-then-read (there is no way to observe an insert except by querying it), so a per-module split
-// would duplicate the SQLite harness below without isolating anything.
-//
-// Covers transactional full-content writes, lightweight indexed reads, and persistence across
-// process/module restarts.
+// Round-trip tests for the usage store (./record.ts writes, ./rows.ts maps, ./queries.ts reads), in one file
+// because every assertion is write-then-read: full-content writes, light reads, persistence across restarts.
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import Database from "better-sqlite3";
 import fs from "fs";
@@ -304,6 +299,62 @@ describe("usageStore", () => {
 
     expect(store.listUsageLight("w1").map((record) => record.sessionId)).toEqual(["a"]);
     expect(store.listUsageLight("w2").map((record) => record.sessionId)).toEqual(["b"]);
+  });
+
+  it("filters the lightweight list by conversation within a workspace", async () => {
+    const store = await freshEmptyStore();
+    startTestSession(store, { id: "a", workspaceId: "w1", conversationId: "c1" });
+    startTestSession(store, { id: "b", workspaceId: "w1", conversationId: "c2" });
+    startTestSession(store, { id: "c", workspaceId: "w2", conversationId: "c1" });
+    for (const sessionId of ["a", "b", "c"]) store.appendUsage(baseTurn({ sessionId }));
+
+    expect(store.listUsageLight("w1", "c1").map((record) => record.sessionId)).toEqual(["a"]);
+  });
+
+  it("filters the lightweight list by session within a conversation", async () => {
+    const store = await freshEmptyStore();
+    startTestSession(store, { id: "a", conversationId: "c1" });
+    startTestSession(store, { id: "b", conversationId: "c1" });
+    for (const sessionId of ["a", "b", "b"]) store.appendUsage(baseTurn({ sessionId }));
+
+    expect(store.listUsageLight("w1", "c1", "b").map((record) => record.sessionId)).toEqual(["b", "b"]);
+  });
+
+  it("reads each session's message and final answer, skipping tool steps and blank turns", async () => {
+    const store = await freshEmptyStore();
+    const toolCall = { name: "file_read", args: {}, output: "body", status: "ok" as const };
+    startTestSession(store, { id: "a", conversationId: "c1", userInput: "fix it" });
+    store.appendUsage(baseTurn({ sessionId: "a", outputText: "I will look", toolCalls: [toolCall] }));
+    store.appendUsage(baseTurn({ sessionId: "a", outputText: "Done." }));
+    store.appendUsage(baseTurn({ sessionId: "a", outputText: "   " }));
+    startTestSession(store, { id: "b", conversationId: "c1", userInput: "and this" });
+    store.appendUsage(baseTurn({ sessionId: "b", outputText: "Checking", toolCalls: [toolCall] }));
+    startTestSession(store, { id: "other-conversation", conversationId: "c2", userInput: "no" });
+    startTestSession(store, { id: "other-workspace", workspaceId: "w2", conversationId: "c1", userInput: "no" });
+
+    const texts = store.listSessionTexts("w1", "c1").sort((x, y) => x.sessionId.localeCompare(y.sessionId));
+    expect(texts).toEqual([
+      { sessionId: "a", userInput: "fix it", agentResponse: "Done." },
+      { sessionId: "b", userInput: "and this" },
+    ]);
+    expect(store.listSessionTexts("w1", "c1", "b")).toEqual([{ sessionId: "b", userInput: "and this" }]);
+    expect(store.listSessionTexts("w1", "c1", "other-conversation")).toEqual([]);
+  });
+
+  it("carries each run's stored status on its lightweight records", async () => {
+    const store = await freshEmptyStore();
+    startTestSession(store, { id: "live" });
+    startTestSession(store, { id: "done" });
+    for (const sessionId of ["live", "done"]) store.appendUsage(baseTurn({ sessionId }));
+    store.finishUsageSession("done", "failed", { message: "gave up" });
+
+    const status = new Map(store.listUsageLight().map((r) => [r.sessionId, r.status]));
+    expect(status).toEqual(
+      new Map([
+        ["live", "running"],
+        ["done", "failed"],
+      ]),
+    );
   });
 
   it("keeps per-turn detail while projecting a session total onto its visible output", async () => {

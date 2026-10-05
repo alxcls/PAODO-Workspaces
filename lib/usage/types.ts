@@ -1,10 +1,5 @@
-// The usage record shapes — what one persisted agent turn looks like in application terms. Kept
-// deliberately dependency-free (no better-sqlite3, no db handle, no logger) because the dashboard
-// page, the browser-side session grouping in lib/client/usageSessions.ts, and the agent runtime all
-// need to name these types, and none of them should pull the storage layer into their import graph.
-//
-// The SQL column shapes these map onto live in ./rows.ts, the writers in ./record.ts, the readers in
-// ./queries.ts.
+// Usage record shapes, dependency-free so the dashboard, ./sessions.ts and the agent runtime never import
+// storage. Their SQL shapes are in ./rows.ts, writers in ./record.ts, readers in ./queries.ts.
 
 import type { Currency } from "../models/currency";
 
@@ -69,6 +64,13 @@ export type TurnUsageFields = Omit<TurnRecord, "id" | "timestamp" | "sessionId" 
   turnId: string;
 };
 
+/** A session's user message and final answer (its last text-only turn); either may be missing. */
+export interface SessionTextRecord {
+  sessionId: string;
+  userInput?: string;
+  agentResponse?: string;
+}
+
 export interface SessionDetailRecord {
   session: SessionRecord;
   turns: TurnRecord[];
@@ -88,6 +90,8 @@ export interface LightTurnRecord {
   workspaceId: string;
   workspaceName: string;
   origin?: SessionOrigin;
+  /** The run's own outcome, stored on its session: running until it ends. */
+  status: SessionStatus;
   timestamp: string;
   model?: string;
   inputTokensTotal: number;

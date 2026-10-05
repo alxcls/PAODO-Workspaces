@@ -10,17 +10,16 @@ import { AsyncState } from "@/components/shared/AsyncState";
 import TokenUsageLine from "@/components/usage/TokenUsageLine";
 import { useDragResize } from "@/lib/client/hooks/useDragResize";
 import { toolLabel, toolArgSummary } from "@/lib/transcript/toolDisplay";
-import { uncachedInputTokens } from "@/lib/client/tokenUsage";
+import { uncachedInputTokens } from "@/lib/usage/tokenUsage";
 import {
-  groupBySessions,
   formatTokens,
   formatSessionCost,
   formatSessionCostTitle,
   formatDateTime,
   formatRunError,
   originLabel,
-  type LightSession,
 } from "@/lib/client/usageSessions";
+import { groupBySessions, type LightSession } from "@/lib/usage/sessions";
 import type { LightTurnRecord, RunErrorRecord, SessionDetailRecord, ToolStatus } from "@/lib/usage/types";
 
 // Tool-outcome dot: green success / red failure. From the caller's view a NEEDS_INPUT call

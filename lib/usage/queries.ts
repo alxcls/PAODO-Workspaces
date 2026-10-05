@@ -1,17 +1,21 @@
-// The usage read path. SQLite is the single source of truth and retains every record —
-// MAX_DASHBOARD_TURNS bounds one list response, it is not a retention policy.
-//
-// The three readers here have separate SELECTs on purpose rather than one query with a projection
-// flag: the dashboard list must not touch the large text columns (user input, reasoning, model
-// output, tool output), the session drawer must, and the conversation totals aggregate instead of
-// listing. Each maps its rows back through the converters in ./rows.ts so column names live in one
-// place per direction.
+// The usage read path. SQLite keeps every record; MAX_DASHBOARD_TURNS bounds one list response only.
+// One SELECT per reader, so the dashboard list never touches the large text columns the drawer needs.
 import { appDataDb as db } from "../data/database";
 import { currencyFromRow, errorFromRow, rowToTurn, toolCallsFromJson } from "./rows";
 import type { LightTurnRow, TurnRow } from "./rows";
-import type { LightTurnRecord, OutputTokenUsage, SessionDetailRecord, SessionOrigin, SessionStatus } from "./types";
+import type {
+  LightTurnRecord,
+  OutputTokenUsage,
+  SessionDetailRecord,
+  SessionOrigin,
+  SessionStatus,
+  SessionTextRecord,
+} from "./types";
 
 const MAX_DASHBOARD_TURNS = 5000;
+
+// A session's final answer: its last turn that wrote text and called no tool. Needs the turn aliased `turn`.
+const FINAL_ANSWER_TURN = "TRIM(COALESCE(turn.output_text, '')) <> '' AND json_array_length(turn.tool_calls_json) = 0";
 
 /**
  * Session token totals keyed by the final visible-output turn. Execution detail remains per turn;
@@ -50,8 +54,7 @@ export function getConversationOutputTokens(
         final_outputs AS (
           SELECT turn.session_id, MAX(turn.seq) AS final_seq
           FROM conversation_turns AS turn
-          WHERE TRIM(COALESCE(turn.output_text, '')) <> ''
-            AND json_array_length(turn.tool_calls_json) = 0
+          WHERE ${FINAL_ANSWER_TURN}
           GROUP BY turn.session_id
         )
         SELECT
@@ -86,24 +89,27 @@ export function getConversationOutputTokens(
 
 // Dashboard list payload — newest first, bounded for response size only. No heavy content columns
 // are selected, so large prompts and tool output do not affect normal dashboard reads.
-export function listUsageLight(workspaceId?: string): LightTurnRecord[] {
-  const where = workspaceId ? "WHERE sessions.workspace_id = ?" : "";
-  const params = workspaceId ? [workspaceId, MAX_DASHBOARD_TURNS] : [MAX_DASHBOARD_TURNS];
+export function listUsageLight(workspaceId?: string, conversationId?: string, sessionId?: string): LightTurnRecord[] {
+  const filters = [
+    ...(workspaceId ? [{ clause: "sessions.workspace_id = ?", value: workspaceId }] : []),
+    ...(conversationId ? [{ clause: "sessions.conversation_id = ?", value: conversationId }] : []),
+    ...(sessionId ? [{ clause: "turns.session_id = ?", value: sessionId }] : []),
+  ];
+  const where = filters.length ? `WHERE ${filters.map((f) => f.clause).join(" AND ")}` : "";
+  const params = [...filters.map((f) => f.value), MAX_DASHBOARD_TURNS];
   const rows = db()
     .prepare(
       `
         SELECT
             turns.seq, turns.id, turns.session_id,
             sessions.conversation_id, sessions.workspace_id, sessions.workspace_name, sessions.origin,
-            turns.timestamp, turns.model,
+            sessions.status, turns.timestamp, turns.model,
             turns.input_tokens_total, turns.input_tokens_cache_read, turns.input_tokens_cache_write,
             turns.output_tokens_total, turns.output_tokens_reasoning,
             turns.cost_amount, turns.cost_currency, turns.tool_calls_json,
             sessions.error_code, sessions.error_message,
-            -- Usage records outlive the conversations that produced them (deleting a workspace drops
-            -- its conversation rows but keeps its execution records). The id stays on the row either
-            -- way — it is what ties the run to its conversation in an audit trail — and this decides
-            -- only whether the dashboard may offer it as a link.
+            -- Usage records outlive their conversations; the id stays for the audit trail, and this
+            -- decides only whether the dashboard may offer it as a link.
             EXISTS (
               SELECT 1 FROM conversations
               WHERE conversations.workspace_id = sessions.workspace_id
@@ -126,6 +132,7 @@ export function listUsageLight(workspaceId?: string): LightTurnRecord[] {
     workspaceId: row.workspace_id,
     workspaceName: row.workspace_name,
     origin: row.origin ? (row.origin as SessionOrigin) : undefined,
+    status: row.status as SessionStatus,
     timestamp: row.timestamp,
     model: row.model ?? undefined,
     inputTokensTotal: row.input_tokens_total,
@@ -137,6 +144,38 @@ export function listUsageLight(workspaceId?: string): LightTurnRecord[] {
     costCurrency: currencyFromRow(row.cost_currency, row.cost_amount),
     error: errorFromRow(row),
     toolCalls: toolCallsFromJson(row.tool_calls_json).map(({ name, status }) => ({ name, status })),
+  }));
+}
+
+/** Each session's user message and final answer, for one conversation or one session of it. */
+export function listSessionTexts(workspaceId: string, conversationId: string, sessionId?: string): SessionTextRecord[] {
+  const rows = db()
+    .prepare(
+      `
+        SELECT
+          sessions.id AS session_id,
+          sessions.user_input,
+          (
+            SELECT turn.output_text FROM turns AS turn
+            WHERE turn.session_id = sessions.id AND ${FINAL_ANSWER_TURN}
+            ORDER BY turn.seq DESC
+            LIMIT 1
+          ) AS agent_response
+        FROM sessions
+        WHERE sessions.workspace_id = ? AND sessions.conversation_id = ?
+          ${sessionId ? "AND sessions.id = ?" : ""}
+      `,
+    )
+    .all(workspaceId, conversationId, ...(sessionId ? [sessionId] : [])) as Array<{
+    session_id: string;
+    user_input: string | null;
+    agent_response: string | null;
+  }>;
+
+  return rows.map((row) => ({
+    sessionId: row.session_id,
+    userInput: row.user_input ?? undefined,
+    agentResponse: row.agent_response ?? undefined,
   }));
 }
 

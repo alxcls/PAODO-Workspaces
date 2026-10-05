@@ -2,7 +2,7 @@
  * What currency a rate is quoted in. A leaf module ON PURPOSE: it imports nothing.
  *
  * These two names belong to ./pricing.ts conceptually, and it re-exports them — but that module also
- * imports the whole vendored price list, and lib/client/usageSessions.ts needs the currency to render
+ * imports the whole vendored price list, and lib/usage/sessions.ts needs the currency to total
  * a dashboard cell. Reaching for it there would drag ~46KB of rates into the browser bundle for one
  * string constant, the same graph lib/usage/types.ts and components/home/ModelBlock.tsx already take
  * care to keep out of the client. Splitting the constant off is what makes that import free.

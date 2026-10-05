@@ -73,14 +73,8 @@ export interface TokenCounts {
   outputTokensTotal: number;
 }
 
-// Looks a model up by id. Catalog keys come in bare (`deepseek-v4-pro`) and provider-prefixed
-// (`deepseek/deepseek-v4-pro`) forms; we try the id as given, then the bare tail, so either works.
-//
-// OWN properties only. A workspace's llmModel is free-form (the PATCH route accepts a model that
-// isn't in the catalog yet), so a plain index would let ids like "constructor" or "toString" hit
-// Object.prototype and return a truthy non-entry — every rate then reads undefined and the cost
-// comes back NaN, which propagates through the per-session SUM in lib/client/usageSessions.ts.
-// "Unknown" is the contract for an unpriced model; NaN is not.
+// Looks a model up by id, as given then by its bare tail. Own properties only: llmModel is free-form, and
+// "constructor" must read as unknown, not as an inherited entry whose NaN cost poisons session totals.
 const own = (key: string): CatalogEntry | undefined => {
   const entries = holder.entries;
   return Object.hasOwn(entries, key) ? entries[key] : undefined;

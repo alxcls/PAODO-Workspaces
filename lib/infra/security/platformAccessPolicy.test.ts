@@ -75,6 +75,27 @@ describe("platform access policy", () => {
     }
   });
 
+  // The CLI observes runs; it never starts, continues or stops one — that is the workspace API and MCP.
+  it("grants reading conversations and their sessions, never invoking or stopping a run", () => {
+    expect(isPlatformRouteAllowed("GET", "/api/workspaces/ws-1/conversations")).toBe(true);
+    expect(isPlatformRouteAllowed("GET", "/api/workspaces/ws-1/conversations/c-1/sessions")).toBe(true);
+    expect(isPlatformRouteAllowed("GET", "/api/workspaces/ws-1/conversations/c-1/sessions/s-1")).toBe(true);
+    for (const method of ["POST", "PUT", "PATCH", "DELETE"]) {
+      expect(isPlatformRouteAllowed(method, "/api/workspaces/ws-1/conversations")).toBe(false);
+      expect(isPlatformRouteAllowed(method, "/api/workspaces/ws-1/conversations/c-1/sessions")).toBe(false);
+      expect(isPlatformRouteAllowed(method, "/api/workspaces/ws-1/conversations/c-1/sessions/s-1")).toBe(false);
+    }
+    expect(isPlatformRouteAllowed("GET", "/api/workspaces/ws-1/conversations/c-1/sessions/s-1/x")).toBe(false);
+    expect(isPlatformRouteAllowed("GET", "/api/workspaces/ws-1/conversations/c-1")).toBe(false);
+    // The website's first load inlines a transcript, so it stays UI-only like one conversation above.
+    expect(isPlatformRouteAllowed("GET", "/api/workspaces/ws-1/conversations/initial")).toBe(false);
+    expect(isPlatformRouteAllowed("POST", "/api/workspaces/ws-1/conversations/c-1/stop")).toBe(false);
+    expect(isPlatformRouteAllowed("POST", "/api/workspaces/ws-1/chat")).toBe(false);
+    expect(isPlatformRouteAllowed("GET", "/api/workspaces/ws-1/conversations/a/b/sessions")).toBe(false);
+    expect(isPlatformRouteAllowed("GET", "/api/usage")).toBe(false);
+    expect(isPlatformRouteAllowed("GET", "/api/usage/s-1")).toBe(false);
+  });
+
   it("allows drive metadata", () => {
     expect(isPlatformRouteAllowed("GET", "/api/drives")).toBe(true);
     expect(isPlatformRouteAllowed("POST", "/api/drives")).toBe(true);

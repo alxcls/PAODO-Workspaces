@@ -32,10 +32,8 @@ describe("modelPricing", () => {
     ).toBeUndefined();
   });
 
-  // llmModel is free-form on the workspace PATCH route, so these ids are reachable by an
-  // authenticated user. Indexing the catalog directly would hand back an inherited member — truthy,
-  // so getRate would report a rate whose fields are all undefined and computeCost would return NaN.
-  // A single NaN turn poisons the whole session total, since usageSessions.ts sums per-turn costs.
+  // llmModel is free-form, so these ids are reachable; an inherited member would price a turn at NaN and
+  // poison the whole session total lib/usage/sessions.ts sums.
   it.each(["constructor", "toString", "__proto__", "valueOf", "hasOwnProperty"])(
     "treats the inherited property %s as an unknown model, not a rate",
     (modelId) => {

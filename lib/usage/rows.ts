@@ -34,6 +34,7 @@ export interface LightTurnRow {
   workspace_id: string;
   workspace_name: string;
   origin: string;
+  status: string;
   timestamp: string;
   model: string | null;
   input_tokens_total: number;

@@ -1,4 +1,4 @@
-import { uncachedInputTokens } from "@/lib/client/tokenUsage";
+import { uncachedInputTokens } from "@/lib/usage/tokenUsage";
 
 interface Props {
   inputTokensTotal: number;

@@ -41,8 +41,12 @@ export interface ConversationDetail {
   transcript: ReturnType<typeof messagesToTranscript>;
 }
 
-export interface ConversationCollection {
+export interface ConversationList {
   conversations: ConversationSummary[];
+}
+
+/** The list plus the newest conversation's transcript: the workspace screen's first load. */
+export interface InitialConversations extends ConversationList {
   active: (Omit<ConversationDetail, "meta"> & { id: string }) | null;
 }
 
@@ -80,37 +84,36 @@ function detail(
 
 export function listWorkspaceConversations(
   workspaceId: string,
-  options: { includeActive?: boolean } = {},
   suppliedDeps: ConversationOperationDeps = {},
-): ConversationCollection | null {
+): ConversationList | null {
   const deps = dependencies(suppliedDeps);
   if (!deps.workspaces.getWorkspace(workspaceId)) return null;
 
   const runningIds = new Set(deps.broker.runningConversationIds(workspaceId));
-  const list = deps.conversations
+  const conversations = deps.conversations
     .listConversations(workspaceId)
     .map((meta) => ({ ...meta, running: runningIds.has(meta.id) }));
-  if (!options.includeActive || list.length === 0) return { conversations: list, active: null };
+  return { conversations };
+}
 
-  const activeMeta = list[0];
-  let active: ConversationDetail;
+export function getInitialWorkspaceConversations(
+  workspaceId: string,
+  suppliedDeps: ConversationOperationDeps = {},
+): InitialConversations | null {
+  const listed = listWorkspaceConversations(workspaceId, suppliedDeps);
+  if (!listed) return null;
+  const [newest] = listed.conversations;
+  if (!newest) return { ...listed, active: null };
+
   try {
-    active = detail(workspaceId, activeMeta.id, activeMeta, deps);
+    const { running, userInput, transcript } = detail(workspaceId, newest.id, newest, dependencies(suppliedDeps));
+    return { ...listed, active: { id: newest.id, running, userInput, transcript } };
   } catch (err) {
     // A conversation removed between the index and message reads should not make the whole list
     // unavailable. The next poll will receive the updated index; only the optional inline detail is lost.
-    if (err instanceof ConversationNotFoundError) return { conversations: list, active: null };
+    if (err instanceof ConversationNotFoundError) return { ...listed, active: null };
     throw err;
   }
-  return {
-    conversations: list,
-    active: {
-      id: activeMeta.id,
-      running: active.running,
-      userInput: active.userInput,
-      transcript: active.transcript,
-    },
-  };
 }
 
 export function getWorkspaceConversation(

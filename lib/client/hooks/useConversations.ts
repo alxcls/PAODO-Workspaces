@@ -57,8 +57,8 @@ export function useConversations(workspaceId: string) {
   }, [workspaceId]);
 
   /* Initial load for the workspace: pick the newest conversation (or create the first one). One
-     combined request (`include=active`) also brings back that conversation's transcript so the chat
-     renders without a second round-trip. */
+     combined request (`/conversations/initial`) also brings back that conversation's transcript so the
+     chat renders without a second round-trip. */
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -66,7 +66,7 @@ export function useConversations(workspaceId: string) {
       setLoadError(false);
       setActiveId(null); // clear any selection carried over from a previous workspace
       setInitial(null);
-      const res = await fetch(`/api/workspaces/${workspaceId}/conversations?include=active`);
+      const res = await fetch(`/api/workspaces/${workspaceId}/conversations/initial`);
       if (cancelled) return;
       if (!res.ok) throw new Error("Failed to load conversations");
       const { conversations, active } = (await res.json()) as {

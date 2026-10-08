@@ -170,7 +170,7 @@ describe("classifyProviderFailure — rate limiting", () => {
 
   it("keeps retry exhaustion neutral instead of inventing a billing diagnosis", () => {
     const cause = raw({ status: 429, message: "Requests rate limit exceeded" });
-    const exhausted = new RateLimitExhaustedError("mistral", "mistral-large-latest", 8, 420_000, cause);
+    const exhausted = new RateLimitExhaustedError("mistral", "mistral-large-4", 8, 420_000, cause);
     const failure = classifyProviderFailure(exhausted);
 
     expect(failure?.failureCode).toBe("PROVIDER_RATE_LIMITED");

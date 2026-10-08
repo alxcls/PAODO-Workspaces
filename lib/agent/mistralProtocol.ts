@@ -1,24 +1,19 @@
 // Everything Mistral requires that no other provider should inherit. Canonical conversation
 // messages stay provider-neutral; this module adapts a short-lived clone at the outbound boundary.
-import { createHash } from "node:crypto";
-import { AIMessage, ToolMessage, type BaseMessage, type BaseMessageChunk } from "@langchain/core/messages";
+import { AIMessage, type BaseMessage, type BaseMessageChunk } from "@langchain/core/messages";
 import { ChatOpenAI, ChatOpenAICompletions, type ChatOpenAIFields } from "@langchain/openai";
 import { replayReasoning } from "./reasoningReplay";
-import { isMistralToolCallId, newMistralToolCallId } from "./toolCallIds";
 import { THINKING_OFF_EFFORT, type ReasoningEffort } from "../models/llmSelection";
 
 type MistralTextChunk = { type: "text"; text: string };
 type MistralThinkChunk = { type: "thinking"; thinking: MistralTextChunk[] };
 export type MistralReplayContent = Array<MistralThinkChunk | MistralTextChunk>;
 
-/** Medium supports optional high reasoning; Large accepts no reasoning field. */
-export function mistralReasoningConfig(
-  model: string,
-  effort: ReasoningEffort,
-): { modelKwargs?: { reasoning_effort: "high" } } {
-  return model === "mistral-medium-latest" && effort !== THINKING_OFF_EFFORT
-    ? { modelKwargs: { reasoning_effort: "high" } }
-    : {};
+type MistralReasoningEffort = "high" | "none";
+
+/** Mistral reasoning is on/off. Off is sent explicitly: measured, Large 4 reasons when the field is absent. */
+function mistralReasoningConfig(effort: ReasoningEffort): { modelKwargs: { reasoning_effort: MistralReasoningEffort } } {
+  return { modelKwargs: { reasoning_effort: effort === THINKING_OFF_EFFORT ? "none" : "high" } };
 }
 
 /**
@@ -31,12 +26,11 @@ export function mistralReasoningConfig(
  * overwritten with undefined and dropped from the body — cached silently, never actually sent.
  */
 export function mistralRequestConfig(
-  model: string,
   effort: ReasoningEffort,
   cacheScopeId?: string,
-): { modelKwargs?: { reasoning_effort: "high" }; promptCacheKey?: string } {
+): { modelKwargs: { reasoning_effort: MistralReasoningEffort }; promptCacheKey?: string } {
   return {
-    ...mistralReasoningConfig(model, effort),
+    ...mistralReasoningConfig(effort),
     ...(cacheScopeId ? { promptCacheKey: cacheScopeId } : {}),
   };
 }
@@ -90,46 +84,6 @@ export function createMistralChatModel(fields: ChatOpenAIFields): ChatOpenAI {
   return new ChatOpenAI({ ...fields, completions: new MistralCompletions(fields) });
 }
 
-/** A provider-valid id derived from the canonical id, stable across requests for prompt caching. */
-function translatedId(id: string, taken: Set<string>): string {
-  for (let salt = 0; ; salt++) {
-    const candidate = createHash("sha256").update(`${id}:${salt}`).digest("hex").slice(0, 9);
-    if (!taken.has(candidate)) {
-      taken.add(candidate);
-      return candidate;
-    }
-  }
-}
-
-/** Build the mapping once so each assistant call and its ToolMessage receive the same translated id. */
-function mistralIdMap(messages: BaseMessage[]): Map<string, string> {
-  const taken = new Set<string>();
-  for (const message of messages) {
-    if (message instanceof AIMessage) {
-      for (const call of message.tool_calls ?? []) {
-        if (call.id && isMistralToolCallId(call.id)) taken.add(call.id);
-      }
-    } else if (message instanceof ToolMessage && isMistralToolCallId(message.tool_call_id)) {
-      // Even an orphan is part of the request. Reserve it so a translated pair cannot collide with it.
-      taken.add(message.tool_call_id);
-    }
-  }
-
-  const ids = new Map<string, string>();
-  const add = (id: string | undefined) => {
-    if (!id || isMistralToolCallId(id) || ids.has(id)) return;
-    ids.set(id, translatedId(id, taken));
-  };
-  for (const message of messages) {
-    if (message instanceof AIMessage) {
-      for (const call of message.tool_calls ?? []) add(call.id);
-    } else if (message instanceof ToolMessage) {
-      add(message.tool_call_id);
-    }
-  }
-  return ids;
-}
-
 /**
  * The stored reasoning as Mistral's content blocks, or nothing for a turn that did not reason.
  *
@@ -145,45 +99,24 @@ function replayContent(message: AIMessage): MistralReplayContent | undefined {
 }
 
 /**
- * Clone only Mistral-sensitive messages, restoring its private thinking and translating foreign ids.
+ * Clone only the assistant turns that reasoned, restoring their thinking as Mistral's content blocks.
  * The caller's array and messages are never mutated; every other provider receives those originals.
  */
 export function prepareMistralMessages(messages: BaseMessage[]): BaseMessage[] {
-  const ids = mistralIdMap(messages);
   return messages.map((message) => {
-    if (message instanceof AIMessage) {
-      const content = replayContent(message) ?? message.content;
-      const toolCalls = (message.tool_calls ?? []).map((call) => ({
-        ...call,
-        ...(call.id && ids.has(call.id) ? { id: ids.get(call.id)! } : {}),
-      }));
-      if (content === message.content && toolCalls.every((call, i) => call.id === message.tool_calls?.[i]?.id)) {
-        return message;
-      }
-      return new AIMessage({
-        content: content as never,
-        tool_calls: toolCalls,
-        invalid_tool_calls: message.invalid_tool_calls,
-        additional_kwargs: message.additional_kwargs,
-        response_metadata: message.response_metadata,
-        usage_metadata: message.usage_metadata,
-        name: message.name,
-        id: message.id,
-      });
-    }
-    if (message instanceof ToolMessage && ids.has(message.tool_call_id)) {
-      return new ToolMessage({
-        content: message.content,
-        tool_call_id: ids.get(message.tool_call_id)!,
-        artifact: message.artifact,
-        status: message.status,
-        additional_kwargs: message.additional_kwargs,
-        response_metadata: message.response_metadata,
-        name: message.name,
-        id: message.id,
-      });
-    }
-    return message;
+    if (!(message instanceof AIMessage)) return message;
+    const content = replayContent(message);
+    if (!content) return message;
+    return new AIMessage({
+      content: content as never,
+      tool_calls: message.tool_calls,
+      invalid_tool_calls: message.invalid_tool_calls,
+      additional_kwargs: message.additional_kwargs,
+      response_metadata: message.response_metadata,
+      usage_metadata: message.usage_metadata,
+      name: message.name,
+      id: message.id,
+    });
   });
 }
 
@@ -205,9 +138,4 @@ export function mistralThinkingText(value: unknown): string {
       part && typeof part === "object" && "text" in part && typeof part.text === "string" ? part.text : "",
     )
     .join("");
-}
-
-/** A missing id is rare but still must satisfy Mistral before the result is replayed next turn. */
-export function providerToolCallId(provider: string, id: string, taken: Set<string>): string {
-  return id || (provider === "mistral" ? newMistralToolCallId(taken) : crypto.randomUUID());
 }

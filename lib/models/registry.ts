@@ -19,10 +19,8 @@ export const AVAILABLE_MODELS: Record<string, readonly string[]> = {
   // distinct, pricier model until DeepSeek reroutes it to V4.1 Flash on 14 Sep 2026. Flash leads.
   deepseek: ["deepseek-flash", "deepseek-v4-pro"],
   moonshot: ["kimi-k3"],
-  // The two generalist models retained for the ReAct loop. These are the API's own current aliases,
-  // confirmed by GET /v1/models. Codestral is the code-specialist option, Medium supports optional
-  // reasoning, and Large does not expose it. Keep aliases so Mistral owns version maintenance.
-  mistral: ["codestral-latest", "mistral-large-latest", "mistral-medium-latest"],
+  // Pinned by id: `mistral-large-latest` still resolves to Large 3, whose quota is 15 requests/min.
+  mistral: ["mistral-large-4"],
   // Serverless ids — the bare names; the `qwen/…:fp8` forms are Dedicated Deployment only. Flash
   // leads: it alone prices cached input, at a fifth of its own rate, which is most of a loop's input.
   scaleway: ["deepseek-v4-flash-0731", "qwen3.6-35b-a3b"],

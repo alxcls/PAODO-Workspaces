@@ -65,14 +65,8 @@ describe("modelPricing", () => {
   });
 
   it("prices Mistral cache reads at 10% of normal input", () => {
-    const rate = getRate("mistral-large-latest")!;
+    const rate = getRate("mistral-large-4")!;
     expect(rate.cachedInput).toBeCloseTo(rate.input * 0.1, 12);
-  });
-
-  it("prices the current Codestral alias at its documented rate", () => {
-    const rate = getRate("codestral-latest")!;
-    expect(rate.input).toBeCloseTo(0.3 / 1e6, 12);
-    expect(rate.output).toBeCloseTo(0.9 / 1e6, 12);
   });
 
   it("does not double-charge Anthropic cache-creation tokens folded into input_tokens", () => {

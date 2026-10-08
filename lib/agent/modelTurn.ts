@@ -6,7 +6,7 @@ import type { Logger } from "pino";
 import { throttleLog } from "../infra/logThrottle";
 import type { AgentEvent } from "./runner";
 import { providerReplaysReasoning, type ModelGateway, type ModelStream, type ModelUsage } from "./modelGateway";
-import { mistralThinkingText, providerToolCallId } from "./mistralProtocol";
+import { mistralThinkingText } from "./mistralProtocol";
 import { classifyProviderFailure, providerFailureMessage } from "./providerFailure";
 import { withReplayMetadata } from "./reasoningReplay";
 
@@ -91,8 +91,7 @@ function extractContentFromChunk(
   return { tokens, reasoning };
 }
 
-function assembleToolCalls(partials: PartialToolCall[], provider: string): ResolvedToolCall[] {
-  const minted = new Set<string>();
+function assembleToolCalls(partials: PartialToolCall[]): ResolvedToolCall[] {
   return partials
     .filter((partial) => partial.name)
     .map((partial) => {
@@ -102,8 +101,8 @@ function assembleToolCalls(partials: PartialToolCall[], provider: string): Resol
       } catch {
         // Malformed provider deltas are surfaced to the tool as empty args.
       }
-      const id = providerToolCallId(provider, partial.id, minted);
-      return { id, name: partial.name, args };
+      // A missing id is rare, but the result must still pair with its call when replayed next turn.
+      return { id: partial.id || crypto.randomUUID(), name: partial.name, args };
     });
 }
 
@@ -202,7 +201,7 @@ export async function* streamModelTurn(
   yield {
     type: "turn_complete",
     fullText,
-    toolCalls: assembleToolCalls(partials, modelWithTools.provider),
+    toolCalls: assembleToolCalls(partials),
     usage: call.usage(),
   };
 }

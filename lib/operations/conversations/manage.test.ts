@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { BaseMessage } from "@langchain/core/messages";
 import {
   createWorkspaceConversation,
+  getInitialWorkspaceConversations,
   getWorkspaceConversation,
   listWorkspaceConversations,
   prepareWorkspaceChat,
@@ -41,13 +42,33 @@ function fixture(running = false): ConversationOperationDeps {
 
 describe("conversation operations", () => {
   it("projects persisted history and user input while a conversation is running", () => {
-    const result = listWorkspaceConversations("ws-1", { includeActive: true }, fixture(true));
+    const result = getInitialWorkspaceConversations("ws-1", fixture(true));
     expect(result?.conversations[0].running).toBe(true);
     expect(result?.active).toMatchObject({
       id: "conv-1",
       running: true,
       userInput: "in flight",
       transcript: [{ role: "assistant", content: "persisted" }],
+    });
+  });
+
+  it("lists conversations without ever reading a transcript", () => {
+    const deps = fixture(true);
+    expect(listWorkspaceConversations("ws-1", deps)).toEqual({ conversations: [{ ...meta, running: true }] });
+    expect(deps.conversations!.getMessages).not.toHaveBeenCalled();
+    expect(deps.conversations!.getPersistedMessages).not.toHaveBeenCalled();
+  });
+
+  it("opens a workspace with no conversation, or one deleted mid-read, with no active transcript", () => {
+    const empty = fixture();
+    vi.mocked(empty.conversations!.listConversations).mockReturnValue([]);
+    expect(getInitialWorkspaceConversations("ws-1", empty)).toEqual({ conversations: [], active: null });
+
+    const removed = fixture();
+    vi.mocked(removed.conversations!.getMessages).mockReturnValue(null);
+    expect(getInitialWorkspaceConversations("ws-1", removed)).toEqual({
+      conversations: [{ ...meta, running: false }],
+      active: null,
     });
   });
 
@@ -101,6 +122,7 @@ describe("conversation operations", () => {
     });
     expect(deps.startRun).not.toHaveBeenCalled();
     vi.mocked(deps.workspaces!.getWorkspace).mockReturnValue(undefined);
-    expect(listWorkspaceConversations("missing", {}, deps)).toBeNull();
+    expect(listWorkspaceConversations("missing", deps)).toBeNull();
+    expect(getInitialWorkspaceConversations("missing", deps)).toBeNull();
   });
 });

@@ -15,3 +15,11 @@ export class ConversationNotFoundError extends AppError {
     this.name = "ConversationNotFoundError";
   }
 }
+
+/** The requested session does not exist in the conversation. */
+export class SessionNotFoundError extends AppError {
+  constructor(sessionId: string, details?: ErrorDetails) {
+    super("NOT_FOUND", `session ${sessionId} not found`, details);
+    this.name = "SessionNotFoundError";
+  }
+}

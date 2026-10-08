@@ -17,8 +17,10 @@ function driveRule(method: string, suffix?: string) {
   return resourceRule("drives", method, suffix);
 }
 
+/** A `{id}` segment in `suffix` matches exactly one path segment; every other segment is literal. */
 function resourceRule(collection: string, method: string, suffix?: string) {
-  const tail = suffix === undefined ? "" : `/${suffix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`;
+  const segments = suffix?.split("/").map((s) => (s === "{id}" ? "[^/]+" : s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  const tail = segments ? `/${segments.join("/")}` : "";
   return { method, pathname: new RegExp(`^/api/${collection}/[^/]+${tail}$`) };
 }
 
@@ -50,6 +52,10 @@ const RULES: ReadonlyArray<{
   workspaceRule("GET", "schedule"),
   workspaceRule("PUT", "schedule"),
   workspaceRule("PATCH", "schedule"),
+  // Reading what a workspace ran; starting, continuing or stopping a conversation stays API/MCP-only.
+  workspaceRule("GET", "conversations"),
+  workspaceRule("GET", "conversations/{id}/sessions"),
+  workspaceRule("GET", "conversations/{id}/sessions/{id}"),
   /**
    * Drive metadata, then a drive's files — the same five methods a workspace's files get above, and
    * for the same commands. Neither collection gets the browser's upload/download transports or the

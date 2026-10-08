@@ -132,6 +132,9 @@
 		#   GET    /api/workspaces
 		#   GET    /api/workspaces/{id}
 		#   GET    /api/workspaces/{id}/schedule
+		#   GET    /api/workspaces/{id}/conversations
+		#   GET    /api/workspaces/{id}/conversations/{id}/sessions
+		#   GET    /api/workspaces/{id}/conversations/{id}/sessions/{id}
 		#   GET    /api/drives
 		#   GET    /api/drives/{id}
 		#   GET    /api/drive-connections
@@ -142,7 +145,7 @@
 		# replaces the document whole and would take the editor's layout with it.
 		@cliRead {
 			method GET
-			path_regexp cliRead ^/api/(status|models|workspaces(?:/[^/]+(?:/schedule)?)?|drives(?:/[^/]+)?|drive-connections|workspace-graph)$
+			path_regexp cliRead ^/api/(status|models|workspaces(?:/[^/]+(?:/schedule|/conversations(?:/[^/]+/sessions(?:/[^/]+)?)?)?)?|drives(?:/[^/]+)?|drive-connections|workspace-graph)$
 		}
 
 		# POST /api/workspaces and /api/drives create; POST on a workspace is NOT

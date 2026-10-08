@@ -1,16 +1,5 @@
-// LLM rate lookup. The data starts as a vendored copy of public price lists — LiteLLM for the bulk,
-// models.dev for models LiteLLM hasn't published yet (./model-pricing.json), trimmed to the
-// providers this app supports. Nothing hits the network at request time: the vendored file is the
-// seed, and ./priceRefresher.ts swaps in fresher rates on a timer in the running server.
-// Refresh the vendored seed at author time with `npm run update-pricing`.
-//
-// getRate / computeCost turn the per-turn token counts the runner already records into a USD cost
-// (used by the usage dashboard). The set of models offered in the picker is a separate, code-owned
-// list (lib/models/registry.ts); pricing is looked up here by model id when usage is recorded.
-//
-// A turn's cost is frozen at write time (lib/usage/record.ts), so a stale rate here is not a display
-// bug that a later refresh repairs — it is permanently wrong in the database. That is why the
-// refresher exists at all, and why the catalog has to be swappable in the live process.
+// LLM rates by model id, seeded from a vendored LiteLLM/models.dev list (`npm run update-pricing`). A turn's cost is
+// frozen when recorded, so ./priceRefresher.ts swaps fresher rates into the live process; the picker is registry.ts.
 import { globalSingleton } from "../infra/globalSingleton";
 import { DEFAULT_CURRENCY, type Currency } from "./currency";
 import seed from "./model-pricing.json";
@@ -31,10 +20,8 @@ export interface CatalogEntry {
   cache_creation_input_token_cost?: number;
 }
 
-// Held on the Node global, not in a module-level binding. The custom server (server.ts, where the
-// refresher runs) and the Next-bundled API routes (where appendUsage actually prices a turn) load
-// this module into SEPARATE scopes — see globalSingleton. A plain `let` would let the refresher
-// update its own copy while every recorded cost kept using the boot-time seed.
+// On the Node global: server.ts (the refresher) and the Next-bundled routes (which price turns) load this module
+// in separate scopes, so a plain `let` would leave every recorded cost on the boot-time seed.
 type Holder = { entries: Record<string, CatalogEntry> };
 const holder = globalSingleton<Holder>("modelPricingCatalog", () => ({
   entries: seed as Record<string, CatalogEntry>,
@@ -73,14 +60,8 @@ export interface TokenCounts {
   outputTokensTotal: number;
 }
 
-// Looks a model up by id. Catalog keys come in bare (`deepseek-v4-pro`) and provider-prefixed
-// (`deepseek/deepseek-v4-pro`) forms; we try the id as given, then the bare tail, so either works.
-//
-// OWN properties only. A workspace's llmModel is free-form (the PATCH route accepts a model that
-// isn't in the catalog yet), so a plain index would let ids like "constructor" or "toString" hit
-// Object.prototype and return a truthy non-entry — every rate then reads undefined and the cost
-// comes back NaN, which propagates through the per-session SUM in lib/client/usageSessions.ts.
-// "Unknown" is the contract for an unpriced model; NaN is not.
+// Looks a model up by id, as given then by its bare tail. Own properties only: llmModel is free-form, and
+// "constructor" must read as unknown, not as an inherited entry whose NaN cost poisons session totals.
 const own = (key: string): CatalogEntry | undefined => {
   const entries = holder.entries;
   return Object.hasOwn(entries, key) ? entries[key] : undefined;
@@ -117,10 +98,8 @@ export function getCurrency(modelId: string | undefined): Currency | undefined {
   return getRate(modelId)?.currency;
 }
 
-// Cost for one turn's tokens, in the model's own currency (getCurrency). inputTokensTotal includes cache reads and cache writes; those
-// buckets are billed separately below, so base input subtracts both to avoid double-charging.
-// Returns undefined when the model isn't in the catalog so callers can render "unknown" rather
-// than a misleading $0.
+// One turn's cost in the model's own currency, or undefined when unpriced so callers show "unknown", not $0. Base
+// input excludes cache reads and writes, which inputTokensTotal includes but are billed at their own rates.
 export function computeCost(t: TokenCounts, modelId: string | undefined): number | undefined {
   const rate = getRate(modelId);
   if (!rate) return undefined;

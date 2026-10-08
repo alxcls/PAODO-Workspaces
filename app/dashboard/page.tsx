@@ -10,22 +10,20 @@ import { AsyncState } from "@/components/shared/AsyncState";
 import TokenUsageLine from "@/components/usage/TokenUsageLine";
 import { useDragResize } from "@/lib/client/hooks/useDragResize";
 import { toolLabel, toolArgSummary } from "@/lib/transcript/toolDisplay";
-import { uncachedInputTokens } from "@/lib/client/tokenUsage";
+import { uncachedInputTokens } from "@/lib/usage/tokenUsage";
 import {
-  groupBySessions,
   formatTokens,
   formatSessionCost,
   formatSessionCostTitle,
   formatDateTime,
   formatRunError,
   originLabel,
-  type LightSession,
 } from "@/lib/client/usageSessions";
+import { groupBySessions, type LightSession } from "@/lib/usage/sessions";
 import type { LightTurnRecord, RunErrorRecord, SessionDetailRecord, ToolStatus } from "@/lib/usage/types";
 
-// Tool-outcome dot: green success / red failure. From the caller's view a NEEDS_INPUT call
-// didn't return a usable result, so it reads red too (the corrected re-call is the green row).
-// The enum keeps needs_input distinct at the data layer in case we ever split it back out.
+// Tool-outcome dot: green success, red failure. A NEEDS_INPUT call gave the caller nothing usable, so it reads
+// red too (the corrected re-call is the green row); the enum still keeps it distinct at the data layer.
 const STATUS_COLOR: Record<ToolStatus, string> = {
   ok: "bg-select",
   error: "bg-danger",
@@ -45,9 +43,8 @@ function StatusDot({ status }: { status: ToolStatus }) {
   );
 }
 
-// Whole-run outcome, one glyph per session row: a red cross when the run ended on an error, a green
-// tick otherwise. Deliberately coarser than the per-tool dots above — a tool call that failed and was
-// retried successfully leaves the run itself green; the drawer is where the individual calls show.
+// Whole-run outcome per session row: a red cross when the run ended on an error, else a green tick. A tool call
+// that failed and was retried leaves the run green; the drawer shows the individual calls.
 function RunOutcomeIcon({ error }: { error?: RunErrorRecord }) {
   return (
     <span
@@ -74,7 +71,7 @@ interface ToolRef {
   toolIdx: number;
 }
 
-// Right-side detail drawer. Turn mode (selected === null) shows the user input + a list of every
+// Right-side detail drawer. Session mode (selected === null) shows the user input + a list of every
 // tool execution in the session. Clicking a tool switches to tool mode: reasoning + args + output.
 function DetailDrawer({ session, onClose, width }: { session: LightSession; onClose: () => void; width: number }) {
   // null = loading, undefined = failed, else the loaded record. `reloadNonce` re-runs the fetch; the
@@ -100,9 +97,8 @@ function DetailDrawer({ session, onClose, width }: { session: LightSession; onCl
   const turns = useMemo(() => detail?.turns ?? [], [detail]);
   const userInput = detail?.session.userInput ?? "";
   const firstReasoning = turns[0]?.reasoningText ?? "";
-  // The agent's final answer lives on the terminal turn — the one that made no tool calls.
-  // Fall back to the latest turn's prose for a failed or incomplete run. detail is chronological,
-  // so the last entry is newest.
+  // The final answer is on the turn that made no tool calls; a failed or incomplete run falls back to the
+  // latest turn's prose (detail is chronological, so the last entry is newest).
   const agentResponse = useMemo(
     () => turns.find((t) => t.toolCalls.length === 0)?.outputText ?? turns.at(-1)?.outputText ?? "",
     [turns],
@@ -137,7 +133,7 @@ function DetailDrawer({ session, onClose, width }: { session: LightSession; onCl
         // ── tool mode ───────────────────────────────────────────────────────────────
         <div className="flex-1 overflow-auto px-5 py-4 flex flex-col gap-4">
           <button onClick={() => setSelected(null)} className="text-xs text-primary self-start hover:underline">
-            ← back to turn
+            ← back to session
           </button>
           {selReasoning && (
             <Section title="Reasoning">
@@ -164,7 +160,7 @@ function DetailDrawer({ session, onClose, width }: { session: LightSession; onCl
           )}
         </div>
       ) : (
-        // ── turn mode ───────────────────────────────────────────────────────────────
+        // ── session mode ────────────────────────────────────────────────────────────
         <div className="flex-1 overflow-auto px-5 py-4 flex flex-col gap-4">
           <Section title="User input">
             <p className="text-ms text-text-1 whitespace-pre-wrap leading-relaxed">{userInput || "—"}</p>
@@ -177,7 +173,7 @@ function DetailDrawer({ session, onClose, width }: { session: LightSession; onCl
           )}
           <Section title={`Tool executions (${session.toolTotal})`}>
             {session.toolTotal === 0 ? (
-              <p className="text-xs text-text-3">No tool calls in this turn.</p>
+              <p className="text-xs text-text-3">No tool calls in this session.</p>
             ) : (
               <ul className="flex flex-col gap-1">
                 {turns.flatMap((turn, turnIdx) =>
@@ -196,7 +192,7 @@ function DetailDrawer({ session, onClose, width }: { session: LightSession; onCl
                             </span>
                           )}
                         </span>
-                        {/* Same static dim-chevron affordance as the turn rows. */}
+                        {/* Same static dim-chevron affordance as the session rows. */}
                         <span className="flex-none text-text-3 text-sm leading-none opacity-40">›</span>
                       </button>
                     </li>
@@ -301,11 +297,8 @@ export default function DashboardPage() {
       });
   }, []);
 
-  // Load on mount, and again whenever the page is shown after being navigated away from.
-  // The session links are full-page <a> navigations, so returning via Back restores the page
-  // from the browser's bfcache — React effects don't re-run on that restore, which would leave
-  // the stale (empty) render up. `pageshow` fires on bfcache restore; `visibilitychange` covers
-  // returning to the tab. Both just refetch the (cheap) light usage list.
+  // Load on mount and whenever the page is shown again: Back restores it from bfcache without re-running effects,
+  // so `pageshow` (bfcache) and `visibilitychange` (tab) refetch the cheap light usage list.
   useEffect(() => {
     loadUsage();
     const onPageShow = () => loadUsage();

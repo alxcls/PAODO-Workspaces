@@ -189,7 +189,7 @@ const PROVIDERS: Record<string, ProviderDescriptor> = {
     availabilityEnv: "MISTRAL_AVAILABLE",
     // This flag controls Anthropic-style cache_control markers; Mistral does not use those markers.
     supportsPromptCaching: false,
-    // Medium exposes a simple on/off checkbox: none disables reasoning, high enables it.
+    // Large 4 exposes a simple on/off checkbox: none disables reasoning, high enables it.
     reasoningEfforts: [THINKING_OFF_EFFORT, "high"],
     build: (config, context) =>
       createMistralChatModel({
@@ -200,7 +200,7 @@ const PROVIDERS: Record<string, ProviderDescriptor> = {
           apiKey: config.apiKey,
           fetch: pacedFetch("mistral", config.model),
         },
-        ...mistralRequestConfig(config.model, config.reasoningEffort, context.cacheScopeId),
+        ...mistralRequestConfig(config.reasoningEffort, context.cacheScopeId),
       }),
   },
   // EU-sovereign inference: open-weight models served from Paris under GDPR, with a zero-retention

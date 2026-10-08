@@ -8,6 +8,7 @@ import {
   buildChatModel,
   buildModel,
   defaultModelSelection,
+  modelReasoningEfforts,
   SUPPORTED_PROVIDERS,
   providerAvailabilityEnv,
 } from "./buildModel";
@@ -90,7 +91,7 @@ describe("buildChatModel", () => {
     ["openai", "gpt-5.5"],
     ["deepseek", "deepseek-v4-pro"],
     ["moonshot", "kimi-k3"],
-    ["mistral", "mistral-medium-latest"],
+    ["mistral", "mistral-large-4"],
     ["scaleway", "qwen3.6-35b-a3b"],
   ])("wires the selected model and key into the %s client", (provider, model) => {
     const m = buildChatModel(config({ provider, model, apiKey: `key-${provider}` })) as unknown as {
@@ -106,7 +107,7 @@ describe("buildChatModel", () => {
   it.each([
     ["deepseek", "deepseek-v4-pro", "https://api.deepseek.com/v1"],
     ["moonshot", "kimi-k3", "https://api.moonshot.ai/v1"],
-    ["mistral", "mistral-medium-latest", "https://api.mistral.ai/v1"],
+    ["mistral", "mistral-large-4", "https://api.mistral.ai/v1"],
     // Doubly load-bearing for Scaleway: the endpoint is the entire EU-sovereignty claim, so a
     // dropped override would send an EU customer's traffic to a US host while still looking correct.
     ["scaleway", "qwen3.6-35b-a3b", "https://api.scaleway.ai/v1"],
@@ -169,30 +170,24 @@ describe("buildChatModel", () => {
   });
 
   it.each([
-    ["high", { reasoning_effort: "high" }],
-    ["none", undefined],
-  ])("maps the Mistral Medium thinking checkbox value %s", (reasoningEffort, expected) => {
+    ["high", "high"],
+    ["none", "none"],
+  ])("maps the Mistral thinking checkbox value %s", (reasoningEffort, expected) => {
     const m = buildChatModel(
-      config({ provider: "mistral", model: "mistral-medium-latest", reasoningEffort: reasoningEffort as never }),
+      config({ provider: "mistral", model: "mistral-large-4", reasoningEffort: reasoningEffort as never }),
     ) as unknown as { modelKwargs?: Record<string, unknown> };
-    expect(m.modelKwargs?.reasoning_effort).toBe(expected?.reasoning_effort);
+    expect(m.modelKwargs?.reasoning_effort).toBe(expected);
   });
 
-  it.each(["codestral-latest", "mistral-large-latest"])(
-    "does not send reasoning_effort to %s, which does not support it",
-    (model) => {
-      const m = buildChatModel(config({ provider: "mistral", model, reasoningEffort: "high" })) as unknown as {
-        modelKwargs?: Record<string, unknown>;
-      };
-      expect(m.modelKwargs ?? {}).not.toHaveProperty("reasoning_effort");
-    },
-  );
+  it("offers the Mistral thinking checkbox on Large 4", () => {
+    expect(modelReasoningEfforts("mistral", "mistral-large-4")).toEqual(["none", "high"]);
+  });
 
   // Asserted on the request body, not on modelKwargs: ChatOpenAI writes prompt_cache_key from its
   // typed field AFTER spreading modelKwargs, so a key parked in modelKwargs is overwritten with
   // undefined and never sent — a constructor-shaped assertion passes while nothing is ever cached.
   it("sends a stable Mistral prompt cache key without dropping reasoning configuration", () => {
-    const m = buildChatModel(config({ provider: "mistral", model: "mistral-medium-latest", reasoningEffort: "high" }), {
+    const m = buildChatModel(config({ provider: "mistral", model: "mistral-large-4", reasoningEffort: "high" }), {
       cacheScopeId: "conversation-42",
     }) as ChatOpenAI;
 
@@ -202,12 +197,12 @@ describe("buildChatModel", () => {
     });
 
     const quiet = buildChatModel(
-      config({ provider: "mistral", model: "mistral-medium-latest", reasoningEffort: "none" }),
+      config({ provider: "mistral", model: "mistral-large-4", reasoningEffort: "none" }),
       { cacheScopeId: "conversation-42" },
     ) as ChatOpenAI;
     const quietParams = quiet.invocationParams({}) as Record<string, unknown>;
     expect(quietParams.prompt_cache_key).toBe("conversation-42");
-    expect(quietParams.reasoning_effort).toBeUndefined();
+    expect(quietParams.reasoning_effort).toBe("none");
   });
 
   it.each([
@@ -236,9 +231,9 @@ describe("buildChatModel", () => {
   // The seam itself: a buildModel handing back a bare SDK client would route the app around every
   // cross-cutting concern while still typechecking. Identity matters too — it is the policy key.
   it("hands callers a gateway rather than the vendor client", () => {
-    const gateway = buildModel(config({ provider: "mistral", model: "mistral-medium-latest" }));
+    const gateway = buildModel(config({ provider: "mistral", model: "mistral-large-4" }));
     expect(gateway.provider).toBe("mistral");
-    expect(gateway.model).toBe("mistral-medium-latest");
+    expect(gateway.model).toBe("mistral-large-4");
     expect(typeof gateway.stream).toBe("function");
     expect(typeof gateway.invoke).toBe("function");
     // No vendor internals reachable through it — the tests above had to unwrap for a reason.
@@ -247,9 +242,9 @@ describe("buildChatModel", () => {
   });
 
   it("keeps provider identity across bindTools, so bound and bare calls share one policy", () => {
-    const gateway = buildModel(config({ provider: "mistral", model: "mistral-medium-latest" })).bindTools([]);
+    const gateway = buildModel(config({ provider: "mistral", model: "mistral-large-4" })).bindTools([]);
     expect(gateway.provider).toBe("mistral");
-    expect(gateway.model).toBe("mistral-medium-latest");
+    expect(gateway.model).toBe("mistral-large-4");
   });
 
   // Iterates the registry rather than naming providers: a sixth entry that forgets NO_SDK_RETRY fails

@@ -88,7 +88,7 @@ describe("runAgent — provider-specific history compatibility", () => {
 
     for await (const _ of runAgent(messages, "continue", "/tmp/ws", "ws-1", {
       ...noopDeps,
-      loadConfig: () => ({ provider: "mistral", model: "mistral-medium-latest", apiKey: "sk" }) as never,
+      loadConfig: () => ({ provider: "mistral", model: "mistral-large-4", apiKey: "sk" }) as never,
       buildAgentTools,
     })) {
       // drain
@@ -109,7 +109,7 @@ describe("runAgent — provider-specific history compatibility", () => {
     for await (const _ of runAgent([], "continue", "/tmp/ws", "ws-1", {
       ...noopDeps,
       conversationId: "conversation-42",
-      loadConfig: () => ({ provider: "mistral", model: "mistral-medium-latest", apiKey: "sk" }) as never,
+      loadConfig: () => ({ provider: "mistral", model: "mistral-large-4", apiKey: "sk" }) as never,
       buildAgentTools,
     })) {
       // drain
@@ -359,7 +359,7 @@ describe("runAgent — history stays consistent across aborts", () => {
 
     for await (const event of runAgent(messages, "list files", "/tmp/ws", "ws-1", {
       ...noopDeps,
-      loadConfig: () => ({ provider: "mistral", model: "mistral-medium-latest", apiKey: "sk" }) as never,
+      loadConfig: () => ({ provider: "mistral", model: "mistral-large-4", apiKey: "sk" }) as never,
       buildAgentTools,
     })) {
       events.push(event);

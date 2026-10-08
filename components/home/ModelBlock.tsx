@@ -128,13 +128,8 @@ function ModelForm({
   // picks a current model, which also prevents the UI and runtime from claiming different models.
   const selectedModel = model;
   // Empty means no effort dial for this model, so the control is absent rather than presenting a
-  // setting the agent never sends. Scaleway narrows via the catalog; Mistral's stays hardcoded here.
-  const efforts =
-    provider === "mistral" && selectedModel !== "mistral-medium-latest"
-      ? []
-      : providerCatalog
-        ? effortsForModel(providerCatalog, selectedModel)
-        : [];
+  // setting the agent never sends. The catalog narrows per model where a vendor does (Scaleway).
+  const efforts = providerCatalog ? effortsForModel(providerCatalog, selectedModel) : [];
   const modelUnavailable =
     catalogLoaded && Boolean(model) && (!providerCatalog || !providerCatalog.models.includes(model));
   const validModel = Boolean(providerCatalog?.models.includes(selectedModel));

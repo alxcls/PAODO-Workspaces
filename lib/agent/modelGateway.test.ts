@@ -2,7 +2,9 @@
 // to the observer exactly once. A pacing layer cannot budget traffic it never sees.
 import { describe, it, expect } from "vitest";
 import { AIMessage, AIMessageChunk, HumanMessage, ToolMessage, type BaseMessage } from "@langchain/core/messages";
+import { mistralReplayContent } from "./mistralProtocol";
 import { createModelGateway, usageTokens, NO_USAGE, type ModelCallRecord } from "./modelGateway";
+import { withReplayMetadata } from "./reasoningReplay";
 import { ProviderConcurrency } from "./providerConcurrency";
 import { NOTICE_THRESHOLD_MS, ProviderPacer } from "./rateLimit/providerPacer";
 import { MAX_ATTEMPTS, RateLimitExhaustedError } from "./rateLimit/retryPolicy";
@@ -65,7 +67,7 @@ function recordingGateway(chunks: AIMessageChunk[], chatOverride?: unknown, prov
   });
   const gateway = createModelGateway(chat as never, {
     provider,
-    model: "mistral-medium-latest",
+    model: "mistral-large-4",
     observe: (record) => records.push(record),
     concurrency,
     pacer,
@@ -129,7 +131,7 @@ describe("ModelGateway.stream", () => {
     expect(records).toHaveLength(1);
     expect(records[0]).toMatchObject({
       provider: "mistral",
-      model: "mistral-medium-latest",
+      model: "mistral-large-4",
       stage: "limit_synthesis",
       partial: false,
       usage: { inputTokensTotal: 7, outputTokensTotal: 1 },
@@ -159,21 +161,16 @@ describe("ModelGateway.stream", () => {
     expect(chat.seen[0].signal).toBe(controller.signal);
   });
 
-  it("adapts foreign tool ids for Mistral without mutating the caller's history", async () => {
-    const nativeId = "toolu_01A09q9rDJmwvLpPCJKtxpvB";
+  it("restores stored reasoning for Mistral without mutating the caller's history", async () => {
     const messages: BaseMessage[] = [
-      new AIMessage({ content: "", tool_calls: [{ id: nativeId, name: "file_read", args: {} }] }),
-      new ToolMessage({ tool_call_id: nativeId, content: "body" }),
+      new AIMessage({ content: "Act.", response_metadata: withReplayMetadata({}, "Plan first.") }),
     ];
     const { gateway, chat } = recordingGateway([chunk("done")]);
 
     await gateway.stream(messages, { stage: "model_turn" });
 
-    const outboundId = (chat.seen[0].messages[0] as AIMessage).tool_calls![0].id!;
-    expect(outboundId).toMatch(/^[A-Za-z0-9]{9}$/);
-    expect((chat.seen[0].messages[1] as ToolMessage).tool_call_id).toBe(outboundId);
-    expect((messages[0] as AIMessage).tool_calls![0].id).toBe(nativeId);
-    expect((messages[1] as ToolMessage).tool_call_id).toBe(nativeId);
+    expect(chat.seen[0].messages[0].content).toEqual(mistralReplayContent("Plan first.", "Act."));
+    expect(messages[0].content).toBe("Act.");
   });
 
   it("passes the exact original history to non-Mistral providers", async () => {
@@ -204,19 +201,15 @@ describe("ModelGateway.invoke", () => {
   });
 
   it("uses the same Mistral boundary adapter as streaming calls", async () => {
-    const nativeId = "call_openai_native";
     const messages: BaseMessage[] = [
-      new AIMessage({ content: "", tool_calls: [{ id: nativeId, name: "file_read", args: {} }] }),
-      new ToolMessage({ tool_call_id: nativeId, content: "body" }),
+      new AIMessage({ content: "Act.", response_metadata: withReplayMetadata({}, "Plan first.") }),
     ];
     const { gateway, chat } = recordingGateway([chunk("BRIEF")]);
 
     await gateway.invoke(messages, { stage: "compaction" });
 
-    const outboundId = (chat.seen[0].messages[0] as AIMessage).tool_calls![0].id!;
-    expect(outboundId).toMatch(/^[A-Za-z0-9]{9}$/);
-    expect((chat.seen[0].messages[1] as ToolMessage).tool_call_id).toBe(outboundId);
-    expect((messages[0] as AIMessage).tool_calls![0].id).toBe(nativeId);
+    expect(chat.seen[0].messages[0].content).toEqual(mistralReplayContent("Plan first.", "Act."));
+    expect(messages[0].content).toBe("Act.");
   });
 });
 
@@ -228,7 +221,7 @@ describe("ModelGateway.bindTools", () => {
     const bound = gateway.bindTools([]);
 
     expect(bound.provider).toBe("mistral");
-    expect(bound.model).toBe("mistral-medium-latest");
+    expect(bound.model).toBe("mistral-large-4");
 
     const call = await bound.stream(MESSAGES, { stage: "model_turn" });
     for await (const _ of call.chunks) {
@@ -241,7 +234,7 @@ describe("ModelGateway.bindTools", () => {
   it("names the provider when the underlying client cannot bind tools", () => {
     const gateway = createModelGateway({ stream: async () => [], invoke: async () => chunk("") } as never, {
       provider: "mistral",
-      model: "mistral-medium-latest",
+      model: "mistral-large-4",
     });
     expect(() => gateway.bindTools([])).toThrow(/mistral/);
   });

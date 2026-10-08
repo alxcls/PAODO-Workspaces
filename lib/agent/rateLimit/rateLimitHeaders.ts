@@ -104,7 +104,7 @@ function resetAt(
 }
 
 // Standard HTTP, so it sits outside the vendor table: either a count of seconds or an HTTP date.
-// It is often the only thing a 429 carries — measured, Mistral's 429s carry no rate-limit headers.
+// Often the only timing a 429 carries. Measured, Mistral's 429s state the request limit but omit it.
 function retryAfter(headers: Headers, now: number): number | undefined {
   const raw = headers.get("retry-after");
   if (raw === null) return undefined;

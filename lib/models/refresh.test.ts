@@ -4,23 +4,18 @@ import { buildCatalog, fromLiteLLM, fromScalewayCatalog, scalewayEffortDrift } f
 afterEach(() => vi.unstubAllGlobals());
 
 describe("model price refresh", () => {
-  it("prices codestral-latest from the newest versioned row", () => {
+  it("vendors a prefixed Mistral row under the bare id the app looks up", () => {
     const catalog = fromLiteLLM({
-      "mistral/codestral-latest": {
+      "mistral/mistral-large-4": {
         litellm_provider: "mistral",
-        input_cost_per_token: 1 / 1e6,
-        output_cost_per_token: 3 / 1e6,
-      },
-      "mistral/codestral-2508": {
-        litellm_provider: "mistral",
-        input_cost_per_token: 0.3 / 1e6,
-        output_cost_per_token: 0.9 / 1e6,
+        input_cost_per_token: 0.68 / 1e6,
+        output_cost_per_token: 2.09 / 1e6,
       },
     });
 
-    expect(catalog["codestral-latest"]).toMatchObject({
-      input_cost_per_token: 0.3 / 1e6,
-      output_cost_per_token: 0.9 / 1e6,
+    expect(catalog["mistral-large-4"]).toMatchObject({
+      input_cost_per_token: 0.68 / 1e6,
+      output_cost_per_token: 2.09 / 1e6,
     });
   });
 });

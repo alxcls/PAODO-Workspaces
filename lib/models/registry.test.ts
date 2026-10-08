@@ -13,7 +13,7 @@ describe("models catalog", () => {
     // Order matters for deepseek: the first entry is what a bare provider choice resolves to.
     expect(listModels("deepseek")).toEqual(["deepseek-flash", "deepseek-v4-pro"]);
     expect(listModels("moonshot")).toContain("kimi-k3");
-    expect(listModels("mistral")).toEqual(["codestral-latest", "mistral-large-latest", "mistral-medium-latest"]);
+    expect(listModels("mistral")).toEqual(["mistral-large-4"]);
     expect(listModels("scaleway")).toEqual(["deepseek-v4-flash-0731", "qwen3.6-35b-a3b"]);
   });
 

@@ -1442,6 +1442,20 @@
     "output_cost_per_token": 0.0000015,
     "cache_read_input_token_cost": 5e-8
   },
+  "mistral-large-4": {
+    "provider": "mistral",
+    "source": "litellm",
+    "input_cost_per_token": 6.8e-7,
+    "output_cost_per_token": 0.00000209,
+    "cache_read_input_token_cost": 6.8e-8
+  },
+  "mistral-large-4-0": {
+    "provider": "mistral",
+    "source": "litellm",
+    "input_cost_per_token": 6.8e-7,
+    "output_cost_per_token": 0.00000209,
+    "cache_read_input_token_cost": 6.8e-8
+  },
   "mistral-large-latest": {
     "provider": "mistral",
     "source": "litellm",

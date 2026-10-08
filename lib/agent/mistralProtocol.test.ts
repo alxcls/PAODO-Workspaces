@@ -18,51 +18,8 @@ function toolPair(id: string, name = "file_read"): BaseMessage[] {
 }
 
 describe("prepareMistralMessages", () => {
-  it("translates foreign tool ids on an outbound clone without changing canonical history", () => {
-    const nativeId = "toolu_01A09q9rDJmwvLpPCJKtxpvB";
-    const messages = toolPair(nativeId);
-
-    const first = prepareMistralMessages(messages);
-    const second = prepareMistralMessages(messages);
-    const translated = (first[0] as AIMessage).tool_calls![0].id!;
-
-    expect(translated).toMatch(/^[A-Za-z0-9]{9}$/);
-    expect((first[1] as ToolMessage).tool_call_id).toBe(translated);
-    expect((second[0] as AIMessage).tool_calls![0].id).toBe(translated);
-    expect((messages[0] as AIMessage).tool_calls![0].id).toBe(nativeId);
-    expect((messages[1] as ToolMessage).tool_call_id).toBe(nativeId);
-    expect(first[0]).not.toBe(messages[0]);
-    expect(first[1]).not.toBe(messages[1]);
-  });
-
-  it("keeps parallel calls distinct, paired, and stable", () => {
-    const messages: BaseMessage[] = [
-      new AIMessage({
-        content: "",
-        tool_calls: [
-          { id: "call_openai_a", name: "glob", args: {} },
-          { id: "toolu_anthropic_b", name: "file_read", args: {} },
-        ],
-      }),
-      new ToolMessage({ tool_call_id: "call_openai_a", content: "a" }),
-      new ToolMessage({ tool_call_id: "toolu_anthropic_b", content: "b" }),
-    ];
-
-    const outbound = prepareMistralMessages(messages);
-    const ids = (outbound[0] as AIMessage).tool_calls!.map((call) => call.id!);
-
-    expect(new Set(ids).size).toBe(2);
-    expect((outbound[1] as ToolMessage).tool_call_id).toBe(ids[0]);
-    expect((outbound[2] as ToolMessage).tool_call_id).toBe(ids[1]);
-    expect(
-      prepareMistralMessages(messages).map((message) =>
-        message instanceof ToolMessage ? message.tool_call_id : undefined,
-      ),
-    ).toEqual([undefined, ids[0], ids[1]]);
-  });
-
-  it("is a no-op when no Mistral-specific adaptation is needed", () => {
-    const messages: BaseMessage[] = [new HumanMessage("hi"), ...toolPair("abc123XYZ")];
+  it("sends tool-call ids exactly as stored, whichever provider minted them", () => {
+    const messages: BaseMessage[] = [new HumanMessage("hi"), ...toolPair("toolu_01A09q9rDJmwvLpPCJKtxpvB")];
     const outbound = prepareMistralMessages(messages);
 
     expect(outbound).not.toBe(messages);
@@ -161,7 +118,7 @@ describe("createMistralChatModel", () => {
       id: "cmpl-1",
       object: "chat.completion.chunk",
       created: 0,
-      model: "mistral-medium-latest",
+      model: "mistral-large-4",
       choices: [{ index: 0, delta: { role: "assistant", content }, finish_reason: null }],
     };
   }
@@ -169,7 +126,7 @@ describe("createMistralChatModel", () => {
   it("streams reasoning blocks instead of discarding them with a console warning", async () => {
     const warn = vi.spyOn(console, "log").mockImplementation(() => {});
     const model = createMistralChatModel({
-      model: "mistral-medium-latest",
+      model: "mistral-large-4",
       configuration: {
         baseURL: "https://api.mistral.ai/v1",
         apiKey: "key-mistral",
@@ -193,7 +150,7 @@ describe("createMistralChatModel", () => {
   it("streams prose that arrives as blocks, which a non-reasoning model loses outright", async () => {
     const warn = vi.spyOn(console, "log").mockImplementation(() => {});
     const model = createMistralChatModel({
-      model: "codestral-latest",
+      model: "mistral-large-4",
       configuration: {
         baseURL: "https://api.mistral.ai/v1",
         apiKey: "key-mistral",

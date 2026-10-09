@@ -19,11 +19,12 @@ export const AVAILABLE_MODELS: Record<string, readonly string[]> = {
     "claude-opus-5-5",
     "claude-opus-4-8",
   ],
-  // Ordered by input rate, then output. 5.1/5 and 6.1 Sol/6 Sol are priced as pairs; the newer leads.
+  // 5.1 leads as the default a bare provider choice resolves to. The rest are ordered by input
+  // rate, then output; 6.1 Sol/6 Sol are priced as a pair, and the newer comes first.
   openai: [
+    "gpt-5.1",
     "gpt-6-luna",
     "gpt-5.6-luna",
-    "gpt-5.1",
     "gpt-5",
     "gpt-6.1-sol",
     "gpt-6-sol",

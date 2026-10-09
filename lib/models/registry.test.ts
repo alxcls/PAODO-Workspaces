@@ -1,6 +1,5 @@
-// The model catalog is a code-owned list of the models offered in the picker. What matters: it
-// covers exactly the supported providers, listModels reflects it, an unknown provider yields an
-// empty list, and every listed model has a matching pricing entry so its usage cost resolves.
+// The code-owned list of models the picker offers: it covers exactly the supported providers,
+// an unknown provider yields an empty list, and every listed model has a price so its cost resolves.
 import { describe, it, expect } from "vitest";
 import { AVAILABLE_MODELS, listModels, offeredModelIds } from "./registry";
 import { getRate } from "./pricing";
@@ -9,7 +8,15 @@ import { SUPPORTED_PROVIDERS, getProviderMetadata, modelReasoningEfforts } from 
 
 describe("models catalog", () => {
   it("lists a provider's models from the curated catalog", () => {
-    expect(listModels("anthropic")).toContain("claude-opus-4-8");
+    // Cheapest first, and within a tier the newer model leads; the superseded ones stay offered.
+    expect(listModels("anthropic")).toEqual([
+      "claude-haiku-5-5",
+      "claude-haiku-4-5",
+      "claude-sonnet-5-5",
+      "claude-sonnet-5",
+      "claude-opus-5-5",
+      "claude-opus-4-8",
+    ]);
     // Order matters for deepseek: the first entry is what a bare provider choice resolves to.
     expect(listModels("deepseek")).toEqual(["deepseek-flash", "deepseek-v4-pro"]);
     expect(listModels("moonshot")).toContain("kimi-k3");

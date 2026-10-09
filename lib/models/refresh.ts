@@ -26,6 +26,7 @@
 import { AVAILABLE_MODELS, offeredModelIds } from "./registry";
 import { SCALEWAY_MODEL_EFFORTS } from "./scalewayEfforts";
 import type { Currency } from "./currency";
+import type { LongPromptRates } from "./pricing";
 
 const LITELLM_SOURCE = "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json";
 const MODELS_DEV_SOURCE = "https://models.dev/api.json";
@@ -40,18 +41,16 @@ const SCALEWAY_MAX_PAGES = 20;
 // taking any region, so prices that diverge per region can't be silently averaged into one number.
 const SCALEWAY_REGION = "fr-par";
 
-// LiteLLM's provider ids for the providers this app supports (lib/agent/buildModel.ts). Moonshot is
-// absent on purpose: LiteLLM keys its Moonshot models "moonshot/kimi-…", and the app looks rates up
-// by the bare id it sends to the API, so those rows would never resolve. models.dev supplies them.
+// LiteLLM's ids for the providers this app supports. Moonshot is absent on purpose: its rows are
+// keyed "moonshot/kimi-…" and would never resolve by the bare id, so models.dev supplies them.
 const PROVIDERS = new Set(["anthropic", "openai", "deepseek", "mistral"]);
 
-// Providers whose LiteLLM rows are keyed "<provider>/<model>" rather than by the bare model id.
-// Their rates are vendored under the bare tail so lookup() in ./pricing.ts — which only tries the id
-// as given, then its tail, never a prefixed form — can actually find them.
-//
-// This is the same mismatch that keeps Moonshot on models.dev, and Moonshot could move here too;
-// it deliberately hasn't, because that would reprice a model already shipping on a models.dev rate.
-// Mistral has no such history, so its prefixed LiteLLM rows are safe to normalize.
+/**
+ * Providers whose LiteLLM rows are keyed "<provider>/<model>". Their rates are vendored under the
+ * bare tail, the only form lookup() in ./pricing.ts can find.
+ *
+ * Moonshot has the same mismatch and stays on models.dev: moving it would reprice a shipping model.
+ */
 const LITELLM_PREFIXED = new Set(["mistral"]);
 
 /**
@@ -74,17 +73,25 @@ const MODELS_DEV_PROVIDER: Record<string, string> = {
 // every later tick — the loop would look alive and never fetch again.
 const FETCH_TIMEOUT_MS = 30_000;
 
+// The index signature admits the tiered keys, e.g. `input_cost_per_token_above_100k_tokens`.
 interface LiteLLMEntry {
   litellm_provider?: string;
   input_cost_per_token?: number;
   output_cost_per_token?: number;
   cache_read_input_token_cost?: number;
   cache_creation_input_token_cost?: number;
+  [key: string]: unknown;
 }
 
 // models.dev quotes USD per MILLION tokens (LiteLLM quotes per token), hence the /1e6 below.
+interface ModelsDevCost {
+  input?: number;
+  output?: number;
+  cache_read?: number;
+  cache_write?: number;
+}
 interface ModelsDevEntry {
-  cost?: { input?: number; output?: number; cache_read?: number; cache_write?: number };
+  cost?: ModelsDevCost & { tiers?: (ModelsDevCost & { tier?: { type?: string; size?: number } })[] };
 }
 interface ModelsDevProvider {
   models?: Record<string, ModelsDevEntry>;
@@ -115,6 +122,7 @@ export interface VendoredEntry {
   output_cost_per_token: number;
   cache_read_input_token_cost?: number;
   cache_creation_input_token_cost?: number;
+  long_prompt?: LongPromptRates;
 }
 
 export type Catalog = Record<string, VendoredEntry>;
@@ -131,6 +139,46 @@ function resolves(catalog: Catalog, modelId: string): boolean {
   return Boolean(catalog[modelId] ?? catalog[modelId.split("/").pop() ?? modelId]);
 }
 
+const LITELLM_TIER_KEY = /^input_cost_per_token_above_(\d+)k_tokens$/;
+
+/**
+ * LiteLLM's long-prompt rate card for a row, or undefined when it has none.
+ *
+ * Read off the key names because the threshold lives only there. The lowest threshold wins, and a
+ * tier priced on input alone is dropped: it would bill every long completion at the base rate.
+ */
+function liteLLMLongPrompt(e: LiteLLMEntry): LongPromptRates | undefined {
+  const sizes = Object.keys(e).flatMap((key) => LITELLM_TIER_KEY.exec(key)?.[1] ?? []);
+  const size = sizes.map(Number).sort((a, b) => a - b)[0];
+  if (size === undefined) return undefined;
+  const at = (prefix: string) => e[`${prefix}_above_${size}k_tokens`];
+  const input = at("input_cost_per_token");
+  const output = at("output_cost_per_token");
+  const cacheRead = at("cache_read_input_token_cost");
+  const cacheWrite = at("cache_creation_input_token_cost");
+  if (typeof input !== "number" || typeof output !== "number") return undefined;
+  return {
+    above_tokens: size * 1000,
+    input_cost_per_token: input,
+    output_cost_per_token: output,
+    ...(typeof cacheRead === "number" && { cache_read_input_token_cost: cacheRead }),
+    ...(typeof cacheWrite === "number" && { cache_creation_input_token_cost: cacheWrite }),
+  };
+}
+
+/** The same rate card from models.dev, which quotes per MILLION tokens and names the threshold. */
+function modelsDevLongPrompt(cost: ModelsDevEntry["cost"]): LongPromptRates | undefined {
+  const tier = cost?.tiers?.find((t) => t.tier?.type === "context" && typeof t.tier.size === "number");
+  if (typeof tier?.input !== "number" || typeof tier.output !== "number") return undefined;
+  return {
+    above_tokens: tier.tier!.size!,
+    input_cost_per_token: tier.input / 1e6,
+    output_cost_per_token: tier.output / 1e6,
+    ...(typeof tier.cache_read === "number" && { cache_read_input_token_cost: tier.cache_read / 1e6 }),
+    ...(typeof tier.cache_write === "number" && { cache_creation_input_token_cost: tier.cache_write / 1e6 }),
+  };
+}
+
 export function fromLiteLLM(upstream: Record<string, LiteLLMEntry>): Catalog {
   const out: Catalog = {};
   for (const [id, e] of Object.entries(upstream)) {
@@ -138,10 +186,10 @@ export function fromLiteLLM(upstream: Record<string, LiteLLMEntry>): Catalog {
     // Skip models with no usable rate (some catalog rows are context-window-only).
     if (typeof e.input_cost_per_token !== "number" || typeof e.output_cost_per_token !== "number") continue;
     const key = LITELLM_PREFIXED.has(e.litellm_provider) ? (id.split("/").pop() ?? id) : id;
-    // A de-prefixed key must never displace a row already vendored under that bare name: the whole
-    // point of the bare key is that the app looks rates up by it, so a collision would silently bill
-    // one vendor's model at another's rate. First writer wins and the loser is simply not vendored.
+    // A de-prefixed key must never displace a row already vendored under that bare name, or one
+    // vendor's model is silently billed at another's rate. First writer wins; the loser is dropped.
     if (key !== id && out[key]) continue;
+    const longPrompt = liteLLMLongPrompt(e);
     out[key] = {
       provider: e.litellm_provider,
       source: "litellm",
@@ -153,6 +201,7 @@ export function fromLiteLLM(upstream: Record<string, LiteLLMEntry>): Catalog {
       ...(typeof e.cache_creation_input_token_cost === "number" && {
         cache_creation_input_token_cost: e.cache_creation_input_token_cost,
       }),
+      ...(longPrompt && { long_prompt: longPrompt }),
     };
   }
 
@@ -170,6 +219,7 @@ export function fillGaps(catalog: Catalog, modelsDev: Record<string, ModelsDevPr
       if (resolves(catalog, model)) continue;
       const cost = modelsDev[devProvider]?.models?.[model]?.cost;
       if (typeof cost?.input !== "number" || typeof cost?.output !== "number") continue;
+      const longPrompt = modelsDevLongPrompt(cost);
       catalog[model] = {
         provider,
         source: "models.dev",
@@ -177,6 +227,7 @@ export function fillGaps(catalog: Catalog, modelsDev: Record<string, ModelsDevPr
         output_cost_per_token: cost.output / 1e6,
         ...(typeof cost.cache_read === "number" && { cache_read_input_token_cost: cost.cache_read / 1e6 }),
         ...(typeof cost.cache_write === "number" && { cache_creation_input_token_cost: cost.cache_write / 1e6 }),
+        ...(longPrompt && { long_prompt: longPrompt }),
       };
       filled.push(model);
     }
@@ -337,9 +388,8 @@ export async function buildCatalog(): Promise<BuiltCatalog> {
   const sourceFailures: VendoredEntry["source"][] = [];
   const offeredScaleway = AVAILABLE_MODELS.scaleway ?? [];
   if (offeredScaleway.length > 0) {
-    // These ids belong to the Scaleway provider in this app. Remove any same-named LiteLLM row before
-    // the vendor fetch so a partial response cannot leave a dollar rate from a different provider in
-    // the hole; it must remain absent for carryForward to restore the previous Scaleway euro rate.
+    // Drop any same-named LiteLLM row first, so a partial vendor response cannot leave another
+    // provider's dollar rate in the hole: absent is what lets carryForward restore the euro rate.
     for (const model of offeredScaleway) delete catalog[model];
     try {
       const rows = await fetchScalewayCatalog();
@@ -347,14 +397,12 @@ export async function buildCatalog(): Promise<BuiltCatalog> {
       Object.assign(catalog, priced);
       scaleway = Object.keys(priced);
       effortDrift = scalewayEffortDrift(rows);
-      // HTTP 200 is not sufficient evidence of a healthy source: an empty page, a truncated page set,
-      // or a response-shape change can all parse successfully while omitting an offered model. Mark
-      // that outcome partial so the live refresher carries the missing known-good rates forward.
+      // HTTP 200 does not prove a healthy source: a truncated or reshaped response still parses.
+      // Mark a missing offered model as partial, so the refresher carries its known-good rate forward.
       if (missingOfferedScalewayModels(priced).length > 0) sourceFailures.push("scaleway");
     } catch {
-      // Reported, never guessed at: a made-up euro rate would be frozen onto every turn. The caller
-      // decides what an absent source means — see `sourceFailures`. Swallowing it silently would make
-      // a catalog missing these rates look exactly like a successful refresh from here.
+      // Reported, never guessed at: a made-up euro rate would be frozen onto every turn, and a
+      // swallowed failure would look like a successful refresh. The caller reads `sourceFailures`.
       sourceFailures.push("scaleway");
     }
   }

@@ -64,6 +64,30 @@ describe("modelPricing", () => {
     expect(computeCost(tokens, "deepseek-v4-pro")).toBeCloseTo(expected, 12);
   });
 
+  // Haiku 5.5 bills the WHOLE request on a dearer card once its prompt passes 100K tokens, and the
+  // prompt is every input token, cache reads included. One flat rate would understate it fivefold.
+  it("switches to the long-prompt rate card once the prompt passes its threshold", () => {
+    const base = getRate("claude-haiku-5-5")!;
+    const long = getRate("claude-haiku-5-5", 100_001)!;
+    expect(getRate("claude-haiku-5-5", 100_000)).toEqual(base);
+    expect(long.input).toBeCloseTo(base.input * 5, 12);
+    expect(long.output).toBeCloseTo(base.output * 5, 12);
+    expect(long.cachedInput).toBeCloseTo(base.cachedInput * 5, 12);
+
+    const tokens = {
+      inputTokensTotal: 150_000,
+      inputTokensCacheRead: 120_000,
+      inputTokensCacheWrite: 0,
+      outputTokensTotal: 1_000,
+    };
+    const expected = 30_000 * long.input + 120_000 * long.cachedInput + 1_000 * long.output;
+    expect(computeCost(tokens, "claude-haiku-5-5")).toBeCloseTo(expected, 12);
+  });
+
+  it("keeps a model without a long-prompt card on one rate at any prompt length", () => {
+    expect(getRate("claude-opus-5-5", 900_000)).toEqual(getRate("claude-opus-5-5"));
+  });
+
   it("prices Mistral cache reads at 10% of normal input", () => {
     const rate = getRate("mistral-large-4")!;
     expect(rate.cachedInput).toBeCloseTo(rate.input * 0.1, 12);

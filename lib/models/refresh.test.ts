@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { buildCatalog, fromLiteLLM, fromScalewayCatalog, scalewayEffortDrift } from "./refresh";
+import { buildCatalog, fillGaps, fromLiteLLM, fromScalewayCatalog, scalewayEffortDrift } from "./refresh";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -16,6 +16,63 @@ describe("model price refresh", () => {
     expect(catalog["mistral-large-4"]).toMatchObject({
       input_cost_per_token: 0.68 / 1e6,
       output_cost_per_token: 2.09 / 1e6,
+    });
+  });
+
+  // The threshold exists only in LiteLLM's key names, and batch keys share the suffix.
+  it("vendors a long-prompt rate card from LiteLLM's tiered keys", () => {
+    const catalog = fromLiteLLM({
+      "claude-haiku-5-5": {
+        litellm_provider: "anthropic",
+        input_cost_per_token: 1e-7,
+        output_cost_per_token: 5e-7,
+        input_cost_per_token_above_100k_tokens: 5e-7,
+        output_cost_per_token_above_100k_tokens: 2.5e-6,
+        cache_read_input_token_cost_above_100k_tokens: 5e-8,
+        input_cost_per_token_above_100k_tokens_batches: 2.5e-7,
+      },
+    });
+
+    expect(catalog["claude-haiku-5-5"].long_prompt).toEqual({
+      above_tokens: 100_000,
+      input_cost_per_token: 5e-7,
+      output_cost_per_token: 2.5e-6,
+      cache_read_input_token_cost: 5e-8,
+    });
+  });
+
+  it("drops a tier priced on input alone rather than billing long completions at the base rate", () => {
+    const catalog = fromLiteLLM({
+      "claude-haiku-5-5": {
+        litellm_provider: "anthropic",
+        input_cost_per_token: 1e-7,
+        output_cost_per_token: 5e-7,
+        input_cost_per_token_above_100k_tokens: 5e-7,
+      },
+    });
+
+    expect(catalog["claude-haiku-5-5"]).not.toHaveProperty("long_prompt");
+  });
+
+  it("vendors the same rate card from models.dev, converting from per-million", () => {
+    const catalog = {};
+    const cost = {
+      input: 0.1,
+      output: 0.5,
+      tiers: [{ input: 0.5, output: 2.5, cache_read: 0.05, tier: { type: "context", size: 100_000 } }],
+    };
+
+    fillGaps(catalog, { anthropic: { models: { "claude-haiku-5-5": { cost } } } });
+
+    expect(catalog).toMatchObject({
+      "claude-haiku-5-5": {
+        long_prompt: {
+          above_tokens: 100_000,
+          input_cost_per_token: 0.5 / 1e6,
+          output_cost_per_token: 2.5 / 1e6,
+          cache_read_input_token_cost: 0.05 / 1e6,
+        },
+      },
     });
   });
 });

@@ -5,12 +5,12 @@ import { deserializeMessages, serializeMessages } from "./messageSerialization";
 import { createModelGateway } from "./modelGateway";
 import { withReplayMetadata } from "./reasoningReplay";
 
-function thinkingTurn(id: string, reasoning: string): BaseMessage[] {
+function thinkingTurn(id: string, reasoning: string, provider?: string): BaseMessage[] {
   return [
     new AIMessage({
       content: "Let me look.",
       tool_calls: [{ id, name: "file_read", args: {} }],
-      response_metadata: withReplayMetadata({ executionTurnId: "turn-1" }, reasoning),
+      response_metadata: withReplayMetadata({ executionTurnId: "turn-1" }, reasoning, provider),
     }),
     new ToolMessage({ tool_call_id: id, content: "result" }),
   ];
@@ -72,6 +72,20 @@ describe("deepseek reasoning replay", () => {
     const sent = await sentMessages(thinkingTurn("call_a", "I should read the file first."));
 
     expect(assistantWithTools(sent)?.reasoning_content).toBe("I should read the file first.");
+  });
+
+  // Every provider's reasoning is stored now. What is SENT must stay what it was when only the
+  // replaying providers stored any: theirs goes out, reasoning kept for display does not.
+  it.each(["deepseek", "mistral"])("replays reasoning a replaying provider (%s) wrote", async (author) => {
+    const sent = await sentMessages(thinkingTurn("call_a", "Read first.", author));
+
+    expect(assistantWithTools(sent)?.reasoning_content).toBe("Read first.");
+  });
+
+  it.each(["anthropic", "openai", "moonshot", "scaleway"])("withholds reasoning %s wrote", async (author) => {
+    const sent = await sentMessages(thinkingTurn("call_a", "Display only.", author));
+
+    expect(assistantWithTools(sent)).not.toHaveProperty("reasoning_content");
   });
 
   it("pairs reasoning by tool-call id, not by position", async () => {

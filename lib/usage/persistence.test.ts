@@ -397,7 +397,7 @@ describe("usageStore", () => {
 
   it("freezes priced cost when the record is written", async () => {
     const store = await freshStore();
-    store.appendUsage(baseTurn({ model: "chatgpt-4o-latest" }));
+    store.appendUsage(baseTurn({ model: "gpt-5.5" }));
 
     expect(store.listUsageLight()[0].cost).toBeTypeOf("number");
     expect(detailOf(store, "s1").turns[0].cost).toBe(store.listUsageLight()[0].cost);
@@ -415,7 +415,7 @@ describe("usageStore", () => {
 
   it("records a dollar-priced turn as dollars, so the two are told apart", async () => {
     const store = await freshStore();
-    store.appendUsage(baseTurn({ model: "chatgpt-4o-latest" }));
+    store.appendUsage(baseTurn({ model: "gpt-5.5" }));
 
     expect(store.listUsageLight()[0].costCurrency).toBe("USD");
   });

@@ -1,5 +1,5 @@
-// The Anthropic thinking API split by model generation: newer models 400 on the legacy budget shape
-// and need adaptive thinking + effort; older ones still take the legacy budget and reject effort.
+// The Anthropic thinking API split by model generation: current models 400 on the legacy budget shape
+// and need adaptive thinking + effort; Haiku 4.5 alone still takes the budget and rejects effort.
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import type { ChatOpenAI } from "@langchain/openai";
 import {
@@ -17,14 +17,14 @@ import type { LLMProviderConfig } from "./interfaces";
 describe("anthropicThinkingConfig", () => {
   it("uses adaptive thinking + effort for claude-sonnet-5", () => {
     const c = anthropicThinkingConfig("claude-sonnet-5", "high");
-    expect(c).toEqual({ thinking: { type: "adaptive" }, outputConfig: { effort: "high" } });
+    expect(c).toEqual({ thinking: { type: "adaptive", display: "summarized" }, outputConfig: { effort: "high" } });
     // No budget_tokens — that field is what 400s on this model.
     expect(c.thinking).not.toHaveProperty("budget_tokens");
   });
 
   it("uses adaptive thinking + effort for claude-opus-4-8", () => {
     const c = anthropicThinkingConfig("claude-opus-4-8", "medium");
-    expect(c).toEqual({ thinking: { type: "adaptive" }, outputConfig: { effort: "medium" } });
+    expect(c).toEqual({ thinking: { type: "adaptive", display: "summarized" }, outputConfig: { effort: "medium" } });
   });
 
   it("maps the reasoning-effort knob straight onto output_config.effort", () => {
@@ -49,10 +49,22 @@ describe("anthropicThinkingConfig", () => {
     });
   });
 
-  it("defaults an unknown model to the legacy budget path", () => {
+  // The legacy shape is what a new model rejects, so an id nobody has listed must not get it.
+  it("defaults an unknown model to adaptive thinking", () => {
     const c = anthropicThinkingConfig("claude-some-future-model", "high");
-    expect(c.thinking).toMatchObject({ type: "enabled" });
+    expect(c).toEqual({ thinking: { type: "adaptive", display: "summarized" }, outputConfig: { effort: "high" } });
   });
+
+  // Adaptive models return thinking blocks empty unless asked, and these put their notes there.
+  it.each(["claude-haiku-5-5", "claude-sonnet-5-5", "claude-opus-5-5"])(
+    "asks %s for summarized thinking, with adaptive thinking + effort",
+    (model) => {
+      expect(anthropicThinkingConfig(model, "medium")).toEqual({
+        thinking: { type: "adaptive", display: "summarized" },
+        outputConfig: { effort: "medium" },
+      });
+    },
+  );
 });
 
 // Where a config becomes a real client, so these assert the model/key actually reach the SDK.
@@ -100,6 +112,29 @@ describe("buildChatModel", () => {
     };
     expect(m.model).toBe(model);
     expect(m.apiKey).toBe(`key-${provider}`);
+  });
+
+  // LangChain's own default is at most 16,384, which thinking alone can use up.
+  it.each(["claude-haiku-5-5", "claude-haiku-4-5", "claude-opus-5-5"])("gives %s the same output cap", (model) => {
+    const m = buildChatModel(config({ provider: "anthropic", model })) as unknown as { maxTokens: number };
+    expect(m.maxTokens).toBe(64_000);
+  });
+
+  // Anthropic 400s a budget that is not below max_tokens, so no offered level may reach it.
+  it("keeps every claude-haiku-4-5 budget below the output cap", () => {
+    for (const effort of modelReasoningEfforts("anthropic", "claude-haiku-4-5")) {
+      const { thinking } = anthropicThinkingConfig("claude-haiku-4-5", effort);
+      const budget = "budget_tokens" in thinking ? thinking.budget_tokens : Number.NaN;
+      expect(budget).toBeLessThan(64_000);
+    }
+  });
+
+  // Compaction calls invoke(); the SDK refuses that non-streaming above ~21K max_tokens.
+  it("streams every Anthropic call, invoke included", () => {
+    const m = buildChatModel(config({ provider: "anthropic", model: "claude-opus-5-5" })) as unknown as {
+      streaming: boolean;
+    };
+    expect(m.streaming).toBe(true);
   });
 
   // These share OpenAI's client class, so a dropped `configuration` silently sends this vendor's key
@@ -183,9 +218,8 @@ describe("buildChatModel", () => {
     expect(modelReasoningEfforts("mistral", "mistral-large-4")).toEqual(["none", "high"]);
   });
 
-  // Asserted on the request body, not on modelKwargs: ChatOpenAI writes prompt_cache_key from its
-  // typed field AFTER spreading modelKwargs, so a key parked in modelKwargs is overwritten with
-  // undefined and never sent — a constructor-shaped assertion passes while nothing is ever cached.
+  // Asserted on the request body: ChatOpenAI writes prompt_cache_key from its typed field AFTER
+  // spreading modelKwargs, so a key parked there is overwritten with undefined and never sent.
   it("sends a stable Mistral prompt cache key without dropping reasoning configuration", () => {
     const m = buildChatModel(config({ provider: "mistral", model: "mistral-large-4", reasoningEffort: "high" }), {
       cacheScopeId: "conversation-42",
@@ -196,10 +230,9 @@ describe("buildChatModel", () => {
       prompt_cache_key: "conversation-42",
     });
 
-    const quiet = buildChatModel(
-      config({ provider: "mistral", model: "mistral-large-4", reasoningEffort: "none" }),
-      { cacheScopeId: "conversation-42" },
-    ) as ChatOpenAI;
+    const quiet = buildChatModel(config({ provider: "mistral", model: "mistral-large-4", reasoningEffort: "none" }), {
+      cacheScopeId: "conversation-42",
+    }) as ChatOpenAI;
     const quietParams = quiet.invocationParams({}) as Record<string, unknown>;
     expect(quietParams.prompt_cache_key).toBe("conversation-42");
     expect(quietParams.reasoning_effort).toBe("none");
@@ -323,7 +356,7 @@ describe("defaultModelSelection", () => {
   it("takes the provider's default effort when it has a dial", () => {
     expect(defaultModelSelection(only("anthropic"))).toEqual({
       provider: "anthropic",
-      model: "claude-haiku-4-5",
+      model: "claude-haiku-5-5",
       reasoningEffort: "low",
     });
   });

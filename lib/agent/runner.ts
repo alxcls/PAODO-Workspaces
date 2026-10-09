@@ -17,14 +17,14 @@ import { sendToWorkspace } from "../infra/realtime/wsHub";
 import { createLogger } from "../infra/logger";
 import type { ToolStatus } from "@/lib/usage/types";
 import type { CallAgentMeta } from "./tools/agentCall";
-import { streamModelTurn, synthesizeLimit, type ResolvedToolCall } from "./modelTurn";
 import {
-  NO_USAGE,
-  providerReplaysReasoning,
-  type ModelCallObserver,
-  type ModelCallRecord,
-  type ModelUsage,
-} from "./modelGateway";
+  refusalMessage,
+  streamModelTurn,
+  synthesizeLimit,
+  type ModelRefusal,
+  type ResolvedToolCall,
+} from "./modelTurn";
+import { NO_USAGE, type ModelCallObserver, type ModelCallRecord, type ModelUsage } from "./modelGateway";
 import { withReplayMetadata } from "./reasoningReplay";
 import { providerConcurrency } from "./providerConcurrency";
 import { dispatchTools, type RunnerTool } from "./toolDispatch";
@@ -48,6 +48,9 @@ export type AgentErrorCode =
   | "TIMEOUT"
   | "CANCELLED"
   | "INFRASTRUCTURE_UNAVAILABLE"
+  // The model's safety checks declined this one request. Not a provider failure: nothing is wrong
+  // with the account or the host, so it is kept out of the terminal provider codes.
+  | "MODEL_REFUSED"
   // The shared list, so a code added to providerFailure.ts cannot be one this union rejects. All of
   // them, not only the terminal ones: a survivable cause still has to explain why THIS run stopped.
   | ProviderFailureCode;
@@ -217,10 +220,10 @@ export async function* runAgent(
   const signalHandlers: Record<string, PostDispatchFn> = injectedHandlers ?? builtHandlers ?? {};
   const typedToolMap = toolMap as Record<string, RunnerTool>;
 
-  // Only a provider that replays reasoning keeps it. The rest would persist thinking text nothing
-  // ever reads — and at the higher effort levels that is most of what the turn produced.
-  const keepsReasoning = providerReplaysReasoning(modelWithTools.provider);
-  const replayedReasoning = (reasoning: string) => (keepsReasoning ? reasoning : "");
+  // Every turn keeps its reasoning, labelled with who produced it: the transcript shows it again
+  // on reload, and only the gateway's adapter for that same provider ever sends it back.
+  const turnMetadata = (turnId: string, reasoning: string) =>
+    withReplayMetadata({ executionTurnId: turnId }, reasoning, modelWithTools.provider);
 
   // Through the hub rather than straight at the socket: notify carries every tool_call and
   // tool_result_log of a run, so it needs the same backpressure bound as the console stream.
@@ -270,12 +273,14 @@ export async function* runAgent(
       let reasoningText = "";
       let toolCalls: ResolvedToolCall[] = [];
       let usage: ModelUsage = NO_USAGE;
+      let refusal: ModelRefusal | undefined;
 
       for await (const event of streamModelTurn(modelWithTools, messages, iterations, signal, wlog)) {
         if (event.type === "turn_complete") {
           fullText = event.fullText;
           toolCalls = event.toolCalls;
           usage = event.usage;
+          refusal = event.refusal;
         } else {
           if (event.type === "reasoning") reasoningText += event.content;
           yield event;
@@ -293,15 +298,31 @@ export async function* runAgent(
         ...(fullText ? { outputText: fullText } : {}),
       };
 
+      if (refusal) {
+        // The tokens were spent, so the turn is still measured. Its tool calls are dropped unrun:
+        // a declined turn is not one to act on, and history must not hold a call with no result.
+        yield { type: "turn_usage", ...usageBase, toolCalls: [] };
+        if (fullText) {
+          messages.push(new AIMessage({ content: fullText, response_metadata: turnMetadata(turnId, reasoningText) }));
+        }
+        wlog.warn(
+          { event: "model_refused", outcome: "error_event_emitted", model: modelId, category: refusal.category },
+          "model declined the request",
+        );
+        yield { type: "error", code: "MODEL_REFUSED", message: refusalMessage(refusal, modelId) };
+        yield { type: "done" };
+        break;
+      }
+
       if (!toolCalls.length) {
         // Final text response — tokens already streamed as they arrived; just persist and exit.
         yield { type: "turn_usage", ...usageBase, toolCalls: [] };
         messages.push(
           new AIMessage({
             content: fullText,
-            // The execution ledger owns token measurements. Replay state keeps only the stable
-            // reference used to join those measurements when a conversation is reopened.
-            response_metadata: withReplayMetadata({ executionTurnId: turnId }, replayedReasoning(reasoningText)),
+            // The execution ledger owns token measurements; this keeps only the stable reference
+            // that joins them when a conversation is reopened, plus the turn's reasoning.
+            response_metadata: turnMetadata(turnId, reasoningText),
           }),
         );
         wlog.debug("agent loop done");
@@ -315,12 +336,12 @@ export async function* runAgent(
       toolCalls.forEach((tc, i) => seen.set(`${tc.name}:${JSON.stringify(tc.args)}`, i));
       const activeCalls = toolCalls.filter((tc, i) => seen.get(`${tc.name}:${JSON.stringify(tc.args)}`) === i);
 
-      // Canonical history remains plain text for every provider. The reasoning is private response
+      // Canonical history remains plain text for every provider. The reasoning is response
       // metadata, and only the gateway's outbound adapter re-encodes it for a provider that needs it.
       const assistantTurn = new AIMessage({
         content: fullText,
         tool_calls: activeCalls.map((tc) => ({ id: tc.id, name: tc.name, args: tc.args })),
-        response_metadata: withReplayMetadata({ executionTurnId: turnId }, replayedReasoning(reasoningText)),
+        response_metadata: turnMetadata(turnId, reasoningText),
       });
 
       for (const tc of activeCalls) {

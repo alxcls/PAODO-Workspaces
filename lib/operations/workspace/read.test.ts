@@ -19,13 +19,8 @@ const store = {
   getWorkspace: (id: string) => (id === workspace.id ? workspace : undefined),
 };
 
-// What a workspace that never picked falls back to is read from .env, so a test asserting it has to
-// pin .env — otherwise whatever the developer's shell exports decides the expected value. Enumerated
-// from the registry rather than hand-listed so a new provider can't quietly leak in.
-//
-// This used to stub only the API-key half of each provider's .env contract, which left the
-// availability half free to leak: `ANTHROPIC_AVAILABLE=false` in a shell failed the suite. There is
-// now only one half to stub, so the whole class of bug is gone rather than fixed.
+// The fallback for a workspace that never picked is read from .env, so these tests pin it; otherwise
+// the developer's shell decides the expected value. Enumerated from the registry, not hand-listed.
 function offerOnly(provider: string) {
   for (const p of SUPPORTED_PROVIDERS) {
     vi.stubEnv(providerAvailabilityEnv(p)!, p === provider ? "true" : "false");
@@ -86,7 +81,7 @@ describe("workspace record queries", () => {
     offerOnly("anthropic");
     expect(getWorkspace("ws-1", store, (provider) => provider === "anthropic")).toMatchObject({
       llmProvider: "anthropic",
-      llmModel: "claude-haiku-4-5",
+      llmModel: "claude-haiku-5-5",
       llmProviderHasKey: true,
       reasoningEffort: "low",
     });

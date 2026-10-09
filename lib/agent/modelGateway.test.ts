@@ -51,9 +51,8 @@ function recordingGateway(chunks: AIMessageChunk[], chatOverride?: unknown, prov
   const records: ModelCallRecord[] = [];
   const chat = (chatOverride ?? fakeChat(chunks)) as ReturnType<typeof fakeChat>;
   const concurrency = new ProviderConcurrency();
-  // Its own pacer, on its own clock: the shared singleton would carry a bucket drained by one test
-  // into the next, and real backoff would make a 429 test take minutes. The fake sleep must advance
-  // the clock it shares with the pacer, or a wait never elapses and the admission loop spins.
+  // Its own pacer and clock: the shared one would leak a drained bucket between tests, and real
+  // backoff takes minutes. The fake sleep must advance that clock, or the admission loop spins.
   const slept: number[] = [];
   let clock = 1_700_000_000_000;
   const pacer = new ProviderPacer({
@@ -171,6 +170,17 @@ describe("ModelGateway.stream", () => {
 
     expect(chat.seen[0].messages[0].content).toEqual(mistralReplayContent("Plan first.", "Act."));
     expect(messages[0].content).toBe("Act.");
+  });
+
+  it("leaves a turn another provider reasoned on exactly as stored", async () => {
+    const messages: BaseMessage[] = [
+      new AIMessage({ content: "Act.", response_metadata: withReplayMetadata({}, "Plan first.", "anthropic") }),
+    ];
+    const { gateway, chat } = recordingGateway([chunk("done")]);
+
+    await gateway.stream(messages, { stage: "model_turn" });
+
+    expect(chat.seen[0].messages[0]).toBe(messages[0]);
   });
 
   it("passes the exact original history to non-Mistral providers", async () => {
@@ -370,9 +380,8 @@ describe("ModelGateway — rate limit retry", () => {
     // so acquire() could not have announced an admission wait yet.
     expect(notices[0]).toMatchObject({ attempt: 1 });
     expect(notices[0].waitMs).toBeGreaterThanOrEqual(NOTICE_THRESHOLD_MS);
-    // At least one wait per refusal. Some passes add a pacing wait on top, once the refusals have
-    // taught the pacer a ceiling — the widening of the backoff itself is asserted in the pacer's
-    // own tests, where it is not tangled up with admission.
+    // At least one wait per refusal; a learned ceiling can add pacing waits on top. The widening
+    // of the backoff itself is asserted in the pacer's own tests.
     expect(slept.length).toBeGreaterThanOrEqual(2);
   });
 

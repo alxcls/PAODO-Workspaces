@@ -1,6 +1,5 @@
-// loadAgentConfig resolves provider/model/reasoning-effort from the workspace's stored selection,
-// falling back to the first AVAILABLE provider when the workspace hasn't picked, and resolves the
-// API key for the selected provider from the encrypted key store the operator fills in from the UI.
+// loadAgentConfig resolves the workspace's stored selection, falls back to the first AVAILABLE
+// provider when it has none, and takes the selected provider's key from the encrypted key store.
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { loadAgentConfig } from "./buildTools";
 import { buildModel, SUPPORTED_PROVIDERS, providerAvailabilityEnv } from "./buildModel";
@@ -14,14 +13,8 @@ function seedWorkspace(ws: Record<string, unknown>) {
   g._workspaces.set(ws.id as string, ws);
 }
 
-// The availability vars loadAgentConfig reads, restored after each test so one case's configuration
-// can't decide another's fallback.
-//
-// Derived from the provider registry rather than hand-listed: the fallback these tests exercise is
-// "first AVAILABLE provider", so a var this list forgets is a var the developer's own shell still
-// supplies — quietly changing which provider the fallback picks, in whichever direction their
-// machine happens to be configured. A hand-written list stops covering the newest provider on the
-// day it is added, which is precisely when these tests matter most.
+// The availability vars loadAgentConfig reads, restored after each test. Derived from the registry:
+// a hand-written list would miss the newest provider and let the developer's shell pick the fallback.
 const PROVIDER_ENV = SUPPORTED_PROVIDERS.map((provider) => providerAvailabilityEnv(provider)!).filter(Boolean);
 
 /** Offer exactly one provider, so the fallback's choice is unambiguous. */
@@ -81,12 +74,11 @@ describe("loadAgentConfig", () => {
     process.env.DEEPSEEK_AVAILABLE = "false";
     const c = loadAgentConfig();
     expect(c.provider).toBe("anthropic");
-    expect(c.model).toBe("claude-haiku-4-5");
+    expect(c.model).toBe("claude-haiku-5-5");
   });
 
-  // The fallback deliberately does NOT prefer a keyed provider. Skipping to one would hide the
-  // deployment's real first choice behind whichever provider happened to be paid for, and would make
-  // a workspace silently change provider the moment a key was added or removed elsewhere.
+  // The fallback deliberately does NOT prefer a keyed provider: that would hide the deployment's
+  // first choice, and switch a workspace's provider whenever a key was added or removed elsewhere.
   it("picks the first offered provider even when a later one is the only keyed one", () => {
     setProviderKey("deepseek", "sk-ds");
     expect(loadAgentConfig().provider).toBe("anthropic");
@@ -111,10 +103,8 @@ describe("loadAgentConfig", () => {
     expect(c.reasoningEffort).toBe("high");
   });
 
-  // The key must follow the selected provider — the bug the old per-provider fields allowed was a
-  // config carrying every vendor's key at once and the builder picking the wrong one. Sending one
-  // vendor's credential to another vendor's endpoint leaks it to that third party, so this is a
-  // disclosure bug wearing a 401's clothes.
+  // The key must follow the selected provider. Sending one vendor's credential to another vendor's
+  // endpoint leaks it to that third party: a disclosure bug wearing a 401's clothes.
   it("resolves the API key of the selected provider, not of some other one", () => {
     setProviderKey("anthropic", "sk-ant-test");
     setProviderKey("deepseek", "sk-ds-test");
@@ -132,9 +122,8 @@ describe("loadAgentConfig", () => {
     expect(loadAgentConfig("ws-key").apiKey).toBe("sk-ant-test");
     // No workspace -> the fallback provider, whose own key follows. anthropic leads the registry.
     expect(loadAgentConfig().apiKey).toBe("sk-ant-test");
-    // ...and deepseek's key once deepseek is the one being offered. Note the fallback follows
-    // AVAILABILITY, not which providers happen to be keyed: switching anthropic off alone would land
-    // on openai — offered, unkeyed, and therefore a run that stops at the preflight.
+    // ...and deepseek's key once deepseek is offered. The fallback follows AVAILABILITY, not keys:
+    // switching anthropic off alone would land on openai, unkeyed, and stop at the preflight.
     offerOnly("deepseek");
     expect(loadAgentConfig().apiKey).toBe("sk-ds-test");
   });

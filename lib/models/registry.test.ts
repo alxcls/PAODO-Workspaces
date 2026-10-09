@@ -5,7 +5,8 @@ import { AVAILABLE_MODELS, listModels, offeredModelIds } from "./registry";
 import { getRate } from "./pricing";
 import { OPENAI_MODEL_EFFORTS } from "./openaiEfforts";
 import { SCALEWAY_MODEL_EFFORTS } from "./scalewayEfforts";
-import { SUPPORTED_PROVIDERS, getProviderMetadata, modelReasoningEfforts } from "@/lib/agent/buildModel";
+import { defaultEffortFor } from "./selection";
+import { SUPPORTED_PROVIDERS, getProviderMetadata, modelReasoningEfforts, vocabularyFor } from "@/lib/agent/buildModel";
 
 describe("models catalog", () => {
   it("lists a provider's models from the curated catalog", () => {
@@ -88,8 +89,19 @@ describe("models catalog", () => {
     }
   });
 
-  it.each(["gpt-5.1", "gpt-5", "gpt-5.4", "gpt-5.5", "gpt-5.5-pro"])("keeps %s on none…xhigh, without max", (model) => {
-    expect(modelReasoningEfforts("openai", model)).toEqual(["none", "minimal", "low", "medium", "high", "xhigh"]);
+  it.each([
+    ["gpt-5", ["minimal", "low", "medium", "high"]],
+    ["gpt-5.1", ["none", "low", "medium", "high"]],
+    ["gpt-5.4", ["none", "low", "medium", "high", "xhigh"]],
+    ["gpt-5.5", ["none", "low", "medium", "high", "xhigh"]],
+    ["gpt-5.5-pro", ["medium", "high", "xhigh"]],
+  ])("keeps %s on the levels its model page lists", (model, levels) => {
+    expect(modelReasoningEfforts("openai", model)).toEqual(levels);
+  });
+
+  // GPT-5.5 Pro has no "low", the usual starting level, so it starts at its quietest instead.
+  it("starts gpt-5.5-pro at medium", () => {
+    expect(defaultEffortFor(vocabularyFor("openai"), "gpt-5.5-pro")).toBe("medium");
   });
 
   it.each(["gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol", "gpt-6-luna", "gpt-6-sol"])(

@@ -255,7 +255,10 @@ describe("workspace metadata validation", () => {
   it.each([
     ["gpt-6.1-sol", "none", "low, medium, high, xhigh, max"],
     ["gpt-6-sol", "minimal", "none, low, medium, high, xhigh, max"],
-    ["gpt-5.5", "max", "none, minimal, low, medium, high, xhigh"],
+    ["gpt-5.5", "max", "none, low, medium, high, xhigh"],
+    ["gpt-5", "none", "minimal, low, medium, high"],
+    ["gpt-5.1", "minimal", "none, low, medium, high"],
+    ["gpt-5.5-pro", "low", "medium, high, xhigh"],
   ])("rejects on %s the OpenAI effort %s, which only its siblings accept", (model, reasoningEffort, accepted) => {
     expect(() => validateMetadata({ model: { provider: "openai", model, reasoningEffort } }, CURRENT)).toThrow(
       `reasoningEffort for ${model} must be one of: ${accepted}`,

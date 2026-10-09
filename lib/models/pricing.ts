@@ -8,6 +8,15 @@ import seed from "./model-pricing.json";
 // themselves live in a leaf the client bundle can import without the price list. See ./currency.ts.
 export { DEFAULT_CURRENCY, type Currency };
 
+/** The dearer rate card a vendor applies to a whole request once its prompt passes `above_tokens`. */
+export interface LongPromptRates {
+  above_tokens: number;
+  input_cost_per_token: number;
+  output_cost_per_token: number;
+  cache_read_input_token_cost?: number;
+  cache_creation_input_token_cost?: number;
+}
+
 export interface CatalogEntry {
   provider: string;
   /** Which upstream list this rate came from — carried for review, not used by the cost math. */
@@ -18,6 +27,7 @@ export interface CatalogEntry {
   output_cost_per_token: number;
   cache_read_input_token_cost?: number;
   cache_creation_input_token_cost?: number;
+  long_prompt?: LongPromptRates;
 }
 
 // On the Node global: server.ts (the refresher) and the Next-bundled routes (which price turns) load this module
@@ -71,10 +81,19 @@ function lookup(modelId: string): CatalogEntry | undefined {
   return own(modelId) ?? own(modelId.split("/").pop() ?? modelId);
 }
 
-export function getRate(modelId: string | undefined): Rate | undefined {
+/**
+ * A model's rates. `promptTokens` is one request's whole prompt, cache reads and writes included;
+ * given, it selects the long-prompt rate card where the model has one and the prompt is past it.
+ */
+export function getRate(modelId: string | undefined, promptTokens = 0): Rate | undefined {
   if (!modelId) return undefined;
-  const e = lookup(modelId);
-  if (!e) return undefined;
+  const entry = lookup(modelId);
+  if (!entry) return undefined;
+  const tier = entry.long_prompt && promptTokens > entry.long_prompt.above_tokens ? entry.long_prompt : undefined;
+  // A tier that omits a cache rate must not inherit the cheaper base one, so it replaces all four.
+  const e = tier
+    ? { ...entry, cache_read_input_token_cost: undefined, cache_creation_input_token_cost: undefined, ...tier }
+    : entry;
   return {
     input: e.input_cost_per_token,
     // Mistral bills cache hits at 10% of the normal input rate. Its LiteLLM rows do not currently
@@ -84,7 +103,7 @@ export function getRate(modelId: string | undefined): Rate | undefined {
       (e.provider === "mistral" ? e.input_cost_per_token * 0.1 : e.input_cost_per_token),
     cacheCreation: e.cache_creation_input_token_cost ?? e.input_cost_per_token,
     output: e.output_cost_per_token,
-    currency: e.currency ?? DEFAULT_CURRENCY,
+    currency: entry.currency ?? DEFAULT_CURRENCY,
   };
 }
 
@@ -101,7 +120,7 @@ export function getCurrency(modelId: string | undefined): Currency | undefined {
 // One turn's cost in the model's own currency, or undefined when unpriced so callers show "unknown", not $0. Base
 // input excludes cache reads and writes, which inputTokensTotal includes but are billed at their own rates.
 export function computeCost(t: TokenCounts, modelId: string | undefined): number | undefined {
-  const rate = getRate(modelId);
+  const rate = getRate(modelId, t.inputTokensTotal);
   if (!rate) return undefined;
   const uncachedInput = Math.max(0, t.inputTokensTotal - t.inputTokensCacheRead - t.inputTokensCacheWrite);
   return (

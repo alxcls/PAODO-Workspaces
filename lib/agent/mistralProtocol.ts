@@ -12,7 +12,9 @@ export type MistralReplayContent = Array<MistralThinkChunk | MistralTextChunk>;
 type MistralReasoningEffort = "high" | "none";
 
 /** Mistral reasoning is on/off. Off is sent explicitly: measured, Large 4 reasons when the field is absent. */
-function mistralReasoningConfig(effort: ReasoningEffort): { modelKwargs: { reasoning_effort: MistralReasoningEffort } } {
+function mistralReasoningConfig(effort: ReasoningEffort): {
+  modelKwargs: { reasoning_effort: MistralReasoningEffort };
+} {
   return { modelKwargs: { reasoning_effort: effort === THINKING_OFF_EFFORT ? "none" : "high" } };
 }
 

@@ -3,10 +3,8 @@ import { metadataWrites, validateMetadata, type MetadataWriter, type WorkspaceMe
 import { providerAvailabilityEnv, SUPPORTED_PROVIDERS } from "@/lib/agent/buildModel";
 import { AppError } from "@/lib/errors/appError";
 
-// Validation now asks .env which providers this deployment offers, so every case has to pin that half
-// of the environment — otherwise a developer whose own .env switches moonshot off fails a suite that
-// has nothing to do with their configuration (see read.test.ts for the same guard). Enumerated from
-// the registry so a newly added provider cannot quietly escape the stub.
+// Validation asks .env which providers are offered, so every case pins it; otherwise a developer's
+// own .env fails the suite. Enumerated from the registry so a new provider cannot escape the stub.
 function offer(...providers: string[]): void {
   for (const provider of SUPPORTED_PROVIDERS) {
     vi.stubEnv(providerAvailabilityEnv(provider)!, providers.includes(provider) ? "true" : "false");
@@ -110,10 +108,8 @@ describe("workspace metadata validation", () => {
     );
   });
 
-  // A provider the app supports but this deployment has switched off has had its API key destroyed at
-  // startup, so accepting it would store a workspace that cannot run — the state startup clears. The
-  // message names the .env switch rather than listing "supported" providers, because the caller who
-  // hits this is the one who wrote that line.
+  // A switched-off provider's key was destroyed at startup, so accepting it would store a workspace
+  // that cannot run. The message names the .env switch, because the caller is who wrote that line.
   it("refuses a supported provider this deployment does not offer", () => {
     offer("anthropic", "openai");
     expect(() => validateMetadata({ model: { provider: "mistral", model: "mistral-large" } })).toThrow(
@@ -144,7 +140,7 @@ describe("workspace metadata validation", () => {
   it("refuses a model the provider does not serve, naming the ones it does", () => {
     // Another provider's model, which is well-formed and entirely wrong.
     expect(() => validateMetadata({ model: { provider: "anthropic", model: "gpt-5.5" } })).toThrow(
-      "llmModel for anthropic must be one of: claude-haiku-4-5, claude-sonnet-5, claude-opus-4-8",
+      "llmModel for anthropic must be one of: claude-haiku-5-5, claude-haiku-4-5, claude-sonnet-5-5, claude-sonnet-5, claude-opus-5-5, claude-opus-4-8",
     );
     // A typo is refused the same way: near-miss is not a category we treat gently.
     expect(() => validateMetadata({ model: { provider: "moonshot", model: "kimi-k4" } })).toThrow(
@@ -201,7 +197,7 @@ describe("workspace metadata validation", () => {
     // level the previous provider was on.
     expect(validateMetadata({ model: { provider: "anthropic" } }, CURRENT).model).toEqual({
       provider: "anthropic",
-      model: "claude-haiku-4-5",
+      model: "claude-haiku-5-5",
       reasoningEffort: "low",
     });
     // Model only: stays on the current provider and resets effort to that provider's default.

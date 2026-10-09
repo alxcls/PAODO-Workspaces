@@ -1,9 +1,10 @@
-// Serialize/deserialize the agent's LangChain message history for durable persistence, and
-// project a message history into the client transcript shape used by the chat UI.
-//
-// The system prompt (a SystemMessage at index 0) is rebuilt fresh on every run from AGENTS.md
-// (see chat/route.ts), so it is intentionally stripped before saving and re-prepended on load —
-// persisting it would freeze a stale prompt into the conversation.
+/**
+ * Serialize/deserialize the agent's LangChain message history for durable persistence, and
+ * project a message history into the client transcript shape used by the chat UI.
+ *
+ * The system prompt is rebuilt on every run from AGENTS.md (see chat/route.ts), so it is stripped
+ * before saving and re-prepended on load: persisting it would freeze a stale prompt.
+ */
 import {
   mapChatMessagesToStoredMessages,
   mapStoredMessagesToChatMessages,
@@ -15,6 +16,7 @@ import {
 import type { Message } from "@/lib/transcript/message";
 import { toolArgSummary } from "@/lib/transcript/toolDisplay";
 import { contentToText } from "@/lib/transcript/content";
+import { storedReasoning } from "./reasoningReplay";
 
 function isSystem(m: BaseMessage): boolean {
   return m._getType() === "system";
@@ -41,10 +43,8 @@ export function setSystemPrompt(messages: BaseMessage[], system: BaseMessage): v
   else messages.unshift(system);
 }
 
-// Stashed on the last message of the run rather than appended as a message of its own: an extra
-// AIMessage would be replayed to the provider as something the assistant said, and an empty one is
-// rejected outright by some of them. `additional_kwargs` is carried through serialization and
-// ignored by every provider adapter — the same seam the call_agent deep-link already rides on.
+// Stashed on the run's last message, not appended as its own: an extra AIMessage would be replayed
+// as something the assistant said. `additional_kwargs` survives serialization and no adapter reads it.
 const RUN_ERROR_KEY = "runError";
 
 /**
@@ -107,6 +107,9 @@ export function messagesToTranscript(
         const toolCalls = ai.tool_calls ?? [];
         // Match the live transcript: usage introduces the model output or tool action it measures.
         appendUsage(ai);
+        // Reasoning streams ahead of the prose and tool calls it led to, so it is replayed first.
+        const reasoning = storedReasoning(ai);
+        if (reasoning.trim()) out.push({ role: "reasoning", content: reasoning });
         if (toolCalls.length === 0) {
           if (text.trim()) out.push({ role: "assistant", content: text });
         } else {
@@ -128,8 +131,7 @@ export function messagesToTranscript(
         const tm = m as ToolMessage;
         const idx = bubbleByCallId.get(tm.tool_call_id);
         // Mirror the live stream: a call_agent bubble carries a deep-link to the callee's session,
-        // not a result body. The link was stashed on the ToolMessage's additional_kwargs at run
-        // time (runner.ts) so it survives reload.
+        // not a result body. runner.ts stashed it on the ToolMessage so it survives reload.
         if (idx !== undefined && out[idx].toolName === "call_agent") {
           const kw = tm.additional_kwargs as
             { calleeConversationId?: unknown; calleeWorkspaceId?: unknown; calleeWorkspaceName?: unknown } | undefined;

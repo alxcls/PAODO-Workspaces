@@ -21,7 +21,7 @@ import {
 } from "../models/selection";
 
 // Legacy extended-thinking budgets, keyed by the workspace's reasoning-effort knob. Used only for
-// models that still accept thinking:{type:"enabled", budget_tokens} — see ANTHROPIC_ADAPTIVE_MODELS.
+// models that still accept thinking:{type:"enabled", budget_tokens} — see ANTHROPIC_LEGACY_BUDGET_MODELS.
 const ANTHROPIC_THINKING_BUDGET: Partial<Record<ReasoningEffort, number>> = {
   low: 4_000,
   medium: 10_000,
@@ -30,22 +30,28 @@ const ANTHROPIC_THINKING_BUDGET: Partial<Record<ReasoningEffort, number>> = {
   max: 48_000,
 };
 
-// Models requiring adaptive thinking + output_config.effort, which 400 on the legacy budget_tokens
-// shape. A registry model absent here falls through to legacy — correct for haiku-4-5, which 400s on effort.
-const ANTHROPIC_ADAPTIVE_MODELS = new Set<string>(["claude-opus-4-8", "claude-sonnet-5"]);
+// The only offered model still on the legacy budget shape, which rejects effort. Every other id,
+// an unknown future one included, takes adaptive thinking: that is what current models require.
+const ANTHROPIC_LEGACY_BUDGET_MODELS = new Set<string>(["claude-haiku-4-5"]);
 
-// An Anthropic model's thinking fields. Newer models take adaptive thinking, and the effort knob maps
-// straight onto output_config.effort; older ones take the legacy fixed budget and reject effort.
+// Anthropic's recommended cap for streaming requests, within every offered model's output limit
+// and above the largest legacy thinking budget. Thinking is billed against it.
+const ANTHROPIC_MAX_OUTPUT_TOKENS = 64_000;
+
+// An Anthropic model's thinking fields: the effort knob maps straight onto output_config.effort,
+// except on the legacy model, where it picks a fixed budget instead.
 export function anthropicThinkingConfig(model: string, effort: ReasoningEffort) {
-  if (ANTHROPIC_ADAPTIVE_MODELS.has(model)) {
-    // Anthropic effort accepts low…max; the none/minimal members of ReasoningEffort never reach here
-    // because they aren't in anthropic's PROVIDER_METADATA list (so validation rejects them upstream).
-    return {
-      thinking: { type: "adaptive" as const },
-      outputConfig: { effort: effort as Exclude<ReasoningEffort, "none" | "minimal"> },
-    };
+  if (ANTHROPIC_LEGACY_BUDGET_MODELS.has(model)) {
+    return { thinking: { type: "enabled" as const, budget_tokens: ANTHROPIC_THINKING_BUDGET[effort] ?? 10_000 } };
   }
-  return { thinking: { type: "enabled" as const, budget_tokens: ANTHROPIC_THINKING_BUDGET[effort] ?? 10_000 } };
+  return {
+    // Summaries are asked for because adaptive models return thinking blocks empty by default, and
+    // the newest ones put their notes between tool calls there. Billing is the same either way.
+    thinking: { type: "adaptive" as const, display: "summarized" as const },
+    // Anthropic effort accepts low…max; none/minimal never reach here, because they are absent from
+    // its reasoningEfforts list below and validation rejects them upstream.
+    outputConfig: { effort: effort as Exclude<ReasoningEffort, "none" | "minimal"> },
+  };
 }
 
 // The capability half of a provider entry — the only part callers outside this module see.
@@ -117,6 +123,10 @@ const PROVIDERS: Record<string, ProviderDescriptor> = {
       new ChatAnthropic({
         model: config.model,
         apiKey: config.apiKey,
+        maxTokens: ANTHROPIC_MAX_OUTPUT_TOKENS,
+        // invoke() streams too: the SDK refuses a non-streaming request with a cap this high, and
+        // compaction is the one caller that would otherwise send one.
+        streaming: true,
         ...NO_SDK_RETRY,
         ...anthropicThinkingConfig(config.model, config.reasoningEffort),
         clientOptions: {

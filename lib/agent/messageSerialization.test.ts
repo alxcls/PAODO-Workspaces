@@ -7,6 +7,7 @@ import {
   messagesToTranscript,
   noteRunError,
 } from "./messageSerialization";
+import { withReplayMetadata } from "./reasoningReplay";
 
 describe("message serialization round-trip", () => {
   it("preserves message classes, tool_calls and tool_call_id, dropping the system prompt", () => {
@@ -67,6 +68,32 @@ describe("messagesToTranscript", () => {
     expect(t[2]).toMatchObject({ role: "tool_start", toolName: "file_read", toolDone: true });
     expect(t[2].calleeConversationId).toBeUndefined();
     expect(t[3]).toEqual({ role: "assistant", content: "here is the answer" });
+  });
+
+  // What a reopened conversation used to lose for every provider that is never sent its reasoning.
+  it("shows a turn's stored reasoning ahead of the text and tool call it led to", () => {
+    const messages = [
+      new HumanMessage("read a file"),
+      new AIMessage({
+        content: "let me look",
+        tool_calls: [{ id: "t1", name: "file_read", args: { file_path: "a.txt" } }],
+        response_metadata: withReplayMetadata({}, "The file should hold the answer.", "anthropic"),
+      }),
+      new ToolMessage({ tool_call_id: "t1", content: "secret" }),
+      new AIMessage("here is the answer"),
+    ];
+
+    expect(messagesToTranscript(messages).map((m) => m.role)).toEqual([
+      "user",
+      "reasoning",
+      "assistant",
+      "tool_start",
+      "assistant",
+    ]);
+    expect(messagesToTranscript(messages)[1]).toEqual({
+      role: "reasoning",
+      content: "The file should hold the answer.",
+    });
   });
 
   it("joins per-turn tokens without storing their values in conversation messages", () => {
@@ -142,9 +169,8 @@ describe("messagesToTranscript", () => {
 
 describe("run errors on the persisted history", () => {
   it("shows why the run stopped when the conversation is re-opened", () => {
-    // The failing run's own history: the prompt landed, one tool turn ran, then the provider
-    // refused. Live, the reason exists only as a stream event — this is what a reload has to work
-    // from, and before it was recorded the conversation re-opened as a prompt with no reply.
+    // The failing run's history: the prompt landed, one tool turn ran, then the provider refused.
+    // Live, the reason is only a stream event; unrecorded, a reload showed a prompt with no reply.
     const messages = [
       new HumanMessage("audit the data"),
       new AIMessage({ content: "", tool_calls: [{ id: "t1", name: "file_read", args: { file_path: "a.json" } }] }),

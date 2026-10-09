@@ -8,6 +8,7 @@ import { buildSignalHandlers } from "./buildTools";
 import { SUPPORTED_PROVIDERS, providerAvailabilityEnv } from "./buildModel";
 import { usageTokens } from "./modelGateway";
 import { prepareMistralMessages } from "./mistralProtocol";
+import { messagesToTranscript } from "./messageSerialization";
 
 // Every test below runs on "deepseek", and runAgent refuses a switched-off provider. Pinning the
 // availability vars keeps a developer's own shell from failing the whole file at preflight.
@@ -305,6 +306,37 @@ describe("runAgent — history stays consistent across aborts", () => {
     expect(events.at(-1)).toEqual({ type: "done" });
   });
 
+  // Anthropic declines with HTTP 200, so nothing throws: without this the run just ends, silently.
+  it("stops with an explanation when the model declines, measuring the turn and running no tools", async () => {
+    const messages: BaseMessage[] = [];
+    const declined = new AIMessageChunk({
+      content: "",
+      additional_kwargs: { stop_reason: "refusal", stop_details: { type: "refusal", category: "cyber" } },
+    });
+    const buildAgentTools = makeBuildTools([
+      [
+        new AIMessageChunk({ content: "Looking into it." }),
+        toolCallsChunk({ id: "call_1", args: '{"cmd":"ls"}' }),
+        declined,
+      ],
+      [new AIMessageChunk({ content: "must not be reached" })],
+    ]);
+
+    const events: AgentEvent[] = [];
+    for await (const event of runAgent(messages, "do work", "/tmp/ws", "ws-1", { ...noopDeps, buildAgentTools })) {
+      events.push(event);
+    }
+
+    const failure = events.find((event) => event.type === "error");
+    expect(failure).toMatchObject({ code: "MODEL_REFUSED" });
+    expect(failure && "message" in failure ? failure.message : "").toContain("declined this request (category: cyber)");
+    expect(events.some((event) => event.type === "tool_start")).toBe(false);
+    expect(events.filter((event) => event.type === "turn_usage")).toHaveLength(1);
+    expect(hasUnansweredToolCalls(messages)).toBe(false);
+    expect(messages.at(-1)?.content).toBe("Looking into it.");
+    expect(events.at(-1)).toEqual({ type: "done" });
+  });
+
   it("persists a reasoning-model tool turn as coalesced text, not raw streamed blocks", async () => {
     const messages: BaseMessage[] = [];
     // An extended-thinking chunk, whose content is provider blocks. Persisting the raw array froze
@@ -330,6 +362,40 @@ describe("runAgent — history stays consistent across aborts", () => {
     expect(toolTurn!.content).toBe("Let me list the files.");
     // No streaming-only artifact survives into persisted history.
     expect(JSON.stringify(messages)).not.toMatch(/thinking|input_json_delta/);
+  });
+
+  // Anthropic is never sent its reasoning back, which is why it used to be dropped at this point.
+  it("keeps a turn's reasoning for a provider that is never sent it back", async () => {
+    const messages: BaseMessage[] = [];
+    const reasoningToolChunk = new AIMessageChunk({
+      content: [
+        { index: 0, type: "thinking", thinking: "Listing the files comes first." },
+        { index: 1, type: "text", text: "Let me list the files." },
+      ] as never,
+      tool_call_chunks: [
+        { index: 2, id: "toolu_1", name: "execute_command", args: '{"cmd":"ls"}', type: "tool_call_chunk" },
+      ],
+    });
+    const buildAgentTools = makeBuildTools(
+      [[reasoningToolChunk], [new AIMessageChunk({ content: "done" })]],
+      "command ran",
+      "anthropic",
+    );
+
+    for await (const _event of runAgent(messages, "list files", "/tmp/ws", "ws-1", {
+      ...noopDeps,
+      loadConfig: () => ({ provider: "anthropic", model: "claude-opus-5-5", apiKey: "sk" }) as never,
+      buildAgentTools,
+    })) {
+      // Drained for its effect on `messages`.
+    }
+
+    const transcript = messagesToTranscript(messages);
+    const reasoningAt = transcript.findIndex((m) => m.role === "reasoning");
+    expect(transcript[reasoningAt]).toEqual({ role: "reasoning", content: "Listing the files comes first." });
+    expect(transcript[reasoningAt + 1]).toMatchObject({ role: "assistant", content: "Let me list the files." });
+    // Stored for people, not for another model: Mistral's adapter leaves the turn untouched.
+    expect(prepareMistralMessages(messages)).toEqual(messages);
   });
 
   it("keeps Mistral reasoning private while restoring it for the next provider request", async () => {

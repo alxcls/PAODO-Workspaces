@@ -5,6 +5,7 @@ import type { BindToolsInput } from "@langchain/core/language_models/chat_models
 import { createLogger } from "../infra/logger";
 import { sendWithDeepSeekReasoning } from "./deepseekProtocol";
 import { prepareMistralMessages } from "./mistralProtocol";
+import type { ReplayingProvider } from "./reasoningReplay";
 import { providerConcurrency, type ProviderConcurrencyGate } from "./providerConcurrency";
 import { NOTICE_THRESHOLD_MS, providerPacer, type PacerKey, type ProviderPacer } from "./rateLimit/providerPacer";
 import { RateLimitExhaustedError, RetryBudget } from "./rateLimit/retryPolicy";
@@ -158,20 +159,10 @@ type OutboundAdapter = <T>(messages: BaseMessage[], send: (messages: BaseMessage
 
 // One entry per provider that cannot accept canonical history verbatim. Adding a provider here is the
 // whole wiring: nothing in the runner or the turn reader learns a vendor's name.
-const OUTBOUND_ADAPTERS: Record<string, OutboundAdapter> = {
+const OUTBOUND_ADAPTERS: Record<ReplayingProvider, OutboundAdapter> = {
   mistral: (messages, send) => send(prepareMistralMessages(messages)),
   deepseek: sendWithDeepSeekReasoning,
 };
-
-/**
- * Whether this provider's history has to keep each turn's reasoning for replay.
- *
- * Asked before persisting it, so a provider that never replays does not carry thinking text nothing
- * reads. Derived from the adapters because today they are exactly the providers that need it.
- */
-export function providerReplaysReasoning(provider: string): boolean {
-  return provider in OUTBOUND_ADAPTERS;
-}
 
 /** One paced attempt that succeeded, plus the bookkeeping its caller still owes. */
 interface Attempt<T> {
@@ -188,7 +179,7 @@ export function createModelGateway(chat: BindableChatModel, options: ModelGatewa
   const pacerKey: PacerKey = { provider, model };
   // Vendor wire formats are quarantined behind OUTBOUND_ADAPTERS. A provider without one sends the
   // caller's exact array; the rest send whatever they refuse to go without.
-  const adapt = OUTBOUND_ADAPTERS[provider];
+  const adapt = (OUTBOUND_ADAPTERS as Record<string, OutboundAdapter | undefined>)[provider];
   const sendOutbound = <T>(messages: BaseMessage[], send: (messages: BaseMessage[]) => Promise<T>): Promise<T> =>
     adapt ? adapt(messages, send) : send(messages);
 

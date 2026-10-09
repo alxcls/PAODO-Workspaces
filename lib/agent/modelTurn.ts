@@ -5,7 +5,7 @@ import type { AIMessageChunk, BaseMessage } from "@langchain/core/messages";
 import type { Logger } from "pino";
 import { throttleLog } from "../infra/logThrottle";
 import type { AgentEvent } from "./runner";
-import { providerReplaysReasoning, type ModelGateway, type ModelStream, type ModelUsage } from "./modelGateway";
+import type { ModelGateway, ModelStream, ModelUsage } from "./modelGateway";
 import { mistralThinkingText } from "./mistralProtocol";
 import { classifyProviderFailure, providerFailureMessage } from "./providerFailure";
 import { withReplayMetadata } from "./reasoningReplay";
@@ -25,7 +25,12 @@ export type TurnEvent =
       fullText: string;
       toolCalls: ResolvedToolCall[];
       usage: ModelUsage;
+      /** Set when the provider's safety checks declined the request instead of answering it. */
+      refusal?: ModelRefusal;
     };
+
+/** A declined request. `category` is the provider's own label, absent when it gives none. */
+export type ModelRefusal = { category?: string };
 
 type PartialToolCall = { id: string; name: string; args: string };
 type ContentBlock =
@@ -89,6 +94,27 @@ function extractContentFromChunk(
     .additional_kwargs?.reasoning_content;
   if (reasoningContent) reasoning.push(reasoningContent);
   return { tokens, reasoning };
+}
+
+/**
+ * A stream's refusal, read off the chunk that closes it. Anthropic answers a declined request with
+ * HTTP 200 and `stop_reason: "refusal"`, which LangChain carries in `additional_kwargs` verbatim.
+ */
+function refusalFromChunk(chunk: AIMessageChunk): ModelRefusal | undefined {
+  const stop = chunk.additional_kwargs as { stop_reason?: unknown; stop_details?: { category?: unknown } | null };
+  if (stop?.stop_reason !== "refusal") return undefined;
+  const category = stop.stop_details?.category;
+  return typeof category === "string" && category ? { category } : {};
+}
+
+/** The explanation shown in the conversation where a declined run stopped. */
+export function refusalMessage(refusal: ModelRefusal, model?: string): string {
+  const who = model || "The model";
+  const why = refusal.category ? ` (category: ${refusal.category})` : "";
+  return (
+    `${who} declined this request${why}. This run stopped here — sending the same message again will be ` +
+    "declined again. Rephrase it, or choose another model in the workspace Model block."
+  );
 }
 
 function assembleToolCalls(partials: PartialToolCall[]): ResolvedToolCall[] {
@@ -172,6 +198,7 @@ export async function* streamModelTurn(
 ): AsyncGenerator<TurnEvent> {
   const partials: PartialToolCall[] = [];
   let fullText = "";
+  let refusal: ModelRefusal | undefined;
   const startedAt = Date.now();
   const call = yield* openStream(modelWithTools, messages, signal);
   let timeToFirstTokenMs: number | null = null;
@@ -186,6 +213,7 @@ export async function* streamModelTurn(
     for (const content of reasoning) {
       yield { type: "reasoning", content };
     }
+    refusal ??= refusalFromChunk(chunk);
 
     for (const delta of chunk.tool_call_chunks ?? []) {
       const index = delta.index ?? 0;
@@ -203,6 +231,7 @@ export async function* streamModelTurn(
     fullText,
     toolCalls: assembleToolCalls(partials),
     usage: call.usage(),
+    ...(refusal && { refusal }),
   };
 }
 
@@ -241,10 +270,7 @@ export async function* synthesizeLimit(
       messages.push(
         new AIMessage({
           content: text,
-          response_metadata: withReplayMetadata(
-            { executionTurnId: turnId },
-            providerReplaysReasoning(model.provider) ? reasoning : "",
-          ),
+          response_metadata: withReplayMetadata({ executionTurnId: turnId }, reasoning, model.provider),
         }),
       );
       yield {
@@ -252,6 +278,7 @@ export async function* synthesizeLimit(
         turnId,
         ...call.usage(),
         ...(modelId ? { model: modelId } : {}),
+        ...(reasoning ? { reasoningText: reasoning } : {}),
         outputText: text,
         toolCalls: [],
       };

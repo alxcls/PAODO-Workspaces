@@ -1,6 +1,5 @@
-// The defaulting rules both surfaces resolve with. Tested directly, not only through the update path,
-// because the picker calls the two primitives on their own — a change that suits the server but breaks
-// carryOverEffort in isolation would otherwise only surface in the UI.
+// The defaulting rules both surfaces resolve with. Tested directly, not only through the update
+// path, because the picker calls these primitives on their own.
 import { describe, it, expect } from "vitest";
 import {
   defaultEffortFor,
@@ -11,20 +10,31 @@ import {
 } from "./selection";
 import type { ModelVocabulary } from "./selection";
 
+const OPENAI_LEVELS = ["none", "minimal", "low", "medium", "high", "xhigh"] as const;
 const OPENAI: ModelVocabulary = {
   models: ["gpt-5.5", "gpt-5.4"],
-  reasoningEfforts: ["none", "minimal", "low", "medium", "high", "xhigh"],
+  modelReasoningEfforts: { "gpt-5.5": OPENAI_LEVELS, "gpt-5.4": OPENAI_LEVELS },
 };
-const MOONSHOT: ModelVocabulary = { models: ["kimi-k3"], reasoningEfforts: ["low", "high", "max"] };
-const DEEPSEEK: ModelVocabulary = { models: ["deepseek-v4-pro"], reasoningEfforts: [] };
+const MOONSHOT: ModelVocabulary = {
+  models: ["kimi-k3"],
+  modelReasoningEfforts: { "kimi-k3": ["low", "high", "max"] },
+};
+const DEEPSEEK: ModelVocabulary = {
+  models: ["deepseek-v4-pro"],
+  modelReasoningEfforts: { "deepseek-v4-pro": [] },
+};
 
-// A vendor whose levels belong to the model, shaped like Scaleway: "narrow" accepts a subset, "wide"
-// has no entry and takes the provider list, and "dialless" is narrowed all the way to nothing.
+// One provider whose models disagree: "narrow" takes two levels, "wide" four, "dialless" none.
 const NARROWING: ModelVocabulary = {
   models: ["narrow", "wide", "dialless"],
-  reasoningEfforts: ["none", "low", "medium", "high"],
-  modelReasoningEfforts: { narrow: ["none", "medium"], dialless: [] },
+  modelReasoningEfforts: { narrow: ["none", "medium"], wide: ["none", "low", "medium", "high"], dialless: [] },
 };
+
+const NOTHING: ModelVocabulary = { models: [], modelReasoningEfforts: {} };
+const single = (...efforts: ModelVocabulary["modelReasoningEfforts"][string]): ModelVocabulary => ({
+  models: ["m"],
+  modelReasoningEfforts: { m: efforts },
+});
 
 const VOCABULARIES: Record<string, ModelVocabulary> = {
   openai: OPENAI,
@@ -32,7 +42,7 @@ const VOCABULARIES: Record<string, ModelVocabulary> = {
   deepseek: DEEPSEEK,
   narrowing: NARROWING,
 };
-const lookup = (provider: string): ModelVocabulary => VOCABULARIES[provider] ?? { models: [], reasoningEfforts: [] };
+const lookup = (provider: string): ModelVocabulary => VOCABULARIES[provider] ?? NOTHING;
 
 const CURRENT = { provider: "openai", model: "gpt-5.4", reasoningEffort: "medium" as const };
 
@@ -42,71 +52,69 @@ describe("defaultModelFor", () => {
   });
 
   it("returns empty for a provider serving no models rather than guessing", () => {
-    expect(defaultModelFor({ models: [], reasoningEfforts: [] })).toBe("");
+    expect(defaultModelFor(NOTHING)).toBe("");
   });
 });
 
 describe("defaultEffortFor", () => {
-  it("uses low, which every provider with a dial offers", () => {
-    expect(defaultEffortFor(MOONSHOT)).toBe("low");
-    expect(defaultEffortFor(OPENAI)).toBe("low");
+  it("uses low wherever the model offers it", () => {
+    expect(defaultEffortFor(MOONSHOT, "kimi-k3")).toBe("low");
+    expect(defaultEffortFor(OPENAI, "gpt-5.5")).toBe("low");
   });
 
-  // Guards the fallback itself: "low" is a preference, not an assumption about every provider.
+  // Guards the fallback itself: "low" is a preference, not an assumption about every model.
   it("falls back to the quietest offered level when low is absent", () => {
-    expect(defaultEffortFor({ models: [], reasoningEfforts: ["medium", "xhigh"] })).toBe("medium");
+    expect(defaultEffortFor(single("medium", "xhigh"), "m")).toBe("medium");
   });
 
   // "none" turns reasoning off entirely, so first-in-the-list is not a safe rule on its own.
-  it("skips none rather than defaulting a provider to no reasoning at all", () => {
-    expect(defaultEffortFor({ models: [], reasoningEfforts: ["none", "medium"] })).toBe("medium");
+  it("skips none rather than defaulting a model to no reasoning at all", () => {
+    expect(defaultEffortFor(single("none", "medium"), "m")).toBe("medium");
   });
 
-  it("defaults to the model's own levels where the provider narrows them", () => {
+  it("defaults to the model's own levels, not a sibling's", () => {
     expect(defaultEffortFor(NARROWING, "narrow")).toBe("medium");
     expect(defaultEffortFor(NARROWING, "wide")).toBe("low");
   });
 });
 
-/**
- * The provider list is a UNION for a vendor whose levels belong to the model — Scaleway's do, and its
- * gateway accepts every level on every model rather than rejecting the ones a model ignores. So
- * reading the provider list where a model is in hand is what would offer a level that silently
- * collapses to something else.
- */
+// Levels belong to the model: reading a sibling's list is what would offer a level that the chosen
+// model rejects, or that silently collapses to something else.
 describe("effortsForModel", () => {
-  it("narrows to the model's list when the provider has one", () => {
+  it("returns each model its own list", () => {
     expect(effortsForModel(NARROWING, "narrow")).toEqual(["none", "medium"]);
+    expect(effortsForModel(NARROWING, "wide")).toEqual(["none", "low", "medium", "high"]);
   });
 
-  it("falls back to the provider list for a model with no entry", () => {
-    expect(effortsForModel(NARROWING, "wide")).toEqual(["none", "low", "medium", "high"]);
-    expect(effortsForModel(OPENAI, "gpt-5.5")).toBe(OPENAI.reasoningEfforts);
+  // A retired id a workspace still stores: no dial, rather than some other model's levels.
+  it("gives a model with no entry no dial", () => {
+    expect(effortsForModel(NARROWING, "retired")).toEqual([]);
   });
 
   it.each(["constructor", "__proto__", "hasOwnProperty"])(
     "treats the inherited property %s as absent rather than as a model entry",
     (model) => {
-      expect(effortsForModel(NARROWING, model)).toBe(NARROWING.reasoningEfforts);
+      expect(effortsForModel(NARROWING, model)).toEqual([]);
     },
   );
 
-  // An empty list is a narrowing, not a missing one: that model has no dial and the UI hides it.
-  it("treats an empty per-model list as no dial rather than as absent", () => {
+  it("treats an empty list as no dial", () => {
     expect(effortsForModel(NARROWING, "dialless")).toEqual([]);
   });
 });
 
-// The rule on its own, fed vocabularies directly. What .env makes available is buildModel's job
-// (defaultModelSelection), tested there against the real registry; these pin the edges that an
-// env-driven test cannot reach — an empty list, and a provider serving no models.
+// The rule on its own, fed vocabularies directly: the edges an env-driven test cannot reach, such
+// as an empty list and a provider serving no models. Availability is tested with buildModel.
 describe("firstAvailableSelection", () => {
   const vocabularies: Record<string, ModelVocabulary> = {
-    first: { models: ["first-a", "first-b"], reasoningEfforts: ["low", "high"] },
-    second: { models: ["second-a"], reasoningEfforts: [] },
-    barren: { models: [], reasoningEfforts: [] },
+    first: {
+      models: ["first-a", "first-b"],
+      modelReasoningEfforts: { "first-a": ["low", "high"], "first-b": ["low", "high"] },
+    },
+    second: { models: ["second-a"], modelReasoningEfforts: { "second-a": [] } },
+    barren: NOTHING,
   };
-  const lookup = (provider: string) => vocabularies[provider] ?? { models: [], reasoningEfforts: [] };
+  const lookup = (provider: string) => vocabularies[provider] ?? NOTHING;
 
   it("takes the first provider offered, ignoring the rest", () => {
     expect(firstAvailableSelection(["first", "second"], lookup)).toEqual({
@@ -116,7 +124,7 @@ describe("firstAvailableSelection", () => {
     });
   });
 
-  it("stores the uniform placeholder for a provider with no effort dial", () => {
+  it("stores the uniform placeholder for a model with no effort dial", () => {
     // defaultEffortFor has nothing to return from an empty list, so the guard is not decoration.
     expect(firstAvailableSelection(["second"], lookup)).toEqual({
       provider: "second",
@@ -194,14 +202,14 @@ describe("resolveModelSelection", () => {
     });
   });
 
-  // Switching between two models of the SAME provider changes the accepted levels where the vendor
-  // narrows per model, so the reset has to consult the incoming model rather than the provider.
-  it("resets effort to the incoming model's default, not the provider's", () => {
+  // Switching between two models of the SAME provider changes the accepted levels, so the reset
+  // has to consult the incoming model.
+  it("resets effort to the incoming model's default", () => {
     const current = { provider: "narrowing", model: "wide", reasoningEffort: "high" as const };
     expect(resolveModelSelection({ model: "narrow" }, current, lookup).reasoningEffort).toBe("medium");
   });
 
-  it("resolves a model narrowed to no dial to the placeholder, on a provider that has one", () => {
+  it("resolves a model with no dial to the placeholder, beside siblings that have one", () => {
     const current = { provider: "narrowing", model: "wide", reasoningEffort: "high" as const };
     expect(resolveModelSelection({ model: "dialless" }, current, lookup)).toEqual({
       provider: "narrowing",

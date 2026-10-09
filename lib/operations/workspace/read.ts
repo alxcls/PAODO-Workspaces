@@ -1,7 +1,7 @@
 // Public workspace projections and trigger-neutral queries.
 import type { IWorkspaceStore } from "@/lib/infra/interfaces";
 import { getStore } from "@/lib/infra/services";
-import { defaultModelSelection, getProviderMetadata } from "@/lib/agent/buildModel";
+import { defaultModelSelection, modelReasoningEfforts } from "@/lib/agent/buildModel";
 import { providerHasKey } from "@/lib/operations/settings/providerKeys";
 import type { Workspace } from "@/lib/workspace/types";
 import type { ModelSelection } from "@/lib/models/selection";
@@ -55,7 +55,7 @@ export function currentModelSelection(workspace: Workspace): ModelSelection {
 
 /** Project the complete internal model tuple onto the public workspace representation. */
 export function publicModelSelection(selection: ModelSelection): PublicModelSelection {
-  const supportsReasoningEffort = getProviderMetadata(selection.provider).reasoningEfforts.length > 0;
+  const supportsReasoningEffort = modelReasoningEfforts(selection.provider, selection.model).length > 0;
   return {
     llmProvider: selection.provider,
     llmModel: selection.model,

@@ -1,25 +1,16 @@
-// The model-selection vocabulary exposed to every trigger. Provider ids are keys so callers can
-// resolve one selection without scanning parallel arrays; each entry keeps its models and effort
-// levels together.
-//
-// Every provider .env has not switched off is published, WHETHER OR NOT IT HAS AN API KEY. This used
-// to publish only keyed providers, which made a deployment with no keys serve an empty catalog and an
-// empty picker — no way in from a fresh install, since keys are now entered in the app. What a key
-// changes is `hasKey`, so a caller can see that a provider is offered but cannot currently run.
-import { availableProviders, getProviderMetadata } from "@/lib/agent/buildModel";
-import type { ReasoningEffort } from "@/lib/models/llmSelection";
-import { listModels } from "@/lib/models/registry";
+/**
+ * The model-selection vocabulary exposed to every trigger, keyed by provider id. Each entry keeps
+ * its models beside the effort levels each of them accepts.
+ *
+ * Every provider .env has not switched off is published, WHETHER OR NOT IT HAS AN API KEY: keys are
+ * entered in the app, so hiding keyless providers would leave a fresh install an empty picker.
+ * `hasKey` is what says whether an offered provider can currently run.
+ */
+import { availableProviders, vocabularyFor } from "@/lib/agent/buildModel";
+import type { ModelVocabulary } from "@/lib/models/selection";
 import { providerHasKey } from "@/lib/operations/settings/providerKeys";
 
-export interface ProviderModelCatalog {
-  models: string[];
-  reasoningEfforts: ReasoningEffort[];
-  /**
-   * Narrower effort lists for models that honour fewer levels than the provider as a whole; absent
-   * for a provider that narrows nothing. The picker must read `effortsForModel` rather than the
-   * provider list above, or it offers levels the selected model silently ignores.
-   */
-  modelReasoningEfforts?: Record<string, readonly ReasoningEffort[]>;
+export interface ProviderModelCatalog extends ModelVocabulary {
   /**
    * Whether an API key is stored for this provider — that is, whether choosing it yields a workspace
    * that can actually run.
@@ -43,17 +34,6 @@ export function getModelCatalog(
   hasKey: (provider: string) => boolean = providerHasKey,
 ): ModelCatalog {
   return Object.fromEntries(
-    availableProviders(env).map((provider) => {
-      const { reasoningEfforts, modelReasoningEfforts } = getProviderMetadata(provider);
-      return [
-        provider,
-        {
-          models: listModels(provider),
-          reasoningEfforts: [...reasoningEfforts],
-          ...(modelReasoningEfforts ? { modelReasoningEfforts } : {}),
-          hasKey: hasKey(provider),
-        },
-      ];
-    }),
+    availableProviders(env).map((provider) => [provider, { ...vocabularyFor(provider), hasKey: hasKey(provider) }]),
   );
 }

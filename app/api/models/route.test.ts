@@ -2,8 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/operations/models/catalog", () => ({
   getModelCatalog: () => ({
-    openai: { models: ["gpt-5.5"], reasoningEfforts: ["none", "low", "high"], hasKey: true },
-    deepseek: { models: ["deepseek-v4-pro"], reasoningEfforts: [], hasKey: false },
+    openai: { models: ["gpt-5.5"], modelReasoningEfforts: { "gpt-5.5": ["none", "low", "high"] }, hasKey: true },
+    deepseek: { models: ["deepseek-v4-pro"], modelReasoningEfforts: { "deepseek-v4-pro": [] }, hasKey: false },
   }),
 }));
 
@@ -15,19 +15,16 @@ describe("GET /api/models", () => {
       providers: {
         openai: {
           models: ["gpt-5.5"],
-          reasoningEfforts: ["none", "low", "high"],
+          modelReasoningEfforts: { "gpt-5.5": ["none", "low", "high"] },
           hasKey: true,
         },
-        deepseek: { models: ["deepseek-v4-pro"], reasoningEfforts: [], hasKey: false },
+        deepseek: { models: ["deepseek-v4-pro"], modelReasoningEfforts: { "deepseek-v4-pro": [] }, hasKey: false },
       },
     });
   });
 
-  // This route is on the instance CLI token's allowlist, so its response is the exact boundary of
-  // what that token may learn about provider keys: whether one exists, and nothing else. The masked
-  // hint and the set-date live on /api/settings/provider-keys, which the token cannot reach at all
-  // (platformAccessPolicy.test.ts pins that half). Widening this shape re-opens the decision by
-  // accident, which is why the assertion is on the whole key set rather than on named fields.
+  // The instance CLI token can read this route, so the whole key set is pinned: it may learn
+  // whether a provider key exists and nothing else about it.
   it("discloses key presence as a boolean and nothing more about the key", async () => {
     const { providers } = (await GET().json()) as {
       providers: Record<string, Record<string, unknown>>;
@@ -35,7 +32,7 @@ describe("GET /api/models", () => {
 
     for (const [provider, entry] of Object.entries(providers)) {
       expect(typeof entry.hasKey, `${provider}.hasKey`).toBe("boolean");
-      expect(Object.keys(entry).sort(), provider).toEqual(["hasKey", "models", "reasoningEfforts"]);
+      expect(Object.keys(entry).sort(), provider).toEqual(["hasKey", "modelReasoningEfforts", "models"]);
     }
   });
 });

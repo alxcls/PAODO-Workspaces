@@ -169,7 +169,7 @@ describe("Scaleway product catalog", () => {
   });
 
   /**
-   * SCALEWAY_MODEL_EFFORTS is hand-maintained, so the only thing keeping it honest is this check
+   * Scaleway's records in registry.ts are hand-maintained, so the only thing keeping it honest is this check
    * against the same rows the prices come from. It has to fail on a real move and stay quiet
    * otherwise, or `npm run update-pricing` either cries wolf or stops catching anything.
    */

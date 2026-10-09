@@ -55,6 +55,18 @@ describe("anthropicThinkingConfig", () => {
     expect(c).toEqual({ thinking: { type: "adaptive", display: "summarized" }, outputConfig: { effort: "high" } });
   });
 
+  it.each(["claude-haiku-5-5", "claude-haiku-4-5", "claude-sonnet-5", "claude-opus-4-8"])(
+    "switches thinking off on %s with the disabled shape, and sends no effort",
+    (model) => {
+      expect(anthropicThinkingConfig(model, "none")).toEqual({ thinking: { type: "disabled" } });
+    },
+  );
+
+  // Sonnet 5.5 400s on "disabled", and accepts no other field beside "between_tools".
+  it("switches thinking off on claude-sonnet-5-5 with between_tools", () => {
+    expect(anthropicThinkingConfig("claude-sonnet-5-5", "none")).toEqual({ thinking: { type: "between_tools" } });
+  });
+
   // Adaptive models return thinking blocks empty unless asked, and these put their notes there.
   it.each(["claude-haiku-5-5", "claude-sonnet-5-5", "claude-opus-5-5"])(
     "asks %s for summarized thinking, with adaptive thinking + effort",
@@ -122,11 +134,30 @@ describe("buildChatModel", () => {
 
   // Anthropic 400s a budget that is not below max_tokens, so no offered level may reach it.
   it("keeps every claude-haiku-4-5 budget below the output cap", () => {
-    for (const effort of modelReasoningEfforts("anthropic", "claude-haiku-4-5")) {
+    const thinkingLevels = modelReasoningEfforts("anthropic", "claude-haiku-4-5").filter((e) => e !== "none");
+    expect(thinkingLevels.length).toBeGreaterThan(0);
+    for (const effort of thinkingLevels) {
       const { thinking } = anthropicThinkingConfig("claude-haiku-4-5", effort);
       const budget = "budget_tokens" in thinking ? thinking.budget_tokens : Number.NaN;
       expect(budget).toBeLessThan(64_000);
     }
+  });
+
+  // Asserted on the request the client would send: LangChain validates thinking per model and
+  // drops a value it was not explicitly given, so the config alone does not prove this.
+  it.each([
+    ["claude-haiku-5-5", { type: "disabled" }],
+    ["claude-haiku-4-5", { type: "disabled" }],
+    ["claude-sonnet-5-5", { type: "between_tools" }],
+    ["claude-sonnet-5", { type: "disabled" }],
+    ["claude-opus-4-8", { type: "disabled" }],
+  ])("sends %s a thinking-off request with no effort", (model, thinking) => {
+    const m = buildChatModel(config({ provider: "anthropic", model, reasoningEffort: "none" })) as unknown as {
+      invocationParams: (options: object) => { thinking?: unknown; output_config?: { effort?: unknown } };
+    };
+    const params = m.invocationParams({});
+    expect(params.thinking).toEqual(thinking);
+    expect(params.output_config?.effort).toBeUndefined();
   });
 
   // Compaction calls invoke(); the SDK refuses that non-streaming above ~21K max_tokens.
@@ -163,8 +194,28 @@ describe("buildChatModel", () => {
     expect(m.clientConfig.baseURL).toBeUndefined();
   });
 
-  // Kimi's "max" is absent from OpenAI's effort union, so it rides modelKwargs. A regression to the
-  // typed field would silently drop it and run every turn at a lower effort.
+  // GPT-5.6 and GPT-6 take "max"; a summary is asked for at every level that reasons.
+  it.each([
+    ["gpt-6-astra", "max"],
+    ["gpt-6.1-sol", "low"],
+    ["gpt-5.6-luna", "max"],
+    ["gpt-5.5", "xhigh"],
+  ])("sends %s the effort %s with a reasoning summary", (model, reasoningEffort) => {
+    const m = buildChatModel(config({ model, reasoningEffort: reasoningEffort as never })) as unknown as {
+      reasoning: Record<string, unknown>;
+    };
+    expect(m.reasoning).toEqual({ effort: reasoningEffort, summary: "auto" });
+  });
+
+  it.each(["gpt-6-luna", "gpt-5.5"])("asks %s for no summary when reasoning is off", (model) => {
+    const m = buildChatModel(config({ model, reasoningEffort: "none" })) as unknown as {
+      reasoning: Record<string, unknown>;
+    };
+    expect(m.reasoning).toEqual({ effort: "none" });
+  });
+
+  // The SDK sends its typed reasoning field only for OpenAI's own model ids, so Kimi's effort rides
+  // modelKwargs. A regression to the typed field would silently drop it.
   it("passes the Kimi reasoning effort through as a raw reasoning_effort request field", () => {
     const m = buildChatModel(config({ provider: "moonshot", model: "kimi-k3", reasoningEffort: "max" })) as unknown as {
       modelKwargs: Record<string, unknown>;

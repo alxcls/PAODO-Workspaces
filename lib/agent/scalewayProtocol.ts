@@ -2,7 +2,7 @@
 // different field name than the SDK reads, and it accepts effort levels its models do not honour.
 import { ChatOpenAI, ChatOpenAICompletions, type ChatOpenAIFields } from "@langchain/openai";
 import type { BaseMessage, BaseMessageChunk } from "@langchain/core/messages";
-import { SCALEWAY_MODEL_EFFORTS } from "../models/scalewayEfforts";
+import { scalewayModel } from "../models/registry";
 import type { ReasoningEffort } from "../models/llmSelection";
 
 /**
@@ -13,12 +13,12 @@ import type { ReasoningEffort } from "../models/llmSelection";
  * model — and then collapse it to the default anyway, so this only makes the request say what is
  * really going to happen. Both offered models support "none", so switching thinking off always works.
  *
- * A model absent from the table is sent the level unchanged; there is nothing better to guess.
+ * A model absent from the registry is sent the level unchanged; there is nothing better to guess.
  */
 export function scalewayEffort(model: string, effort: ReasoningEffort): ReasoningEffort {
-  const entry = SCALEWAY_MODEL_EFFORTS[model];
-  if (!entry) return effort;
-  return entry.supported.includes(effort) ? effort : entry.fallback;
+  const spec = scalewayModel(model);
+  if (!spec) return effort;
+  return spec.efforts.includes(effort) ? effort : spec.fallbackEffort;
 }
 
 /** Scaleway's own documented dial. Raw because "none" is not in the SDK's typed effort union. */

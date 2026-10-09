@@ -4,12 +4,11 @@ import { useState, useEffect } from "react";
 import type { AsyncResource } from "@/lib/client/hooks/useAsyncResource";
 import type { WorkspaceDetails } from "@/lib/client/hooks/useWorkspaceDetails";
 import { AsyncState } from "@/components/shared/AsyncState";
+import { Switch } from "@/components/shared/Switch";
 import { THINKING_OFF_EFFORT, type ReasoningEffort } from "@/lib/models/llmSelection";
 import { defaultEffortFor, effortsForModel } from "@/lib/models/selection";
-// The GET /api/models payload shape, imported from the module that SERVES it rather than redeclared
-// here. `import type` is erased at compile time, so this pulls none of that module's runtime graph
-// (which reaches the LLM SDKs) into the client bundle. Redeclaring it drifted once already: the
-// server made `thinking` required while this copy still had it optional.
+// The GET /api/models payload shape, from the module that serves it so the two cannot drift.
+// `import type` is erased at compile time, so none of its runtime graph reaches the client bundle.
 import type { ModelCatalog } from "@/lib/operations/models/catalog";
 import { confirmedValues } from "@/lib/client/workspaceReceipt";
 
@@ -17,9 +16,8 @@ import { confirmedValues } from "@/lib/client/workspaceReceipt";
 // because the `.input` base class is `w-full`, which otherwise stretches each field to fill the row.
 const FIELD_WIDTH = { provider: 128, model: 168, effort: 100 };
 
-// A committed value shown when not editing: a greyed, caret-less read-only field so it clearly
-// reads as a set value rather than an interactive dropdown. Keep this component at module scope so
-// React preserves its identity across ModelBlock renders.
+// A committed value shown when not editing: a greyed, caret-less field that reads as a set value.
+// Kept at module scope so React preserves its identity across ModelBlock renders.
 function LockedValue({ value, width }: { value: string; width: number }) {
   return (
     <div
@@ -31,15 +29,11 @@ function LockedValue({ value, width }: { value: string; width: number }) {
   );
 }
 
-// Per-workspace LLM picker: provider + model + reasoning effort, persisted on the workspace via
-// PATCH /api/workspaces/:id. The complete provider → models/efforts hierarchy comes from one
-// /api/models read, so the UI and programmatic callers consume the same code-owned catalog without a
-// request per provider change. The provider list is narrowed to those .env makes available: an API key
-// is set and <PROVIDER>_AVAILABLE is not false.
+// Per-workspace LLM picker (provider, model, reasoning effort), saved by PATCH /api/workspaces/:id.
+// One /api/models read supplies the whole catalog, already narrowed to providers .env makes available.
 
-// Empty until the workspace read lands, rather than seeded with a guess at the default: the default is
-// the first provider .env makes available, which only the server knows. A hardcoded seed here would
-// flash a provider this deployment may have switched off, and would stick if the read failed.
+// Empty until the workspace read lands: only the server knows the default provider, and a hardcoded
+// seed would flash one this deployment may have switched off, then stick if the read failed.
 export default function ModelBlock({
   wsId,
   workspace,
@@ -98,11 +92,8 @@ function ModelForm({
   const [catalog, setCatalog] = useState<ModelCatalog>({});
   const [catalogLoaded, setCatalogLoaded] = useState(false);
   const [saving, setSaving] = useState(false);
-  // Provider ids own their models and accepted effort levels, so changing a dropdown stays a local
-  // lookup rather than another network request. The one thing that does invalidate the catalog is a
-  // provider key being added or removed in Settings, since `hasKey` drives the warning below —
-  // `catalogVersion` is the parent's signal that this happened, and re-reading is how the warning
-  // clears without a page reload.
+  // Changing a dropdown is a local catalog lookup, not a request. `catalogVersion` changes when a
+  // provider key is added or removed in Settings, and the re-read is what clears the key warning.
   useEffect(() => {
     let active = true;
     fetch("/api/models")
@@ -128,7 +119,7 @@ function ModelForm({
   // picks a current model, which also prevents the UI and runtime from claiming different models.
   const selectedModel = model;
   // Empty means no effort dial for this model, so the control is absent rather than presenting a
-  // setting the agent never sends. The catalog narrows per model where a vendor does (Scaleway).
+  // setting the agent never sends. The levels belong to the model, so the catalog lists them per model.
   const efforts = providerCatalog ? effortsForModel(providerCatalog, selectedModel) : [];
   const modelUnavailable =
     catalogLoaded && Boolean(model) && (!providerCatalog || !providerCatalog.models.includes(model));
@@ -144,9 +135,9 @@ function ModelForm({
   const thinkingAlways = hasThinking && !efforts.includes(THINKING_OFF_EFFORT);
   const thinkingOn = thinkingAlways || selectedEffort !== THINKING_OFF_EFFORT;
   // The levels worth choosing BETWEEN once thinking is on. "none" is excluded because turning
-  // thinking off is the checkbox's job, and offering it in both places lets the two disagree.
+  // thinking off is the switch's job, and offering it in both places lets the two disagree.
   const levels = efforts.filter((eff) => eff !== THINKING_OFF_EFFORT);
-  // One level is not a choice: the checkbox already controls on/off, so a one-option dropdown beside
+  // One level is not a choice: the switch already controls on/off, so a one-option dropdown beside
   // it would add no information.
   const showEffort = thinkingOn && levels.length > 1;
 
@@ -154,20 +145,12 @@ function ModelForm({
 
   const modelOptions = models;
 
-  // Belt and braces for a stale tab. The server no longer keeps a workspace on a withdrawn provider
-  // (startup clears those selections, and a PATCH naming one is refused), so this only fires when the
-  // deployment switched a provider off after this page loaded — and even then the row shows the value
-  // the workspace really holds rather than silently swapping it for the first catalog entry.
+  // Stale-tab guard: if the provider was switched off after this page loaded, keep showing the
+  // value the workspace really holds rather than silently swapping in the first catalog entry.
   const providerOptions = provider && !providers.includes(provider) ? [provider, ...providers] : providers;
 
-  // Whether the selected provider can actually authenticate. Read from the catalog this component
-  // already fetched, so the warning costs no extra request.
-  //
-  // A run stops with this same fact at conversation start, which is the backstop — but finding out
-  // there is no key only after sending a message, in the transcript, is a worse place to learn it
-  // than right here where the provider was chosen. A provider not in the catalog at all (a stored
-  // selection whose provider was since withdrawn) is left alone: it has its own message on the run,
-  // and "add a key" would be the wrong advice for it.
+  // Whether the selected provider can authenticate, so a missing key is flagged here rather than
+  // mid-run. A provider absent from the catalog is left alone: the run has its own message for it.
   const missingKey = Boolean(provider) && providerCatalog !== undefined && !providerCatalog.hasKey;
 
   const save = async () => {
@@ -246,6 +229,27 @@ function ModelForm({
               ))}
             </select>
 
+            {hasThinking && (
+              // An "always" model is shown on and disabled rather than hidden: "on" is the truth,
+              // and those models reject the request outright if told otherwise.
+              <Switch
+                label="Thinking"
+                className="px-1"
+                checked={thinkingOn}
+                disabled={thinkingAlways}
+                title={
+                  thinkingAlways
+                    ? "This model always thinks — it offers no way to switch that off."
+                    : "Let the model think before it answers."
+                }
+                onChange={(on) =>
+                  setEffort(
+                    on && providerCatalog ? defaultEffortFor(providerCatalog, selectedModel) : THINKING_OFF_EFFORT,
+                  )
+                }
+              />
+            )}
+
             {showEffort && (
               <select
                 style={{ width: FIELD_WIDTH.effort }}
@@ -261,34 +265,6 @@ function ModelForm({
               </select>
             )}
 
-            {hasThinking && (
-              <label
-                className="flex-none flex items-center gap-1.5 text-ms text-text-2 select-none"
-                title={
-                  thinkingAlways
-                    ? "This model always thinks — it offers no way to switch that off."
-                    : "Let the model think before it answers."
-                }
-              >
-                <input
-                  type="checkbox"
-                  // An "always" model is checked and disabled rather than hidden: "on" is the truth,
-                  // and presenting it as a choice the user could change would be a lie the API
-                  // enforces — those models reject the request outright if told otherwise.
-                  checked={thinkingOn}
-                  disabled={thinkingAlways}
-                  onChange={(e) =>
-                    setEffort(
-                      e.target.checked && providerCatalog
-                        ? defaultEffortFor(providerCatalog, selectedModel)
-                        : THINKING_OFF_EFFORT,
-                    )
-                  }
-                />
-                Thinking
-              </label>
-            )}
-
             <button className="btn" disabled={saving || !validModel} onClick={save}>
               {saving ? "Saving…" : "Save"}
             </button>
@@ -297,13 +273,10 @@ function ModelForm({
           <>
             <LockedValue value={provider} width={FIELD_WIDTH.provider} />
             <LockedValue value={selectedModel} width={FIELD_WIDTH.model} />
-            {showEffort && <LockedValue value={selectedEffort} width={FIELD_WIDTH.effort} />}
             {hasThinking && (
-              <label className="flex-none flex items-center gap-1.5 text-ms text-text-3 select-none cursor-default">
-                <input type="checkbox" checked={thinkingOn} disabled readOnly />
-                Thinking
-              </label>
+              <Switch label="Thinking" className="px-1" checked={thinkingOn} disabled onChange={() => {}} />
             )}
+            {showEffort && <LockedValue value={selectedEffort} width={FIELD_WIDTH.effort} />}
             <button className="btn" onClick={() => setDraft(saved)}>
               Edit
             </button>

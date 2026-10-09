@@ -1,19 +1,13 @@
-// Refreshes the vendored model-pricing catalog (lib/models/model-pricing.json) from public price
-// lists, at author time (`npm run update-pricing`).
-//
-// This file is now only the CLI wrapper — fetching and assembling the catalog lives in
-// lib/models/refresh.ts, shared with lib/models/priceRefresher.ts so the script and the running
-// server can never build the catalog differently. See that file for the source strategy.
-//
-// WHAT THIS FILE IS STILL FOR, now that production refreshes itself: the vendored file is the SEED
-// a container boots on before its first fetch, and the offline fallback if upstream is unreachable.
-// Re-running this keeps that seed from drifting years behind. It is no longer the mechanism by which
-// prices reach production.
-//
-// The run FAILS if any offered model still has no rate, because lib/models/registry.test.ts asserts
-// every offered model prices — better to find out here than in CI.
-//
-// (The picker's model list is a separate code-owned catalog: lib/models/registry.ts.)
+/**
+ * Refreshes the vendored model-pricing catalog (lib/models/model-pricing.json) from public price
+ * lists, at author time (`npm run update-pricing`). This is only the CLI wrapper: fetching and
+ * assembling live in lib/models/refresh.ts, shared with the running server's own refresher.
+ *
+ * Production refreshes itself; the vendored file is the SEED a container boots on before its first
+ * fetch, and the offline fallback. Re-running this keeps that seed from drifting years behind.
+ *
+ * The run FAILS if any offered model (lib/models/registry.ts) still has no rate.
+ */
 import { writeFileSync } from "fs";
 import path from "path";
 import { buildCatalog } from "../lib/models/refresh";
@@ -25,9 +19,8 @@ const OUT = path.join(__dirname, "..", "lib", "models", "model-pricing.json");
 async function main() {
   const { catalog, filled, scaleway, unpriced, effortDrift, sourceFailures } = await buildCatalog();
 
-  // BEFORE the write, unlike every check below it: an unreachable or incomplete source yields a
-  // catalog missing models, and this file is the seed every fresh deployment boots on. Vendoring
-  // that commits the hole.
+  // BEFORE the write, unlike every check below: an incomplete source yields a catalog missing
+  // models, and vendoring that commits the hole into the seed every fresh deployment boots on.
   if (sourceFailures.length) {
     console.error(`\nSOURCE INCOMPLETE OR UNREACHABLE: ${sourceFailures.join(", ")}`);
     console.error(`${OUT} left untouched. Re-run once the source is back.`);
@@ -39,11 +32,11 @@ async function main() {
   if (filled.length) console.log(`filled from models.dev (not yet in LiteLLM): ${filled.join(", ")}`);
   if (scaleway.length) console.log(`priced in EUR from Scaleway's own catalog: ${scaleway.join(", ")}`);
 
-  // Prices are vendored above; the reasoning table is not, so drift in it has to be reported rather
-  // than written. See lib/models/scalewayEfforts.ts for why that one stays hand-maintained.
+  // Prices are vendored above; the reasoning levels are not, so drift in them is reported rather
+  // than written. See the Scaleway records in lib/models/registry.ts for why they stay hand-maintained.
   if (effortDrift.length) {
     console.error(`\nSCALEWAY REASONING LEVELS MOVED:\n  ${effortDrift.join("\n  ")}`);
-    console.error("Update SCALEWAY_MODEL_EFFORTS in lib/models/scalewayEfforts.ts to match, then re-run.");
+    console.error("Update the Scaleway records in lib/models/registry.ts to match, then re-run.");
     process.exit(1);
   }
   if (unpriced.length) {

@@ -60,6 +60,13 @@ describe("model catalog", () => {
     expect(Object.keys(catalog.deepseek).sort()).toEqual(["hasKey", "models", "reasoningEfforts"]);
   });
 
+  // The picker narrows from this map; without it, it would offer max on gpt-5.5 and none on gpt-6.1-sol.
+  it("publishes OpenAI's per-model effort lists beside the provider-wide union", () => {
+    const { openai } = getModelCatalog(only("openai"), noKeys);
+    expect(Object.keys(openai.modelReasoningEfforts ?? {}).sort()).toEqual([...openai.models].sort());
+    expect(openai.modelReasoningEfforts?.["gpt-6.1-sol"]).toEqual(["low", "medium", "high", "xhigh", "max"]);
+  });
+
   it("omits a provider .env switched off, models and all", () => {
     // A disabled provider's models never reach the picker, and its stored key was destroyed at
     // startup, so a workspace that selected it earlier cannot run it either.

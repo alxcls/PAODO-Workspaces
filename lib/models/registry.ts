@@ -19,8 +19,21 @@ export const AVAILABLE_MODELS: Record<string, readonly string[]> = {
     "claude-opus-5-5",
     "claude-opus-4-8",
   ],
-  // 5.1 and 5 are priced identically ($1.25/$10 per M); the newer of the two leads.
-  openai: ["gpt-5.1", "gpt-5", "gpt-5.4", "gpt-5.5", "gpt-5.5-pro"],
+  // Ordered by input rate, then output. 5.1/5 and 6.1 Sol/6 Sol are priced as pairs; the newer leads.
+  openai: [
+    "gpt-6-luna",
+    "gpt-5.6-luna",
+    "gpt-5.1",
+    "gpt-5",
+    "gpt-6.1-sol",
+    "gpt-6-sol",
+    "gpt-5.6-terra",
+    "gpt-5.4",
+    "gpt-5.6-sol",
+    "gpt-5.5",
+    "gpt-6-astra",
+    "gpt-5.5-pro",
+  ],
   // `deepseek-flash` is V4.1 Flash (the old `deepseek-v4-flash` id now just aliases it); Pro stays a
   // distinct, pricier model until DeepSeek reroutes it to V4.1 Flash on 14 Sep 2026. Flash leads.
   deepseek: ["deepseek-flash", "deepseek-v4-pro"],

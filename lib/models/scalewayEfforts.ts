@@ -13,7 +13,7 @@
  * default — no error, just a dial with two labels for one behaviour. This table is the only place
  * that distinction is written down.
  */
-import type { ReasoningEffort } from "./llmSelection";
+import { effortUnion, type ReasoningEffort } from "./llmSelection";
 
 export interface ScalewayModelEfforts {
   /** `supported_reasoning_values`, ordered quietest first — the levels the picker may offer. */
@@ -42,7 +42,5 @@ export function scalewayModelEffortLists(): Record<string, readonly ReasoningEff
  * only safe because SCALEWAY_MODEL_EFFORTS narrows it per model everywhere it is offered or checked.
  */
 export function scalewayProviderEfforts(): ReasoningEffort[] {
-  const order: ReasoningEffort[] = ["none", "minimal", "low", "medium", "high", "xhigh", "max"];
-  const union = new Set(Object.values(SCALEWAY_MODEL_EFFORTS).flatMap((entry) => entry.supported));
-  return order.filter((effort) => union.has(effort));
+  return effortUnion(Object.values(SCALEWAY_MODEL_EFFORTS).map((entry) => entry.supported));
 }

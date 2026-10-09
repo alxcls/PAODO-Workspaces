@@ -3,6 +3,7 @@
 import { describe, it, expect } from "vitest";
 import { AVAILABLE_MODELS, listModels, offeredModelIds } from "./registry";
 import { getRate } from "./pricing";
+import { OPENAI_MODEL_EFFORTS } from "./openaiEfforts";
 import { SCALEWAY_MODEL_EFFORTS } from "./scalewayEfforts";
 import { SUPPORTED_PROVIDERS, getProviderMetadata, modelReasoningEfforts } from "@/lib/agent/buildModel";
 
@@ -16,6 +17,20 @@ describe("models catalog", () => {
       "claude-sonnet-5",
       "claude-opus-5-5",
       "claude-opus-4-8",
+    ]);
+    expect(listModels("openai")).toEqual([
+      "gpt-6-luna",
+      "gpt-5.6-luna",
+      "gpt-5.1",
+      "gpt-5",
+      "gpt-6.1-sol",
+      "gpt-6-sol",
+      "gpt-5.6-terra",
+      "gpt-5.4",
+      "gpt-5.6-sol",
+      "gpt-5.5",
+      "gpt-6-astra",
+      "gpt-5.5-pro",
     ]);
     // Order matters for deepseek: the first entry is what a bare provider choice resolves to.
     expect(listModels("deepseek")).toEqual(["deepseek-flash", "deepseek-v4-pro"]);
@@ -43,8 +58,9 @@ describe("models catalog", () => {
   });
 
   it("exposes each provider's accepted reasoning-effort levels; empty hides the control", () => {
-    // The levels come from the installed SDK unions and differ per provider; deepseek has no dial.
+    // The levels differ per provider, and per model where a vendor documents them that way.
     expect(getProviderMetadata("anthropic").reasoningEfforts).toEqual(["low", "medium", "high", "xhigh", "max"]);
+    // OpenAI's levels belong to the model too: a union here, narrowed by modelReasoningEfforts.
     expect(getProviderMetadata("openai").reasoningEfforts).toEqual([
       "none",
       "minimal",
@@ -52,6 +68,7 @@ describe("models catalog", () => {
       "medium",
       "high",
       "xhigh",
+      "max",
     ]);
     expect(getProviderMetadata("deepseek").reasoningEfforts).toEqual(["none", "low", "high", "max"]);
     // Kimi K3 accepts low|high|max — no medium, and it always thinks, so none/minimal aren't offered.
@@ -61,6 +78,35 @@ describe("models catalog", () => {
     // Scaleway's levels belong to the model, so the provider list is a union that is never offered
     // whole — modelReasoningEfforts narrows it wherever a model is in hand.
     expect(getProviderMetadata("scaleway").reasoningEfforts).toEqual(["none", "low", "medium", "high", "max"]);
+  });
+
+  // An OpenAI model with no entry would be offered the union, which no single model accepts whole.
+  it("narrows every offered OpenAI model to its own levels", () => {
+    for (const model of listModels("openai")) {
+      expect(OPENAI_MODEL_EFFORTS[model], `${model} has no effort list`).toBeDefined();
+      expect(modelReasoningEfforts("openai", model)).toEqual(OPENAI_MODEL_EFFORTS[model]);
+    }
+  });
+
+  it.each(["gpt-5.1", "gpt-5", "gpt-5.4", "gpt-5.5", "gpt-5.5-pro"])("keeps %s on none…xhigh, without max", (model) => {
+    expect(modelReasoningEfforts("openai", model)).toEqual(["none", "minimal", "low", "medium", "high", "xhigh"]);
+  });
+
+  it.each(["gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol", "gpt-6-luna", "gpt-6-sol"])(
+    "offers %s max, and none but not minimal",
+    (model) => {
+      expect(modelReasoningEfforts("openai", model)).toEqual(["none", "low", "medium", "high", "xhigh", "max"]);
+    },
+  );
+
+  // These always reason, so there is no off position to offer.
+  it.each(["gpt-6.1-sol", "gpt-6-astra"])("offers %s low…max only", (model) => {
+    expect(modelReasoningEfforts("openai", model)).toEqual(["low", "medium", "high", "xhigh", "max"]);
+  });
+
+  it("keeps OpenAI's provider-wide list equal to the union of its models' levels", () => {
+    const union = new Set(listModels("openai").flatMap((m) => [...modelReasoningEfforts("openai", m)]));
+    expect(new Set(getProviderMetadata("openai").reasoningEfforts)).toEqual(union);
   });
 
   /**

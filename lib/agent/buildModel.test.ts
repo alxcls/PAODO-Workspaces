@@ -163,8 +163,28 @@ describe("buildChatModel", () => {
     expect(m.clientConfig.baseURL).toBeUndefined();
   });
 
-  // Kimi's "max" is absent from OpenAI's effort union, so it rides modelKwargs. A regression to the
-  // typed field would silently drop it and run every turn at a lower effort.
+  // GPT-5.6 and GPT-6 take "max"; a summary is asked for at every level that reasons.
+  it.each([
+    ["gpt-6-astra", "max"],
+    ["gpt-6.1-sol", "low"],
+    ["gpt-5.6-luna", "max"],
+    ["gpt-5.5", "xhigh"],
+  ])("sends %s the effort %s with a reasoning summary", (model, reasoningEffort) => {
+    const m = buildChatModel(config({ model, reasoningEffort: reasoningEffort as never })) as unknown as {
+      reasoning: Record<string, unknown>;
+    };
+    expect(m.reasoning).toEqual({ effort: reasoningEffort, summary: "auto" });
+  });
+
+  it.each(["gpt-6-luna", "gpt-5.5"])("asks %s for no summary when reasoning is off", (model) => {
+    const m = buildChatModel(config({ model, reasoningEffort: "none" })) as unknown as {
+      reasoning: Record<string, unknown>;
+    };
+    expect(m.reasoning).toEqual({ effort: "none" });
+  });
+
+  // The SDK sends its typed reasoning field only for OpenAI's own model ids, so Kimi's effort rides
+  // modelKwargs. A regression to the typed field would silently drop it.
   it("passes the Kimi reasoning effort through as a raw reasoning_effort request field", () => {
     const m = buildChatModel(config({ provider: "moonshot", model: "kimi-k3", reasoningEffort: "max" })) as unknown as {
       modelKwargs: Record<string, unknown>;

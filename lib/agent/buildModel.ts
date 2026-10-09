@@ -11,6 +11,7 @@ import { providerPacer } from "./rateLimit/providerPacer";
 import { parseRateLimitHeaders } from "./rateLimit/rateLimitHeaders";
 import { createScalewayChatModel, scalewayReasoningConfig } from "./scalewayProtocol";
 import { THINKING_OFF_EFFORT, type ReasoningEffort } from "../models/llmSelection";
+import { openaiModelEffortLists, openaiProviderEfforts } from "../models/openaiEfforts";
 import { listModels } from "../models/registry";
 import { scalewayModelEffortLists, scalewayProviderEfforts } from "../models/scalewayEfforts";
 import {
@@ -63,8 +64,8 @@ interface ProviderMetadata {
   /**
    * Narrower lists for models that honour fewer levels than the provider as a whole; the provider
    * list above stands for anything absent here. Needed wherever a vendor's levels are per model
-   * rather than per provider — Scaleway's are, and its gateway accepts every level on every model,
-   * so nothing but this stops the picker offering two labels for one behaviour.
+   * rather than per provider — OpenAI's and Scaleway's are. Scaleway's gateway accepts every level
+   * on every model, so nothing but this stops the picker offering two labels for one behaviour.
    */
   modelReasoningEfforts?: Record<string, readonly ReasoningEffort[]>;
 }
@@ -140,11 +141,14 @@ const PROVIDERS: Record<string, ProviderDescriptor> = {
   openai: {
     availabilityEnv: "OPENAI_AVAILABLE",
     supportsPromptCaching: false,
-    reasoningEfforts: ["none", "minimal", "low", "medium", "high", "xhigh"],
+    // The union of the offered models' levels, narrowed per model below: GPT-5.6 and GPT-6 take
+    // "max", and the always-reasoning ones (6.1 Sol, 6 Astra) do not support "none".
+    reasoningEfforts: openaiProviderEfforts(),
+    modelReasoningEfforts: openaiModelEffortLists(),
     build: (config) => {
-      // OpenAI takes none…xhigh, never "max" (validation keeps it out). "none" disables reasoning, so
-      // the summary request is omitted — there would be nothing to summarize.
-      const effort = config.reasoningEffort as Exclude<ReasoningEffort, "max">;
+      // "none" disables reasoning, so the summary request is omitted — there would be nothing to
+      // summarize. Validation keeps out any level the selected model does not take.
+      const effort = config.reasoningEffort;
       return new ChatOpenAI({
         model: config.model,
         // `apiKey`, not the legacy `openAIApiKey` alias — the latter is silently ignored by
@@ -190,8 +194,8 @@ const PROVIDERS: Record<string, ProviderDescriptor> = {
           apiKey: config.apiKey,
           fetch: pacedFetch("moonshot", config.model),
         },
-        // modelKwargs, not the typed `reasoningEffort`: that field is OpenAI's union, which has no
-        // "max" — Kimi's strongest level. modelKwargs is spread verbatim into the request body.
+        // modelKwargs, not the typed `reasoning`: the SDK sends that only for ids it knows as OpenAI
+        // reasoning models, so Kimi's would be dropped. modelKwargs is spread verbatim into the body.
         modelKwargs: { reasoning_effort: config.reasoningEffort },
       }),
   },

@@ -147,7 +147,7 @@ const PROVIDERS: Record<string, ProviderDescriptor> = {
     modelReasoningEfforts: openaiModelEffortLists(),
     build: (config) => {
       // "none" disables reasoning, so the summary request is omitted — there would be nothing to
-      // summarize. Validation keeps out any level the selected model does not take.
+      // summarize. Only a save checks the level against the model; a stored one is sent as is.
       const effort = config.reasoningEffort;
       return new ChatOpenAI({
         model: config.model,

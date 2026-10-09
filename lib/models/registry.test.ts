@@ -1,12 +1,17 @@
 // The code-owned list of models the picker offers: it covers exactly the supported providers,
 // an unknown provider yields an empty list, and every listed model has a price so its cost resolves.
 import { describe, it, expect } from "vitest";
-import { AVAILABLE_MODELS, listModels, offeredModelIds } from "./registry";
+import {
+  AVAILABLE_MODELS,
+  anthropicModel,
+  listModels,
+  modelEffortLists,
+  offeredModelIds,
+  scalewayModel,
+} from "./registry";
 import { getRate } from "./pricing";
-import { OPENAI_MODEL_EFFORTS } from "./openaiEfforts";
-import { SCALEWAY_MODEL_EFFORTS } from "./scalewayEfforts";
 import { defaultEffortFor } from "./selection";
-import { SUPPORTED_PROVIDERS, getProviderMetadata, modelReasoningEfforts, vocabularyFor } from "@/lib/agent/buildModel";
+import { SUPPORTED_PROVIDERS, modelReasoningEfforts, vocabularyFor } from "@/lib/agent/buildModel";
 
 describe("models catalog", () => {
   it("lists a provider's models from the curated catalog", () => {
@@ -45,10 +50,9 @@ describe("models catalog", () => {
     expect(listModels("not-a-provider")).toEqual([]);
   });
 
-  it("only lists models for supported providers", () => {
-    for (const provider of Object.keys(AVAILABLE_MODELS)) {
-      expect(SUPPORTED_PROVIDERS).toContain(provider);
-    }
+  // Both directions: a provider with no builder cannot run, and one with no records offers nothing.
+  it("lists models for exactly the supported providers", () => {
+    expect(Object.keys(AVAILABLE_MODELS).sort()).toEqual([...SUPPORTED_PROVIDERS].sort());
   });
 
   // Every supported provider must serve at least one model: the fallback selection is the first
@@ -59,35 +63,47 @@ describe("models catalog", () => {
     }
   });
 
-  it("exposes each provider's accepted reasoning-effort levels; empty hides the control", () => {
-    // The levels differ per provider, and per model where a vendor documents them that way.
-    expect(getProviderMetadata("anthropic").reasoningEfforts).toEqual(["low", "medium", "high", "xhigh", "max"]);
-    // OpenAI's levels belong to the model too: a union here, narrowed by modelReasoningEfforts.
-    expect(getProviderMetadata("openai").reasoningEfforts).toEqual([
-      "none",
-      "minimal",
-      "low",
-      "medium",
-      "high",
-      "xhigh",
-      "max",
-    ]);
-    expect(getProviderMetadata("deepseek").reasoningEfforts).toEqual(["none", "low", "high", "max"]);
-    // Kimi K3 accepts low|high|max — no medium, and it always thinks, so none/minimal aren't offered.
-    expect(getProviderMetadata("moonshot").reasoningEfforts).toEqual(["low", "high", "max"]);
-    // Medium exposes one binary choice: off or Mistral's supported high reasoning mode.
-    expect(getProviderMetadata("mistral").reasoningEfforts).toEqual(["none", "high"]);
-    // Scaleway's levels belong to the model, so the provider list is a union that is never offered
-    // whole — modelReasoningEfforts narrows it wherever a model is in hand.
-    expect(getProviderMetadata("scaleway").reasoningEfforts).toEqual(["none", "low", "medium", "high", "max"]);
+  // The id and its levels sit on one record, so the picker's map cannot miss or invent a model.
+  it("carries each offered model's effort list beside its id", () => {
+    for (const provider of SUPPORTED_PROVIDERS) {
+      expect(Object.keys(modelEffortLists(provider)), provider).toEqual(listModels(provider));
+      expect(vocabularyFor(provider).modelReasoningEfforts, provider).toEqual(modelEffortLists(provider));
+    }
   });
 
-  // An OpenAI model with no entry would be offered the union, which no single model accepts whole.
-  it("narrows every offered OpenAI model to its own levels", () => {
-    for (const model of listModels("openai")) {
-      expect(OPENAI_MODEL_EFFORTS[model], `${model} has no effort list`).toBeDefined();
-      expect(modelReasoningEfforts("openai", model)).toEqual(OPENAI_MODEL_EFFORTS[model]);
+  it("offers each model of the single-list providers its documented levels", () => {
+    for (const model of listModels("deepseek")) {
+      expect(modelReasoningEfforts("deepseek", model)).toEqual(["none", "low", "high", "max"]);
     }
+    // Kimi K3 accepts low|high|max — no medium, and it always thinks, so none/minimal aren't offered.
+    expect(modelReasoningEfforts("moonshot", "kimi-k3")).toEqual(["low", "high", "max"]);
+    // One binary choice: off or Mistral's supported high reasoning mode.
+    expect(modelReasoningEfforts("mistral", "mistral-large-4")).toEqual(["none", "high"]);
+  });
+
+  // Per Anthropic's thinking table: only Opus 5.5 cannot run without thinking.
+  it.each(["claude-haiku-5-5", "claude-haiku-4-5", "claude-sonnet-5-5", "claude-sonnet-5", "claude-opus-4-8"])(
+    "lets %s switch thinking off",
+    (model) => {
+      expect(modelReasoningEfforts("anthropic", model)).toEqual(["none", "low", "medium", "high", "xhigh", "max"]);
+    },
+  );
+
+  it("keeps claude-opus-5-5 always thinking", () => {
+    expect(modelReasoningEfforts("anthropic", "claude-opus-5-5")).toEqual(["low", "medium", "high", "xhigh", "max"]);
+  });
+
+  // "none" with no way to send it would 400, and a way to send it that is never offered is dead.
+  it("offers thinking-off on exactly the Anthropic models that say how to request it", () => {
+    for (const id of listModels("anthropic")) {
+      const model = anthropicModel(id)!;
+      expect(model.efforts.includes("none"), id).toBe(model.thinkingOff !== undefined);
+    }
+  });
+
+  it("gives an unoffered model no dial rather than a sibling's levels", () => {
+    expect(modelReasoningEfforts("openai", "gpt-4o-retired")).toEqual([]);
+    expect(modelReasoningEfforts("not-a-provider", "anything")).toEqual([]);
   });
 
   it.each([
@@ -117,31 +133,24 @@ describe("models catalog", () => {
     expect(modelReasoningEfforts("openai", model)).toEqual(["low", "medium", "high", "xhigh", "max"]);
   });
 
-  it("keeps OpenAI's provider-wide list equal to the union of its models' levels", () => {
-    const union = new Set(listModels("openai").flatMap((m) => [...modelReasoningEfforts("openai", m)]));
-    expect(new Set(getProviderMetadata("openai").reasoningEfforts)).toEqual(union);
-  });
-
   /**
    * Scaleway's gateway validates reasoning_effort against vLLM's whole union for every model, so an
-   * unsupported level does not fail — it collapses to the model's default. Nothing but this table
+   * unsupported level does not fail — it collapses to the model's default. Nothing but its record
    * stops the picker offering "low" and "high" on a model where both silently mean "medium".
    */
-  it("narrows every offered Scaleway model to the levels its vendor documents", () => {
-    for (const model of listModels("scaleway")) {
-      const efforts = SCALEWAY_MODEL_EFFORTS[model];
-      expect(efforts, `${model} has no documented effort list`).toBeDefined();
-      expect(modelReasoningEfforts("scaleway", model)).toEqual(efforts.supported);
-      // The default has to be selectable, or the model's own resting level is unreachable.
-      expect(efforts.supported, `${model} cannot select its default`).toContain(efforts.fallback);
-    }
+  it.each([
+    ["deepseek-v4-flash-0731", ["none", "low", "high", "max"]],
+    ["qwen3.6-35b-a3b", ["none", "medium"]],
+  ])("keeps %s on the levels its vendor documents", (model, levels) => {
+    expect(modelReasoningEfforts("scaleway", model)).toEqual(levels);
   });
 
-  // Every level the app offers on some Scaleway model, and nothing else: a union wider than the
-  // per-model lists would be handed to any future model that arrives without an entry.
-  it("keeps Scaleway's provider-wide list equal to the union of its models' levels", () => {
-    const union = new Set(listModels("scaleway").flatMap((m) => [...modelReasoningEfforts("scaleway", m)]));
-    expect(new Set(getProviderMetadata("scaleway").reasoningEfforts)).toEqual(union);
+  // The default has to be selectable, or the model's own resting level is unreachable.
+  it("lets every Scaleway model select its own default level", () => {
+    for (const id of listModels("scaleway")) {
+      const model = scalewayModel(id)!;
+      expect(model.efforts, `${id} cannot select its default`).toContain(model.fallbackEffort);
+    }
   });
 
   // "none" is how a toggle stores its unchecked state (see THINKING_OFF_EFFORT), so a model that

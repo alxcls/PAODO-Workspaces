@@ -19,23 +19,11 @@
  */
 
 /**
- * The full set of reasoning-effort levels across all providers, quietest first. Each provider accepts
- * only a SUBSET (see PROVIDERS in lib/agent/buildModel.ts): Anthropic takes low…max, Mistral none|high,
- * OpenAI and Scaleway a list per model. A stored/selected value is validated against the chosen
- * model's subset, not this union — so this type is deliberately the widest thing any provider might carry.
+ * The full set of reasoning-effort levels across all models, quietest first. Each MODEL accepts only
+ * a subset (see PROVIDERS in lib/agent/buildModel.ts), and a stored or selected value is validated
+ * against the chosen model's own list — so this type is deliberately the widest thing any might carry.
  */
 export type ReasoningEffort = "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
-
-const EFFORT_ORDER: readonly ReasoningEffort[] = ["none", "minimal", "low", "medium", "high", "xhigh", "max"];
-
-/**
- * Every level any of the given lists holds, quietest first — the provider-wide list of a vendor
- * whose levels belong to the model. Only safe to offer because each model is then narrowed to its own.
- */
-export function effortUnion(lists: Iterable<readonly ReasoningEffort[]>): ReasoningEffort[] {
-  const union = new Set([...lists].flat());
-  return EFFORT_ORDER.filter((effort) => union.has(effort));
-}
 
 /**
  * The reasoning effort stored for a provider that has no effort dial. Never sent to the provider —
@@ -45,10 +33,9 @@ export function effortUnion(lists: Iterable<readonly ReasoningEffort[]>): Reason
 export const NO_DIAL_EFFORT: ReasoningEffort = "low";
 
 /**
- * How "thinking off" is stored: a `toggle` provider with its box unchecked runs at effort "none".
+ * How "thinking off" is stored: a model with its Thinking switch off runs at effort "none".
  *
- * This is why a `toggle` provider must offer "none" in its reasoningEfforts — there would
- * otherwise be no storable representation of the unchecked state. lib/models/registry.test.ts
- * asserts that invariant across every provider so a future model can't quietly violate it.
+ * This is why a model whose thinking can be switched off must list "none" among its efforts —
+ * there would otherwise be no storable representation of the off state.
  */
 export const THINKING_OFF_EFFORT: ReasoningEffort = "none";

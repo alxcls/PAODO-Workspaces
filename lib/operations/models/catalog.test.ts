@@ -17,7 +17,9 @@ const keyed =
 const noKeys = () => false;
 
 describe("model catalog", () => {
-  it("keeps each offered provider beside its models and reasoning efforts", () => {
+  it("keeps each offered provider beside its models and each model's reasoning efforts", () => {
+    const switchable = ["none", "low", "medium", "high", "xhigh", "max"];
+    const deepseekLevels = ["none", "low", "high", "max"];
     expect(getModelCatalog(only("anthropic", "deepseek"), keyed("anthropic", "deepseek"))).toEqual({
       anthropic: {
         models: [
@@ -28,12 +30,19 @@ describe("model catalog", () => {
           "claude-opus-5-5",
           "claude-opus-4-8",
         ],
-        reasoningEfforts: ["low", "medium", "high", "xhigh", "max"],
+        modelReasoningEfforts: {
+          "claude-haiku-5-5": switchable,
+          "claude-haiku-4-5": switchable,
+          "claude-sonnet-5-5": switchable,
+          "claude-sonnet-5": switchable,
+          "claude-opus-5-5": ["low", "medium", "high", "xhigh", "max"],
+          "claude-opus-4-8": switchable,
+        },
         hasKey: true,
       },
       deepseek: {
         models: ["deepseek-flash", "deepseek-v4-pro"],
-        reasoningEfforts: ["none", "low", "high", "max"],
+        modelReasoningEfforts: { "deepseek-flash": deepseekLevels, "deepseek-v4-pro": deepseekLevels },
         hasKey: true,
       },
     });
@@ -57,14 +66,16 @@ describe("model catalog", () => {
   // authenticate but nothing about the key. The masked hint lives on a route the CLI cannot reach.
   it("carries no key material — only the boolean", () => {
     const catalog = getModelCatalog(only("deepseek"), keyed("deepseek"));
-    expect(Object.keys(catalog.deepseek).sort()).toEqual(["hasKey", "models", "reasoningEfforts"]);
+    expect(Object.keys(catalog.deepseek).sort()).toEqual(["hasKey", "modelReasoningEfforts", "models"]);
   });
 
-  // The picker narrows from this map; without it, it would offer max on gpt-5.5 and none on gpt-6.1-sol.
-  it("publishes OpenAI's per-model effort lists beside the provider-wide union", () => {
-    const { openai } = getModelCatalog(only("openai"), noKeys);
-    expect(Object.keys(openai.modelReasoningEfforts ?? {}).sort()).toEqual([...openai.models].sort());
-    expect(openai.modelReasoningEfforts?.["gpt-6.1-sol"]).toEqual(["low", "medium", "high", "xhigh", "max"]);
+  // The picker reads this map and nothing else, so a model missing from it would lose its dial.
+  it("publishes an effort list for every model of every provider", () => {
+    const catalog = getModelCatalog(only(...SUPPORTED_PROVIDERS), noKeys);
+    for (const [provider, entry] of Object.entries(catalog)) {
+      expect(Object.keys(entry.modelReasoningEfforts).sort(), provider).toEqual([...entry.models].sort());
+    }
+    expect(catalog.openai.modelReasoningEfforts["gpt-6.1-sol"]).toEqual(["low", "medium", "high", "xhigh", "max"]);
   });
 
   it("omits a provider .env switched off, models and all", () => {

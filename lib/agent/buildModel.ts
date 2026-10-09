@@ -11,9 +11,7 @@ import { providerPacer } from "./rateLimit/providerPacer";
 import { parseRateLimitHeaders } from "./rateLimit/rateLimitHeaders";
 import { createScalewayChatModel, scalewayReasoningConfig } from "./scalewayProtocol";
 import { THINKING_OFF_EFFORT, type ReasoningEffort } from "../models/llmSelection";
-import { openaiModelEffortLists, openaiProviderEfforts } from "../models/openaiEfforts";
-import { listModels } from "../models/registry";
-import { scalewayModelEffortLists, scalewayProviderEfforts } from "../models/scalewayEfforts";
+import { anthropicModel, listModels, modelEffortLists } from "../models/registry";
 import {
   effortsForModel,
   firstAvailableSelection,
@@ -22,7 +20,7 @@ import {
 } from "../models/selection";
 
 // Legacy extended-thinking budgets, keyed by the workspace's reasoning-effort knob. Used only for
-// models that still accept thinking:{type:"enabled", budget_tokens} — see ANTHROPIC_LEGACY_BUDGET_MODELS.
+// a model whose record (lib/models/registry.ts) says it still takes the budget shape.
 const ANTHROPIC_THINKING_BUDGET: Partial<Record<ReasoningEffort, number>> = {
   low: 4_000,
   medium: 10_000,
@@ -31,26 +29,28 @@ const ANTHROPIC_THINKING_BUDGET: Partial<Record<ReasoningEffort, number>> = {
   max: 48_000,
 };
 
-// The only offered model still on the legacy budget shape, which rejects effort. Every other id,
-// an unknown future one included, takes adaptive thinking: that is what current models require.
-const ANTHROPIC_LEGACY_BUDGET_MODELS = new Set<string>(["claude-haiku-4-5"]);
-
 // Anthropic's recommended cap for streaming requests, within every offered model's output limit
 // and above the largest legacy thinking budget. Thinking is billed against it.
 const ANTHROPIC_MAX_OUTPUT_TOKENS = 64_000;
 
-// An Anthropic model's thinking fields: the effort knob maps straight onto output_config.effort,
-// except on the legacy model, where it picks a fixed budget instead.
+// An Anthropic model's thinking fields, shaped by its record. An id with no record, a future one
+// included, takes adaptive thinking: that is what current models require.
 export function anthropicThinkingConfig(model: string, effort: ReasoningEffort) {
-  if (ANTHROPIC_LEGACY_BUDGET_MODELS.has(model)) {
+  const spec = anthropicModel(model);
+  if (effort === THINKING_OFF_EFFORT) {
+    // No effort goes with it: both off shapes are refused above "high", and every default sits below.
+    // The cast is because the SDK's types predate "between_tools"; the object is forwarded verbatim.
+    return { thinking: { type: spec?.thinkingOff ?? "disabled" } as { type: "disabled" } };
+  }
+  if (spec?.thinking === "budget") {
     return { thinking: { type: "enabled" as const, budget_tokens: ANTHROPIC_THINKING_BUDGET[effort] ?? 10_000 } };
   }
   return {
     // Summaries are asked for because adaptive models return thinking blocks empty by default, and
     // the newest ones put their notes between tool calls there. Billing is the same either way.
     thinking: { type: "adaptive" as const, display: "summarized" as const },
-    // Anthropic effort accepts low…max; none/minimal never reach here, because they are absent from
-    // its reasoningEfforts list below and validation rejects them upstream.
+    // Anthropic effort accepts low…max: "none" returned above, and "minimal" is on no Anthropic
+    // model's list, so validation rejects it upstream.
     outputConfig: { effort: effort as Exclude<ReasoningEffort, "none" | "minimal"> },
   };
 }
@@ -58,16 +58,6 @@ export function anthropicThinkingConfig(model: string, effort: ReasoningEffort) 
 // The capability half of a provider entry — the only part callers outside this module see.
 interface ProviderMetadata {
   supportsPromptCaching: boolean;
-  // The effort levels this provider accepts, quietest first. Drives BOTH the picker and API-side
-  // validation, so the UI cannot offer a rejected level. Empty means no dial, and the UI hides it.
-  reasoningEfforts: ReasoningEffort[];
-  /**
-   * Narrower lists for models that honour fewer levels than the provider as a whole; the provider
-   * list above stands for anything absent here. Needed wherever a vendor's levels are per model
-   * rather than per provider — OpenAI's and Scaleway's are. Scaleway's gateway accepts every level
-   * on every model, so nothing but this stops the picker offering two labels for one behaviour.
-   */
-  modelReasoningEfforts?: Record<string, readonly ReasoningEffort[]>;
 }
 
 interface ProviderDescriptor extends ProviderMetadata {
@@ -119,7 +109,6 @@ const PROVIDERS: Record<string, ProviderDescriptor> = {
   anthropic: {
     availabilityEnv: "ANTHROPIC_AVAILABLE",
     supportsPromptCaching: true,
-    reasoningEfforts: ["low", "medium", "high", "xhigh", "max"],
     build: (config) =>
       new ChatAnthropic({
         model: config.model,
@@ -141,10 +130,6 @@ const PROVIDERS: Record<string, ProviderDescriptor> = {
   openai: {
     availabilityEnv: "OPENAI_AVAILABLE",
     supportsPromptCaching: false,
-    // The union of the offered models' levels, narrowed per model below: GPT-5.6 and GPT-6 take
-    // "max", and the always-reasoning ones (6.1 Sol, 6 Astra) do not support "none".
-    reasoningEfforts: openaiProviderEfforts(),
-    modelReasoningEfforts: openaiModelEffortLists(),
     build: (config) => {
       // "none" disables reasoning, so the summary request is omitted — there would be nothing to
       // summarize. Only a save checks the level against the model; a stored one is sent as is.
@@ -164,9 +149,6 @@ const PROVIDERS: Record<string, ProviderDescriptor> = {
   deepseek: {
     availabilityEnv: "DEEPSEEK_AVAILABLE",
     supportsPromptCaching: false,
-    // V4 thinks by default at "high" since 13 Aug 2026, so the dial is what keeps a run from paying
-    // for reasoning nobody asked for. "none" is offered because only it switches thinking off.
-    reasoningEfforts: [THINKING_OFF_EFFORT, "low", "high", "max"],
     build: (config) =>
       createDeepSeekChatModel({
         model: config.model,
@@ -182,9 +164,6 @@ const PROVIDERS: Record<string, ProviderDescriptor> = {
   moonshot: {
     availabilityEnv: "MOONSHOT_AVAILABLE",
     supportsPromptCaching: false,
-    // Kimi K3 takes low|high|max only — no medium, and none/minimal aren't offered because K3 always
-    // thinks. The narrower list is why the effort knob is validated per provider rather than globally.
-    reasoningEfforts: ["low", "high", "max"],
     build: (config) =>
       new ChatOpenAI({
         model: config.model,
@@ -203,8 +182,6 @@ const PROVIDERS: Record<string, ProviderDescriptor> = {
     availabilityEnv: "MISTRAL_AVAILABLE",
     // This flag controls Anthropic-style cache_control markers; Mistral does not use those markers.
     supportsPromptCaching: false,
-    // Large 4 exposes a simple on/off checkbox: none disables reasoning, high enables it.
-    reasoningEfforts: [THINKING_OFF_EFFORT, "high"],
     build: (config, context) =>
       createMistralChatModel({
         model: config.model,
@@ -222,10 +199,6 @@ const PROVIDERS: Record<string, ProviderDescriptor> = {
   scaleway: {
     availabilityEnv: "SCALEWAY_AVAILABLE",
     supportsPromptCaching: false,
-    // The union of the offered models' levels, narrowed per model below — Scaleway documents efforts
-    // per model, and its gateway accepts every level on every model rather than rejecting the rest.
-    reasoningEfforts: scalewayProviderEfforts(),
-    modelReasoningEfforts: scalewayModelEffortLists(),
     build: (config) =>
       createScalewayChatModel({
         model: config.model,
@@ -318,22 +291,19 @@ export function availableProviders(env: Record<string, string | undefined> = pro
 }
 
 /**
- * What a provider accepts, assembled from the two registries that own the halves: model names from
- * lib/models/registry.ts, effort levels from PROVIDERS above.
+ * What a provider offers: its models and each one's effort levels, both from lib/models/registry.ts.
  *
  * Exported because validateMetadata resolves against it too — GET /api/models serves the picker this
  * same pair, and one shared builder is what keeps all three surfaces agreeing on what a provider takes.
  */
 export function vocabularyFor(provider: string): ModelVocabulary {
-  const { reasoningEfforts, modelReasoningEfforts } = getProviderMetadata(provider);
   return {
     models: listModels(provider),
-    reasoningEfforts,
-    ...(modelReasoningEfforts ? { modelReasoningEfforts } : {}),
+    modelReasoningEfforts: modelEffortLists(provider),
   };
 }
 
-/** The levels one model accepts — the provider's list unless that provider narrows it per model. */
+/** The levels one model accepts. Empty for a model with no dial, or one its provider does not offer. */
 export function modelReasoningEfforts(provider: string, model: string): readonly ReasoningEffort[] {
   return effortsForModel(vocabularyFor(provider), model);
 }
@@ -368,5 +338,5 @@ export function providerAvailabilityEnv(provider: string): string | undefined {
 // Total for legacy stored selections and validation paths that inspect metadata before rejecting an
 // unknown provider. Unknown ids have no capabilities; they must never inherit another provider's.
 export function getProviderMetadata(provider: string): ProviderMetadata {
-  return PROVIDERS[provider] ?? { supportsPromptCaching: false, reasoningEfforts: [] };
+  return PROVIDERS[provider] ?? { supportsPromptCaching: false };
 }

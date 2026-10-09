@@ -23,8 +23,7 @@
  * bake a moving exchange rate into a cost that lib/usage/record.ts then freezes forever. So a euro
  * rate stays a euro rate end to end, and the dashboard renders whichever currency it was billed in.
  */
-import { AVAILABLE_MODELS, offeredModelIds } from "./registry";
-import { SCALEWAY_MODEL_EFFORTS } from "./scalewayEfforts";
+import { AVAILABLE_MODELS, offeredModelIds, scalewayModel } from "./registry";
 import type { Currency } from "./currency";
 import type { LongPromptRates } from "./pricing";
 
@@ -296,10 +295,10 @@ export function missingOfferedScalewayModels(catalog: Catalog): string[] {
 }
 
 /**
- * Offered Scaleway models whose documented reasoning levels no longer match ./scalewayEfforts.ts.
+ * Offered Scaleway models whose documented reasoning levels no longer match their ./registry.ts records.
  *
- * That table is checked in rather than fetched, because it decides what the picker offers and what
- * validateMetadata accepts — see its header. This is the other half of that bargain: the same rows
+ * Those records are checked in rather than fetched, because they decide what the picker offers and
+ * what validateMetadata accepts — see the note above them. This is the other half of that bargain: the same rows
  * the prices come from are re-read here, and `npm run update-pricing` fails on any disagreement, so
  * the transcription cannot quietly rot while the vendor moves on.
  *
@@ -312,15 +311,17 @@ export function scalewayEffortDrift(rows: readonly ScalewayProduct[]): string[] 
     const row = rows.find((r) => r.product === model && r.properties?.generative_apis?.supported_reasoning_values);
     const api = row?.properties?.generative_apis;
     if (!api?.supported_reasoning_values) continue;
-    const known = SCALEWAY_MODEL_EFFORTS[model];
+    const known = scalewayModel(model);
     const same =
       known &&
-      known.fallback === api.default_reasoning_value &&
-      [...known.supported].sort().join(",") === [...api.supported_reasoning_values].sort().join(",");
+      known.fallbackEffort === api.default_reasoning_value &&
+      [...known.efforts].sort().join(",") === [...api.supported_reasoning_values].sort().join(",");
     if (!same) {
       drift.push(
         `${model}: catalog says [${api.supported_reasoning_values.join(", ")}] default ${api.default_reasoning_value}, ` +
-          (known ? `table says [${known.supported.join(", ")}] default ${known.fallback}` : "table has no entry"),
+          (known
+            ? `registry says [${known.efforts.join(", ")}] default ${known.fallbackEffort}`
+            : "registry has no record"),
       );
     }
   }

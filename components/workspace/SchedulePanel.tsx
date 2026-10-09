@@ -5,6 +5,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { AsyncState } from "@/components/shared/AsyncState";
+import { Switch } from "@/components/shared/Switch";
 import { useNow } from "@/lib/client/hooks/useNow";
 import { useWorkspaceSchedule, type WorkspaceSchedule } from "@/lib/client/hooks/useWorkspaceSchedule";
 import { timezoneOffsetLabel, timezoneOffsetMinutes, timezoneOptionLabel } from "@/lib/client/timezoneLabel";
@@ -118,29 +119,6 @@ function Field({
       </span>
       {children}
     </label>
-  );
-}
-
-function EnabledToggle({ enabled, onToggle, busy }: { enabled: boolean; onToggle: () => void; busy?: boolean }) {
-  return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={enabled}
-      aria-label={enabled ? "Enabled — disable schedule" : "Disabled — enable schedule"}
-      onClick={onToggle}
-      disabled={busy}
-      className="shrink-0 flex items-center gap-2.5 h-9 px-1 transition-colors outline-none focus-visible:ring-2 focus-visible:ring-primary-soft"
-    >
-      <span className={`text-ms font-semibold ${enabled ? "text-primary" : "text-text-2"}`}>
-        {enabled ? "Enabled" : "Disabled"}
-      </span>
-      <span className={`relative w-9 h-5 rounded-full transition-colors ${enabled ? "bg-primary" : "bg-border"}`}>
-        <span
-          className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow-sm transition-all ${enabled ? "left-[18px]" : "left-0.5"}`}
-        />
-      </span>
-    </button>
   );
 }
 
@@ -272,7 +250,14 @@ function ScheduleModal({ schedule, onClose }: ModalProps) {
               and then animate to the loaded state on every open. Mounting it in its final state skips
               that slide (CSS transitions don't fire on the first render). */}
           {!unavailable && (
-            <EnabledToggle enabled={form.enabled} onToggle={() => set("enabled", !form.enabled)} busy={saving} />
+            <Switch
+              checked={form.enabled}
+              onChange={(enabled) => set("enabled", enabled)}
+              label={form.enabled ? "Enabled" : "Disabled"}
+              ariaLabel={form.enabled ? "Enabled — disable schedule" : "Disabled — enable schedule"}
+              disabled={saving}
+              className="h-9 px-1"
+            />
           )}
         </header>
 

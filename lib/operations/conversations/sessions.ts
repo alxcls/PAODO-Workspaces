@@ -1,4 +1,4 @@
-// A conversation's runs, one dashboard row each, or one run with its user message and final answer. Read-only:
+// A conversation's runs, each as a short preview to choose from, or one run in full with what it cost. Read-only:
 // starting or stopping a run is the API's and MCP's job; the grouping is the dashboard's own, so both agree.
 import type { IWorkspaceStore } from "@/lib/infra/interfaces";
 import { getStore } from "@/lib/infra/services";
@@ -8,10 +8,11 @@ import { ConversationNotFoundError, SessionNotFoundError } from "@/lib/operation
 import { listSessionTexts, listUsageLight } from "@/lib/usage/queries";
 import { groupBySessions, type LightSession } from "@/lib/usage/sessions";
 import { uncachedInputTokens } from "@/lib/usage/tokenUsage";
+import { countChars } from "./calls";
 import type { RunErrorRecord, SessionOrigin, SessionStatus, SessionTextRecord } from "@/lib/usage/types";
 
-/** The most of each text one session returns; the dashboard's session drawer shows the rest. */
-export const SESSION_TEXT_MAX_CHARS = 4000;
+/** The most of each text the list shows; one session returns both whole. */
+export const SESSION_PREVIEW_MAX_CHARS = 200;
 
 export interface ConversationSessionsDeps {
   workspaces?: Pick<IWorkspaceStore, "getWorkspace">;
@@ -20,62 +21,73 @@ export interface ConversationSessionsDeps {
   texts?: typeof listSessionTexts;
 }
 
-/** A dashboard row minus what the request already names: the workspace and the conversation. */
-export interface ConversationSessionRow {
+/** What the list and one session both say about a run. */
+interface ConversationSessionIdentity {
   sessionId: string;
-  status: SessionStatus;
-  origin: SessionOrigin;
-  models: string[];
   startedAt: string;
-  inputTokensUncached: number;
-  inputTokensCacheRead: number;
-  outputTokensTotal: number;
-  toolExec: number;
-  costByCurrency: Partial<Record<Currency, number>>;
-  error?: RunErrorRecord;
-  /** Characters in the user message, the unit `show` cuts at; absent when the session recorded none. */
+  status: SessionStatus;
+}
+
+/** Enough to choose a run: the start of each text, and how long the whole of it is. */
+export interface ConversationSessionRow extends ConversationSessionIdentity {
+  /** Cut at SESSION_PREVIEW_MAX_CHARS; absent when the session recorded no user message. */
+  userInput?: string;
+  /** Cut the same way; absent when there is no final answer: it failed, was stopped, or is still running. */
+  agentResponse?: string;
+  /** Characters in the whole user message, which `getConversationSession` returns. */
   userInputChars?: number;
-  /** Absent when the session has no final answer: it failed, was stopped, or is still running. */
   agentResponseChars?: number;
 }
 
-/** The row, plus each text cut at SESSION_TEXT_MAX_CHARS; `*OmittedChars` says how much was cut. */
-export interface ConversationSessionDetail extends ConversationSessionRow {
+/** One run in full: both texts uncut, and what the run cost. The sizes stay on the list. */
+export interface ConversationSessionDetail extends ConversationSessionIdentity {
+  error?: RunErrorRecord;
+  origin: SessionOrigin;
+  models: string[];
+  inputTokensUncached: number;
+  inputTokensCacheRead: number;
+  outputTokensTotal: number;
+  /** Tool calls in the session, failed ones included: how many `calls.ts` lists for it. */
+  callCount: number;
+  costByCurrency: Partial<Record<Currency, number>>;
   userInput?: string;
-  userInputOmittedChars?: number;
   agentResponse?: string;
-  agentResponseOmittedChars?: number;
+}
+
+function identity(session: LightSession): ConversationSessionIdentity {
+  return { sessionId: session.sessionId, startedAt: session.timestamp, status: session.status };
 }
 
 function toRow(session: LightSession, text: SessionTextRecord | undefined): ConversationSessionRow {
   return {
-    sessionId: session.sessionId,
-    status: session.status,
-    origin: session.origin,
-    models: session.models,
-    startedAt: session.timestamp,
-    inputTokensUncached: uncachedInputTokens(session.inputTokensTotal, session.inputTokensCacheRead),
-    inputTokensCacheRead: session.inputTokensCacheRead,
-    outputTokensTotal: session.outputTokensTotal,
-    toolExec: session.toolTotal,
-    costByCurrency: session.costByCurrency,
-    ...(session.error ? { error: session.error } : {}),
+    ...identity(session),
+    ...(text?.userInput !== undefined ? { userInput: preview(text.userInput) } : {}),
+    ...(text?.agentResponse !== undefined ? { agentResponse: preview(text.agentResponse) } : {}),
     ...(text?.userInput !== undefined ? { userInputChars: countChars(text.userInput) } : {}),
     ...(text?.agentResponse !== undefined ? { agentResponseChars: countChars(text.agentResponse) } : {}),
   };
 }
 
-/** Whole characters, not UTF-16 units, so an emoji counts once here and in the cut below. */
-function countChars(text: string): number {
-  return Array.from(text).length;
+function toDetail(session: LightSession, text: SessionTextRecord | undefined): ConversationSessionDetail {
+  return {
+    ...identity(session),
+    ...(session.error ? { error: session.error } : {}),
+    origin: session.origin,
+    models: session.models,
+    inputTokensUncached: uncachedInputTokens(session.inputTokensTotal, session.inputTokensCacheRead),
+    inputTokensCacheRead: session.inputTokensCacheRead,
+    outputTokensTotal: session.outputTokensTotal,
+    callCount: session.toolTotal,
+    costByCurrency: session.costByCurrency,
+    ...(text?.userInput !== undefined ? { userInput: text.userInput } : {}),
+    ...(text?.agentResponse !== undefined ? { agentResponse: text.agentResponse } : {}),
+  };
 }
 
 /** Cut on whole characters, so an emoji at the edge is kept or dropped, never split. */
-function capText(text: string): { text: string; omittedChars?: number } {
-  if (text.length <= SESSION_TEXT_MAX_CHARS) return { text };
-  const chars = Array.from(text);
-  if (chars.length <= SESSION_TEXT_MAX_CHARS) return { text };
-  return { text: chars.slice(0, SESSION_TEXT_MAX_CHARS).join(""), omittedChars: chars.length - SESSION_TEXT_MAX_CHARS };
+function preview(text: string): string {
+  if (text.length <= SESSION_PREVIEW_MAX_CHARS) return text;
+  return Array.from(text).slice(0, SESSION_PREVIEW_MAX_CHARS).join("");
 }
 
 /** Newest run first; null when the workspace does not exist. */
@@ -84,7 +96,7 @@ function readSessions(
   conversationId: string,
   deps: ConversationSessionsDeps,
   sessionId?: string,
-): Array<{ row: ConversationSessionRow; text?: SessionTextRecord }> | null {
+): Array<{ session: LightSession; text?: SessionTextRecord }> | null {
   if (!(deps.workspaces ?? getStore()).getWorkspace(workspaceId)) return null;
   if (!(deps.conversations ?? conversations).getMeta(workspaceId, conversationId)) {
     throw new ConversationNotFoundError(conversationId);
@@ -93,10 +105,7 @@ function readSessions(
   const texts = new Map(
     (deps.texts ?? listSessionTexts)(workspaceId, conversationId, sessionId).map((text) => [text.sessionId, text]),
   );
-  return sessions.map((session) => {
-    const text = texts.get(session.sessionId);
-    return { row: toRow(session, text), text };
-  });
+  return sessions.map((session) => ({ session, text: texts.get(session.sessionId) }));
 }
 
 /** Newest run first; null when the workspace does not exist. */
@@ -106,10 +115,10 @@ export function listConversationSessions(
   deps: ConversationSessionsDeps = {},
 ): { sessions: ConversationSessionRow[] } | null {
   const sessions = readSessions(workspaceId, conversationId, deps);
-  return sessions && { sessions: sessions.map(({ row }) => row) };
+  return sessions && { sessions: sessions.map(({ session, text }) => toRow(session, text)) };
 }
 
-/** One run of the conversation, the same row `listConversationSessions` gives plus its texts. */
+/** One run of the conversation in full; null when the workspace does not exist. */
 export function getConversationSession(
   workspaceId: string,
   conversationId: string,
@@ -120,15 +129,5 @@ export function getConversationSession(
   if (!sessions) return null;
   const [found] = sessions;
   if (!found) throw new SessionNotFoundError(sessionId);
-  const input = found.text?.userInput === undefined ? undefined : capText(found.text.userInput);
-  const answer = found.text?.agentResponse === undefined ? undefined : capText(found.text.agentResponse);
-  return {
-    session: {
-      ...found.row,
-      ...(input ? { userInput: input.text } : {}),
-      ...(input?.omittedChars ? { userInputOmittedChars: input.omittedChars } : {}),
-      ...(answer ? { agentResponse: answer.text } : {}),
-      ...(answer?.omittedChars ? { agentResponseOmittedChars: answer.omittedChars } : {}),
-    },
-  };
+  return { session: toDetail(found.session, found.text) };
 }

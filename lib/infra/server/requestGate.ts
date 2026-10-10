@@ -161,6 +161,14 @@ export function createRequestGate(deps: RequestGateDependencies): (req: Incoming
       return;
     }
 
+    if (authResult === "forbidden") {
+      // 403, not 401: the token was verified, so answering "Unauthorized" sends its owner off to
+      // check a secret that is fine. Every unshared route answers alike, so none is revealed.
+      auditRejection("auth_forbidden", {}, "auth forbidden");
+      reject(403, "FORBIDDEN", `This token cannot call ${method} ${pathname}.`);
+      return;
+    }
+
     // Not gated on an Authorization header: in `iap` mode a verified request carries none, and that
     // is the mode that most needs this one "auth works" line.
     if (authResult === "ok" && !authLoggedOnce) {

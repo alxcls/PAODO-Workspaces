@@ -63,10 +63,10 @@ export function createUpgradeGate(
       refuse("429 Too Many Requests\r\nRetry-After: 60", "auth_blocked", "auth blocked");
       return;
     }
-    if (authResult === "challenge" || authResult === "unauthorized") {
+    if (authResult === "challenge" || authResult === "unauthorized" || authResult === "forbidden") {
       // Deliberately NO WWW-Authenticate: WebKit cannot satisfy a challenge on a handshake, so one
       // opened a credential dialog that the hooks' auto-reconnect re-opened every 2s forever.
-      if (authResult === "unauthorized") refuse("401 Unauthorized", "auth_unauthorized", "auth unauthorized");
+      if (authResult !== "challenge") refuse("401 Unauthorized", "auth_unauthorized", "auth unauthorized");
       else refuse("401 Unauthorized", "auth_challenge", "auth challenge");
       return;
     }

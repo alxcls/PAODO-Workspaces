@@ -1,5 +1,5 @@
-// A conversation's runs as dashboard rows, newest first. Read-only, so the CLI may call it; starting or
-// stopping a run stays on the workspace API and MCP routes.
+// A conversation's runs, newest first, each as the start of its message and answer. Read-only, so the CLI
+// may call it; starting or stopping a run stays on the workspace API and MCP routes.
 export const runtime = "nodejs";
 
 import type { NextRequest } from "next/server";

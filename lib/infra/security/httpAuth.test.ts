@@ -342,7 +342,7 @@ describe("checkAuth", () => {
       ["DELETE", "/api/settings/cli-access"],
     ]) {
       expect(checkAuth("ip", req({ method, pathname, authorization: "Bearer cli_good" }), UI, tracker, validate)).toBe(
-        "unauthorized",
+        "forbidden",
       );
     }
   });
@@ -362,7 +362,7 @@ describe("checkAuth", () => {
           tracker,
           (token) => token === "cli_good",
         ),
-      ).toBe("unauthorized");
+      ).toBe("forbidden");
     }
     expect(spy).not.toHaveBeenCalled();
     // ...and the UI's own credentials still work from that IP.

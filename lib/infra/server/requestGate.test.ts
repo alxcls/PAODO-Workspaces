@@ -11,6 +11,7 @@ import { createRequestGate, type RequestGateDependencies } from "./requestGate";
 const UI = basicAuthenticator({ user: "admin", pass: "hunter2" });
 const GOOD = "Basic " + Buffer.from("admin:hunter2").toString("base64");
 const BAD = "Basic " + Buffer.from("admin:wrong").toString("base64");
+const PLATFORM = "Bearer platform-secret";
 const RATE_OK = { ok: true, retryAfter: 0, limit: 100, remaining: 99, policy: "global" as const };
 
 function fakeLogger() {
@@ -86,10 +87,20 @@ describe("request gate — what gets through", () => {
 
   it("never mints a session cookie for a platform token", () => {
     const { send, handle } = setup();
-    const { res } = send({ url: "/api/workspace-graph", headers: { authorization: "Bearer platform-secret" } });
+    const { res } = send({ url: "/api/workspace-graph", headers: { authorization: PLATFORM } });
 
     expect(handle).toHaveBeenCalledTimes(1);
     expect(res.headers["set-cookie"]).toBeUndefined();
+  });
+
+  it("answers a valid platform token on an unshared route with 403, naming the method and path", () => {
+    const { send, handle } = setup();
+    const { res } = send({ method: "POST", url: "/api/usage", headers: { authorization: PLATFORM } });
+
+    expect(handle).not.toHaveBeenCalled();
+    expect(res.statusCode).toBe(403);
+    expect(res.headers["www-authenticate"]).toBeUndefined();
+    expect(JSON.parse(res.body)).toMatchObject({ code: "FORBIDDEN", error: "This token cannot call POST /api/usage." });
   });
 
   it("never mints a session cookie outside basic mode", () => {
@@ -277,6 +288,7 @@ describe("request gate — audit trail", () => {
       ["api_rate_limited", { checkRateLimit: vi.fn(() => limited) }, { url: "/api/workspaces" }],
       ["auth_blocked", { authFailures: lockedOut() }, { url: "/api/workspaces" }],
       ["auth_unauthorized", {}, { url: "/api/workspaces", headers: { authorization: BAD } }],
+      ["auth_forbidden", {}, { method: "PUT", url: "/api/workspaces", headers: { authorization: PLATFORM } }],
       [
         "csrf_blocked",
         {},

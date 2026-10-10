@@ -76,6 +76,17 @@ describe("platform access policy", () => {
   });
 
   // The CLI observes runs; it never starts, continues or stops one — that is the workspace API and MCP.
+  it("grants reading a session's tool calls and one call, and nothing under a call", () => {
+    const calls = "/api/workspaces/ws-1/conversations/c-1/sessions/s-1/calls";
+    expect(isPlatformRouteAllowed("GET", calls)).toBe(true);
+    expect(isPlatformRouteAllowed("GET", `${calls}/k-1`)).toBe(true);
+    for (const method of ["POST", "PUT", "PATCH", "DELETE"]) {
+      expect(isPlatformRouteAllowed(method, calls)).toBe(false);
+      expect(isPlatformRouteAllowed(method, `${calls}/k-1`)).toBe(false);
+    }
+    expect(isPlatformRouteAllowed("GET", `${calls}/k-1/x`)).toBe(false);
+  });
+
   it("grants reading conversations and their sessions, never invoking or stopping a run", () => {
     expect(isPlatformRouteAllowed("GET", "/api/workspaces/ws-1/conversations")).toBe(true);
     expect(isPlatformRouteAllowed("GET", "/api/workspaces/ws-1/conversations/c-1/sessions")).toBe(true);

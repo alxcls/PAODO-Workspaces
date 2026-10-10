@@ -10,6 +10,7 @@ import type {
   SessionOrigin,
   SessionStatus,
   SessionTextRecord,
+  SessionToolCallRecord,
 } from "./types";
 
 const MAX_DASHBOARD_TURNS = 5000;
@@ -177,6 +178,27 @@ export function listSessionTexts(workspaceId: string, conversationId: string, se
     userInput: row.user_input ?? undefined,
     agentResponse: row.agent_response ?? undefined,
   }));
+}
+
+/** A session's tool calls in execution order; undefined when the conversation has no such session. */
+export function listSessionToolCalls(
+  workspaceId: string,
+  conversationId: string,
+  sessionId: string,
+): SessionToolCallRecord[] | undefined {
+  const conn = db();
+  const session = conn
+    .prepare("SELECT 1 FROM sessions WHERE id = ? AND workspace_id = ? AND conversation_id = ?")
+    .get(sessionId, workspaceId, conversationId);
+  if (!session) return undefined;
+
+  const rows = conn
+    .prepare("SELECT timestamp, tool_calls_json FROM turns WHERE session_id = ? ORDER BY seq ASC")
+    .all(sessionId) as Array<{ timestamp: string; tool_calls_json: string }>;
+
+  return rows.flatMap((row) =>
+    toolCallsFromJson(row.tool_calls_json).map((tool) => ({ ...tool, timestamp: row.timestamp })),
+  );
 }
 
 interface SessionRow {

@@ -81,6 +81,7 @@ function turnParams(record: TurnRecord) {
     output_text: record.outputText ?? null,
     tool_calls_json: JSON.stringify(
       record.toolCalls.map((tool) => ({
+        id: tool.id,
         name: tool.name,
         args: tool.args,
         output: tool.output,
@@ -120,6 +121,7 @@ export function toolCallsFromJson(value: string | null): TurnRecord["toolCalls"]
       if (typeof row.name !== "string") return [];
       return [
         {
+          id: typeof row.id === "string" ? row.id : "",
           name: row.name,
           args:
             row.args && typeof row.args === "object" && !Array.isArray(row.args)

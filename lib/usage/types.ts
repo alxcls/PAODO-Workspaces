@@ -11,6 +11,8 @@ export type SessionOrigin = "chat" | "api" | "mcp" | "scheduled" | "agent" | "ma
 export type SessionStatus = "running" | "success" | "failed" | "cancelled" | "timeout" | "limit_reached" | "incomplete";
 
 export interface ToolCallRecord {
+  /** The call's own id, given by ./record.ts when its turn is written. */
+  id: string;
   name: string;
   args: Record<string, unknown>;
   output: string;
@@ -58,11 +60,23 @@ export interface TurnRecord {
   toolCalls: ToolCallRecord[];
 }
 
-export type NewTurnRecord = Omit<TurnRecord, "id" | "timestamp" | "cost" | "costCurrency"> & { id?: string };
+/** A call as the runner reports it, before ./record.ts gives it an id. */
+export type NewToolCallRecord = Omit<ToolCallRecord, "id"> & { id?: string };
 
-export type TurnUsageFields = Omit<TurnRecord, "id" | "timestamp" | "sessionId" | "cost" | "costCurrency"> & {
+export type NewTurnRecord = Omit<TurnRecord, "id" | "timestamp" | "cost" | "costCurrency" | "toolCalls"> & {
+  id?: string;
+  toolCalls: NewToolCallRecord[];
+};
+
+export type TurnUsageFields = Omit<NewTurnRecord, "id" | "sessionId"> & {
   turnId: string;
 };
+
+/** One tool call of a session, for the CLI's call reads. */
+export interface SessionToolCallRecord extends ToolCallRecord {
+  /** Its turn's, since a call has no clock of its own; calls requested together share one. */
+  timestamp: string;
+}
 
 /** A session's user message and final answer (its last text-only turn); either may be missing. */
 export interface SessionTextRecord {

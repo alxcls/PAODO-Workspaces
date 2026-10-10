@@ -4,7 +4,7 @@ import { ConversationNotFoundError, SessionNotFoundError } from "@/lib/operation
 import {
   getConversationSession,
   listConversationSessions,
-  SESSION_TEXT_MAX_CHARS,
+  SESSION_PREVIEW_MAX_CHARS,
   type ConversationSessionsDeps,
 } from "./sessions";
 
@@ -43,18 +43,13 @@ function fixture(
 }
 
 describe("listConversationSessions", () => {
-  it("folds a run's turns into the dashboard row, without the workspace and conversation", () => {
-    const deps = fixture([
-      turn({ id: "a", inputTokensTotal: 20_000, inputTokensCacheRead: 19_000, outputTokensTotal: 300, cost: 0.0007 }),
-      turn({
-        id: "b",
-        inputTokensTotal: 6_400,
-        inputTokensCacheRead: 6_300,
-        outputTokensTotal: 265,
-        cost: 0.0005,
-        toolCalls: [{ name: "read", status: "ok" }],
-      }),
-    ]);
+  it("gives each run only what identifies it, the start of its texts and their full sizes", () => {
+    const deps = fixture(
+      [turn({ id: "a", cost: 0.0007 }), turn({ id: "b", toolCalls: [{ name: "read", status: "ok" }] })],
+      {
+        texts: [{ sessionId: "s1", userInput: "fix it\nplease", agentResponse: "Done 🙂" }],
+      },
+    );
 
     const result = listConversationSessions("ws-1", "conv-1", deps);
 
@@ -63,39 +58,38 @@ describe("listConversationSessions", () => {
       sessions: [
         {
           sessionId: "s1",
-          status: "success",
-          origin: "chat",
-          models: ["deepseek-flash"],
           startedAt: "2026-10-03T10:01:00.000Z",
-          inputTokensUncached: 1_100,
-          inputTokensCacheRead: 25_300,
-          outputTokensTotal: 565,
-          toolExec: 1,
-          costByCurrency: { USD: expect.closeTo(0.0012) },
+          status: "success",
+          userInput: "fix it\nplease",
+          agentResponse: "Done 🙂",
+          userInputChars: 13,
+          agentResponseChars: 6,
         },
       ],
     });
   });
 
-  it("states the run's stored outcome beside the error it stopped on", () => {
-    const deps = fixture([turn({ status: "timeout", error: { code: "TIMEOUT", message: "run aborted" } })]);
-    expect(listConversationSessions("ws-1", "conv-1", deps)?.sessions[0]).toMatchObject({
-      status: "timeout",
-      error: { code: "TIMEOUT", message: "run aborted" },
-    });
+  it("cuts each text at the preview length and still counts the whole of it", () => {
+    const long = `${"a".repeat(SESSION_PREVIEW_MAX_CHARS - 1)}🙂🙂 and more`;
+    const deps = fixture([turn()], { texts: [{ sessionId: "s1", userInput: long, agentResponse: "short" }] });
+    const [session] = listConversationSessions("ws-1", "conv-1", deps)?.sessions ?? [];
+    expect(session.userInput).toBe(`${"a".repeat(SESSION_PREVIEW_MAX_CHARS - 1)}🙂`);
+    expect(session.userInputChars).toBe(SESSION_PREVIEW_MAX_CHARS + 10);
+    expect(session.agentResponse).toBe("short");
   });
 
-  it("counts the characters of each run's message and answer, leaving out the ones it does not have", () => {
-    const deps = fixture([turn({ sessionId: "s1" }), turn({ id: "t2", sessionId: "s2" })], {
-      texts: [
-        { sessionId: "s1", userInput: "fix it\nplease", agentResponse: "Done 🙂" },
-        { sessionId: "s2", userInput: "and this" },
-      ],
-    });
-    const [first, second] = listConversationSessions("ws-1", "conv-1", deps)?.sessions ?? [];
-    expect(first).toMatchObject({ sessionId: "s1", userInputChars: 13, agentResponseChars: 6 });
-    expect(second).toMatchObject({ sessionId: "s2", userInputChars: 8 });
-    expect(second).not.toHaveProperty("agentResponseChars");
+  it("keeps a text that fills the preview exactly", () => {
+    const text = "🙂".repeat(SESSION_PREVIEW_MAX_CHARS);
+    const deps = fixture([turn()], { texts: [{ sessionId: "s1", agentResponse: text }] });
+    expect(listConversationSessions("ws-1", "conv-1", deps)?.sessions[0].agentResponse).toBe(text);
+  });
+
+  it("leaves out the texts and sizes a run does not have", () => {
+    const deps = fixture([turn({ status: "failed" })], { texts: [{ sessionId: "s1", userInput: "and this" }] });
+    const [session] = listConversationSessions("ws-1", "conv-1", deps)?.sessions ?? [];
+    expect(session).toMatchObject({ status: "failed", userInput: "and this", userInputChars: 8 });
+    expect(session).not.toHaveProperty("agentResponse");
+    expect(session).not.toHaveProperty("agentResponseChars");
   });
 
   it("returns null for an unknown workspace without reading usage", () => {
@@ -112,54 +106,64 @@ describe("listConversationSessions", () => {
 });
 
 describe("getConversationSession", () => {
-  it("gives the run's list row plus its message and answer, read for that session only", () => {
-    const deps = fixture([turn({ outputTokensTotal: 40 })], {
-      texts: [{ sessionId: "s1", userInput: "fix it", agentResponse: "Done." }],
-    });
+  it("folds the run's turns into its cost and gives both texts, read for that session only", () => {
+    const deps = fixture(
+      [
+        turn({ id: "a", inputTokensTotal: 20_000, inputTokensCacheRead: 19_000, outputTokensTotal: 300, cost: 0.0007 }),
+        turn({
+          id: "b",
+          inputTokensTotal: 6_400,
+          inputTokensCacheRead: 6_300,
+          outputTokensTotal: 265,
+          cost: 0.0005,
+          toolCalls: [{ name: "read", status: "ok" }],
+        }),
+      ],
+      { texts: [{ sessionId: "s1", userInput: "fix it", agentResponse: "Done." }] },
+    );
 
     const result = getConversationSession("ws-1", "conv-1", "s1", deps);
 
     expect(deps.usage).toHaveBeenCalledWith("ws-1", "conv-1", "s1");
     expect(deps.texts).toHaveBeenCalledWith("ws-1", "conv-1", "s1");
-    expect(result?.session).toEqual({
-      ...listConversationSessions("ws-1", "conv-1", deps)?.sessions[0],
-      userInput: "fix it",
-      agentResponse: "Done.",
+    expect(result).toEqual({
+      session: {
+        sessionId: "s1",
+        startedAt: "2026-10-03T10:01:00.000Z",
+        status: "success",
+        origin: "chat",
+        models: ["deepseek-flash"],
+        inputTokensUncached: 1_100,
+        inputTokensCacheRead: 25_300,
+        outputTokensTotal: 565,
+        callCount: 1,
+        costByCurrency: { USD: expect.closeTo(0.0012) },
+        userInput: "fix it",
+        agentResponse: "Done.",
+      },
     });
-    expect(result?.session).toMatchObject({ userInputChars: 6, agentResponseChars: 5 });
   });
 
-  it("cuts a long answer and says how many characters were left out", () => {
-    const long = "a".repeat(SESSION_TEXT_MAX_CHARS + 1);
+  it("returns a long text whole, with no cut and no size of its own", () => {
+    const long = "🙂".repeat(50_000);
     const deps = fixture([turn()], { texts: [{ sessionId: "s1", userInput: "short", agentResponse: long }] });
     const session = getConversationSession("ws-1", "conv-1", "s1", deps)?.session;
-    expect(session?.agentResponse).toHaveLength(SESSION_TEXT_MAX_CHARS);
-    expect(session?.agentResponseOmittedChars).toBe(1);
-    expect(session).not.toHaveProperty("userInputOmittedChars");
-  });
-
-  it("counts characters, not UTF-16 units, so an emoji at the edge is never split", () => {
-    const text = `${"a".repeat(SESSION_TEXT_MAX_CHARS - 1)}🙂🙂`;
-    const deps = fixture([turn()], { texts: [{ sessionId: "s1", userInput: text }] });
-    const session = getConversationSession("ws-1", "conv-1", "s1", deps)?.session;
-    expect(session?.userInput).toBe(`${"a".repeat(SESSION_TEXT_MAX_CHARS - 1)}🙂`);
-    expect(session?.userInputOmittedChars).toBe(1);
-  });
-
-  it("keeps a text that fills the limit exactly", () => {
-    const text = "🙂".repeat(SESSION_TEXT_MAX_CHARS);
-    const deps = fixture([turn()], { texts: [{ sessionId: "s1", agentResponse: text }] });
-    const session = getConversationSession("ws-1", "conv-1", "s1", deps)?.session;
-    expect(session?.agentResponse).toBe(text);
+    expect(session?.agentResponse).toBe(long);
+    expect(session).not.toHaveProperty("agentResponseChars");
     expect(session).not.toHaveProperty("agentResponseOmittedChars");
   });
 
-  it("leaves the answer out of a run that has none", () => {
-    const deps = fixture([turn({ status: "failed" })], { texts: [{ sessionId: "s1", userInput: "fix it" }] });
+  it("states the run's stored outcome beside the error it stopped on, and no answer", () => {
+    const deps = fixture([turn({ status: "timeout", error: { code: "TIMEOUT", message: "run aborted" } })], {
+      texts: [{ sessionId: "s1", userInput: "fix it" }],
+    });
     const session = getConversationSession("ws-1", "conv-1", "s1", deps)?.session;
-    expect(session).toMatchObject({ status: "failed", userInput: "fix it" });
+    expect(session).toMatchObject({
+      status: "timeout",
+      error: { code: "TIMEOUT", message: "run aborted" },
+      userInput: "fix it",
+    });
     expect(session).not.toHaveProperty("agentResponse");
-    expect(session).not.toHaveProperty("agentResponseChars");
   });
 
   it("refuses a session the conversation does not have", () => {

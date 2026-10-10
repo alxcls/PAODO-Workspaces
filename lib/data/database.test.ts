@@ -166,7 +166,7 @@ describe("migrateDatabase", () => {
 
     migrateDatabase(conn, DATABASE_MIGRATIONS);
 
-    expect(conn.pragma("user_version", { simple: true })).toBe(1);
+    expect(conn.pragma("user_version", { simple: true })).toBe(LATEST_VERSION);
     expect(
       conn
         .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name")

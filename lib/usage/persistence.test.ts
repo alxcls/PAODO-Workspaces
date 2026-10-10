@@ -266,6 +266,46 @@ describe("usageStore", () => {
     ]);
   });
 
+  it("gives every tool call its own id, kept across reads", async () => {
+    const store = await freshStore();
+    const tool = { name: "file_read", args: {}, output: "", status: "ok" };
+    store.appendUsage(baseTurn({ toolCalls: [tool, tool, { ...tool, id: "given" }] }));
+
+    const ids = detailOf(store, "s1").turns[0].toolCalls.map((call) => call.id);
+    expect(ids[2]).toBe("given");
+    expect(ids[0]).toMatch(/^[0-9a-f-]{36}$/);
+    expect(new Set(ids).size).toBe(3);
+    expect(detailOf(store, "s1").turns[0].toolCalls.map((call) => call.id)).toEqual(ids);
+  });
+
+  it("lists a session's tool calls in execution order across its turns", async () => {
+    const store = await freshEmptyStore();
+    startTestSession(store, { conversationId: "c1" });
+    const tool = (name: string) => ({ name, args: { n: name }, output: `${name} out`, status: "ok" });
+    store.appendUsage(baseTurn({ id: "t1", toolCalls: [tool("first"), tool("second")] }));
+    store.appendUsage(baseTurn({ id: "t2", toolCalls: [tool("third")] }));
+    store.appendUsage(baseTurn({ id: "t3", outputText: "Done." }));
+
+    const calls = store.listSessionToolCalls("w1", "c1", "s1")!;
+    expect(calls.map(({ name, output }) => ({ name, output }))).toEqual([
+      { name: "first", output: "first out" },
+      { name: "second", output: "second out" },
+      { name: "third", output: "third out" },
+    ]);
+    expect(calls[0].timestamp).toBe(calls[1].timestamp);
+    expect(calls.every((call) => call.id && call.timestamp)).toBe(true);
+  });
+
+  it("finds no session to list calls for under another conversation or workspace", async () => {
+    const store = await freshEmptyStore();
+    startTestSession(store, { conversationId: "c1" });
+
+    expect(store.listSessionToolCalls("w1", "c1", "s1")).toEqual([]);
+    expect(store.listSessionToolCalls("w1", "other", "s1")).toBeUndefined();
+    expect(store.listSessionToolCalls("other", "c1", "s1")).toBeUndefined();
+    expect(store.listSessionToolCalls("w1", "c1", "missing")).toBeUndefined();
+  });
+
   it("preserves recording order for turns that share a timestamp", async () => {
     const store = await freshEmptyStore();
     startTestSession(store, { id: "caller", workspaceId: "w-caller", userInput: "call the callee" });

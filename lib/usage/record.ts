@@ -78,6 +78,7 @@ export function appendUsage(partial: NewTurnRecord): void {
   const record: TurnRecord = {
     ...partial,
     id: partial.id ?? crypto.randomUUID(),
+    toolCalls: partial.toolCalls.map((tool) => ({ ...tool, id: tool.id ?? crypto.randomUUID() })),
     timestamp: new Date().toISOString(),
   };
   // Both frozen together: a rate refresh must never restate what an old turn was billed, or in what.

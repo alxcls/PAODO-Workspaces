@@ -56,6 +56,8 @@ const RULES: ReadonlyArray<{
   workspaceRule("GET", "conversations"),
   workspaceRule("GET", "conversations/{id}/sessions"),
   workspaceRule("GET", "conversations/{id}/sessions/{id}"),
+  workspaceRule("GET", "conversations/{id}/sessions/{id}/calls"),
+  workspaceRule("GET", "conversations/{id}/sessions/{id}/calls/{id}"),
   /**
    * Drive metadata, then a drive's files — the same five methods a workspace's files get above, and
    * for the same commands. Neither collection gets the browser's upload/download transports or the

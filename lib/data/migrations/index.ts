@@ -3,6 +3,7 @@
 // database on its previous version.
 import type Database from "better-sqlite3";
 import { baselineSchema } from "./001-baseline";
+import { toolCallIds } from "./002-tool-call-ids";
 
 export interface Migration {
   version: number;
@@ -10,7 +11,7 @@ export interface Migration {
   up(db: Database.Database): void;
 }
 
-export const DATABASE_MIGRATIONS: readonly Migration[] = [baselineSchema];
+export const DATABASE_MIGRATIONS: readonly Migration[] = [baselineSchema, toolCallIds];
 
 function validateMigrations(migrations: readonly Migration[]): void {
   migrations.forEach((migration, index) => {

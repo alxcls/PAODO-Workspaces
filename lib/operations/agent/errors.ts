@@ -23,3 +23,11 @@ export class SessionNotFoundError extends AppError {
     this.name = "SessionNotFoundError";
   }
 }
+
+/** The requested tool call does not exist in the session. */
+export class CallNotFoundError extends AppError {
+  constructor(callId: string, details?: ErrorDetails) {
+    super("NOT_FOUND", `call ${callId} not found`, details);
+    this.name = "CallNotFoundError";
+  }
+}

@@ -259,9 +259,8 @@ describe("checkAuth", () => {
 
   it("exempts POST to the agent run and stop endpoints (Bearer API key auth)", () => {
     const r = req({ method: "POST", pathname: "/api/workspaces/ws1/agent" });
-    // "exempt", never "ok": nothing about this caller has been verified here, and server.ts hands
-    // out a /ws session cookie on "ok". This route is published on the DNS-direct public hostname,
-    // so conflating the two would mint a working UI session for any anonymous caller.
+    // "exempt", never "ok": requestGate.ts mints a /ws session cookie on "ok", and this route is on
+    // the public hostname, so conflating the two would hand any anonymous caller a UI session.
     expect(checkAuth("ip", r, UI, tracker)).toBe("exempt");
     expect(checkAuth("ip", req({ method: "POST", pathname: "/api/workspaces/ws1/agent/stop" }), UI, tracker)).toBe(
       "exempt",

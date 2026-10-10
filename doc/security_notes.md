@@ -132,7 +132,7 @@ Neither miss was visible from any one file.
 
 - Security headers: `X-Content-Type-Options`, `X-Frame-Options: DENY`, CSP, `Referrer-Policy`, `Permissions-Policy`
 - No workspace-generated HTML is rendered by the app; web applications must be deployed before they are used in a browser
-- CSRF guard: state-changing requests to `/api/*` are rejected when `Sec-Fetch-Site` is cross-site (server.ts `isCsrf`). Non-browser clients without `Sec-Fetch-Site` (for example, the Bearer-authenticated agent API) remain supported
+- CSRF guard: state-changing requests to `/api/*` are rejected when `Sec-Fetch-Site` is cross-site (`isCsrf` in `lib/infra/security/httpAuth.ts`, applied by `lib/infra/server/requestGate.ts`). Non-browser clients without `Sec-Fetch-Site` (for example, the Bearer-authenticated agent API) remain supported
 
 **Operational**
 

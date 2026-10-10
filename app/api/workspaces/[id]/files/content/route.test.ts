@@ -306,7 +306,7 @@ describe("files/content — errno reaches the client as a code", () => {
       fs.chmodSync(abs("locked"), 0o755);
     }
 
-    // Deliberately not 403: server.ts already answers 403 for a CSRF rejection, so a read-only file
+    // Deliberately not 403: requestGate.ts already answers 403 for a CSRF rejection, so a read-only file
     // sharing that status would be indistinguishable from a request that was refused outright.
     expect(status).toBe(409);
     expect(body.code).toBe("FILE_NOT_WRITABLE");

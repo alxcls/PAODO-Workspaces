@@ -1,15 +1,10 @@
-// Custom Node.js entry point that runs Next.js on a manually created HTTP server.
-// This is needed to co-host a WebSocket server on the same port: upgrade requests
-// to /ws are routed to the app's WebSocket manager, while all other upgrades
-// (e.g. Next.js HMR) and plain HTTP requests are forwarded to Next.js as normal.
+// Custom entry point that runs Next.js and the WebSocket server on one manually created HTTP
+// server: /ws upgrades go to the app, every other upgrade and request goes to Next.js.
 
 import "dotenv/config";
-import { randomUUID } from "node:crypto";
 import { createServer } from "http";
 import path from "path";
-import { createAuditLogger, createLogger, exitAfterLogs, runWithLogContext } from "./lib/infra/logger";
-import { throttleLog } from "./lib/infra/logThrottle";
-import { publicErrorBody, type AppErrorCode } from "./lib/errors/appError";
+import { createAuditLogger, createLogger, exitAfterLogs } from "./lib/infra/logger";
 
 const log = createLogger("server");
 const audit = createAuditLogger("server");
@@ -48,21 +43,15 @@ import { addConnection, removeConnection, getConnectionCount } from "./lib/infra
 import { ensureWatcher, stopWatcher, markSelfWrite, stopAllWatchers } from "./lib/infra/workspace/watcher";
 import {
   AuthFailureTracker,
-  authRequestFromIncoming,
-  checkAuth,
-  checkWsAuth,
-  getClientIp,
-  isCsrf,
   trustedRequestHosts,
   trustedRequestOrigins,
   apiRequestHost,
-  type AuthResult,
-  validateRequestHost,
-  validateRequestOrigin,
 } from "./lib/infra/security/httpAuth";
-import { mintSessionCookie, sessionCookieNeedsRefresh, verifySessionCookie } from "./lib/infra/security/wsSession";
+import { verifySessionCookie } from "./lib/infra/security/wsSession";
 import { resolveUiAuth } from "./lib/infra/security/uiAuth";
-import { buildSecurityHeaders } from "./lib/infra/security/securityHeaders";
+import { createRequestGate } from "./lib/infra/server/requestGate";
+import { createUpgradeGate } from "./lib/infra/server/upgradeGate";
+import { createWorkspaceSocketHandler } from "./lib/infra/server/workspaceSocket";
 import { startScheduler, stopScheduler } from "./lib/infra/schedules/scheduler";
 import { startProxyReconciler, stopProxyReconciler } from "./lib/infra/docker/proxyReconciler";
 import { startUploadSweeper, stopUploadSweeper } from "./lib/uploads/sweeper";
@@ -162,48 +151,13 @@ if (!Number.isInteger(port) || port < 1 || port > 65_535) {
   exitAfterLogs(1);
 }
 
+// Shared by both gates: a credential guessed over HTTP or over the /ws handshake counts toward the
+// same per-IP lockout.
 const authFailures = new AuthFailureTracker();
-let authLoggedOnce = false;
-
-// Thin adapter: extract the request primitives and delegate to the testable checkAuth. The platform
-// credential is instance-wide, so it takes no subject; which routes it may reach is decided by
-// platformAccessPolicy.ts inside checkAuth, not by the credential itself.
-function authenticate(ip: string, req: import("http").IncomingMessage, hostname: string): AuthResult {
-  return checkAuth(
-    ip,
-    authRequestFromIncoming(req, uiAuth.assertionHeader, hostname),
-    uiAuth,
-    authFailures,
-    (plain) => validateCredential("platform", null, plain),
-    apiHost,
-  );
-}
-
-// Same adapter for the /ws upgrade, which additionally consults a cookie because no browser can put
-// an Authorization header on a handshake and WebKit does not reuse cached Basic credentials either.
-function authenticateWs(ip: string, req: import("http").IncomingMessage, hostname: string): AuthResult {
-  const authRequest = authRequestFromIncoming(req, uiAuth.assertionHeader, hostname, true);
-  return checkWsAuth(ip, authRequest, uiAuth, authFailures, verifyWsSessionCookie, apiHost);
-}
-
-// A mode with no challenge sends no header at all: behind an identity-aware proxy a browser prompt
-// cannot satisfy the 401, and naming a scheme would advertise one this deployment does not accept.
-function authenticateHeader(scheme: string | null): Record<string, string> {
-  return scheme ? { "WWW-Authenticate": scheme } : {};
-}
-
-function setSecurityHeaders(res: import("http").ServerResponse): void {
-  const headers = buildSecurityHeaders({
-    isProduction: runtimeMode.hardenedBrowser,
-  });
-  for (const [name, value] of Object.entries(headers)) res.setHeader(name, value);
-}
 
 const httpServer = createServer();
-// Node's 5-minute default would abort a legitimate upload of a file near MAX_UPLOAD_BYTES on a slow
-// link (a repo's .git pack file is routinely hundreds of MB), and the client would see a dropped
-// connection rather than a reason. headersTimeout is deliberately left at its default — headers
-// always arrive promptly, so it keeps covering slowloris while this only relaxes the body deadline.
+// Node's 5-minute default would abort a large upload on a slow link with no reason given.
+// headersTimeout keeps its default, so slowloris stays covered: only the body deadline relaxes.
 httpServer.requestTimeout = 30 * 60_000;
 httpServer.on("error", (err) => {
   log.fatal(
@@ -217,273 +171,59 @@ httpServer.on("error", (err) => {
 const app = next({ dev: runtimeMode.hotReload, httpServer, port } as any);
 const handle = app.getRequestHandler();
 
-httpServer.on("request", (req, res) => {
-  const method = req.method ?? "GET";
-  const url = req.url ?? "/";
-  const pathname = new URL(url, "http://localhost").pathname;
-  const requestId = randomUUID();
-  const start = process.hrtime.bigint();
-  let logged = false;
-  // Set by the rejection paths below, which emit their own audit line. Without this a caller that
-  // keeps hammering an exhausted limit costs two lines per request instead of one.
-  let audited = false;
-  const logRequest = () => {
-    if (logged) return;
-    logged = true;
-    // The audit record for a rejection carries everything this line would, plus the client address
-    // and the reason, and it is already throttled. Emitting both just doubles the flood. This holds
-    // only because every auditRejection call passes method and pathname — suppressing this line
-    // while omitting them left denials with no route at all, so a source-level test in
-    // lib/infra/auditRejectionContract.test.ts now enforces it.
-    if (audited) return;
-    const durationNs = process.hrtime.bigint() - start;
-    const durationMs = Number(durationNs) / 1_000_000;
-    // `event` rather than a second `context` field: the child logger already binds context, and two
-    // keys of the same name in one JSON object is malformed enough to break some readers.
-    const meta = { method, pathname, status: res.statusCode, durationMs, requestId, event: "http_request" };
-    if (res.statusCode >= 500) log.error({ ...meta, event: "http_request", outcome: "request_failed" }, "http request");
-    // 429s from inside Next (the route-level limits in lib/api/guards.ts) are equally caller-driven,
-    // so they get the same throttle rather than a line each.
-    else if (res.statusCode === 429) {
-      const suppressed = throttleLog("http_rate_limited");
-      if (suppressed !== null) log.warn({ ...meta, suppressed }, "http request");
-    } else if (res.statusCode >= 400) log.warn(meta, "http request");
-    // Successful requests are the baseline "is anything happening" signal, so they log at info and
-    // reach Docker's output in production; at debug they were invisible there and nothing but errors
-    // ever showed up. Static assets and upload chunks stay out — high volume, nothing to observe.
-    else if (!url.startsWith("/_next/") && !url.includes("/files/upload") && !url.includes("/background-tasks"))
-      log.info(meta, "http request");
-  };
-  res.once("finish", logRequest);
-  res.once("close", logRequest);
-
-  setSecurityHeaders(res);
-  res.setHeader("X-Request-Id", requestId);
-  req.headers["x-request-id"] = requestId;
-
-  // Security rejections happen before Next.js, so they cannot use the route-level response helper.
-  // API callers still receive the identical public envelope; browser-page challenges retain their
-  // terse text body and WWW-Authenticate behavior.
-  const reject = (status: number, code: AppErrorCode, message: string, headers: Record<string, string> = {}) => {
-    if (pathname.startsWith("/api/")) {
-      res.writeHead(status, {
-        "Content-Type": "application/json; charset=utf-8",
-        "Cache-Control": "no-store",
-        ...headers,
-      });
-      res.end(JSON.stringify(publicErrorBody(code, message, { requestId })));
-      return;
-    }
-    res.writeHead(status, headers);
-    res.end(message);
-  };
-
-  // Rejection paths are reachable pre-auth, so an unauthenticated caller drives how often they log.
-  // Throttle them and mark the request audited, so one rejected request costs at most one line.
-  const auditRejection = (event: string, fields: Record<string, unknown>, msg: string) => {
-    audited = true;
-    const suppressed = throttleLog(event);
-    if (suppressed !== null) audit.warn({ ...fields, event, suppressed }, msg);
-  };
-
-  const ip = getClientIp(req);
-  const hostValidation = validateRequestHost(req.headers, allowedRequestHosts);
-  if (!hostValidation.ok) {
-    auditRejection(
-      "request_host_rejected",
-      { ip, method, pathname, reason: hostValidation.reason, requestId },
-      "request host rejected",
-    );
-    reject(421, "INVALID_REQUEST", "Misdirected Request");
-    return;
-  }
-  if (pathname.startsWith("/api/")) {
-    const rl = checkApiRateLimit(ip, method, pathname);
-    if (!rl.ok) {
-      auditRejection(
-        "api_rate_limited",
-        { ip, method, pathname, policy: rl.policy, requestId },
-        "API rate limit exceeded",
-      );
-      reject(429, "RATE_LIMITED", "Too Many Requests", {
-        "Retry-After": String(rl.retryAfter),
-        "RateLimit-Limit": String(rl.limit),
-        "RateLimit-Remaining": String(rl.remaining),
-      });
-      return;
-    }
-  }
-
-  const authResult = authenticate(ip, req, hostValidation.hostname);
-  if (authResult === "blocked") {
-    auditRejection("auth_blocked", { ip, method, pathname, requestId }, "auth blocked");
-    reject(429, "RATE_LIMITED", "Too Many Requests", { "Retry-After": "60" });
-    return;
-  }
-  if (authResult === "challenge") {
-    audit.debug({ ip, requestId, event: "auth_challenge" }, "auth challenge");
-    reject(401, "UNAUTHORIZED", "Unauthorized", authenticateHeader(uiAuth.challenge));
-    return;
-  }
-  if (authResult === "unauthorized") {
-    auditRejection("auth_unauthorized", { ip, method, pathname, requestId }, "auth unauthorized");
-    const bearer = req.headers["authorization"]?.startsWith("Bearer ");
-    // No UI challenge on the public API host: the credential it names is refused there, and
-    // advertising it invites the confusion that made the password look like an identity on it.
-    const uiChallenge = hostValidation.hostname === apiHost ? null : uiAuth.challenge;
-    reject(401, "UNAUTHORIZED", "Unauthorized", authenticateHeader(bearer ? 'Bearer realm="PAODO"' : uiChallenge));
-    return;
-  }
-
-  // No longer gated on an Authorization header: in `iap` mode a verified request carries none, and
-  // the gate meant the one "auth works" line never appeared for the mode that most needs proving.
-  if (authResult === "ok" && !authLoggedOnce) {
-    authLoggedOnce = true;
-    audit.info({ requestId, event: "auth_ok", authMode: uiAuth.mode }, "auth configured and working");
-  }
-
-  // Mint the /ws session cookie only in `basic` mode, and only for a verified UI credential.
-  // Programmatic platform tokens and route-authenticated agent/MCP credentials never become sessions.
-  if (uiAuth.mode === "basic" && authResult === "ok" && sessionCookieNeedsRefresh(req.headers["cookie"])) {
-    res.setHeader("Set-Cookie", mintSessionCookie({ isProduction: runtimeMode.hardenedBrowser }));
-  }
-
-  if (isCsrf({ method, pathname, secFetchSite: req.headers["sec-fetch-site"] as string | undefined })) {
-    auditRejection("csrf_blocked", { ip, method, pathname, requestId }, "csrf blocked");
-    reject(403, "FORBIDDEN", "Forbidden");
-    return;
-  }
-
-  // Every log produced while Next handles this request (including caught route errors) inherits
-  // the same correlation fields as the access log without each route having to bind them manually.
-  runWithLogContext({ requestId, method, pathname }, () => {
-    void handle(req, res);
-  });
-});
+httpServer.on(
+  "request",
+  createRequestGate({
+    uiAuth,
+    allowedHosts: allowedRequestHosts,
+    apiHost,
+    authFailures,
+    validatePlatformToken: (plain) => validateCredential("platform", null, plain),
+    checkRateLimit: checkApiRateLimit,
+    hardenedBrowser: runtimeMode.hardenedBrowser,
+    handle,
+    log,
+    audit,
+  }),
+);
 
 const wss = new WebSocketServer({ noServer: true });
 wss.on("error", (err) =>
   log.error({ event: "websocket_server_error", outcome: "websocket_service_degraded", err }, "websocket server error"),
 );
 
-httpServer.on("upgrade", (req, socket, head) => {
-  const { pathname } = new URL(req.url ?? "", "http://localhost");
-  if (pathname === "/ws") {
-    const requestId = randomUUID();
-    const wsIp = getClientIp(req);
-    // Same throttle as the HTTP rejections, and the same reason: an upgrade is just as cheap to
-    // repeat. The window is shared with the HTTP path — one flood, one line, whichever door it uses.
-    const auditWsRejection = (event: string, msg: string) => {
-      const suppressed = throttleLog(event);
-      if (suppressed !== null) {
-        audit.warn({ ip: wsIp, requestId, transport: "websocket", event, suppressed }, msg);
-      }
-    };
-    const hostValidation = validateRequestHost(req.headers, allowedRequestHosts);
-    if (!hostValidation.ok) {
-      auditWsRejection("request_host_rejected", "request host rejected");
-      socket.write("HTTP/1.1 421 Misdirected Request\r\n\r\n");
-      socket.destroy();
-      return;
-    }
-    // Before authentication, because the credential is the problem here: a handshake carries it
-    // whoever opened the page, and an accepted socket is readable by that page. See httpAuth.ts.
-    if (!validateRequestOrigin(req.headers.origin, allowedRequestOrigins)) {
-      auditWsRejection("request_origin_rejected", "request origin rejected");
-      socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
-      socket.destroy();
-      return;
-    }
-    const wsAuthResult = authenticateWs(wsIp, req, hostValidation.hostname);
-    if (wsAuthResult === "blocked") {
-      auditWsRejection("auth_blocked", "auth blocked");
-      socket.write("HTTP/1.1 429 Too Many Requests\r\nRetry-After: 60\r\n\r\n");
-      socket.destroy();
-      return;
-    }
-    if (wsAuthResult === "challenge" || wsAuthResult === "unauthorized") {
-      // Both cases audit. A rejected upgrade used to be logged only when credentials were malformed,
-      // so the common failure — no credential at all, which is every Safari handshake before the
-      // session cookie existed — left no server-side trace at all.
-      auditWsRejection(
-        wsAuthResult === "unauthorized" ? "auth_unauthorized" : "auth_challenge",
-        wsAuthResult === "unauthorized" ? "auth unauthorized" : "auth challenge",
-      );
-      // Deliberately NO WWW-Authenticate here, unlike the HTTP rejections above. A browser cannot
-      // attach an Authorization header to a WebSocket handshake, and WebKit — unlike Chrome and
-      // Firefox — does not reuse the cached Basic credentials for it either. Sending a challenge
-      // therefore made Safari open a credential dialog the handshake could never satisfy, and the
-      // hooks' auto-reconnect re-opened it every 2s forever. Failing without a challenge keeps the
-      // socket closed but leaves the browser nothing to prompt on.
-      socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
-      socket.destroy();
-      return;
-    }
-    wss.handleUpgrade(req, socket, head, (ws) => {
-      wss.emit("connection", ws, req);
-    });
-  }
-});
+httpServer.on(
+  "upgrade",
+  createUpgradeGate({
+    uiAuth,
+    allowedHosts: allowedRequestHosts,
+    allowedOrigins: allowedRequestOrigins,
+    apiHost,
+    authFailures,
+    verifySessionCookie: verifyWsSessionCookie,
+    accept: (req, socket, head) => {
+      wss.handleUpgrade(req, socket, head, (ws) => {
+        wss.emit("connection", ws, req);
+      });
+    },
+    audit,
+  }),
+);
 
-wss.on("connection", (ws, req) => {
-  const workspaceId = new URL(req.url ?? "", "http://localhost").searchParams.get("workspaceId") ?? undefined;
+wss.on(
+  "connection",
+  createWorkspaceSocketHandler({
+    getWorkspace: (workspaceId) => getStore().getWorkspace(workspaceId),
+    connections: { add: addConnection, remove: removeConnection, count: getConnectionCount },
+    loadConversations: loadIndex,
+    watcher: { ensure: ensureWatcher, stop: stopWatcher, markSelfWrite },
+    clearTodos: (workspaceId) => setTodos(workspaceId, []),
+    log,
+  }),
+);
 
-  if (!workspaceId) {
-    ws.close(1008, "workspaceId query param required");
-    return;
-  }
-
-  const workspace = getStore().getWorkspace(workspaceId);
-  if (!workspace) {
-    ws.close(1008, "workspace not found");
-    return;
-  }
-
-  const wasEmpty = getConnectionCount(workspaceId) === 0;
-  addConnection(workspaceId, ws);
-  if (wasEmpty) {
-    // First connection — load saved conversations from SQLite so a returning user immediately sees
-    // their history. Conversations persist across restarts and disconnects (and a run keeps going
-    // even with no one connected), so we deliberately no longer wipe message history here.
-    // loadIndex owns its recoverable persistence error log and falls back to an empty index.
-    loadIndex(workspaceId);
-    ensureWatcher(workspaceId, workspace.dir);
-  }
-
-  const cleanup = () => {
-    removeConnection(workspaceId, ws);
-    setTimeout(() => {
-      if (getConnectionCount(workspaceId) === 0) {
-        stopWatcher(workspaceId);
-        setTodos(workspaceId, []);
-      }
-    }, 5000);
-  };
-
-  ws.on("close", cleanup);
-  ws.on("error", cleanup);
-
-  ws.on("message", (data) => {
-    let msg: { type: string; path?: string };
-    try {
-      msg = JSON.parse(data.toString()) as { type: string; path?: string };
-    } catch {
-      // ignore malformed messages
-      return;
-    }
-    try {
-      if (msg.type === "ping") ws.send(JSON.stringify({ type: "pong" }));
-      if (msg.type === "self_write" && msg.path) markSelfWrite(workspace.dir, msg.path);
-    } catch (err) {
-      log.warn({ err, workspaceId, messageType: msg.type }, "websocket message handling failed");
-    }
-  });
-});
-
-// There is deliberately NO startup gate on LLM provider keys. Keys are entered in the app
-// (Settings → Provider API keys), so a fresh deployment has none by definition — refusing to start
-// would make the very screen that fixes it unreachable. A workspace with no usable provider fails at
-// the start of its conversation instead, naming the provider and the fix (lib/agent/providerFailure.ts).
+// Deliberately NO startup gate on LLM provider keys: they are entered in the app, so refusing to
+// start would make the screen that fixes it unreachable. See lib/agent/providerFailure.ts.
 
 // Before the data root is touched: without the volume, every workspace mount would resolve against
 // the daemon's host filesystem instead, and the app would run on state nothing else can see.
@@ -507,9 +247,8 @@ try {
   exitAfterLogs(1);
 }
 
-// Provision both recoverable-secret boundaries before creating the proxy CA. Seeing the CA is the
-// sidecar's startup barrier, so its workspace-secret vault/key are ready before it proceeds. The
-// provider vault/key are app-only and are never mounted into that sidecar.
+// Both secret boundaries are provisioned before the proxy CA, which is the sidecar's startup
+// barrier. The provider vault and key are app-only and never mounted into that sidecar.
 try {
   assertSecretStorageSeparated(WORKSPACES_ROOT);
   assertDataRootAvailable(PROVIDER_VAULT_ROOT);
@@ -534,10 +273,8 @@ try {
   exitAfterLogs(1);
 }
 
-// Unconditional, like assertDataRootAvailable above. Each of these reports state that is present
-// but unreadable, and all three treat a missing file as a first run — so a fresh clone is unaffected
-// and the only thing a hot-reload exemption would buy is starting on top of corruption, which is
-// worse here than in a deployed stack: this is where corruption gets made.
+// Unconditional: each reports state that is present but unreadable and treats a missing file as a
+// first run, so a hot-reload exemption would only buy starting on top of corruption.
 try {
   assertWorkspaceRegistryAvailable(WORKSPACES_ROOT);
 } catch (err) {
@@ -581,13 +318,8 @@ try {
   exitAfterLogs(1);
 }
 
-// Withdrawing a provider destroys its key, and this is where that happens: availability is read from
-// .env, so it can only change across a restart. Running it before the server listens means no request
-// and no scheduled run can spend on a provider the operator has just switched off.
-//
-// DESTRUCTIVE. Setting <PROVIDER>_AVAILABLE=false and restarting deletes that provider's stored key
-// for good; switching it back on does not bring it back. That is what makes the switch mean "nobody
-// can spend on this" rather than merely "hidden from the picker", and each deletion is audit-logged.
+// DESTRUCTIVE: a provider switched off in .env has its stored key deleted here for good, and each
+// deletion is audit-logged. Runs before the server listens, so nothing can spend on it.
 {
   const offered = availableProviders();
   const purged = purgeProviderKeysExcept(offered);
@@ -597,13 +329,8 @@ try {
       "deleted the stored API keys of providers this deployment has switched off",
     );
   }
-  // A workspace already set to a provider this deployment has just switched off keeps a selection
-  // nothing can honour — its key was destroyed a line ago — and the picker has no way to show that:
-  // a withdrawn provider is absent from the catalog, so the row renders like any other and the run
-  // fails on send. Clearing the selection here returns those workspaces to the default provider,
-  // which is one .env does offer. Same restart-scoped reasoning as the purge: availability can only
-  // change across a boot, so a sweep before the server listens leaves no window where a request or
-  // a scheduled run reaches a stranded workspace.
+  // A workspace set to a withdrawn provider would fail on send with nothing in the picker to show
+  // why. Clearing the selection before the server listens returns it to the default provider.
   const stranded = getStore().clearWithdrawnLlmSelections(offered);
   if (stranded.length) {
     log.warn(
@@ -618,9 +345,8 @@ try {
 }
 
 try {
-  // Opening the application database applies every pending migration before any request, WebSocket,
-  // or scheduler can reach a feature store. An incompatible schema is a startup failure, never a
-  // partially working application.
+  // Opening the database applies every pending migration before anything can reach a feature
+  // store. An incompatible schema is a startup failure, never a partially working application.
   appDataDb();
 } catch (err) {
   log.fatal(
@@ -651,11 +377,8 @@ assertGitAvailable()
   .then(async () => {
     // The app owns CA generation (writable data mount); the credproxy sidecar only loads it.
     try {
-      // Strict on both axes. Nothing on disk still generates a fresh CA, so a first run is
-      // unaffected; what this refuses is silently replacing partial or unreadable material, which
-      // invalidates the CA already baked into every existing workspace container at
-      // /etc/proxy-ca.crt and rotates every derived proxy secret. That surfaces only as "the agent
-      // lost internet". Remedy is `rm -rf data/.proxy-ca` plus recreating workspaces.
+      // Strict: silently replacing partial or unreadable material would invalidate the CA baked into
+      // every workspace container. Remedy: `rm -rf data/.proxy-ca` plus recreating workspaces.
       ensureCA(WORKSPACES_ROOT, { strictExisting: true });
     } catch (err) {
       log.fatal(
@@ -674,9 +397,8 @@ assertGitAvailable()
       );
       exitAfterLogs(1);
     }
-    // The proxy runs in the `credproxy` sidecar, never in this process, so the app never joins a
-    // workspace network. A redeploy recreates the sidecar and drops its attachments — reconnect
-    // running workspaces so their egress keeps working.
+    // The proxy runs in the `credproxy` sidecar, never here. A redeploy recreates it and drops its
+    // network attachments, so reconnect running workspaces to keep their egress working.
     await getContainers().reattachProxyNetworks();
     // Boot-time reattach only heals sidecar recreations that coincide with an app restart. Keep a
     // reconcile loop running so an independent sidecar restart self-heals within one interval.

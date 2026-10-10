@@ -1,5 +1,5 @@
 // Builds the security response headers (CSP, HSTS, frame/sniff guards) for the custom HTTP server.
-// Pure and header-store-agnostic — returns a name→value map that server.ts applies to the response.
+// Pure and header-store-agnostic — returns a name→value map that requestGate.ts applies to the response.
 
 export type SecurityHeaderOptions = {
   isProduction: boolean;

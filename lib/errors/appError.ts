@@ -12,7 +12,7 @@ export const ERROR_CODES = {
   CAPACITY_REACHED: "CAPACITY_REACHED",
   /**
    * The filesystem refused the write. Deliberately not FORBIDDEN: 403 already means CSRF rejection in
-   * this app (server.ts), so a read-only file answering 403 would be indistinguishable from "this
+   * this app (requestGate.ts), so a read-only file answering 403 would be indistinguishable from "this
    * request was not allowed to be made" in a log or to a CLI author reading a status.
    */
   FILE_NOT_WRITABLE: "FILE_NOT_WRITABLE",
@@ -32,7 +32,7 @@ export const ERROR_CODES = {
   /**
    * A third-party secret was offered to a route that does not write secrets. Its own code rather than
    * FORBIDDEN or INVALID_REQUEST: "unknown field" would invite a caller to retry with a better
-   * spelling, and a bare 403 is this app's CSRF rejection (server.ts) — neither tells a program that
+   * spelling, and a bare 403 is this app's CSRF rejection (requestGate.ts) — neither tells a program that
    * the field exists, is refused here on purpose, and has one endpoint of its own.
    */
   WORKSPACE_SECRET_FORBIDDEN: "WORKSPACE_SECRET_FORBIDDEN",

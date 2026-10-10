@@ -1,9 +1,9 @@
 /**
- * Request authentication and CSRF logic for the custom HTTP server (server.ts).
+ * Request authentication and CSRF logic for the custom HTTP server's gates (lib/infra/server/).
  *
- * Kept out of server.ts so the security-critical pieces — failure-based blocking, the platform-token
- * route gate and the CSRF guard — are unit-testable in isolation rather than welded to the process
- * entry point. server.ts is a thin adapter that extracts primitives off the Node request.
+ * Kept out of the gates so the security-critical pieces — failure-based blocking, the platform-token
+ * route gate and the CSRF guard — are unit-testable in isolation. requestGate.ts and upgradeGate.ts
+ * are thin adapters that extract primitives off the Node request and decide the order of checks.
  *
  * How a browser proves who it is belongs to uiAuth.ts, not here: this module takes a
  * UiAuthenticator and never learns whether the deployment runs on a shared password or behind an

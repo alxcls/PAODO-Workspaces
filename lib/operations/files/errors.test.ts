@@ -56,7 +56,7 @@ describe("fileSystemAppError", () => {
     fs.chmodSync(target, 0o444);
     try {
       const failure = await failureOf("locked.txt", () => fsp.writeFile(target, "y"));
-      // Not FORBIDDEN: 403 already means CSRF rejection in this app (server.ts), so a read-only file
+      // Not FORBIDDEN: 403 already means CSRF rejection in this app (requestGate.ts), so a read-only file
       // answering 403 would be indistinguishable from a request that was not allowed to be made.
       expect(failure).toMatchObject({ code: "FILE_NOT_WRITABLE", message: "locked.txt is not writable" });
     } finally {

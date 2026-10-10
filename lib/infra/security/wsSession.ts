@@ -4,8 +4,8 @@
 // A browser cannot set an Authorization header on a WebSocket handshake. Chrome and Firefox paper
 // over that by reusing the cached Basic credentials for a same-origin upgrade; WebKit does not, so
 // on Safari the handshake is unauthenticatable by Basic alone. A cookie is the one credential every
-// browser does attach to an upgrade, so server.ts mints this after a request proves it knows the
-// Basic credentials, and the upgrade handler accepts it as a fallback.
+// browser does attach to an upgrade, so requestGate.ts mints this after a request proves it knows
+// the Basic credentials, and upgradeGate.ts accepts it as a fallback.
 //
 // Scope is deliberately narrow. This cookie is NOT accepted for HTTP requests — Basic stays the sole
 // HTTP credential — so it adds no bypass for the API surface and, being SameSite=Strict, no CSRF

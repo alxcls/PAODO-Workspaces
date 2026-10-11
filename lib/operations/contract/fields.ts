@@ -146,7 +146,8 @@ function describe() {
         "failed, absent when ok.",
       times:
         "Every time is on timezone's clock: startAt and endAt as set, no seconds, Z or offset; nextRunAt, " +
-        "createdAt and lastRun.at with their offset, e.g. 2026-10-03T09:00+02:00.",
+        "createdAt and lastRun.at with their offset, e.g. 2026-10-03T09:00+02:00. endAt is null when the job " +
+        "has no end.",
       timing:
         "The job fires every intervalValue intervalUnit from startAt, read on timezone's clock; the first run " +
         "is the first of those after now, and none fire at or after endAt. Due runs are looked for every " +

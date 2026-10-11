@@ -12,6 +12,7 @@ import {
   MAX_INTERVAL_VALUE,
   MAX_PROMPT_LENGTH,
   type IntervalUnit,
+  type PresentedSchedule,
   type ScheduleEntry,
   type UnsetSchedule,
 } from "@/lib/schedules/types";
@@ -215,7 +216,7 @@ function invalid(issues: ScheduleIssue[]): ScheduleInvalidError {
  * A schedule as callers see it: only the entity's own fields, whatever else the stored record holds,
  * and every recorded time on the schedule's clock beside startAt. Storage keeps its own instants.
  */
-export function presentSchedule(entry: ScheduleEntry): ScheduleEntry {
+export function presentSchedule(entry: ScheduleEntry): PresentedSchedule {
   const clock = (instant: string) => onScheduleClock(instant, entry.timezone) ?? instant;
   const { lastRun } = entry;
   return {
@@ -225,7 +226,7 @@ export function presentSchedule(entry: ScheduleEntry): ScheduleEntry {
     intervalValue: entry.intervalValue,
     intervalUnit: entry.intervalUnit,
     startAt: entry.startAt,
-    ...(entry.endAt ? { endAt: entry.endAt } : {}),
+    endAt: entry.endAt ?? null,
     timezone: entry.timezone,
     enabled: entry.enabled,
     createdAt: clock(entry.createdAt),
@@ -251,7 +252,7 @@ export function presentSchedule(entry: ScheduleEntry): ScheduleEntry {
 export function getWorkspaceSchedule(
   id: string,
   schedules: ScheduleReader = scheduleStore,
-): ScheduleEntry | UnsetSchedule {
+): PresentedSchedule | UnsetSchedule {
   const stored = schedules.getSchedule(id);
   if (stored) return presentSchedule(stored);
   return {

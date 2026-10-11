@@ -81,4 +81,13 @@ describe("schedule HTTP updates", () => {
     const patched = await (await PATCH(request({ prompt: "edited" }), ctx())).json();
     expect(patched.createdAt).toBe(shown.createdAt);
   });
+
+  it("answers a saved job with no end as endAt null, on a read and on a write", async () => {
+    const saved = await (await PUT(request(config, "PUT"), ctx())).json();
+    expect(h.entry).not.toHaveProperty("endAt");
+    expect(saved.endAt).toBeNull();
+    const read = new Request(`http://localhost/api/workspaces/${id}/schedule`) as never;
+    expect((await (await GET(read, ctx())).json()).endAt).toBeNull();
+    expect((await (await PATCH(request({ prompt: "edited" }), ctx())).json()).endAt).toBeNull();
+  });
 });

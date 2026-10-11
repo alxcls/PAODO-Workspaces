@@ -2,12 +2,12 @@
 
 import { useCallback, useEffect } from "react";
 import { fetchJson } from "@/lib/client/fetchJson";
-import type { ScheduleEntry, UnsetSchedule } from "@/lib/schedules/types";
+import type { PresentedSchedule, ScheduleEntry, UnsetSchedule } from "@/lib/schedules/types";
 import { useAsyncResource, type AsyncResource } from "./useAsyncResource";
 
 /** `entry` is null for the unset job, wrapped so that reads apart from a read still in flight. */
 export interface ScheduleData {
-  entry: ScheduleEntry | null;
+  entry: PresentedSchedule | null;
 }
 
 /** The configuration fields a PATCH may update; the server keeps the id, the timestamps and the last run. */
@@ -30,7 +30,7 @@ export function useWorkspaceSchedule(workspaceId: string, { pollMs }: { pollMs?:
   const resource = useAsyncResource<ScheduleData>(
     useCallback(
       async (signal: AbortSignal) => {
-        const job = await fetchJson<ScheduleEntry | UnsetSchedule>(url, signal, "Failed to load schedule.");
+        const job = await fetchJson<PresentedSchedule | UnsetSchedule>(url, signal, "Failed to load schedule.");
         // Only a saved job has an id. The form fills an unset one from the browser's clock and timezone.
         return { entry: "id" in job ? job : null };
       },

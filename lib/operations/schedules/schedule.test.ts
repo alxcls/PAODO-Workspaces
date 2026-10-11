@@ -410,7 +410,7 @@ describe("presenting a schedule", () => {
     const shown = presentSchedule({ ...stored, enabled: false, nextRunAt: null, lastRun: undefined });
     expect(shown.nextRunAt).toBeNull();
     expect(shown).not.toHaveProperty("lastRun");
-    expect(shown).not.toHaveProperty("endAt");
+    expect(shown.endAt).toBeNull();
   });
 });
 

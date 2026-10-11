@@ -1,11 +1,26 @@
-// POST connects two ids, whichever two they are; lib/operations/connections/resolve decides which
-// graph the pair belongs to. The per-graph routes stay for the editor, which sends handles and positions.
+// GET lists connections of both kinds, whole or `?for=<id>`; POST connects two ids, whichever two they
+// are. The per-graph routes stay for the editor, which sends handles and positions.
 import { NextResponse, type NextRequest } from "next/server";
 import { appErrorResponse, errorResponse, readJsonObject } from "@/lib/api/errorResponse";
 import { createLogger } from "@/lib/infra/logger";
+import { connectionListing } from "@/lib/operations/connections/list";
 import { connect } from "@/lib/operations/connections/resolve";
 
 const log = createLogger("api").child({ route: "connections" });
+
+export function GET(req: NextRequest) {
+  try {
+    return NextResponse.json(connectionListing(req.nextUrl.searchParams.get("for") ?? undefined));
+  } catch (err) {
+    const expected = appErrorResponse(err, req);
+    if (expected) return expected;
+    log.error(
+      { event: "connection_list_failed", outcome: "connections_not_listed", code: "INTERNAL_ERROR", err },
+      "failed to list connections",
+    );
+    return errorResponse("INTERNAL_ERROR", "failed to list connections", { request: req });
+  }
+}
 
 export async function POST(req: NextRequest) {
   const parsed = await readJsonObject(req);

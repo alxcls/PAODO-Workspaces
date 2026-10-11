@@ -18,6 +18,11 @@ describe("platform access policy", () => {
     expect(isPlatformRouteAllowed("POST", "/api/models")).toBe(false);
   });
 
+  it("grants listing connections on the collection only", () => {
+    expect(isPlatformRouteAllowed("GET", "/api/connections")).toBe(true);
+    expect(isPlatformRouteAllowed("GET", "/api/connections/link_1")).toBe(false);
+  });
+
   it("grants connecting by two ids and disconnecting by one, and nothing wider", () => {
     expect(isPlatformRouteAllowed("POST", "/api/connections")).toBe(true);
     expect(isPlatformRouteAllowed("DELETE", "/api/connections/link_1")).toBe(true);

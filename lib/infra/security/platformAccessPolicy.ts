@@ -92,7 +92,7 @@ const RULES: ReadonlyArray<{
   /**
    * Both connection graphs: read whole, written one edge at a time. Reading is what makes the rest of
    * this policy usable — a drive is addressed by name only from a workspace connected to it, and an
-   * edge of either kind is removed by an id these two routes are the only source of.
+   * edge of either kind is removed by an id only a listing publishes.
    *
    * PUT on /api/workspace-graph is deliberately absent, which is why the write here is a sub-resource
    * rather than that. It replaces the document whole — edges and the editor's node positions together
@@ -110,6 +110,8 @@ const RULES: ReadonlyArray<{
   { method: "POST", pathname: /^\/api\/workspace-graph\/edges$/ },
   { method: "DELETE", pathname: /^\/api\/workspace-graph\/edges$/ },
   // Either kind by two ids, or by one: which graph a pair or an id belongs to is decided in the app.
+  // GET is the listing a caller with no canvas reads: both graphs joined, every end named.
+  { method: "GET", pathname: /^\/api\/connections$/ },
   { method: "POST", pathname: /^\/api\/connections$/ },
   { method: "DELETE", pathname: /^\/api\/connections\/[^/]+$/ },
 ];

@@ -81,9 +81,6 @@ CLAUDE.md
 # Operator notes for our own deployment — the repo stays IAP-agnostic
 *.local.md
 
-# Experimental CLI client — developed locally until it moves to its own repository
-/cli/
-
 # Local operator tool for provisioning S3 buckets — touches live infra, stays local
 /scripts/commission-s3-bucket.ts
 

@@ -13,6 +13,7 @@ import {
   MAX_PROMPT_LENGTH,
   type IntervalUnit,
   type ScheduleEntry,
+  type UnsetSchedule,
 } from "@/lib/schedules/types";
 import { ScheduleInvalidError } from "./errors";
 
@@ -242,9 +243,27 @@ export function presentSchedule(entry: ScheduleEntry): ScheduleEntry {
   };
 }
 
-/** A workspace's schedule, or null when it has none. */
-export function getWorkspaceSchedule(id: string, schedules: ScheduleReader = scheduleStore): ScheduleEntry | null {
-  return schedules.getSchedule(id);
+/**
+ * A workspace's schedule as callers see it. A workspace always has one: until a first save it is the
+ * unset job, disabled, with nothing pre-filled, since a reader should never be shown a guess. Nothing
+ * is stored for it, so it costs no write on workspace creation and no backfill.
+ */
+export function getWorkspaceSchedule(
+  id: string,
+  schedules: ScheduleReader = scheduleStore,
+): ScheduleEntry | UnsetSchedule {
+  const stored = schedules.getSchedule(id);
+  if (stored) return presentSchedule(stored);
+  return {
+    prompt: null,
+    intervalValue: null,
+    intervalUnit: null,
+    startAt: null,
+    endAt: null,
+    timezone: null,
+    enabled: false,
+    nextRunAt: null,
+  };
 }
 
 /**

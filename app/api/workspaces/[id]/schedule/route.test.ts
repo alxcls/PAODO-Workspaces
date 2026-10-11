@@ -53,6 +53,23 @@ describe("schedule HTTP updates", () => {
     expect(h.entry).toBe(before);
   });
 
+  it("answers the unset job, disabled and with no identity, before a first save", async () => {
+    const read = new Request(`http://localhost/api/workspaces/${id}/schedule`) as never;
+    const response = await GET(read, ctx());
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      prompt: null,
+      intervalValue: null,
+      intervalUnit: null,
+      startAt: null,
+      endAt: null,
+      timezone: null,
+      enabled: false,
+      nextRunAt: null,
+    });
+    expect(h.entry).toBeNull();
+  });
+
   it("answers on the schedule's clock with only its own fields, leaving storage as written", async () => {
     await PUT(request({ ...config, timezone: "Europe/Paris" }, "PUT"), ctx());
     h.entry = { ...h.entry!, lastRunError: "stray" } as ScheduleEntry;

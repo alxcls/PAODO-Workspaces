@@ -1,7 +1,5 @@
-// One entry point over both connection graphs, for a caller that holds two ids and no canvas.
-//
-// What a pair of ids makes — a drive link or an agent call — is decided by what the ids are, and which
-// pairs are refused is decided here too, so a client relays the answer instead of restating the rule.
+// One entry point over both connection graphs, for a caller that holds two ids and no canvas. What a
+// pair makes and which pairs are refused is decided here, so a client relays instead of restating.
 import { AppError, requireNonEmptyString } from "@/lib/errors/appError";
 import { connectionKind } from "@/lib/connections/ids";
 import { getDrive } from "@/lib/drives/store";

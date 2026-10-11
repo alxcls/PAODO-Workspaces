@@ -75,13 +75,8 @@ export async function getFileTree(request: Request, be: FileBackend): Promise<Re
 
   try {
     const depth = requestedDepth(searchParams.get("depth"));
-    // `?measure=1` — how big each file is, and how many lines it has. Opt-in because it is the one
-    // thing a listing can be asked for that costs a read per entry, and the panel that makes most of
-    // these requests renders neither. A client choosing a `cat` window asks for it; nothing else does.
-    // `?count=1` — how many files sit under each directory, at any depth. Opt-in for the same reason and
-    // with the same shape: a one-level listing has to walk everything below it to answer, which is a cost
-    // the panel must not pay for a number it does not render. The caller it is for is the one deciding
-    // where to look next, and cannot see from a tree alone which directory is enormous.
+    // `?measure=1` (file sizes and line counts) and `?count=1` (files under each directory) are opt-in:
+    // each costs a read or a walk per entry, for numbers the file panel does not render.
     const limit = requestedLimit(searchParams.get("limit"));
     const { tree, truncated } = await listEntries(be.dir, source, {
       ...(depth === undefined ? {} : { maxDepth: depth }),
@@ -89,10 +84,8 @@ export async function getFileTree(request: Request, be: FileBackend): Promise<Re
       ...(searchParams.get("measure") === "1" ? { measure: true } : {}),
       ...(searchParams.get("count") === "1" ? { countFiles: true } : {}),
     });
-    // `truncated` only when it is true. A caller that set no ?limit= can never see it, and one that did
-    // reads a key that is present exactly when it means something — the shape this route already chose
-    // when it stopped serving a `truncated` that merely restated the caller's own ?depth=.
-    // `limit` beside `truncated`, so a reader is told the ceiling it hit rather than left to know it.
+    // `truncated` only when it is true, so the key is present exactly when it means something, with the
+    // `limit` beside it so a reader is told the ceiling it hit.
     return NextResponse.json({ tree, ...(truncated ? { truncated: true, limit } : {}) });
   } catch (err) {
     const known = appErrorResponse(err, request);

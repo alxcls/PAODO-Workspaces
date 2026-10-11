@@ -7,7 +7,7 @@ import { appErrorResponse, errorResponse, readJsonObject } from "@/lib/api/error
 import { publicBaseUrl } from "@/lib/api/credentialRoutes";
 import { receiptResponse } from "@/lib/api/workspaceUpdateReceipt";
 import { getWorkspaceOverview } from "@/lib/operations/workspace/overview";
-import { updateWorkspace } from "@/lib/operations/workspace/update";
+import { updateWorkspace, WORKSPACE_UPDATABLE_FIELDS as UPDATABLE_FIELDS } from "@/lib/operations/workspace/update";
 import { deleteWorkspace } from "@/lib/operations/workspace/delete";
 import { workspaceDeleteDeps } from "@/lib/infra/workspaceDeleteDeps";
 
@@ -38,28 +38,6 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
     return errorResponse("INTERNAL_ERROR", "failed to read workspace", { request: req });
   }
 }
-
-// The wire names PATCH accepts, in one place so the emptiness check, the unknown-field rejection and
-// the error messages cannot drift apart. These are the request's field names, which differ from the
-// operation's input shape: the three llm* fields arrive separately and become one `model`.
-//
-// `secret` is deliberately absent. A third-party secret carries a plaintext value, is scoped to
-// domains, and is listed and deleted through its own endpoints — putting it on the general settings
-// PATCH meant the widest-reaching mutation a programmatic caller has could also plant a credential,
-// and advertising it here invited every such caller to try. It is refused explicitly below rather
-// than left to the unknown-field branch, which would misdescribe a real field as a typo.
-const UPDATABLE_FIELDS = [
-  "name",
-  "description",
-  "maxIterations",
-  "maxRunMinutes",
-  "internetAccess",
-  "workspaceApiAccess",
-  "workspaceMcpAccess",
-  "llmProvider",
-  "llmModel",
-  "reasoningEffort",
-] as const;
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const param = workspaceIdParam((await params).id, req);

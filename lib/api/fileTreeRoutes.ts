@@ -14,6 +14,7 @@ import { createLogger } from "@/lib/infra/logger";
 import { appErrorResponse, errorResponse } from "@/lib/api/errorResponse";
 import { AppError } from "@/lib/errors/appError";
 import type { FileBackend } from "@/lib/files/backend";
+import { MAX_DRIVE_LISTING_ENTRIES } from "@/lib/infra/limits";
 import { listEntries } from "@/lib/operations/files/listing";
 
 /**
@@ -43,7 +44,7 @@ function requestedDepth(value: string | null): number | undefined {
 }
 
 /**
- * `?limit=`, the most entries any one directory may contribute: a positive integer, or absent for no
+ * `?limit=`, the most entries any one directory may contribute: a positive integer, "max", or absent for no
  * ceiling at all — which is what the file panel asks for, and what every caller got before this
  * existed.
  *
@@ -53,9 +54,13 @@ function requestedDepth(value: string | null): number | undefined {
  */
 function requestedLimit(value: string | null): number | undefined {
   if (value === null) return undefined;
+  // The app's own ceiling, for a caller that wants a bounded listing without restating the bound.
+  if (value === "max") return MAX_DRIVE_LISTING_ENTRIES;
   const entries = Number(value);
   if (!Number.isInteger(entries) || entries < 1) {
-    throw new AppError("INVALID_REQUEST", `limit must be a positive integer, got "${value}"`, { field: "limit" });
+    throw new AppError("INVALID_REQUEST", `limit must be a positive integer or "max", got "${value}"`, {
+      field: "limit",
+    });
   }
   return entries;
 }
@@ -87,7 +92,8 @@ export async function getFileTree(request: Request, be: FileBackend): Promise<Re
     // `truncated` only when it is true. A caller that set no ?limit= can never see it, and one that did
     // reads a key that is present exactly when it means something — the shape this route already chose
     // when it stopped serving a `truncated` that merely restated the caller's own ?depth=.
-    return NextResponse.json({ tree, ...(truncated ? { truncated: true } : {}) });
+    // `limit` beside `truncated`, so a reader is told the ceiling it hit rather than left to know it.
+    return NextResponse.json({ tree, ...(truncated ? { truncated: true, limit } : {}) });
   } catch (err) {
     const known = appErrorResponse(err, request);
     if (known) return known;

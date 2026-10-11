@@ -21,6 +21,7 @@ vi.mock("@/lib/infra/schedules/scheduleStore", () => ({
   },
 }));
 import { GET, PATCH, PUT } from "./route";
+import { GET as getContract } from "@/app/api/contract/route";
 
 const executable = path.resolve("cli/bin/paodo.mjs");
 let endpoint: string;
@@ -31,6 +32,13 @@ const server = createServer(async (req, res) => {
     const body = Buffer.concat(chunks).toString();
     if (req.headers.authorization !== "Bearer cli-local-test") {
       res.writeHead(401).end();
+      return;
+    }
+    // The CLI reads what a schedule accepts from the app before each set, so the real contract is served.
+    if (req.url === "/api/contract") {
+      const contract = getContract();
+      res.writeHead(contract.status, Object.fromEntries(contract.headers));
+      res.end(await contract.text());
       return;
     }
     h.requests.push(`${req.method} ${req.url}`);

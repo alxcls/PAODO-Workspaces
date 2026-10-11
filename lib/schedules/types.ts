@@ -45,3 +45,14 @@ export interface ScheduleEntry {
   /** Absent until a first run is recorded. */
   lastRun?: LastRun;
 }
+
+/** A saved job as a reply carries it: `endAt` always answered, null when the job has no end. */
+export type PresentedSchedule = Omit<ScheduleEntry, "endAt"> & { endAt: string | null };
+
+/**
+ * The job a workspace has before one is saved: every setting empty, and disabled. It has no identity or
+ * history yet, which is how a reader tells it from a saved job.
+ */
+export type UnsetSchedule = {
+  [Field in Exclude<keyof ScheduleEntry, "id" | "workspaceId" | "createdAt" | "lastRun" | "enabled">]: null;
+} & { enabled: false };

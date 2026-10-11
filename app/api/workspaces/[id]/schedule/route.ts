@@ -1,4 +1,4 @@
-// REST endpoint for a workspace's single agent schedule: GET returns it (or null), PUT replaces, PATCH merges.
+// REST endpoint for a workspace's single agent schedule: GET returns it (the unset job until one is saved), PUT replaces, PATCH merges.
 // HTTP translation only — every rule, message and response shape is lib/operations/schedules/schedule.ts.
 export const runtime = "nodejs";
 
@@ -18,12 +18,11 @@ const log = createLogger("api").child({ route: "schedule" });
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  // Guarded here rather than in the operation: on this path "no such workspace" and "no schedule yet"
-  // are both answers, and only the route can tell them apart in its response.
+  // Guarded here rather than in the operation, which answers the unset job for any id it has nothing
+  // stored under — an unknown workspace included.
   const ws = requireWorkspace(id, req);
   if (ws instanceof NextResponse) return ws;
-  const entry = getWorkspaceSchedule(id);
-  return NextResponse.json(entry && presentSchedule(entry));
+  return NextResponse.json(getWorkspaceSchedule(id));
 }
 
 type Context = { params: Promise<{ id: string }> };

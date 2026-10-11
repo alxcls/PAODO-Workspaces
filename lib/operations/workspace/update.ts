@@ -21,6 +21,31 @@ import {
 } from "./secrets";
 import { WorkspaceUpdateFailure } from "./errors";
 
+/**
+ * The wire names a workspace PATCH accepts, in one place so the route's emptiness check, its
+ * unknown-field rejection and the published contract (lib/operations/contract/fields.ts) cannot drift
+ * apart. These are the request's field names, which differ from this operation's input shape: the
+ * three llm* fields arrive separately and become one `model`.
+ *
+ * `secret` is deliberately absent. A third-party secret carries a plaintext value, is scoped to
+ * domains, and is listed and deleted through its own endpoints — putting it on the general settings
+ * PATCH meant the widest-reaching mutation a programmatic caller has could also plant a credential,
+ * and advertising it here invited every such caller to try. The route refuses it explicitly rather
+ * than leaving it to the unknown-field branch, which would misdescribe a real field as a typo.
+ */
+export const WORKSPACE_UPDATABLE_FIELDS = [
+  "name",
+  "description",
+  "maxIterations",
+  "maxRunMinutes",
+  "internetAccess",
+  "workspaceApiAccess",
+  "workspaceMcpAccess",
+  "llmProvider",
+  "llmModel",
+  "reasoningEffort",
+] as const;
+
 /** Runs `validate` only when `value` was supplied — the update contract's "omitted means unchanged" rule. */
 function ifDefined<T, R>(value: T | undefined, validate: (value: T) => R): R | undefined {
   return value === undefined ? undefined : validate(value);

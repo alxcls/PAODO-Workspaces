@@ -10,10 +10,10 @@ import { listAll, getSchedule, setNextRunAt, recordRun } from "./scheduleStore";
 import { nextRunIso, endBound } from "@/lib/schedules/nextRun";
 import type { LastRun, RunStatus, ScheduleEntry } from "@/lib/schedules/types";
 import { AppError } from "@/lib/errors/appError";
+import { scheduleTickMs } from "@/lib/schedules/tick";
 
 const log = createLogger("scheduler");
 
-const DEFAULT_TICK_MS = 30_000;
 const ERROR_MAX = 280;
 
 type SchedulerState = { timer: NodeJS.Timeout | null };
@@ -203,7 +203,7 @@ export function startScheduler(): void {
   for (const entry of listAll()) {
     setNextRunAt(entry.workspaceId, nextRunIso(entry, now));
   }
-  const tickMs = parseInt(process.env.SCHEDULE_TICK_MS ?? String(DEFAULT_TICK_MS), 10) || DEFAULT_TICK_MS;
+  const tickMs = scheduleTickMs();
   state.timer = setInterval(tick, tickMs);
   state.timer.unref?.();
   log.info({ tickMs }, "scheduler started");

@@ -48,4 +48,4 @@ A citizen developer building a complex service needs to coordinate multiple spec
 
 ## Note
 
-This feature is gated behind `GRAPH_ENABLED=true`
+This feature was first gated behind `GRAPH_ENABLED=true`. The flag has since been removed: the graph is always served.

@@ -1,4 +1,4 @@
-import type { IntervalUnit, ScheduleEntry } from "@/lib/schedules/types";
+import type { IntervalUnit, PresentedSchedule } from "@/lib/schedules/types";
 import type { SchedulePayload } from "./hooks/useWorkspaceSchedule";
 
 export interface FormState {
@@ -11,7 +11,7 @@ export interface FormState {
   enabled: boolean;
 }
 
-export const toForm = (s: ScheduleEntry): FormState => ({
+export const toForm = (s: PresentedSchedule): FormState => ({
   prompt: s.prompt,
   intervalValue: String(s.intervalValue),
   intervalUnit: s.intervalUnit,

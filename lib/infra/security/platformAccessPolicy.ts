@@ -24,6 +24,19 @@ function resourceRule(collection: string, method: string, suffix?: string) {
   return { method, pathname: new RegExp(`^/api/${collection}/[^/]+${tail}$`) };
 }
 
+/**
+ * The version of the surface below, sent as `X-Paodo-Contract` on every API response so a client built
+ * for another one can say so instead of misreading a reply. Raise it when a rule here is removed or a
+ * listed route changes what it accepts or answers incompatibly; adding a rule or a field does not count.
+ */
+export const PLATFORM_CONTRACT_VERSION = 1;
+
+/**
+ * The credential channels a workspace exposes: the word a caller names one by, and its route segment.
+ * The rules below are generated from it and the contract publishes it, so a channel exists in one place.
+ */
+export const CREDENTIAL_CHANNELS = { api: "api-key", mcp: "mcp-config" } as const;
+
 const RULES: ReadonlyArray<{
   method: string;
   pathname: RegExp;
@@ -32,6 +45,8 @@ const RULES: ReadonlyArray<{
   // The model catalog, so workspace PATCH callers read valid combinations instead of learning by rejection.
   // Its `hasKey` flag replaces provider-keys, whose GET leaks masked key hints and whose writes move billing.
   { method: "GET", pathname: /^\/api\/models$/ },
+  // What each PATCH accepts, so a caller's field list is the app's own rather than a copy that ages.
+  { method: "GET", pathname: /^\/api\/contract$/ },
   { method: "GET", pathname: /^\/api\/workspaces$/ },
   { method: "POST", pathname: /^\/api\/workspaces$/ },
   workspaceRule("GET"),
@@ -39,10 +54,10 @@ const RULES: ReadonlyArray<{
   workspaceRule("PATCH"),
   // Irreversible: deleting a workspace takes its directory with it.
   workspaceRule("DELETE"),
-  workspaceRule("POST", "api-key"),
-  workspaceRule("DELETE", "api-key"),
-  workspaceRule("POST", "mcp-config"),
-  workspaceRule("DELETE", "mcp-config"),
+  ...Object.values(CREDENTIAL_CHANNELS).flatMap((segment) => [
+    workspaceRule("POST", segment),
+    workspaceRule("DELETE", segment),
+  ]),
   workspaceRule("GET", "files"),
   workspaceRule("GET", "files/content"),
   workspaceRule("DELETE", "files/content"),
@@ -77,7 +92,7 @@ const RULES: ReadonlyArray<{
   /**
    * Both connection graphs: read whole, written one edge at a time. Reading is what makes the rest of
    * this policy usable — a drive is addressed by name only from a workspace connected to it, and an
-   * edge of either kind is removed by an id these two routes are the only source of.
+   * edge of either kind is removed by an id only a listing publishes.
    *
    * PUT on /api/workspace-graph is deliberately absent, which is why the write here is a sub-resource
    * rather than that. It replaces the document whole — edges and the editor's node positions together
@@ -94,7 +109,17 @@ const RULES: ReadonlyArray<{
   { method: "GET", pathname: /^\/api\/workspace-graph$/ },
   { method: "POST", pathname: /^\/api\/workspace-graph\/edges$/ },
   { method: "DELETE", pathname: /^\/api\/workspace-graph\/edges$/ },
+  // Either kind by two ids, or by one: which graph a pair or an id belongs to is decided in the app.
+  // GET is the listing a caller with no canvas reads: both graphs joined, every end named.
+  { method: "GET", pathname: /^\/api\/connections$/ },
+  { method: "POST", pathname: /^\/api\/connections$/ },
+  { method: "DELETE", pathname: /^\/api\/connections\/[^/]+$/ },
 ];
+
+/** Every rule as `METHOD pattern`, for the test that pins this surface against the version above. */
+export function platformRouteRules(): string[] {
+  return RULES.map((rule) => `${rule.method} ${rule.pathname.source}`);
+}
 
 export function isPlatformRouteAllowed(method: string, pathname: string): boolean {
   return RULES.some((rule) => rule.method === method && rule.pathname.test(pathname));

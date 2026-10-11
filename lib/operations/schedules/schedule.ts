@@ -12,7 +12,9 @@ import {
   MAX_INTERVAL_VALUE,
   MAX_PROMPT_LENGTH,
   type IntervalUnit,
+  type PresentedSchedule,
   type ScheduleEntry,
+  type UnsetSchedule,
 } from "@/lib/schedules/types";
 import { ScheduleInvalidError } from "./errors";
 
@@ -214,7 +216,7 @@ function invalid(issues: ScheduleIssue[]): ScheduleInvalidError {
  * A schedule as callers see it: only the entity's own fields, whatever else the stored record holds,
  * and every recorded time on the schedule's clock beside startAt. Storage keeps its own instants.
  */
-export function presentSchedule(entry: ScheduleEntry): ScheduleEntry {
+export function presentSchedule(entry: ScheduleEntry): PresentedSchedule {
   const clock = (instant: string) => onScheduleClock(instant, entry.timezone) ?? instant;
   const { lastRun } = entry;
   return {
@@ -224,7 +226,7 @@ export function presentSchedule(entry: ScheduleEntry): ScheduleEntry {
     intervalValue: entry.intervalValue,
     intervalUnit: entry.intervalUnit,
     startAt: entry.startAt,
-    ...(entry.endAt ? { endAt: entry.endAt } : {}),
+    endAt: entry.endAt ?? null,
     timezone: entry.timezone,
     enabled: entry.enabled,
     createdAt: clock(entry.createdAt),
@@ -242,9 +244,27 @@ export function presentSchedule(entry: ScheduleEntry): ScheduleEntry {
   };
 }
 
-/** A workspace's schedule, or null when it has none. */
-export function getWorkspaceSchedule(id: string, schedules: ScheduleReader = scheduleStore): ScheduleEntry | null {
-  return schedules.getSchedule(id);
+/**
+ * A workspace's schedule as callers see it. A workspace always has one: until a first save it is the
+ * unset job, disabled, with nothing pre-filled, since a reader should never be shown a guess. Nothing
+ * is stored for it, so it costs no write on workspace creation and no backfill.
+ */
+export function getWorkspaceSchedule(
+  id: string,
+  schedules: ScheduleReader = scheduleStore,
+): PresentedSchedule | UnsetSchedule {
+  const stored = schedules.getSchedule(id);
+  if (stored) return presentSchedule(stored);
+  return {
+    prompt: null,
+    intervalValue: null,
+    intervalUnit: null,
+    startAt: null,
+    endAt: null,
+    timezone: null,
+    enabled: false,
+    nextRunAt: null,
+  };
 }
 
 /**

@@ -17,6 +17,7 @@ import {
   type AuthFailureTracker,
   type PlatformTokenValidator,
 } from "../security/httpAuth";
+import { PLATFORM_CONTRACT_VERSION } from "../security/platformAccessPolicy";
 import type { checkApiRateLimit } from "../security/rateLimit";
 import { buildSecurityHeaders } from "../security/securityHeaders";
 import type { UiAuthenticator } from "../security/uiAuth";
@@ -88,6 +89,7 @@ export function createRequestGate(deps: RequestGateDependencies): (req: Incoming
 
     for (const [name, value] of Object.entries(securityHeaders)) res.setHeader(name, value);
     res.setHeader("X-Request-Id", requestId);
+    if (pathname.startsWith("/api/")) res.setHeader("X-Paodo-Contract", String(PLATFORM_CONTRACT_VERSION));
     req.headers["x-request-id"] = requestId;
 
     // Rejections happen before Next.js, so they cannot use the route-level response helper. API

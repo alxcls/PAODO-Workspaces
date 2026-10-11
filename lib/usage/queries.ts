@@ -12,8 +12,7 @@ import type {
   SessionTextRecord,
   SessionToolCallRecord,
 } from "./types";
-
-const MAX_DASHBOARD_TURNS = 5000;
+import { MAX_DASHBOARD_TURNS } from "./types";
 
 // A session's final answer: its last turn that wrote text and called no tool. Needs the turn aliased `turn`.
 const FINAL_ANSWER_TURN = "TRIM(COALESCE(turn.output_text, '')) <> '' AND json_array_length(turn.tool_calls_json) = 0";

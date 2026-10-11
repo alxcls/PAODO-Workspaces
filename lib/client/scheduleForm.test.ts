@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { toForm, scheduleChanges } from "./scheduleForm";
-import type { ScheduleEntry } from "@/lib/schedules/types";
+import type { PresentedSchedule } from "@/lib/schedules/types";
 
-const stored: ScheduleEntry = {
+const stored: PresentedSchedule = {
   id: "s1",
   workspaceId: "w1",
   createdAt: "2026-01-01T00:00Z",
@@ -20,6 +20,10 @@ describe("schedule form round trips", () => {
   it("retains stored values verbatim, including sub-minute precision", () => {
     expect(toForm(stored)).toMatchObject({ startAt: stored.startAt, endAt: stored.endAt });
     expect(scheduleChanges(toForm(stored), {}, true)).toEqual({});
+  });
+
+  it("shows a job with no end as an empty end field", () => {
+    expect(toForm({ ...stored, endAt: null }).endAt).toBe("");
   });
 
   it("sends only edits while refreshed values remain visible", () => {

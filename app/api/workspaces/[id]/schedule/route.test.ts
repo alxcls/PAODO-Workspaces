@@ -53,6 +53,23 @@ describe("schedule HTTP updates", () => {
     expect(h.entry).toBe(before);
   });
 
+  it("answers the unset job, disabled and with no identity, before a first save", async () => {
+    const read = new Request(`http://localhost/api/workspaces/${id}/schedule`) as never;
+    const response = await GET(read, ctx());
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      prompt: null,
+      intervalValue: null,
+      intervalUnit: null,
+      startAt: null,
+      endAt: null,
+      timezone: null,
+      enabled: false,
+      nextRunAt: null,
+    });
+    expect(h.entry).toBeNull();
+  });
+
   it("answers on the schedule's clock with only its own fields, leaving storage as written", async () => {
     await PUT(request({ ...config, timezone: "Europe/Paris" }, "PUT"), ctx());
     h.entry = { ...h.entry!, lastRunError: "stray" } as ScheduleEntry;
@@ -63,5 +80,14 @@ describe("schedule HTTP updates", () => {
     expect(h.entry?.createdAt).toMatch(/Z$/);
     const patched = await (await PATCH(request({ prompt: "edited" }), ctx())).json();
     expect(patched.createdAt).toBe(shown.createdAt);
+  });
+
+  it("answers a saved job with no end as endAt null, on a read and on a write", async () => {
+    const saved = await (await PUT(request(config, "PUT"), ctx())).json();
+    expect(h.entry).not.toHaveProperty("endAt");
+    expect(saved.endAt).toBeNull();
+    const read = new Request(`http://localhost/api/workspaces/${id}/schedule`) as never;
+    expect((await (await GET(read, ctx())).json()).endAt).toBeNull();
+    expect((await (await PATCH(request({ prompt: "edited" }), ctx())).json()).endAt).toBeNull();
   });
 });

@@ -3,6 +3,9 @@
 
 import type { Currency } from "../models/currency";
 
+/** The most model calls one list response reads, newest first; storage keeps every record. */
+export const MAX_DASHBOARD_TURNS = 5000;
+
 // Outcome of a tool call, decided at the source (the runner) and persisted so the dashboard can
 // render it without re-parsing output. "needs_input" is the A2A non-terminal retry state.
 export type ToolStatus = "ok" | "error" | "needs_input";

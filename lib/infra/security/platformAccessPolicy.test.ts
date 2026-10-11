@@ -18,6 +18,23 @@ describe("platform access policy", () => {
     expect(isPlatformRouteAllowed("POST", "/api/models")).toBe(false);
   });
 
+  it("grants listing connections on the collection only", () => {
+    expect(isPlatformRouteAllowed("GET", "/api/connections")).toBe(true);
+    expect(isPlatformRouteAllowed("GET", "/api/connections/link_1")).toBe(false);
+  });
+
+  it("grants connecting by two ids and disconnecting by one, and nothing wider", () => {
+    expect(isPlatformRouteAllowed("POST", "/api/connections")).toBe(true);
+    expect(isPlatformRouteAllowed("DELETE", "/api/connections/link_1")).toBe(true);
+    expect(isPlatformRouteAllowed("DELETE", "/api/connections")).toBe(false);
+    expect(isPlatformRouteAllowed("DELETE", "/api/connections/link_1/extra")).toBe(false);
+  });
+
+  it("grants reading the field contract but not writing it", () => {
+    expect(isPlatformRouteAllowed("GET", "/api/contract")).toBe(true);
+    expect(isPlatformRouteAllowed("PUT", "/api/contract")).toBe(false);
+  });
+
   it("allows issue and revoke on both credential channels", () => {
     for (const channel of ["api-key", "mcp-config"]) {
       expect(isPlatformRouteAllowed("POST", `/api/workspaces/ws-1/${channel}`)).toBe(true);

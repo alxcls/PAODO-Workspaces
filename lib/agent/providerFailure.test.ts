@@ -95,6 +95,14 @@ describe("classifyProviderFailure — rejected key", () => {
     });
   });
 
+  it("explains a 403 in one sentence", () => {
+    const failure = classifyProviderFailure(raw({ status: 403, message: '403 "FORBIDDEN"' }));
+    expect(failure).toMatchObject({ failureCode: "PROVIDER_KEY_INVALID", status: 403 });
+    expect(providerFailureMessage(failure!, { provider: "scaleway", model: "glm-5.3" })).toBe(
+      "scaleway denied access to the model. Check that the API key for this provider is valid under Settings.",
+    );
+  });
+
   it("recognizes the wording even when no status came through", () => {
     // LangChain sometimes wraps the vendor error and loses the status on the way.
     expect(classifyProviderFailure(new Error("401 invalid_api_key: Incorrect API key provided"))).not.toBeNull();
@@ -202,32 +210,18 @@ describe("classifyProviderFailure — what it leaves alone", () => {
 });
 
 describe("providerFailureMessage", () => {
-  it("names the account, the model and the way out for an empty balance", () => {
-    const failure = classifyProviderFailure("402 Insufficient Balance")!;
-
-    const message = providerFailureMessage(failure, { provider: "deepseek", model: "deepseek-chat" });
-
-    expect(message).toContain("deepseek account has run out of credit");
-    expect(message).toContain("402 Insufficient Balance");
-    expect(message).toContain("topped up");
-    // Reachable from the limit-synthesis path, which knows the model but not the provider.
-    expect(providerFailureMessage(failure, { model: "deepseek-chat" })).toContain(
-      "The model provider account has run out of credit",
-    );
-  });
-
-  it("names the provider and where the key is replaced for a rejected key", () => {
-    const failure = classifyProviderFailure(raw({ status: 401, message: "invalid x-api-key" }))!;
-    const message = providerFailureMessage(failure, { provider: "anthropic" });
-    expect(message).toContain("anthropic");
-    expect(message).toContain("Settings");
-    // The provider's own words are what distinguish "wrong key" from "revoked key" in practice.
-    expect(message).toContain("invalid x-api-key");
+  it.each([
+    ["402 Insufficient Balance", "deepseek is out of credit. Top up the account or switch to another provider."],
+    [{ status: 401, message: "invalid x-api-key" }, "deepseek rejected the API key. Check that the API key for this provider is valid under Settings."],
+    [{ status: 429, message: "Too Many Requests" }, "deepseek kept rate-limiting requests, so the run stopped. Try again later."],
+  ])("says %j in one short line", (error, expected) => {
+    const failure = classifyProviderFailure(typeof error === "string" ? error : raw(error))!;
+    expect(providerFailureMessage(failure, { provider: "deepseek", model: "deepseek-chat" })).toBe(expected);
   });
 
   it("stays readable when the provider is unknown", () => {
     const failure = classifyProviderFailure(raw({ status: 401, message: "Unauthorized" }))!;
-    expect(providerFailureMessage(failure)).toContain("the model provider");
+    expect(providerFailureMessage(failure)).toContain("The model provider");
   });
 });
 

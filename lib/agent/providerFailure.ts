@@ -92,6 +92,8 @@ function providerMessage(error: unknown): string {
   return line.length > MAX_PROVIDER_MESSAGE ? `${line.slice(0, MAX_PROVIDER_MESSAGE - 1)}…` : line;
 }
 
+const providerName = (target: ProviderTarget) => target.provider ?? "The model provider";
+
 /**
  * ORDER IS PRECEDENCE — first match wins. Credit leads because a dry account answers 401 or a
  * balance-worded 429, and "replace your key" sends that operator to fix the wrong thing.
@@ -119,16 +121,8 @@ const RULES = [
       // Moonshot "Your account org-… is not active, please check your account balance".
       /check your account balance/i,
     ],
-    message: (failure: ProviderFailure, target: ProviderTarget) => {
-      const account = target.provider ? `The ${target.provider} account` : "The model provider account";
-      const refused = target.model ? `${target.model} refused` : "the provider refused";
-      const scope = target.provider ? ` on ${target.provider}` : "";
-      return (
-        `${account} has run out of credit, so ${refused} the request (${failure.providerMessage}). ` +
-        `This run stopped here — no further model call${scope} can succeed until the account is topped up, ` +
-        `or this workspace is switched to a provider that still has credit.`
-      );
-    },
+    message: (_failure: ProviderFailure, target: ProviderTarget) =>
+      `${providerName(target)} is out of credit. Top up the account or switch to another provider.`,
     event: "provider_credit_exhausted",
     outcome: "run_stopped_no_credit",
     logMessage: "LLM provider account is out of credit",
@@ -141,7 +135,7 @@ const RULES = [
     retryable: false,
     // A disabled-account 401 is still a credential to replace, so it stays here; the credit rule
     // above has already claimed the wordings where an empty account is the real cause.
-    decisiveStatuses: [401],
+    decisiveStatuses: [401, 403],
     patterns: [
       // OpenAI / DeepSeek / Mistral / Moonshot (all OpenAI-compatible): code `invalid_api_key`,
       // message "Incorrect API key provided" or "Authentication Fails".
@@ -154,15 +148,10 @@ const RULES = [
       /unauthorized/i,
       /no auth credentials found/i,
     ],
-    message: (failure: ProviderFailure, target: ProviderTarget) => {
-      const named = target.provider ?? "the model provider";
-      const where = target.provider ? `the ${target.provider} key` : "the key";
-      return (
-        `${named} rejected the API key this deployment is using (${failure.providerMessage}). ` +
-        `This run stopped here — no retry can succeed until ${where} is replaced in Settings → Provider API keys. ` +
-        `A key that used to work can also be revoked or expire upstream.`
-      );
-    },
+    message: (failure: ProviderFailure, target: ProviderTarget) =>
+      failure.status === 403
+        ? `${providerName(target)} denied access to the model. Check that the API key for this provider is valid under Settings.`
+        : `${providerName(target)} rejected the API key. Check that the API key for this provider is valid under Settings.`,
     event: "provider_key_invalid",
     outcome: "run_stopped_bad_credential",
     logMessage: "LLM provider rejected the configured API key",
@@ -187,15 +176,8 @@ const RULES = [
       // Anthropic 529 `overloaded_error`.
       /overloaded/i,
     ],
-    message: (failure: ProviderFailure, target: ProviderTarget) => {
-      const named = target.provider ?? "The model provider";
-      const scope = target.model ? ` for ${target.model}` : "";
-      return (
-        `${named} is refusing requests${scope} because they arrived too quickly (${failure.providerMessage}). ` +
-        `Nothing is wrong with the account or the key — the same request should succeed once the ` +
-        `provider's window resets.`
-      );
-    },
+    message: (_failure: ProviderFailure, target: ProviderTarget) =>
+      `${providerName(target)} kept rate-limiting requests, so the run stopped. Try again later.`,
     event: "provider_rate_limited",
     outcome: "run_stopped_rate_limited",
     logMessage: "LLM provider is throttling this deployment",

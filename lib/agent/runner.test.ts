@@ -302,7 +302,7 @@ describe("runAgent — history stays consistent across aborts", () => {
 
     const failure = events.find((event) => event.type === "error");
     expect(failure).toMatchObject({ code: "PROVIDER_CREDIT_EXHAUSTED" });
-    expect(failure && "message" in failure ? failure.message : "").toContain("deepseek account has run out of credit");
+    expect(failure && "message" in failure ? failure.message : "").toContain("deepseek is out of credit");
     expect(events.at(-1)).toEqual({ type: "done" });
   });
 

@@ -5,6 +5,7 @@ import { listModels } from "../models/registry";
 
 export const PROVIDER_CREDIT_EXHAUSTED_CODE = "PROVIDER_CREDIT_EXHAUSTED" as const;
 export const PROVIDER_KEY_INVALID_CODE = "PROVIDER_KEY_INVALID" as const;
+export const PROVIDER_ACCESS_DENIED_CODE = "PROVIDER_ACCESS_DENIED" as const;
 export const PROVIDER_KEY_MISSING_CODE = "PROVIDER_KEY_MISSING" as const;
 export const MODEL_UNAVAILABLE_CODE = "MODEL_UNAVAILABLE" as const;
 export const PROVIDER_RATE_LIMITED_CODE = "PROVIDER_RATE_LIMITED" as const;
@@ -135,7 +136,7 @@ const RULES = [
     retryable: false,
     // A disabled-account 401 is still a credential to replace, so it stays here; the credit rule
     // above has already claimed the wordings where an empty account is the real cause.
-    decisiveStatuses: [401, 403],
+    decisiveStatuses: [401],
     patterns: [
       // OpenAI / DeepSeek / Mistral / Moonshot (all OpenAI-compatible): code `invalid_api_key`,
       // message "Incorrect API key provided" or "Authentication Fails".
@@ -148,10 +149,8 @@ const RULES = [
       /unauthorized/i,
       /no auth credentials found/i,
     ],
-    message: (failure: ProviderFailure, target: ProviderTarget) =>
-      failure.status === 403
-        ? `${providerName(target)} denied access to the model. Check that the API key for this provider is valid under Settings.`
-        : `${providerName(target)} rejected the API key. Check that the API key for this provider is valid under Settings.`,
+    message: (_failure: ProviderFailure, target: ProviderTarget) =>
+      `${providerName(target)} rejected the API key. Check that the API key for this provider is valid under Settings.`,
     event: "provider_key_invalid",
     outcome: "run_stopped_bad_credential",
     logMessage: "LLM provider rejected the configured API key",
@@ -181,6 +180,21 @@ const RULES = [
     event: "provider_rate_limited",
     outcome: "run_stopped_rate_limited",
     logMessage: "LLM provider is throttling this deployment",
+  },
+  {
+    code: PROVIDER_ACCESS_DENIED_CODE,
+    failureClass: "authorization",
+    resource: "llm_provider_api_key",
+    resourceScope: "deployment",
+    retryable: false,
+    // Last, so a 403 worded as a bad key, a dry balance or a rate limit goes to that rule instead.
+    decisiveStatuses: [403],
+    patterns: [],
+    message: (_failure: ProviderFailure, target: ProviderTarget) =>
+      `${providerName(target)} denied access. Check the API key's permissions or switch to another provider.`,
+    event: "provider_access_denied",
+    outcome: "run_stopped_access_denied",
+    logMessage: "LLM provider denied access",
   },
 ] as const satisfies readonly ProviderFailureRule[];
 

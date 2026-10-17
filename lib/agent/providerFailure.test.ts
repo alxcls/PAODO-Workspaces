@@ -95,11 +95,9 @@ describe("classifyProviderFailure — rejected key", () => {
     });
   });
 
-  it("explains a 403 in one sentence", () => {
-    const failure = classifyProviderFailure(raw({ status: 403, message: '403 "FORBIDDEN"' }));
-    expect(failure).toMatchObject({ failureCode: "PROVIDER_KEY_INVALID", status: 403 });
-    expect(providerFailureMessage(failure!, { provider: "scaleway", model: "glm-5.3" })).toBe(
-      "scaleway denied access to the model. Check that the API key for this provider is valid under Settings.",
+  it("still reads a 403 worded as a bad key as one", () => {
+    expect(classifyProviderFailure(raw({ status: 403, message: "invalid api key" }))?.failureCode).toBe(
+      "PROVIDER_KEY_INVALID",
     );
   });
 
@@ -327,10 +325,27 @@ describe("preflightProviderFailure", () => {
   });
 });
 
+describe("classifyProviderFailure — access denied", () => {
+  it("reads any other 403 as access denied, in one generic line", () => {
+    const failure = classifyProviderFailure(raw({ status: 403, message: '403 "FORBIDDEN"' }));
+    expect(failure).toMatchObject({ failureCode: "PROVIDER_ACCESS_DENIED", retryable: false, status: 403 });
+    expect(providerFailureMessage(failure!, { provider: "scaleway", model: "glm-5.3" })).toBe(
+      "scaleway denied access. Check the API key's permissions or switch to another provider.",
+    );
+  });
+
+  it("leaves a rate-limit-worded 403 retryable", () => {
+    expect(classifyProviderFailure(raw({ status: 403, message: "rate limit exceeded" }))?.failureCode).toBe(
+      "PROVIDER_RATE_LIMITED",
+    );
+  });
+});
+
 describe("TERMINAL_PROVIDER_CODES", () => {
   it("covers every way a provider can make a run unrunnable", () => {
     expect([...TERMINAL_PROVIDER_CODES].sort()).toEqual([
       "MODEL_UNAVAILABLE",
+      "PROVIDER_ACCESS_DENIED",
       "PROVIDER_CREDIT_EXHAUSTED",
       "PROVIDER_KEY_INVALID",
       "PROVIDER_KEY_MISSING",

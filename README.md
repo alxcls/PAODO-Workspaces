@@ -60,7 +60,7 @@ _Demo video of PAODO in action_ :
 **Requirements:** [Docker](https://docs.docker.com/get-docker/) (running), Node.js 24 LTS (22+ works; `nvm use` picks it up from `.nvmrc`), and an API key for at least one supported AI model provider.
 
 ```bash
-git clone https://github.com/alxcls/PAODO-Workspaces.git
+git clone https://github.com/paodo-solution/PAODO-Workspaces.git
 cd PAODO-Workspaces
 npm install                   # host tooling only: tests, lint, editor
 cp .env.example .env          # set USERNAME and PASSWORD

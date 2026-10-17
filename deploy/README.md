@@ -20,7 +20,7 @@ then restrict inbound access:
 ## 2. Configure PAODO
 
 ```bash
-git clone https://github.com/alxcls/PAODO-Workspaces.git
+git clone https://github.com/paodo-solution/PAODO-Workspaces.git
 cd PAODO-Workspaces
 cp .env.example .env
 chmod 600 .env

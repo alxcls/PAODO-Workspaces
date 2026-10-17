@@ -321,6 +321,14 @@
     "cache_read_input_token_cost": 4.4e-8,
     "cache_creation_input_token_cost": 0
   },
+  "deepseek-v4.1-flash": {
+    "provider": "scaleway",
+    "source": "scaleway",
+    "currency": "EUR",
+    "input_cost_per_token": 6e-7,
+    "output_cost_per_token": 0.0000018,
+    "cache_read_input_token_cost": 1.2e-7
+  },
   "deepseek/deepseek-chat": {
     "provider": "deepseek",
     "source": "litellm",
@@ -503,6 +511,13 @@
     "input_cost_per_token": 0.0000014,
     "output_cost_per_token": 0.0000044,
     "cache_read_input_token_cost": 1.4e-7
+  },
+  "glm-5.3": {
+    "provider": "scaleway",
+    "source": "scaleway",
+    "currency": "EUR",
+    "input_cost_per_token": 0.0000018,
+    "output_cost_per_token": 0.0000055
   },
   "gpt-3.5-turbo": {
     "provider": "openai",

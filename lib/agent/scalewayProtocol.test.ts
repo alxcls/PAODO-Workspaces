@@ -11,6 +11,7 @@ describe("scalewayEffort", () => {
   it("passes through a level the model documents", () => {
     expect(scalewayEffort("deepseek-v4-flash-0731", "high")).toBe("high");
     expect(scalewayEffort("qwen3.6-35b-a3b", "medium")).toBe("medium");
+    expect(scalewayEffort("glm-5.3", "low")).toBe("low");
   });
 
   /**
@@ -22,6 +23,8 @@ describe("scalewayEffort", () => {
     expect(scalewayEffort("qwen3.6-35b-a3b", "low")).toBe("medium");
     expect(scalewayEffort("qwen3.6-35b-a3b", "high")).toBe("medium");
     expect(scalewayEffort("deepseek-v4-flash-0731", "medium")).toBe("high");
+    expect(scalewayEffort("deepseek-v4.1-flash", "medium")).toBe("high");
+    expect(scalewayEffort("glm-5.3", "medium")).toBe("max");
   });
 
   // Thinking off is a stored toggle state, not a level to approximate — snapping it to a default

@@ -43,7 +43,7 @@ describe("models catalog", () => {
     expect(listModels("deepseek")).toEqual(["deepseek-flash", "deepseek-v4-pro"]);
     expect(listModels("moonshot")).toContain("kimi-k3");
     expect(listModels("mistral")).toEqual(["mistral-large-4"]);
-    expect(listModels("scaleway")).toEqual(["deepseek-v4-flash-0731", "qwen3.6-35b-a3b"]);
+    expect(listModels("scaleway")).toEqual(["deepseek-v4-flash-0731", "deepseek-v4.1-flash", "qwen3.6-35b-a3b", "glm-5.3"]);
   });
 
   it("returns an empty list for an unknown provider", () => {
@@ -140,7 +140,9 @@ describe("models catalog", () => {
    */
   it.each([
     ["deepseek-v4-flash-0731", ["none", "low", "high", "max"]],
+    ["deepseek-v4.1-flash", ["none", "low", "high", "max"]],
     ["qwen3.6-35b-a3b", ["none", "medium"]],
+    ["glm-5.3", ["none", "low", "high", "max"]],
   ])("keeps %s on the levels its vendor documents", (model, levels) => {
     expect(modelReasoningEfforts("scaleway", model)).toEqual(levels);
   });

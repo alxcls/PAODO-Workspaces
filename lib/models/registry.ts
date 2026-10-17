@@ -103,8 +103,11 @@ const MISTRAL_MODELS: readonly ModelSpec[] = [
  */
 const SCALEWAY_MODELS: readonly ScalewayModelSpec[] = [
   { id: "deepseek-v4-flash-0731", efforts: ["none", "low", "high", "max"], fallbackEffort: "high" },
+  { id: "deepseek-v4.1-flash", efforts: ["none", "low", "high", "max"], fallbackEffort: "high" },
   // Genuinely binary: "medium" is its only thinking level, so the picker shows a switch, not a dial.
   { id: "qwen3.6-35b-a3b", efforts: ["none", "medium"], fallbackEffort: "medium" },
+  // No cached-input rate, so a long loop pays full input on every call.
+  { id: "glm-5.3", efforts: ["none", "low", "high", "max"], fallbackEffort: "max" },
 ];
 
 /** Every offered model, by provider. Keys must match SUPPORTED_PROVIDERS (lib/agent/buildModel.ts). */

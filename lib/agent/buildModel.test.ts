@@ -256,9 +256,9 @@ describe("buildChatModel", () => {
   });
 
   it("sends glm-5.3 a level it documents unchanged", () => {
-    const m = buildChatModel(
-      config({ provider: "scaleway", model: "glm-5.3", reasoningEffort: "low" }),
-    ) as unknown as { modelKwargs: Record<string, unknown> };
+    const m = buildChatModel(config({ provider: "scaleway", model: "glm-5.3", reasoningEffort: "low" })) as unknown as {
+      modelKwargs: Record<string, unknown>;
+    };
     expect(m.modelKwargs).toEqual({ reasoning_effort: "low" });
   });
 

@@ -210,8 +210,14 @@ describe("classifyProviderFailure — what it leaves alone", () => {
 describe("providerFailureMessage", () => {
   it.each([
     ["402 Insufficient Balance", "deepseek is out of credit. Top up the account or switch to another provider."],
-    [{ status: 401, message: "invalid x-api-key" }, "deepseek rejected the API key. Check that the API key for this provider is valid under Settings."],
-    [{ status: 429, message: "Too Many Requests" }, "deepseek kept rate-limiting requests, so the run stopped. Try again later."],
+    [
+      { status: 401, message: "invalid x-api-key" },
+      "deepseek rejected the API key. Check that the API key for this provider is valid under Settings.",
+    ],
+    [
+      { status: 429, message: "Too Many Requests" },
+      "deepseek kept rate-limiting requests, so the run stopped. Try again later.",
+    ],
   ])("says %j in one short line", (error, expected) => {
     const failure = classifyProviderFailure(typeof error === "string" ? error : raw(error))!;
     expect(providerFailureMessage(failure, { provider: "deepseek", model: "deepseek-chat" })).toBe(expected);

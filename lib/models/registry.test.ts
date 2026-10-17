@@ -43,7 +43,12 @@ describe("models catalog", () => {
     expect(listModels("deepseek")).toEqual(["deepseek-flash", "deepseek-v4-pro"]);
     expect(listModels("moonshot")).toContain("kimi-k3");
     expect(listModels("mistral")).toEqual(["mistral-large-4"]);
-    expect(listModels("scaleway")).toEqual(["deepseek-v4-flash-0731", "deepseek-v4.1-flash", "qwen3.6-35b-a3b", "glm-5.3"]);
+    expect(listModels("scaleway")).toEqual([
+      "deepseek-v4-flash-0731",
+      "deepseek-v4.1-flash",
+      "qwen3.6-35b-a3b",
+      "glm-5.3",
+    ]);
   });
 
   it("returns an empty list for an unknown provider", () => {

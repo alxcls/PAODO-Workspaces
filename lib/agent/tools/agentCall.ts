@@ -128,13 +128,7 @@ A workspace with no declared skills is not callable. If the workspace is not con
       };
     }
     if (isTerminalProviderCode(code)) {
-      // Scoped to the callee: it may run on a different provider than this workspace, so this is
-      // "stop calling that agent", not "stop working". Whether this workspace can keep going is
-      // answered by its own next model turn.
-      //
-      // All four provider failures share one instruction because the caller's options are identical
-      // for every one of them — none is fixable from inside a run, and only an operator can clear it.
-      // The specific cause is already in `message`, which is what gets reported to the user.
+      // Scoped to the callee, which may use another provider; no retry clears any of these.
       return {
         result:
           `Error (${code}): ${message} Do not re-call "${workspace}" — no retry can succeed until an ` +
